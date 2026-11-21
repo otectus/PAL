@@ -13,3 +13,11 @@ Default raw-turn retention is 30 days; candidate retention is 7 days. Expiration
 The supported trust boundary is one OS user. The broker's administrative memory methods are available to that user's authorized local client; arbitrary SQL/Cypher and internal projection commits are not model tools. Same-user programs can already access the private profile. Private directories and credential files must retain their configured modes.
 
 Remaining restrictions and incomplete source lifecycle behavior are listed in [implementation status](implementation-report.md). This publication is not a claim that the complete reference design has passed all release gates.
+
+## Curation and evidence retention
+
+A project memory statement records an exact source passage, modality, source authority, category, recording revision and valid time. Each correction creates a successor. Captured assistant output stays assistant-attributed. An explicit user correction supplies a new user observation. Manual pins, automated grace and bounded preservation affect evidence retention. Factual acceptance requires a separate decision, exact citations and a current supported record. Neither retrieval frequency nor an extractor's original confidence increases authority.
+
+The stored policy starts with a 48-hour at-risk window, 14 days of review grace, 30 days of preservation, and a 90-day cap on automatic unresolved extension. The default scope caps are 5,000 protected records and 50 MiB of unique supporting excerpts. Existing raw-passage and candidate durations survive upgrade. The same planner accounts for record deadlines, active holds and complete independent support bundles. Explicit forgetting follows the erasure registry even when a hold is active.
+
+The default review budget is 100 requests, 100,000 estimated input tokens and 20,000 output tokens per UTC day. Requests have separate input and output caps. Unknown usage stays reserved. An optional monetary ceiling requires prices supplied by the user. Failures leave uncertainty intact and surface in the review inbox. The provider sees only the bounded task input. An unknown processing location blocks dispatch. An assessor may request review or propose preservation, while the canonical transaction alone changes storage or status.

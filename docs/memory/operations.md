@@ -2,6 +2,36 @@
 
 Build and install Cere using the root README. From a source checkout, invoke `node broker/memory-cli.ts`; after installation use `cere memory`. The existing Cere broker hosts memory; there is no separate memory daemon to start. CLI operations do not auto-start an absent broker.
 
+## Desktop 0.1.6 rollout and backlog preservation
+
+1. Before upgrading an existing installation, run `cere memory health --json` and `cere memory backup --output /private/backups/cere-before-016.sqlite`. Use a fresh path. Keep the manifest and current erasure registry with the backup. Install the desktop update through the installation method used for that profile. Open Cere and run health again. Migrations 6 and 7 append tables and indexes and import active manual pins. Existing TTLs, credentials, scope IDs, factual status and capture permissions carry forward. New curation starts Off.
+2. Select a conversation in the project to inspect. In the chat toolbar or chat menu, open **Memory review → Expiring memories** for a scoped dry run. The individual inspector shows the candidate deadline, when supporting excerpts start expiring, when the last complete support would disappear and the effective deadline after protection. A later independent source may outlive the first. Dates and counts depend on the installation and change as new turns arrive.
+3. In **Settings → Knowledge → Memory review**, pick a saved connection or native API provider and enter the model ID or refresh the catalog. Choose **Preview recommendations** for a trial. Save settings, then choose **Test model**. The probe uses synthetic input and consumes the configured request budget. A cloud probe requires saving cloud-curation consent first. To retain evidence while processing a backlog, choose **Assisted review**, authorize retaining supporting excerpts and explicitly enable review grace. These choices also authorize the periodic sweep of at-risk candidates.
+4. In **Expiring memories**, inspect the page, enter a new private backup path and select **Back up and protect this page**. Save the returned backup, manifest, registry and hold IDs. Refresh before acting on the next page. A stale manifest requires a new preview. Use **Release hold** to reverse the selected hold. Manual pins have their own release action. Releasing a hold makes a record subject to its ordinary effective deadline again.
+5. Choose **Review existing memory**, preview the selection and queue it. The broker processes one target at a time while idle. Use **Recommendations** to inspect the source and apply a recommendation, defer, correct, restrict to local processing, dismiss or forget. The inspector shows the reviewer, assessment and version history. A later correction or erasure can supersede a pending recommendation. **Undo decision** restores an eligible previous state through a new revision.
+6. **Automatic** can preserve uncertain memories for the configured term. Enable automatic acceptance separately. A measured route needs independent held-out evidence. The experimental checkbox authorizes the tested unmeasured route and retains the same source and authority checks. Neither option converts an assistant's reported success or a plan into an observed outcome. Reranking and synthesis each have a separate switch. The chat model and embedding selection stay independent.
+7. **Save retention policy** sets future baseline durations. To migrate existing deadlines in the selected project, use **Preview changes to existing project memory**. Review the additional retention and newly due counts, enter a new backup path, then explicitly apply. Continue the bounded batches until complete. **Undo retention policy change** restores surviving eligible deadlines. A record already forgotten or cleaned up requires the normal registry-aware recovery procedure.
+
+The following shell session previews, protects and queues one scoped page. Set `SESSION` to the selected conversation ID and `BACKUP` to a new private filename. Run each mutation after inspecting the preceding JSON. Preview manifests are held by the running broker and must be regenerated after a restart or a relevant change.
+
+```sh
+cere memory curation status --session "$SESSION" --json
+cere memory retention preview --session "$SESSION" --reason review_grace --limit 25 --json > forecast.json
+jq '{counts,items,next_cursor}' forecast.json
+jq --arg out "$BACKUP" '{selection,expected_revision:.revision,reason,output:$out}' forecast.json |
+  cere memory retention protect --session "$SESSION" --stdin --json > protected.json
+cere memory curation preview --session "$SESSION" --limit 25 --json > review.json
+jq '{selection,ids:[.rows[].version_id],limit:25}' review.json |
+  cere memory curation run --session "$SESSION" --stdin --json
+cere memory curation list --session "$SESSION" --limit 10 --json
+```
+
+For a single memory, use `cere memory retention forecast --session "$SESSION" --id "$ID"`. Release a specific hold with `cere memory retention release --session "$SESSION" --hold-id "$HOLD"`. A policy change in progress can resume through `retention policy-apply --session "$SESSION" --change-id "$CHANGE"`. Review settings are global and use a separate revision. Read `cere memory curation settings` before calling `curation configure --file settings.json` with `{"expected_revision":<returned revision>,"profile":{...}}`. Each task binding has a connection reference and exact model ID. Ordered `fallbackBindings` contain complete bindings. A cloud fallback requires explicit authorization on that binding as well as cloud task consent. Compatible connections keep their own origin-bound keys. Private excerpts, context, evidence and neighbors require local processing throughout.
+
+**Troubleshooting.** A blocked job includes an error code. For an unknown processing location, inspect the saved connection and its processing declaration. For a missing key, edit that connection. For invalid output or unsupported citations, inspect the original evidence or change models. Token or request exhaustion postpones work until the next UTC day. Each attempted provider request reserves its own allowance. Unknown provider usage retains its reservation. An unset price displays unknown cost. Foreground work interrupts background inference. Capture, lexical search, correction, explicit saves and forgetting are available independently of the reviewer.
+
+**Rollback.** Switch curation Off. Use the running compatible broker to run `cere memory restore --input /private/backups/cere-before-016.sqlite --staging /private/empty-staging` while the current registry is available. Verify the staged store, including a previously forgotten ID. Stop the desktop and broker and preserve that registry and backups before switching directories. Earlier binaries require their supported schema. Use a matching pre-upgrade backup and the documented erasure-aware recovery workflow. Turning Off future assessments does not undo already accepted facts or release existing manual holds.
+
 ## API models (no Ollama required)
 
 In **Settings → Connections**, add a Gemini API key and, if using Claude for extraction, a Claude API key. Memory reuses those credentials; keys are never stored in memory settings. `GEMINI_API_KEY` / `GOOGLE_API_KEY` and `ANTHROPIC_API_KEY` in the broker environment also work.

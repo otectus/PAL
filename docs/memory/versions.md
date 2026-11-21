@@ -13,7 +13,8 @@
 | Extraction evaluated | `glm-5.3-flash:cloud`, `nemotron-3-super:cloud` and `gpt-oss:20b-cloud` (EV-01, 2026-10-16); `glm-5.3-flash:cloud` again the same day, at the same digest, once undated statements could be accepted |
 | Extraction digests tested | `3e780905abc0e7240dd1489935ec1e3c7fcf1854a6f4e7f8688f9bb0bdacb1a5` (`glm-5.3-flash:cloud`), `c6398e09afd407f9988333b6e48629c0afb143c1116f5f79e877552b68a684e4` (`nemotron-3-super:cloud`), `9a01793d9ef8de5309f157c06dbcbadfb598001b4a6f13cbc699cdff5042eaae` (`gpt-oss:20b-cloud`) |
 | Extraction prompt / parser | `cere-extraction-v2` / `zod-4-v2` |
-| Protocol / ontology / SQLite schema | 1 / 1 / checksum-verified migrations 1–5, pinned by `tests/memory-migrations.test.ts` |
+| Memory review | Assessment contract `cere-assessment-2`, rubric `memory-value-1`, parser/schema 1. Local model identity and precision are recorded in [the 0.1.6 evaluation](evaluation.md#desktop-016-curation). |
+| Protocol / ontology / SQLite schema | 1 / 1 / checksum-verified migrations 1–7, pinned by `tests/memory-migrations.test.ts` |
 
 The deployment Compose file pins image digests. The native fallback launcher verifies archive SHA-256 hashes. Java 21 or newer is needed by the native Neo4j distribution. See the [adapter validation](adapters-validation.md) for exact live evidence and upstream references.
 

@@ -4,6 +4,12 @@ Notable changes to Cere, the desktop application and its broker, and to Cere Mob
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-21
+
+- Desktop memory can review project facts, decisions and preferences with a separately selected model. Settings support Preview, Assisted and Automatic modes, local and remote Ollama, native APIs and saved compatible endpoints.
+- Retention pins now keep the evidence needed to recall a memory after its original deadline. The review inbox can forecast expiry, back up and protect a backlog, audit model decisions and undo them. Project memory statements preserve attribution and uncertainty.
+- Upgraded profiles start with curation Off. See the [rollout and backlog procedure](docs/memory/operations.md#desktop-016-rollout-and-backlog-preservation) and [measured evaluation](docs/memory/evaluation.md#desktop-016-curation).
+
 ## [0.1.5] - 2026-11-20
 
 This desktop release includes the Cere Mobile compatibility work first published in the 0.1.4 development snapshot, plus the redesigned 0.1.5 Android interface and cross-device draft reconciliation. The phone side is published through the separate `mobile-dev-v0.1.5` development channel and updates existing `.debug` development installs. Stable mobile signing and publication remain separate and require the permanent release key and the evidence in [docs/mobile/TESTING.md](docs/mobile/TESTING.md).
