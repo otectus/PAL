@@ -63,6 +63,7 @@ CDialog {
         if(known.text)p.known_revision=Number(known.text)
         call(deep?"deep_recall":"retrieve",p)
     }
+    function retentionDate(us){return us===null || us===undefined?"No scheduled loss":new Date(us/1000).toLocaleString()}
     function openRecord(id){record.text=id;preview={};call("inspect",{id:id})}
     function loadPolicy(){policyLoaded=false;policyRequest=App.rpc("memory.graph",{sessionId:sessionId,method:"policy_get",params:{}})}
     function updatePolicy(patch){if(!policyLoaded)return;policyLoaded=false;preview={};policyRequest=App.rpc("memory.graph",{sessionId:sessionId,method:"policy_update",params:{policy:patch,expected_epoch:policyEpoch}})}
@@ -110,7 +111,13 @@ CDialog {
         Layout.fillWidth:true;spacing:6
         CText { objectName:"graphMemoryPinState";text:inspector.pin?"Pinned against retention expiry"+(inspector.pin.note?" · "+inspector.pin.note:""):"Not pinned. Retention rules may expire it.";color:inspector.pin?Theme.accentText:Theme.muted;font.pixelSize:Theme.secondary }
         CText { visible:!!inspector.inspected.retention; Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.muted
-            text:inspector.inspected.retention?("Protection · "+(inspector.inspected.retention.protection_reasons.join(", ")||"baseline policy")+"\nEffective expiry · "+(inspector.inspected.retention.effective_expires_at_us?new Date(inspector.inspected.retention.effective_expires_at_us/1000).toLocaleString():"No scheduled expiry")):"" }
+            text:inspector.inspected.retention ? [
+                "Protection · "+(inspector.inspected.retention.protection_reasons.join(", ")||"baseline policy"),
+                "Original deadline · "+inspector.retentionDate(inspector.inspected.retention.baseline_expires_at_us),
+                "Next evidence loss · "+inspector.retentionDate(inspector.inspected.retention.next_evidence_loss_at_us),
+                "Last complete support · "+inspector.retentionDate(inspector.inspected.retention.last_support_loss_at_us),
+                "Effective expiry · "+inspector.retentionDate(inspector.inspected.retention.effective_expires_at_us)
+            ].join("\n") : "" }
         CText { Layout.fillWidth:true;wrapMode:Text.Wrap;visible:!!inspector.inspectedRecord.version_id; text:inspector.inspected.assessment?(inspector.inspected.assessment.producer.assess.modelId+" · "+inspector.inspected.assessment.output.explanation):inspector.inspected.decision?.action?("Recorded "+inspector.inspected.decision.action+" by "+inspector.inspected.decision.actor+". Full assessment context is no longer retained."):"Not assessed" }
         CTextArea { id:statementEdit;visible:inspector.inspectedRecord.kind==="statement"; Layout.fillWidth:true; placeholderText:"Enter your corrected statement"; Accessible.name:"Statement correction" }
         CButton { visible:inspector.inspectedRecord.kind==="statement";text:"Save corrected statement";enabled:statementEdit.text.trim().length>0&&inspector.pending<0;onClicked:inspector.call("curation_statement_correct",{id:inspector.inspectedRecord.version_id,expected_revision:inspector.inspectedRecord.aggregate_revision,text:statementEdit.text}) }

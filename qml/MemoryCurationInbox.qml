@@ -64,6 +64,8 @@ ColumnLayout {
     ColumnLayout {
         visible:root.forecast!==null;Layout.fillWidth:true
         CText { text:root.forecast?(root.forecast.counts.at_risk+" at risk · "+root.forecast.counts.already_protected+" already protected · "+root.forecast.counts.eligible+" eligible on this page"):"";wrapMode:Text.Wrap }
+        CText { visible:!!root.forecast;Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.muted
+            text:root.forecast?("As of "+root.deadline(root.forecast.generated_at_us)+" · "+root.forecast.timezone+" · policy "+root.forecast.policy_epoch+(root.forecast.projection_incomplete?" · Projection updates pending":"")):"" }
         Repeater {
             model:root.forecast?.items||[]
             CButton { required property var modelData;Layout.fillWidth:true;alignLeft:true;text:(modelData.text||modelData.status||"Memory")+" · "+root.deadline(modelData.effective_expires_at_us);onClicked:root.inspectRequested(modelData.version_id) }
