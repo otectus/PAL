@@ -19,10 +19,11 @@ function target(provider: ApiProvider, access: ApiAccess, path: string) {
   if (!base) throw new Error('Set the compatible endpoint in Settings → Connections');
   return base.replace(/\/+$/, '') + '/' + path;
 }
-async function request(provider: ApiProvider, access: ApiAccess, path: string, signal: AbortSignal, body?: unknown, acceptance: SendOptions = {}) {
+async function request(provider: ApiProvider, access: ApiAccess, path: string, signal: AbortSignal, body?: unknown, acceptance: SendOptions = {}, beforeRequest?: () => Promise<void>) {
   const payload = body === undefined ? undefined : JSON.stringify(body), label = apiLabel(provider, access);
   if (payload && payload.length > 96 * 1024 * 1024) throw new Error('This conversation is too large to send');
   try { return await withHttpRetry(async()=>{
+    await beforeRequest?.();
     const key = access.key(), url = target(provider, access, path);
     // A compatible endpoint may run without a key; its key is never sent to another origin (credentials.ts).
     if (!key && (provider !== 'compatible' || access.endpoint?.().requiresKey !== false)) throw new Error(provider === 'compatible' ? `Add a key for ${label} in Settings → Connections` : `Add a ${label} key in Settings → Connections`);
@@ -52,9 +53,9 @@ async function json(response: Response, limit = 4*1024*1024, what = 'model catal
   try { return JSON.parse(text + decoder.decode()); }
   catch { throw new Error(`The provider returned an invalid ${what}`); }
 }
-/** Bounded non-streaming API request shared by background memory jobs. */
-export async function apiJson(provider: 'google' | 'anthropic', access: ApiAccess, path: string, body: unknown, signal: AbortSignal) {
-  return json(await request(provider, access, path, signal, body), 2 * 1024 * 1024, 'memory response');
+/** Bounded non-streaming API request shared by background model tasks. It never enters the chat/tool loop. */
+export async function apiJson(provider: ApiProvider, access: ApiAccess, path: string, body: unknown, signal: AbortSignal, acceptance: SendOptions = {}, limit = 2 * 1024 * 1024, beforeRequest?: () => Promise<void>) {
+  return json(await request(provider, access, path, signal, body, acceptance, beforeRequest), limit, 'background model response');
 }
 export async function apiModels(provider: ApiProvider, access: ApiAccess): Promise<ModelOption[]> {
   const models: ModelOption[] = [], seen = new Set<string>(); let cursor = '';

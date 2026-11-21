@@ -13,6 +13,8 @@ const applied: Record<number, string> = {
   3: '8d7400e82b0ad94fcbcf0fb6fb41888f9a6a95995badc3cff77ab58105bc1e73',
   4: '2e488843376a205fba32765044518e735e4a789a1812b6b968975419c2e91e67',
   5: 'fa3a04d5ee812bac2a80d207c533710444649077807a1c54df46117035b1ecf5',
+  6: '4175254d9bb46e9084eacf29bb6c28d5ef6f0a2b256231dfaa1db27c5544ffa7',
+  7: '27c145c4a88ff46ceda9e2dc733c506d002474bbe584cde230af9a20fe413c62',
 };
 
 test('S3 applied memory migrations are never edited', () => {

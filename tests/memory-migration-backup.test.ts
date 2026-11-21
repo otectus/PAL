@@ -14,7 +14,7 @@ import { healthReport } from '../broker/health.ts';
 function storeAtFour(t: any) {
   const root = mkdtempSync(join(tmpdir(), 'cere-premigration-')), directory = join(root, 'graph-memory'), backups = join(root, 'memory-backups');
   t.after(() => { try { chmodSync(join(root, 'locked'), 0o700); } catch {} rmSync(root, { recursive: true, force: true }); });
-  const five = migrations.pop()!;
+  const later = migrations.splice(migrations.findIndex(migration => migration.id === 5));
   let scope = '', note = '', assertion = '';
   try {
     const c = new Canonical(directory);
@@ -24,7 +24,7 @@ function storeAtFour(t: any) {
     const version = c.remember({ scope_id: scope, claim: { subject: { type: 'Project', name: 'Atlas' }, predicate: 'USES_TOOL', object: { type: 'Tool', name: 'Kitty' } }, witness: { observation_id: observed.id, quote: 'Atlas uses Kitty.' } }).id;
     assertion = c.one('SELECT logical_id FROM assertion_versions WHERE version_id=?', version).logical_id;
     c.close();
-  } finally { migrations.push(five); }
+  } finally { migrations.push(...later); }
   return { root, directory, backups, scope, note, assertion };
 }
 const version = (directory: string) => {
@@ -36,15 +36,16 @@ const backupFiles = (backups: string) => existsSync(backups) ? readdirSync(backu
 
 test('S4 an existing store is copied and checked before it migrates; new and current stores are not', t => {
   const { directory, backups, scope, note } = storeAtFour(t);
+  const latest = migrations.at(-1)!.id;
   assert.deepEqual(version(directory), [4, false]);
   const c = new Canonical(directory, { backups });
   try {
-    assert.deepEqual(version(directory), [5, true]);
-    const date = new Date().toISOString().slice(0, 10), name = `before-migration-4-to-5-${date}.sqlite`;
+    assert.deepEqual(version(directory), [latest, true]);
+    const date = new Date().toISOString().slice(0, 10), name = `before-migration-4-to-${latest}-${date}.sqlite`;
     assert.deepEqual(backupFiles(backups), [name, name + '.manifest.json']);
     assert.equal(statSync(backups).mode & 0o777, 0o700); assert.equal(statSync(join(backups, name)).mode & 0o777, 0o600);
     const manifest = JSON.parse(readFileSync(join(backups, name + '.manifest.json'), 'utf8'));
-    assert.deepEqual([manifest.kind, manifest.from, manifest.to, manifest.integrity, manifest.erasure_registry_required], ['before_migration', 4, 5, 'ok', true]);
+    assert.deepEqual([manifest.kind, manifest.from, manifest.to, manifest.integrity, manifest.erasure_registry_required], ['before_migration', 4, latest, 'ok', true]);
     const copy = new DatabaseSync(join(backups, name), { readOnly: true });
     try {
       assert.deepEqual(copy.prepare('PRAGMA integrity_check').all().map((row: any) => row.integrity_check), ['ok']);
@@ -68,7 +69,7 @@ const contents = (directory: string) => {
     return Object.fromEntries(tables.map(name => [name, db.prepare(`SELECT * FROM "${name}"`).all().map(row => JSON.stringify(row)).sort()]));
   } finally { db.close(); }
 };
-const refusedMigration = (pattern: RegExp) => (error: any) => error.code === 'MIGRATION_BACKUP_FAILED' && /schema update \(4 to 5\) and was left unchanged/.test(error.message) && pattern.test(error.message);
+const refusedMigration = (pattern: RegExp) => (error: any) => error.code === 'MIGRATION_BACKUP_FAILED' && new RegExp(`schema update \\(4 to ${migrations.at(-1)!.id}\\) and was left unchanged`).test(error.message) && pattern.test(error.message);
 const runningAsRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
 // Root bypasses directory permission bits, so this fixture only proves anything for an ordinary user;
@@ -101,7 +102,7 @@ test('S4 a backup directory that cannot be created, a disk that fills mid-copy, 
   assert.deepEqual(contents(directory), before, 'no failed attempt changed the store');
   Canonical.copyStore = copy;
   new Canonical(directory, { backups }).close();
-  assert.deepEqual(version(directory), [5, true], 'once the copy can be written, the next open migrates');
+  assert.deepEqual(version(directory), [migrations.at(-1)!.id, true], 'once the copy can be written, the next open migrates');
 });
 
 test('S4 without enough room for the copy, the store is left unmigrated with the reason', t => {
@@ -113,21 +114,22 @@ test('S4 without enough room for the copy, the store is left unmigrated with the
   assert.deepEqual(version(directory), [4, false]);
   assert.deepEqual(backupFiles(join(root, 'memory-backups')).filter(name => name.includes('partial')), [], 'no partial copy is left behind');
   new Canonical(directory, { backups: join(root, 'memory-backups') }).close();
-  assert.deepEqual(version(directory), [5, true], 'with room, the next open migrates');
+  assert.deepEqual(version(directory), [migrations.at(-1)!.id, true], 'with room, the next open migrates');
 });
 
 test('S4 the newest two pre-migration backups are kept, and none for longer than 14 days', t => {
   const { directory, backups } = storeAtFour(t);
+  const latest = migrations.at(-1)!.id;
   const c = new Canonical(directory, { backups });
   t.after(() => c.close());
   const day = 86_400_000_000, now = Date.now() * 1000;
   const fake = (name: string, age: number) => { writeFileSync(join(backups, name), 'x'); writeFileSync(join(backups, name + '.manifest.json'), JSON.stringify({ created_us: now - age, from: 1, to: 2 })); };
   fake('before-migration-1-to-2-2026-10-01.sqlite', 3 * day); fake('before-migration-2-to-3-2026-10-02.sqlite', 2 * day);
   c.pruneMigrationBackups();
-  assert.deepEqual(c.migrationBackups().map(backup => backup.name), [`before-migration-4-to-5-${new Date().toISOString().slice(0, 10)}.sqlite`, 'before-migration-2-to-3-2026-10-02.sqlite'], 'the third-newest is removed');
+  assert.deepEqual(c.migrationBackups().map(backup => backup.name), [`before-migration-4-to-${latest}-${new Date().toISOString().slice(0, 10)}.sqlite`, 'before-migration-2-to-3-2026-10-02.sqlite'], 'the third-newest is removed');
   assert.equal(existsSync(join(backups, 'before-migration-1-to-2-2026-10-01.sqlite.manifest.json')), false);
   fake('before-migration-3-to-4-2026-09-20.sqlite', 15 * day);
-  writeFileSync(join(backups, 'before-migration-4-to-5-' + new Date().toISOString().slice(0, 10) + '.sqlite.manifest.json'), JSON.stringify({ created_us: now - 15 * day, from: 4, to: 5 }));
+  writeFileSync(join(backups, `before-migration-4-to-${latest}-` + new Date().toISOString().slice(0, 10) + '.sqlite.manifest.json'), JSON.stringify({ created_us: now - 15 * day, from: 4, to: latest }));
   c.maintenance();
   assert.deepEqual(c.migrationBackups().map(backup => backup.name), ['before-migration-2-to-3-2026-10-02.sqlite'], 'maintenance removes backups older than 14 days');
   assert.deepEqual(c.deleteMigrationBackups(), { deleted: 1 });

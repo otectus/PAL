@@ -271,6 +271,11 @@ export class Core extends EventEmitter {
     this.completions=store.get<any[]>('completionInbox',[]).flatMap(row=>{const message=store.messageById(row.messageId);try{const s=store.session(row.sessionId);return[{...row,message:message||{id:'',sessionId:s.id,role:'assistant',text:'This run finished without a final message.',time:row.time}}];}catch{return[];}});
     // Last, so its restart recovery can describe state that every other service already provides.
     this.chatConnections=new ChatConnections(this);
+    this.memory.service.readConnection=id=>this.chatConnections.get(id);
+    this.chatConnections.addDependencyCheck(connection=>{
+      return this.memory.service.usesBinding('connection:'+connection.id)
+        ?'Change the memory task binding in Knowledge settings before removing this connection.':undefined;
+    });
     this.workbench=new Workbench(this);
     this.flush();
     this.ticker = setInterval(() => void this.checkTimers(), 1000); this.ticker.unref();
@@ -281,9 +286,9 @@ export class Core extends EventEmitter {
     if (provider !== 'compatible') return { key: () => this.credentials.key(provider) };
     // A conversation on a named connection always reads that connection, as it is now.
     const endpoint = () => this.chatConnections.endpoint(sessionId ? this.store.session(sessionId) : undefined);
-    return { key: () => this.credentials.key('compatible', endpointOrigin(endpoint().baseUrl)), endpoint };
+    return { key: () => {const id=sessionId?this.store.session(sessionId).connectionId:undefined;return this.credentials.key('compatible', endpointOrigin(endpoint().baseUrl),id?'connection:'+id:undefined);}, endpoint };
   }
-  endpointAccess(endpoint: import('./types.ts').CompatibleEndpoint): ApiAccess { return { key: () => this.credentials.key('compatible', endpointOrigin(endpoint.baseUrl)), endpoint: () => endpoint }; }
+  endpointAccess(endpoint: import('./types.ts').CompatibleEndpoint,connectionId?:string): ApiAccess { return { key: () => this.credentials.key('compatible', endpointOrigin(endpoint.baseUrl),connectionId?'connection:'+connectionId:undefined), endpoint: () => endpoint }; }
   /**
    * A conversation's own catalog: its Ollama host's, its named connection's, or the provider's. A
    * conversation on a named connection never gets the default endpoint's list (MOB-001).
@@ -537,7 +542,7 @@ export class Core extends EventEmitter {
     if(isApiProvider(p.provider)){
       if(!model)throw new Error('Choose an API model or enter its model ID');if(effort)throw new Error('API conversations use the model’s default reasoning settings');
       if(p.provider==='compatible'){
-        const endpoint=connection?.compatible||this.settings.compatible,access=this.endpointAccess(endpoint);
+        const endpoint=connection?.compatible||this.settings.compatible,access=this.endpointAccess(endpoint,connection?.id);
         if(!endpoint.baseUrl)throw new Error('Set the compatible endpoint in Settings → Connections');
         if(endpoint.requiresKey&&!access.key())throw new Error(`Add a key for ${apiLabel('compatible',access)} in Settings → Connections`);
         if(p.tools===true&&!endpoint.tools)throw new Error('This endpoint is not declared to support tools. Turn on tool calling for it in Settings → Connections if it does.');
@@ -1278,10 +1283,14 @@ export class Core extends EventEmitter {
     });
     const previous = this.settings; this.settings = next;
     // The Settings endpoint and host are the default connections; editing them is editing those records.
-    if (hostChanged) this.chatConnections.syncDefault('ollama', next);
-    if (endpointChanged) this.chatConnections.syncDefault('compatible', next);
+    for(const kind of ['ollama','compatible'] as const){
+      if(kind==='ollama' ? !hostChanged : !endpointChanged)continue;
+      this.chatConnections.syncDefault(kind,next);
+      const changed=this.chatConnections.list().find(row=>row.migrated && row.kind===kind);
+      if(changed)await this.memory.service.bindingChanged('connection:'+changed.id);
+    }
     if (JSON.stringify(next.webSearch) !== JSON.stringify(previous.webSearch) || next.paused !== previous.paused) { this.webController.abort(new Error('Web search settings changed')); this.webController = new AbortController(); }
-    if (JSON.stringify(next.memory) !== JSON.stringify(previous.memory) || hostChanged || next.paused !== previous.paused) this.memory.invalidate();
+    if (JSON.stringify(next.memory) !== JSON.stringify(previous.memory) || hostChanged || next.paused !== previous.paused) await this.memory.invalidate();
     this.noteRoutes.clear();
     if ('extensions' in patch) this.extensions.reconfigure(previous.extensions);
     if ('customTools' in patch) this.customTools.reconfigure();
@@ -1788,6 +1797,10 @@ export class Core extends EventEmitter {
     if(method==='session.capabilities')return this.setCapabilities(p);
     if(method==='session.modelOptions')return this.setModelOptions(p);
     if(['capsules.','recipes.','results.'].some(prefix=>method.startsWith(prefix)))return this.workflows.dispatch(method,p);
+    if(/^memory\.(curation|retention|models)\./.test(method)){
+      const {sessionId,...params}=p;
+      return this.memory.graph(sessionId?this.store.session(sessionId):undefined,method.slice(7).replaceAll('.','_'),params);
+    }
     if(method.startsWith('memoryReview.'))return this.memoryReview.dispatch(method,p);
     if(method.startsWith('presets.'))return this.presets.dispatch(method,p);
     if(method.startsWith('recovery.'))return this.recovery.dispatch(method,p);
@@ -1874,10 +1887,13 @@ export class Core extends EventEmitter {
         if (!isApiProvider(p.provider)) throw new Error('Choose an API provider');
         // M13: a compatible endpoint's key is saved for the endpoint's current origin only.
         const origin=p.provider==='compatible'?endpointOrigin((p.connectionId!==undefined?this.chatConnections.get(p.connectionId,'compatible').compatible!:this.settings.compatible).baseUrl):undefined;
-        const status=this.credentials.update(p.provider,p.key,origin);
+        const status=this.credentials.update(p.provider,p.key,origin,p.provider==='compatible'&&p.connectionId?'connection:'+p.connectionId:undefined);
         this.memory.service.controller.abort(new Error('API credentials changed'));
         this.memory.service.controller = new AbortController();
         this.memory.service.extractor = undefined;
+        await this.memory.ready;
+        const changedRef=p.provider==='compatible'?(p.connectionId||this.chatConnections.list().find(row=>row.kind==='compatible'&&row.migrated)?.id):undefined;
+        if(p.provider!=='compatible'||changedRef)await this.memory.service.bindingChanged(changedRef?'connection:'+changedRef:'native:'+p.provider);
         this.modelGenerations.set(p.provider,(this.modelGenerations.get(p.provider)||0)+1);
         this.capabilities[p.provider]={...status[p.provider],available:false,models:[],modelsStatus:'unknown',remoteRestricted:false,label:apiLabel(p.provider,this.apiAccess(p.provider)),...(p.provider==='compatible'?{endpoint:this.settings.compatible.baseUrl,declared:declared(this.settings.compatible)}:{})};
         // Revoking a key also stops an in-flight tool loop before another request can leave.
@@ -2017,12 +2033,17 @@ export class Core extends EventEmitter {
       case 'extensions.restart': return this.extensions.restart(p.id);
       case 'extensions.secret': return this.extensions.setSecret(p);
       case 'connections.list': return this.chatConnections.snapshot();
-      case 'connections.save': return this.chatConnections.save(p);
-      case 'connections.remove': return this.chatConnections.remove(p.id);
+      case 'connections.save': {
+        await this.memory.ready;
+        const result=this.chatConnections.save(p);
+        await this.memory.service.bindingChanged('connection:'+result.id);
+        return result;
+      }
+      case 'connections.remove': await this.memory.ready;return this.chatConnections.remove(p.id);
       case 'connections.models': {
         const connection = this.chatConnections.get(p.id);
         if (connection.kind === 'ollama') return { models: await this.modelLoader('ollama', connection.ollama!.host) };
-        return { models: await apiModels('compatible', this.endpointAccess(connection.compatible!)) };
+        return { models: await apiModels('compatible', this.endpointAccess(connection.compatible!,connection.id)) };
       }
       // Resources and prompt templates are the user's own operations; models never invoke them.
       case 'extensions.resources': return this.extensions.resources(p.id, p.cursor);

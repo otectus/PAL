@@ -6,7 +6,7 @@ type Row = Record<string, any>;
  * The canonical claims and witnesses for one extraction run's proposals, as the memory worker
  * submits them. Throws when a proposal names an entity it did not declare or quotes another record.
  */
-export function extractionProposals(result: ExtractionRun, observationId: string) {
+export function extractionProposals(result: ExtractionRun, observationId: string): Row[] {
   const entities = new Map(
     result.proposals.entities.map((e) => [e.temporaryRef, e]),
   );
@@ -60,12 +60,22 @@ export function extractionProposals(result: ExtractionRun, observationId: string
       claim.modality = "reported";
     proposals.push({
         claim,
+        ...(a.quotes.length>1?{additional_witnesses:a.quotes.slice(1).map(q=>({observation_id:q.sourceRecordId,quote:q.quote,occurrence:q.occurrenceIndex}))}:{}),
+        extractor_hints: { importance: a.importanceHint, durability: a.durabilityHint },
         witness: {
           observation_id: observationId,
           quote: quote.quote,
           occurrence: quote.occurrenceIndex,
         },
       });
+  }
+  for (const candidate of result.proposals.statements ?? []) {
+    const quote = candidate.quote;
+    if (quote.sourceRecordId !== observationId) throw new Error('Unsupported extraction quote');
+    proposals.push({
+      statement: { category: candidate.category, modality: candidate.modality },
+      witness: { observation_id: observationId, quote: quote.quote, occurrence: quote.occurrenceIndex },
+    });
   }
   return proposals;
 }

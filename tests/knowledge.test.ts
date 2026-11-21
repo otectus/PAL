@@ -255,7 +255,7 @@ test('extraction model defaults, persists, and switches the model dispatched by 
   t.mock.method(service.canonical, 'call', async (method: string, params: any = {}) => {
     if (method === 'extraction_next') return { id: 'run', observation_id: 'source', source_revision: 1, role: 'user', sensitivity: 'cloud_allowed', text: 'Use Ruff.' };
     if (method === 'extraction_result') { results.push(params); return {}; }
-    if (method === 'apply_extraction') return {};
+    if (method === 'apply_extraction') { results.push(params); return {}; }
     return original(method, params);
   });
   await service.extraction();

@@ -42,14 +42,16 @@ ColumnLayout {
         readonly property bool ollama: kind.currentIndex === 0
         function openFor(item) {
             existing = item; kind.currentIndex = item?.kind === "compatible" ? 1 : 0; kind.enabled = !item; name.text = item?.name || ""
-            address.text = item ? (item.host || item.endpoint?.baseUrl || "") : ""; processing.currentIndex = Math.max(0, ["local", "remote", "cloud", "unknown"].indexOf(item?.endpoint?.processing || "unknown"))
+            address.text = item ? (item.host || item.endpoint?.baseUrl || "") : ""; processing.currentIndex = Math.max(0, ["local", "remote", "cloud", "unknown"].indexOf(item?.task?.processing || item?.endpoint?.processing || "unknown"))
+            dialect.currentIndex=item?.task?.dialect==="responses"?1:0
             needsKey.checked = !!item?.endpoint?.requiresKey; tools.checked = !!item?.endpoint?.tools; images.checked = !!item?.endpoint?.images; key.text = ""; message.text = ""; open()
         }
         CText { text: editor.existing ? "Edit connection" : "Add a connection"; font.pixelSize: Theme.title; font.weight: Font.DemiBold }
         CComboBox { id: kind; objectName: "namedConnectionKind"; Layout.fillWidth: true; model: ["Ollama on another computer or port", "OpenAI-compatible endpoint"]; Accessible.name: "Kind of connection" }
         CField { id: name; objectName: "namedConnectionName"; Layout.fillWidth: true; maximumLength: 60; placeholderText: "Name, such as Workstation GPU"; Accessible.name: "Connection name" }
         CField { id: address; objectName: "namedConnectionAddress"; Layout.fillWidth: true; placeholderText: editor.ollama ? "http://192.168.1.20:11434" : "https://gateway.example.com/v1"; Accessible.name: "Address" }
-        CComboBox { id: processing; visible: !editor.ollama; Layout.fillWidth: true; model: ["Processes on this computer", "Processes on my own server", "Processes in a cloud service", "Not sure"]; Accessible.name: "Where it processes requests" }
+        CComboBox { id: processing; Layout.fillWidth: true; model: ["Processes on this computer", "Processes on my own server", "Processes in a cloud service", "Not sure"]; Accessible.name: "Where it processes requests" }
+        CComboBox { id:dialect; visible:!editor.ollama; Layout.fillWidth:true; model:["Chat Completions","Responses"]; Accessible.name:"Memory task protocol" }
         Flow {
             visible: !editor.ollama; Layout.fillWidth: true; spacing: 12
             CCheckBox { id: needsKey; width: implicitContentWidth + leftPadding + rightPadding; text: "Needs a key" }
@@ -66,8 +68,8 @@ ColumnLayout {
             CButton {
                 objectName: "namedConnectionSave"; text: "Save"; primary: true; enabled: name.text.trim().length > 0 && address.text.trim().length > 0
                 onClicked: {
-                    const value = Object.assign({ name: name.text.trim() }, editor.existing ? { id: editor.existing.id, expectedRevision: editor.existing.revision } : { kind: editor.ollama ? "ollama" : "compatible" },
-                        editor.ollama ? { host: address.text.trim() } : { endpoint: { baseUrl: address.text.trim(), processing: ["local", "remote", "cloud", "unknown"][processing.currentIndex], requiresKey: needsKey.checked, tools: tools.checked, images: images.checked } })
+                    const value = Object.assign({ name: name.text.trim(), processing:["local","remote","cloud","unknown"][processing.currentIndex] }, editor.existing ? { id: editor.existing.id, expectedRevision: editor.existing.revision } : { kind: editor.ollama ? "ollama" : "compatible" },
+                        editor.ollama ? { host: address.text.trim() } : { dialect:dialect.currentIndex===1?"responses":"chat_completions", endpoint: { baseUrl: address.text.trim(), processing: ["local", "remote", "cloud", "unknown"][processing.currentIndex], requiresKey: needsKey.checked, tools: tools.checked, images: images.checked } })
                     rpc.call("connections.save", value, saved => {
                         if (saved.error) { message.text = saved.error; return }
                         if (!editor.ollama && key.text) rpc.call("provider.credentials", { provider: "compatible", key: key.text, connectionId: saved.id }, () => named.refresh())

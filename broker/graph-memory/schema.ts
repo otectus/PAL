@@ -1,3 +1,5 @@
+import { curationMigrationSql } from "./curation-schema.ts";
+import { retentionMigrationSql } from "./retention-migration.ts";
 export const schema = `
 CREATE TABLE schema_migrations(id INTEGER PRIMARY KEY,checksum TEXT NOT NULL,applied_us INTEGER NOT NULL) STRICT;
 CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL) STRICT;
@@ -108,4 +110,6 @@ CREATE INDEX retention_pins_target ON retention_pins(target_id,released_revision
 CREATE INDEX retention_pins_scope ON retention_pins(scope_id,released_revision);
 `,
   },
+  { id: 6, sql: curationMigrationSql },
+  { id: 7, sql: retentionMigrationSql },
 ];

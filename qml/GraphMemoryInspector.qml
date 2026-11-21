@@ -7,6 +7,7 @@ CDialog {
     property string sessionId:""
     property int pending:-1
     property int policyRequest:-1
+    property int policyEpoch:-1
     property string action:""
     property string error:""
     property var result:({})
@@ -27,7 +28,7 @@ CDialog {
     property var ontology:({predicates:[],entity_types:[],modalities:[],valid_modes:[]})
     property int ontologyRequest:-1
     readonly property var inspectedRecord:inspected.record||({})
-    readonly property bool isAssertion:!!inspectedRecord.version_id
+    readonly property bool isAssertion:!!inspectedRecord.slot_id
     readonly property var pin:inspected.retention_pin||null
     function isoDate(us){return us===null||us===undefined?"":new Date(Math.floor(us/1000)).toISOString()}
     function microseconds(text){if(!text.trim())return null;const time=Date.parse(text.trim());return isNaN(time)?NaN:time*1000}
@@ -56,9 +57,15 @@ CDialog {
     }
     function call(method,params){error="";action=method;pending=App.rpc("memory.graph",{sessionId:sessionId,method:method,params:params||{}})}
     function mutate(method){try{let body=JSON.parse(mutation.text);preview={};call(method,body)}catch(e){error="Enter valid structured JSON: "+e.message}}
+    function searchEvidence(deep){
+        const p={text:query.text};if(cloudSearch.checked)p.model_route="cloud"
+        if(world.text){ const t=Date.parse(world.text);if(isNaN(t)){error="Enter an ISO date with a timezone.";return}p.world_at_us=t*1000 }
+        if(known.text)p.known_revision=Number(known.text)
+        call(deep?"deep_recall":"retrieve",p)
+    }
     function openRecord(id){record.text=id;preview={};call("inspect",{id:id})}
     function loadPolicy(){policyLoaded=false;policyRequest=App.rpc("memory.graph",{sessionId:sessionId,method:"policy_get",params:{}})}
-    function updatePolicy(patch){if(!policyLoaded)return;policyLoaded=false;preview={};policyRequest=App.rpc("memory.graph",{sessionId:sessionId,method:"policy_update",params:{policy:patch}})}
+    function updatePolicy(patch){if(!policyLoaded)return;policyLoaded=false;preview={};policyRequest=App.rpc("memory.graph",{sessionId:sessionId,method:"policy_update",params:{policy:patch,expected_epoch:policyEpoch}})}
     // Reset before the popup becomes visible, so a reopened inspector never shows stale enabled controls.
     onAboutToShow:{result={};inspected={};timeline=({entries:[]});neighborhood=({edges:[]});preview={};erasureJob="";policy={};loadPolicy();call("health",{});if(!ontology.predicates.length)ontologyRequest=App.rpc("memory.graph",{method:"ontology",params:{}})}
     onSessionIdChanged:preview={}
@@ -76,7 +83,11 @@ CDialog {
         CField { id:world;Layout.fillWidth:true;placeholderText:"World date (ISO, optional)";Accessible.name:"World time" }
         CField { id:known;Layout.fillWidth:true;placeholderText:"Knowledge revision";Accessible.name:"Knowledge revision" }
     }
-    CButton { id:search;text:"Search evidence";enabled:inspector.pending<0&&query.text.trim().length>0;onClicked:{let p={text:query.text};if(world.text){let time=Date.parse(world.text);if(isNaN(time)){inspector.error="Enter an ISO date with a timezone.";return}p.world_at_us=time*1000}if(known.text)p.known_revision=Number(known.text);inspector.call("retrieve",p)} }
+    CCheckBox { id:cloudSearch;visible:inspector.policy.allow_cloud_memory===true;text:"Allow an authorized cloud reviewer to rank this search";onVisibleChanged:if(!visible)checked=false }
+    Flow { Layout.fillWidth:true;spacing:6
+        CButton { id:search;text:"Search evidence";enabled:inspector.pending<0&&query.text.trim().length>0;onClicked:inspector.searchEvidence(false) }
+        CButton { text:"Search memory more deeply";enabled:search.enabled;onClicked:inspector.searchEvidence(true) }
+    }
     Repeater {
         model:inspector.result.results||[]
         ColumnLayout {
@@ -98,6 +109,11 @@ CDialog {
         visible:!!inspector.inspectedRecord.version_id||!!inspector.inspectedRecord.id
         Layout.fillWidth:true;spacing:6
         CText { objectName:"graphMemoryPinState";text:inspector.pin?"Pinned against retention expiry"+(inspector.pin.note?" · "+inspector.pin.note:""):"Not pinned. Retention rules may expire it.";color:inspector.pin?Theme.accentText:Theme.muted;font.pixelSize:Theme.secondary }
+        CText { visible:!!inspector.inspected.retention; Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.muted
+            text:inspector.inspected.retention?("Protection · "+(inspector.inspected.retention.protection_reasons.join(", ")||"baseline policy")+"\nEffective expiry · "+(inspector.inspected.retention.effective_expires_at_us?new Date(inspector.inspected.retention.effective_expires_at_us/1000).toLocaleString():"No scheduled expiry")):"" }
+        CText { Layout.fillWidth:true;wrapMode:Text.Wrap;visible:!!inspector.inspectedRecord.version_id; text:inspector.inspected.assessment?(inspector.inspected.assessment.producer.assess.modelId+" · "+inspector.inspected.assessment.output.explanation):inspector.inspected.decision?.action?("Recorded "+inspector.inspected.decision.action+" by "+inspector.inspected.decision.actor+". Full assessment context is no longer retained."):"Not assessed" }
+        CTextArea { id:statementEdit;visible:inspector.inspectedRecord.kind==="statement"; Layout.fillWidth:true; placeholderText:"Enter your corrected statement"; Accessible.name:"Statement correction" }
+        CButton { visible:inspector.inspectedRecord.kind==="statement";text:"Save corrected statement";enabled:statementEdit.text.trim().length>0&&inspector.pending<0;onClicked:inspector.call("curation_statement_correct",{id:inspector.inspectedRecord.version_id,expected_revision:inspector.inspectedRecord.aggregate_revision,text:statementEdit.text}) }
         RowLayout {
             Layout.fillWidth:true
             CField { id:pinNote;objectName:"graphMemoryPinNote";Layout.fillWidth:true;visible:!inspector.pin;placeholderText:"Why keep it? (optional)";maximumLength:500;Accessible.name:"Pin note" }
@@ -196,7 +212,7 @@ CDialog {
         if(id===inspector.policyRequest){
             inspector.policyRequest=-1
             if(value?.error){inspector.error=value.error;inspector.policyLoaded=false;return}
-            inspector.policy=value.policy||{};inspector.policyLoaded=!!value.policy;return
+            inspector.policyEpoch=value.epoch;inspector.policy=value.policy||{};inspector.policyLoaded=!!value.policy;return
         }
         if(id!==inspector.pending)return
         inspector.pending=-1
@@ -209,6 +225,7 @@ CDialog {
             if(r?.version_id&&r.claim_data){mutation.text=JSON.stringify({id:r.version_id,expected_revision:r.aggregate_revision,claim:r.claim_data,witness:{observation_id:"",quote:""}},null,2);inspector.loadForm(r.claim_data)}
             inspector.timeline=({entries:[]});inspector.neighborhood=({edges:[]})
         }
+        if(inspector.action==="curation_statement_correct"){statementEdit.text="";inspector.openRecord(value.id)}
         if(inspector.action==="timeline")inspector.timeline=value
         if(inspector.action==="neighborhood")inspector.neighborhood=value
         // A pin change is reflected by inspecting the record again.

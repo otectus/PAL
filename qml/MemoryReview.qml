@@ -13,7 +13,8 @@ CDialog {
     property string feedback:""
     function call(method,args){operation=method;request=App.rpc(method,Object.assign({sessionId:sessionId},args||{}))}
     function reload(){call("memoryReview.list",{offset:offset})}
-    onOpened:reload()
+    onOpened:{reload();curation.reload()}
+    onClosed:curation.selected=null
     CText { text:"Project memory review";font.pixelSize:Theme.page }
     CText { text:"Proposed decisions and constraints keep their supporting passage. Confirm or Correct adds your reviewed project note and capsule entry. Keep local restricts the note to local recall.";color:Theme.muted;wrapMode:Text.Wrap }
     CButton { text:"Browse memory and older facts";onClicked:{allMemory.sessionId=review.sessionId;allMemory.open()} }
@@ -33,6 +34,7 @@ CDialog {
             CButton { required property var modelData;text:modelData.label;enabled:review.request<0;onClicked:review.call("memoryReview.resolve",{id:review.selected.id,expectedRevision:review.selected.currentRevision,text:note.text,choice:modelData.choice}) }
         }
     }
+    MemoryCurationInbox { id:curation;Layout.fillWidth:true;sessionId:review.sessionId;onInspectRequested:recordId=>{inspector.sessionId=review.sessionId;inspector.open();inspector.openRecord(recordId)} }
     CText { text:"Graph proposals and conflicts";font.bold:true }
     Repeater {
         model:review.listing.assertions||[]

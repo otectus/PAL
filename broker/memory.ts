@@ -118,6 +118,7 @@ export type RecallOutcome = {
   reason: string; coverage: string[];
   items: number; held: number; trimmed: number; candidates: number;
   budgetTokens: number; estimatedTokens: number;
+  ranking?:{strategy:string;route?:string;latency_ms?:number;prior?:string;formula?:string;usage?:{inputTokens?:number;outputTokens?:number}};
   route: 'local' | 'cloud' | 'unknown'; memoryState: string; memoryRevision: number | null; latencyMs: number;
 };
 export const recallOutcomeKey = (sessionId: string) => 'recall-outcomes:' + sessionId;
@@ -180,7 +181,7 @@ export class Memory {
       embedding_model: s.memory.model, extraction_model: s.memory.extractionModel || defaultExtractionModel,
       allow_cloud_extraction: s.memory.allowCloudExtraction ?? true, allow_cloud_memory: s.memory.allowCloudMemory ?? false });
   }
-  invalidate() { this.revision++; this.controller.abort(new Error('Memory settings changed')); this.controller = new AbortController(); this.packets.clear(); this.recent.clear(); void this.ready.then(() => this.configure()).catch(e => this.setStatus('degraded', e.message)); }
+  invalidate() { this.revision++; this.controller.abort(new Error('Memory settings changed')); this.controller = new AbortController(); this.packets.clear(); this.recent.clear(); return this.ready.then(() => this.configure()).catch(e => this.setStatus('degraded', e.message)); }
   summary() { return { ...this.status }; }
   async refresh() { const health = await this.service.call('health'); this.status.total = health.counts.artifacts; this.status.saved = health.counts.saved; this.status.pending = health.queues.outbox; this.status.backups = (health.migration_backups || []).map(({ created_us, from, to }: any) => ({ created_us, from, to })); this.notify(); return health; }
   setStatus(state: string, error = '') { this.status = { ...this.status, state, error }; this.notify(); }
@@ -384,7 +385,7 @@ export class Memory {
     const record: RecallOutcome = { turnId, time: Date.now(), outcome: value.outcome || 'degraded', reason: value.reason || '', coverage: (value.coverage || []).slice(0, 12),
       items: value.items || 0, held: value.held || 0, trimmed: value.trimmed || 0, candidates: value.candidates || 0,
       budgetTokens: value.budgetTokens || 0, estimatedTokens: value.estimatedTokens || 0, route: value.route || 'unknown',
-      memoryState: this.status.state, memoryRevision: value.memoryRevision ?? null, latencyMs: started === undefined ? 0 : Math.round(performance.now() - started) };
+      ...(value.ranking?{ranking:value.ranking}:{}),memoryState: this.status.state, memoryRevision: value.memoryRevision ?? null, latencyMs: started === undefined ? 0 : Math.round(performance.now() - started) };
     const earlier = this.outcomes(sessionId).filter(row => !turnId || row.turnId !== turnId);
     this.store.set(recallOutcomeKey(sessionId), [record, ...earlier].slice(0, recallOutcomeHistory));
   }
@@ -435,7 +436,7 @@ export class Memory {
   private classify(trace: Partial<RecallOutcome>, packet: any, shown: { items: any[] }) {
     const coverage: string[] = Array.isArray(packet.coverage) ? packet.coverage.filter((code: unknown) => typeof code === 'string').slice(0, 12) : [];
     const total = (packet.items || []).length;
-    Object.assign(trace, { coverage, items: shown.items.length, held: total - shown.items.length, trimmed: packet.budget?.trimmed_items || 0,
+    Object.assign(trace, { ranking:packet.metrics?.ranking,coverage, items: shown.items.length, held: total - shown.items.length, trimmed: packet.budget?.trimmed_items || 0,
       candidates: packet.metrics?.candidates || 0, estimatedTokens: packet.budget?.estimated_tokens || 0, memoryRevision: packet.snapshot?.revision ?? null });
     const set = (outcome: RecallOutcome['outcome'], reason: string) => { trace.outcome = outcome; trace.reason = reason; };
     if (packet.mode === 'disabled') return set('disabled', 'setting_off');
@@ -456,11 +457,11 @@ export class Memory {
     return { items: shown, text: renderPacket(shown, packet.budget?.trimmed_items || 0, items.length - shown.length) };
   }
   async graph(session: Session | undefined, method: string, params: Record<string, unknown> = {}, signal?:AbortSignal, authorize?:()=>void) {
-    const allowed = ['health','stats','doctor','inspect','retrieve','remember','correct','resolve_conflict','identity','forget_preview','forget','erasure_status','workspace','policy_get','policy_update','rebuild','backup','restore','compact','readjudicate','freeze_episode','consolidate','pin','unpin','pins','timeline','neighborhood','ontology','delete_migration_backups'];
+    const allowed = ['curation_status','curation_details','curation_preview','curation_run','curation_cancel','curation_retry','curation_list','curation_apply','curation_undo','curation_review_later','curation_confirm_note','curation_keep_local','curation_statement_correct','curation_settings','curation_configure','retention_forecast','retention_preview','retention_protect','retention_release','retention_policy_preview','retention_policy_apply','retention_policy_status','retention_policy_undo','models_probe','models_evaluate','health','stats','doctor','inspect','retrieve','deep_recall','remember','correct','resolve_conflict','identity','forget_preview','forget','erasure_status','workspace','policy_get','policy_update','rebuild','backup','restore','compact','readjudicate','freeze_episode','consolidate','pin','unpin','pins','timeline','neighborhood','ontology','delete_migration_backups'];
     if (!allowed.includes(method)) throw new Error('This memory method is not exposed to clients');
-    const global = ['health','stats','doctor','workspace','policy_get','policy_update','rebuild','backup','restore','compact','readjudicate','erasure_status','ontology','delete_migration_backups'].includes(method);
+    const global = ['curation_settings','curation_configure','models_probe','models_evaluate','health','stats','doctor','workspace','policy_get','policy_update','rebuild','backup','restore','compact','readjudicate','erasure_status','ontology','delete_migration_backups'].includes(method);
     if (!global && !session) throw new Error('Choose a conversation to select its authorized project scope');
-    const { scope_id: _scope, owner_id: _owner, ...safe } = params;
+    const { scope_id: _scope, owner_id: _owner, review_order: _order, review_revision: _reviewRevision, review_pool: _pool, ...safe } = params;
     await this.ready;
     if(method==='forget')return this.erase(session!,safe,signal,authorize);
     const scoped=!global?{scope_id:await this.scope(session!)}:{};

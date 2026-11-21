@@ -9,13 +9,13 @@ CDialog {
     property int requestId:-1
     property int changeId:-1
     property string error:""
-    function reload(){error="";requestId=App.rpc("memory.list",{sessionId:sessionId,kind:["saved","conversation","assertions","episodes","entities"][kind.currentIndex],offset:offset,filter:filter.text})}
+    function reload(){error="";requestId=App.rpc("memory.list",{sessionId:sessionId,kind:["saved","conversation","assertions","episodes","entities","statements"][kind.currentIndex],offset:offset,filter:filter.text})}
     onOpened:{sessionId=App.selectedId;offset=0;kind.currentIndex=0;filter.text="";listing={rows:[],total:0};reload()}
     CText { text:"Project memory";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
     CButton { objectName:"openGraphInspector";text:"Graph, evidence and workspace inspector";onClicked:{graphInspector.sessionId=dialog.sessionId;graphInspector.open()} }
     GraphMemoryInspector { id:graphInspector }
     CText { text:(dialog.listing.project||"")+"\n"+(dialog.listing.host||"");color:Theme.muted;font.pixelSize:Theme.secondary }
-    CComboBox { id:kind;objectName:"memoryKind";Layout.fillWidth:true;model:["Saved notes","Conversation passages","Graph assertions","Task episodes","Entities"];Accessible.name:"Memory type";onActivated:{dialog.offset=0;dialog.reload()} }
+    CComboBox { id:kind;objectName:"memoryKind";Layout.fillWidth:true;model:["Saved notes","Conversation passages","Graph assertions","Task episodes","Entities","Attributed statements"];Accessible.name:"Memory type";onActivated:{dialog.offset=0;dialog.reload()} }
     RowLayout {
         Layout.fillWidth:true
         CField { id:filter;Layout.fillWidth:true;Layout.minimumWidth:0;placeholderText:"Find text in memory";Accessible.name:"Find memory";onAccepted:{dialog.offset=0;dialog.reload()} }

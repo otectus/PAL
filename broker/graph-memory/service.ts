@@ -1,10 +1,17 @@
+import { extractionChunk, relocateWitness } from "./extraction-chunks.ts";
+import { TaskConnectionResolver, TaskModelRouter } from './task-router.ts';
+import { taskProviderAdapters } from './task-providers.ts';
+import { bindingSchema, type TaskModelBinding } from './task-models.ts';
+import { ReviewInference, errorCode } from './review-inference.ts';
+import { profileSchema, type Profile } from './assessment.ts';
+import type { ChatConnection } from '../connections.ts';
 import { join, relative, isAbsolute } from "node:path";
 import { randomUUID } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { GraphMemory, pointId } from "./client.ts";
 import { Neo4jGraphRepository } from "./adapters/neo4j.ts";
 import { QdrantVectorRepository } from "./adapters/qdrant.ts";
-import { ApiExtractionAdapter, googleEmbeddings } from './adapters/api.ts';
+import { ApiExtractionAdapter, RoutedExtractionAdapter, googleEmbeddings } from './adapters/api.ts';
 import { ProviderCredentials } from '../credentials.ts';
 import { OllamaExtractionAdapter, ExtractionPolicyError } from "./adapters/ollama.ts";
 import { LiveWorkspaceState } from "./adapters/live.ts";
@@ -57,13 +64,21 @@ export class MemoryService {
   collectorRpc?: CollectorRpc;
   graph?: Neo4jGraphRepository;
   vectors = new Map<string, QdrantVectorRepository>();
-  extractor?: OllamaExtractionAdapter | ApiExtractionAdapter;
+  extractor?: OllamaExtractionAdapter | ApiExtractionAdapter | RoutedExtractionAdapter;
   credentials: ProviderCredentials;
   timer: NodeJS.Timeout;
   busy = false;
   recoveryFrozen = false;
   closed = false;
   foreground = 0;
+  review:ReviewInference;
+  reviewSettings:{profile:Profile,revision:number}={profile:profileSchema.parse({}),revision:0};
+  readConnection:(id:string)=>ChatConnection=()=>{throw new Error('Saved connection unavailable');};
+  reviewController=new AbortController();
+  reviewWork?:Promise<void>;
+  retentionWork?:Promise<void>;
+  nextScan=0;
+  workRound=0;
   lastMaintenance = 0;
   controller = new AbortController();
   notify: (event: Row) => void;
@@ -93,20 +108,53 @@ export class MemoryService {
       }
       notify(event);
     });
+    const resolver=new TaskConnectionResolver({credentials:this.credentials,readConnection:id=>this.readConnection(id),defaultOllamaHost:()=>this.configuration.host});
+    this.review=new ReviewInference(this.canonical,new TaskModelRouter({resolver,adapters:taskProviderAdapters()}));
     this.timer = setInterval(() => {
       void this.maintain();
     }, 1000);
     this.timer.unref();
+  }
+  routeManifest(profile:Profile){
+    const entries:string[]=[];
+    const visit=(binding:TaskModelBinding)=>{
+      try{entries.push(this.review.router.resolve(binding).fingerprint);}
+      catch{entries.push('unavailable:'+binding.connectionRef);}
+      binding.fallbackBindings?.forEach(visit);
+    };
+    for(const b of [profile.reviewModel,...Object.values(profile.overrides)])if(b)visit(b);
+    return JSON.stringify(entries);
+  }
+  usesBinding(ref:string){
+    const {reviewModel,overrides}=this.reviewSettings.profile;
+    const matches=(b:TaskModelBinding):boolean=>b.connectionRef===ref||!!b.fallbackBindings?.some(matches);
+    return [reviewModel,...Object.values(overrides)].some(b=>b&&matches(b));
+  }
+  async bindingChanged(ref:string){
+    if(!this.usesBinding(ref))return;
+    this.reviewController.abort();this.reviewController=new AbortController();
+    this.extractor=undefined;
+    const settings=await this.canonical.call('curation_binding_changed',{manifest:this.routeManifest(this.reviewSettings.profile)});
+    if(settings.revision>=this.reviewSettings.revision)this.reviewSettings=settings;
+    this.nextScan=0;
+    await this.canonical.call('extraction_reconcile',{include_denied:true});
   }
   async configure(p: MemoryConfiguration) {
     const changed = JSON.stringify(this.configuration) !== JSON.stringify(p);
     const extractionChanged = ["host", "extraction_model", "extraction_provider", "allow_cloud_extraction"].some(
       (key) => (this.configuration as any)[key] !== (p as any)[key],
     );
+    const settings=await this.canonical.call("curation_settings");
+    if(settings.revision>=this.reviewSettings.revision)this.reviewSettings=settings;
     this.configuration = { ...p };
+    if(this.reviewSettings.profile.reviewModel||Object.keys(this.reviewSettings.profile.overrides).length){
+      const reconciled=await this.canonical.call('curation_route_snapshot',{revision:this.reviewSettings.revision,manifest:this.routeManifest(this.reviewSettings.profile)});
+      if(reconciled.revision>=this.reviewSettings.revision)this.reviewSettings=reconciled;
+    }
     if (!changed) return;
     this.controller.abort(new Error("Memory configuration changed"));
     this.controller = new AbortController();
+    this.reviewController.abort();this.reviewController=new AbortController();
     this.extractor = undefined;
     // A new server or embedding model starts a new space; background embedding begins at once.
     this.spaces.clear();
@@ -581,13 +629,15 @@ export class MemoryService {
     }
   }
   async extraction() {
-    if (!this.configuration.extraction_model) return;
+    if (!this.configuration.extraction_model && !this.reviewSettings.profile.overrides.extract) return;
     const run = await this.canonical.call("extraction_next");
     if (!run) return;
     try {
       const extractionHost=run.embedding_host||this.configuration.host;
       if(this.extractor instanceof OllamaExtractionAdapter && this.extractor.config.endpoint!==extractionHost)this.extractor=undefined;
       const provider = this.configuration.extraction_provider || 'ollama';
+      const override=this.reviewSettings.profile.overrides.extract;
+      if(override)this.extractor=new RoutedExtractionAdapter(this.review.router,override,this.configuration.allow_cloud_extraction);
       this.extractor ??= provider !== 'ollama' ? new ApiExtractionAdapter({ provider, model: this.configuration.extraction_model, allowCloud: this.configuration.allow_cloud_extraction }, { key: () => this.credentials.key(provider) }) : new OllamaExtractionAdapter({
         endpoint: extractionHost,
         model: this.configuration.extraction_model,
@@ -595,31 +645,31 @@ export class MemoryService {
         timeoutMs: 45000,
         probeTimeoutMs: 30000,
       });
+      const chunk=extractionChunk(run.text,run.covered_codepoints||0);
+      const fence=override?AbortSignal.any([this.controller.signal,this.reviewController.signal]):this.controller.signal;
       const result = await this.extractor.extract(
         {
           sourceRecordId: run.observation_id,
           sourceRevision: run.source_revision,
           sourceRole: run.role,
           modelRoute: run.sensitivity,
-          text: run.text,
+          text: chunk.text,
         },
-        this.controller.signal,
+        fence,
       );
-      await this.canonical.call("extraction_result", {
-        id: run.id,
-        identity: {
-          model: result.model,
-          digest: result.modelDigest,
-          endpoint: result.endpointClass,
-        },
-        prompt_version: result.promptVersion,
-        parser_version: result.parserVersion,
-      });
-      const proposals = extractionProposals(result, run.observation_id);
-      await this.canonical.call('apply_extraction',{id:run.id,proposals});
+      const proposals=extractionProposals(result,run.observation_id);
+      for(const proposal of proposals){
+        proposal.witness=relocateWitness(run.text,chunk,proposal.witness);
+        if(proposal.additional_witnesses)proposal.additional_witnesses=proposal.additional_witnesses.map((w:any)=>relocateWitness(run.text,chunk,w));
+      }
+      if(result.taskRoute)await this.review.router.recheck(result.taskRoute,fence);
+      fence.throwIfAborted();
+      await this.canonical.call('apply_extraction',{id:run.id,proposals,coverage:{start:chunk.start,end:chunk.end,total:chunk.total},
+        identity:{model:result.model,digest:result.modelDigest,endpoint:result.endpointClass,...(result.taskRoute?{route:result.taskRoute.fingerprint,connection:result.taskRoute.connectionRef,output_mode:result.outputMode}:{})},
+        prompt_version:result.promptVersion,parser_version:result.parserVersion},fence);
     } catch (error) {
       // Route and consent denials are terminal until configuration changes; they are not outages.
-      const denied = error instanceof ExtractionPolicyError ? error.code : undefined;
+      const denied = error instanceof ExtractionPolicyError ? error.code : ['LOCAL_ONLY_ROUTE','CLOUD_TASK_DISABLED','UNKNOWN_PROCESSING'].includes((error as any)?.code)?(error as any).code:undefined;
       await this.canonical
         .call("extraction_result", denied ? { id: run.id, denied } : {
           id: run.id,
@@ -629,9 +679,34 @@ export class MemoryService {
       this.lastError = denied ? "EXTRACTION_DENIED" : "EXTRACTION_RETRYABLE";
     }
   }
+  // Housekeeping owns its own timer slot: projection timeouts and model loads
+  // cannot keep an authorized review grace sweep waiting behind inference.
+  scheduleRetention(){
+    if(this.retentionWork||Date.now()-this.lastMaintenance<60000)return;
+    this.lastMaintenance=Date.now();
+    this.retentionWork=this.canonical.call('maintenance').then(()=>{this.maintenanceError='';},e=>{
+      this.maintenanceError=e.code||'MAINTENANCE_FAILED';
+    }).finally(()=>{this.retentionWork=undefined;});
+  }
+  scheduleReview(){
+    const pf=this.reviewSettings.profile;
+    if(this.reviewWork||this.foreground||pf.mode==='off')return;
+    const generation=this.reviewController.signal;
+    const guard=AbortSignal.any([generation,this.controller.signal]);
+    this.reviewWork=(async()=>{
+      if(Date.now()>=this.nextScan){
+        this.nextScan=Date.now()+30000;
+        await this.canonical.call('curation_scan',{},guard);
+      }
+      const summaryTurn=pf.consolidation&&pf.mode==='automatic'&&this.workRound%4===0;
+      if(summaryTurn&&await this.review.synthesize(this.reviewSettings,guard))return;
+      await this.review.process(guard);
+    })().catch(e=>{if(!guard.aborted)this.lastError=errorCode(e);}).finally(()=>{this.reviewWork=undefined;});
+  }
   static readonly projectionBatch = 50;
   static readonly projectionBudgetMs = 400;
   async maintain() {
+    if(!this.recoveryFrozen&&!this.closed&&this.configuration.enabled&&!this.configuration.paused)this.scheduleRetention();
     if (
       this.busy ||
       this.recoveryFrozen ||
@@ -650,12 +725,15 @@ export class MemoryService {
         const applied = await Promise.allSettled([this.project("graph"), this.project("vector")]);
         if (!applied.some((result) => result.status === "fulfilled" && result.value === true)) break;
       }
-      if (!this.foreground) await this.extraction();
-      if (!this.foreground) await this.embedBacklog();
+      if(!this.foreground){
+        this.workRound++;
+        if(this.reviewSettings.profile.mode!=='off' && this.workRound%2===0)this.scheduleReview();
+        else if(!this.reviewWork)await this.extraction();
+        if(!this.reviewWork)await this.embedBacklog();
+      }
       if (!this.foreground && !this.vectorsPacked)
         this.vectorsPacked = (await this.canonical.call("vector_upgrade")).upgraded === 0;
-      if(!this.foreground&&Date.now()-this.lastMaintenance>60000){this.lastMaintenance=Date.now();await this.canonical.call('maintenance');}
-      this.maintenanceError = "";
+
     } catch (error: any) {
       // A tick runs from a timer; a rejection here would end the broker. A stopped or restarted
       // worker, or expiry that ran out of budget, is retried by the next tick.
@@ -666,7 +744,7 @@ export class MemoryService {
   }
   /** Reserve the current memory profile before recovery starts reading or replacing it. */
   async freezeForRecovery(){
-    if(this.busy)throw new Error('Wait for memory maintenance to finish before restoring');
+    if(this.busy||this.reviewWork||this.retentionWork)throw new Error('Wait for memory maintenance to finish before restoring');
     this.recoveryFrozen=true;this.collectorGeneration++;
     this.controller.abort(new Error('Memory paused for recovery'));
     await this.collectorRpc?.close();this.collectorRpc=undefined;
@@ -676,10 +754,10 @@ export class MemoryService {
     if(!this.recoveryFrozen)return;
     this.recoveryFrozen=false;this.controller=new AbortController();await this.startCollectors();
   }
-  async retrieve(p: Row, signal?: AbortSignal) {
+  async retrieve(p: Row, signal?: AbortSignal, deep=false) {
     const time = performance.now(),
       policy = await this.canonical.call("policy_get"),
-      deadline = policy.policy.deadline_ms;
+      deadline = deep?this.reviewSettings.profile.deepRecallMs:policy.policy.deadline_ms;
     const guard = AbortSignal.any([
       ...(signal ? [signal] : []),
       this.controller.signal,
@@ -770,10 +848,12 @@ export class MemoryService {
     const graphIds=await graphPromise;
     // Setup that outlived the deadline must not keep the foreground waiting on stragglers.
     if (guard.aborted && !signal?.aborted && !coverage.includes("deadline_partial")) coverage.push("deadline_partial");
-    const result = await this.canonical.call(
+    const settings=this.reviewSettings,rank=settings.profile.mode==='automatic'&&settings.profile.rerank&&!!settings.profile.reviewModel;
+    let result = await this.canonical.call(
       "retrieve",
       {
         ...query,
+        review_pool:rank,
         semantic_ids: semantic,
         graph_ids:graphIds,
         backend_coverage: coverage,
@@ -782,6 +862,23 @@ export class MemoryService {
       },
       signal,
     );
+    const rankingStarted=performance.now();
+    const prior=settings.profile.mode==='automatic'&&settings.profile.valuePrior?'assessed-value-x0.10-v1':undefined;
+    result.metrics.ranking={strategy:'baseline',formula:'rrf-v1',prior,latency_ms:0};
+    if(rank&&result.review_pool?.length>1&&!guard.aborted){
+      let strategy='baseline',ordered:string[]=[],fingerprint:string|undefined,usage;
+      try{
+        const ranked=await this.review.rerank(query,result,settings,policy.policy.allow_cloud_memory===true && p.model_route==='cloud',
+          AbortSignal.any([guard,AbortSignal.timeout(deep?deadline:settings.profile.rerankMs),this.reviewController.signal]));
+        if(ranked){ordered=ranked.ids;fingerprint=ranked.route;usage=ranked.usage;strategy='model';}
+      }catch(e){strategy='fallback_'+errorCode(e);}
+      // Reranking never grants access. Re-run baseline hydration even after failure
+      // so a concurrent forget, correction or route change cannot reuse stale text.
+      result=await this.canonical.call('retrieve',{...query,semantic_ids:semantic,graph_ids:graphIds,backend_coverage:coverage,
+        ...(semanticFloor!==null?{semantic_floor:semanticFloor}:{}),review_order:ordered,review_revision:settings.revision,deadline_ms:Math.max(25,deadline-(performance.now()-time))},signal);
+      result.metrics.ranking={strategy,formula:'rrf-v1',prior,route:fingerprint,usage,latency_ms:Math.round(performance.now()-rankingStarted)};
+    }
+    delete result.review_pool;
     const epochs = await this.canonical.call("health");
     if (
       epochs.policy_epoch !== result.snapshot.policy_epoch ||
@@ -880,18 +977,48 @@ export class MemoryService {
     };
   }
   async call(method: string, p: Row = {}, signal?: AbortSignal): Promise<any> {
+    if(method==='curation_cancel'){
+      const result=await this.canonical.call(method,p,signal);
+      if(result.cancelled)this.review.cancel(p.job_id);
+      return result;
+    }
+    if(method==='curation_configure'){
+      const profile=profileSchema.parse({...this.reviewSettings.profile,...p.profile});
+      const settings=await this.canonical.call(method,{...p,manifest:this.routeManifest(profile)},signal);
+      this.reviewController.abort();this.reviewController=new AbortController();
+      this.reviewSettings=settings;this.nextScan=0;this.extractor=undefined;
+      await this.canonical.call('extraction_reconcile',{include_denied:true});
+      return settings;
+    }
+    if(method==='models_probe'){
+      const binding=bindingSchema.parse(p.binding||this.reviewSettings.profile.reviewModel);
+      const settings=this.reviewSettings,guard=AbortSignal.any([AbortSignal.timeout(settings.profile.timeoutMs),this.reviewController.signal,...(signal?[signal]:[])]);
+      const probe=await this.review.router.probe(binding,'cloud_allowed',settings.profile.allowCloudCuration,guard,
+        async(route,input)=>{await this.canonical.call('curation_reserve',{task:'probe',config_revision:settings.revision,input,output:route.maxOutputTokens,route:route.fingerprint},guard);});
+      await this.canonical.call('curation_evaluation_record',{fingerprint:probe.route.fingerprint,dataset:'capability-probe',result:{...probe,qualified:false}});
+      return probe;
+    }
+    if(method==='models_evaluate')return this.review.evaluate(p,this.reviewSettings,AbortSignal.any([this.reviewController.signal,...(signal?[signal]:[])]));
+    if(method==='curation_apply'){
+      const producer=await this.canonical.call('curation_producer',p,signal);
+      for(const identity of Object.values(producer))await this.review.router.recheck(identity as any,signal);
+    }
+    if(method==='curation_run'&&!p.dry_run && (!this.configuration.enabled||this.configuration.paused))fail('POLICY_DENIED','Memory activity is paused');
     if (method === "configure") return this.configure(p as MemoryConfiguration);
-    if (method === "retrieve") return this.retrieve(p, signal);
+    if (method === "retrieve" || method === "deep_recall") return this.retrieve(p,signal,method==="deep_recall");
     if (method === "workspace") return this.workspace();
     if (method === "embedding_impact_check") return this.embeddingImpact(p.host, p.model, signal!);
     if (method === "foreground") {
+      if(p.active){this.reviewController.abort();this.reviewController=new AbortController();}
       this.foreground = Math.max(0, this.foreground + (p.active ? 1 : -1));
       return { foreground: this.foreground };
     }
     if (method === "health" || method === "doctor")
       return {
         ...(await this.canonical.call("health")),
-        extraction_model: this.configuration.extraction_model,
+        curation:{mode:this.reviewSettings.profile.mode,revision:this.reviewSettings.revision,model:this.reviewSettings.profile.reviewModel?.modelId,
+          allow_cloud_curation:this.reviewSettings.profile.allowCloudCuration,busy:!!this.reviewWork},
+        extraction_model: this.reviewSettings.profile.overrides.extract?.modelId||this.configuration.extraction_model,
         extraction_provider: this.configuration.extraction_provider || 'ollama',
         embedding_model: this.configuration.embedding_model,
         embedding_provider: this.configuration.embedding_provider || 'ollama',
@@ -909,6 +1036,7 @@ export class MemoryService {
     if (this.closed) return;
     this.closed = true;
     clearInterval(this.timer);
+    this.reviewController.abort();
     await this.collectorRpc?.close();
     this.controller.abort(new Error("Memory service closed"));
     for (const c of this.collectors) await c.stop();
@@ -917,6 +1045,7 @@ export class MemoryService {
       this.graph?.close(),
       ...[...this.vectors.values()].map((v) => v.close()),
     ]);
+    await Promise.allSettled([this.reviewWork,this.retentionWork]);
     await this.canonical.close();
   }
 }

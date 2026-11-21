@@ -2924,6 +2924,22 @@ Unicode: café ✦ 日本語
     //   QT_QPA_PLATFORM=offscreen:configfile=tests/fixtures/offscreen-screens.json build/cere-ui-check SLOT...
     // F-042 policy display, F-006 forget binding, F-019 correction round trip.
     // M05: pin and unpin a fact, read its timeline and related facts, and fill a typed correction.
+    void configureMemoryReviewWithoutChangingChat(){
+        openCategory("knowledge");
+        QTRY_VERIFY(item("memoryCurationMode") && item("memoryCurationMode")->isEnabled());
+        auto picker=item("memoryReviewConnection");
+        QVERIFY(picker);
+        picker->setProperty("currentIndex",0);
+        item("memoryReviewModel")->setProperty("text","manual-fixture-model");
+        item("memoryCurationMode")->setProperty("currentIndex",1);
+        QVERIFY(QMetaObject::invokeMethod(item("saveMemoryCuration"),"clicked"));
+        QTRY_COMPARE(call("memory.curation.settings",{}).value("profile").toMap().value("mode").toString(),QString("preview"));
+        const auto settings=call("memory.curation.settings",{});
+        const auto profile=settings.value("profile").toMap();
+        QCOMPARE(profile.value("reviewModel").toMap().value("modelId").toString(),QString("manual-fixture-model"));
+        QCOMPARE(profile.value("allowCloudCuration").toBool(),false);
+        QVERIFY(!call("memory.curation.configure",{{"expected_revision",settings.value("revision")},{"profile",QVariantMap{{"mode","off"}}}}).contains("error"));
+    }
     void memoryCurationPinsAndTimeline(){
         const auto restore=qScopeGuard([&]{call("settings.update",{{"memory",QVariantMap{{"enabled",false}}}});restoreWorkspace();});
         click("tab_Chat");const auto previous=app->selectedId();

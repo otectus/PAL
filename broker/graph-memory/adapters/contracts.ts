@@ -57,7 +57,7 @@ export interface GraphRepository {
   close(): Promise<void>;
 }
 
-export type ArtifactKind = 'assertion' | 'episode_summary' | 'topic_summary' | 'entity_description' | 'conversation' | 'saved' | 'episode' | 'topic';
+export type ArtifactKind = 'statement' | 'derived_summary' | 'assertion' | 'episode_summary' | 'topic_summary' | 'entity_description' | 'conversation' | 'saved' | 'episode' | 'topic';
 export type VectorDistance = 'Cosine' | 'Dot' | 'Euclid' | 'Manhattan';
 
 /** The payload is deliberately text-free; Cere hydrates text from canonical storage. */
@@ -115,6 +115,7 @@ export interface VectorRepository {
 export type ProposalPolarity = 'positive' | 'negative';
 export type ProposalModality = 'actual' | 'planned' | 'hypothetical' | 'reported' | 'inferred';
 export type ProposalEpistemicType = 'explicit_user' | 'instrumented' | 'document_claim' | 'inference' | 'derived_summary';
+export type StatementCategory = 'preference' | 'decision' | 'constraint' | 'goal' | 'relationship' | 'biographical' | 'project_convention' | 'episode';
 
 export interface ProposalQuote {
   sourceRecordId: string;
@@ -138,6 +139,12 @@ export interface MutationProposalBatch {
     durabilityHint: number;
     importanceHint: number;
   }>;
+  /** Exact-quote candidates for useful details that the graph ontology cannot represent faithfully. */
+  statements?: Array<{
+    category: StatementCategory;
+    modality: ProposalModality;
+    quote: ProposalQuote;
+  }>;
 }
 
 export interface ExtractionSource {
@@ -149,10 +156,12 @@ export interface ExtractionSource {
 }
 
 export interface ExtractionRun {
+  taskRoute?: import('../task-models.ts').ResolvedTaskRoute;
+  outputMode?: string;
   proposals: MutationProposalBatch;
   model: string;
   modelDigest: string;
-  endpointClass: 'local' | 'ollama_cloud' | 'google_api' | 'anthropic_api';
+  endpointClass: 'local' | 'remote' | 'ollama_cloud' | 'openai_api' | 'google_api' | 'anthropic_api' | 'compatible_api';
   promptVersion: string;
   schemaVersion: number;
   parserVersion: string;

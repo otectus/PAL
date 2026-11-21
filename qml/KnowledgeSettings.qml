@@ -136,6 +136,7 @@ ColumnLayout {
         CButton { objectName:"manageMemories";text:"Manage project memory";enabled:App.connected&&!!App.session.id&&!App.session.temporary;onClicked:manager.open() }
         CText { text:App.session.id?"Review, correct or forget shared facts and conversation passages. Memory stays separate for each project and server.":"Select a conversation to manage its project’s memory.";color:Theme.muted;font.pixelSize:Theme.secondary }
     }
+    MemoryCurationSettings { Layout.fillWidth:true }
     CSection {
         title:"Documents and notes"
         description:"Ground answers in your own files. Everything is read on this computer, and answers name the file they used."

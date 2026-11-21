@@ -59,6 +59,7 @@ export function excerpt(text: string, terms: string[]) {
  */
 export function compactItem(a: Row, learnedUs: number, quote?: string, terms: string[] = []): Row {
   const ids = (a.evidence as Row[]).slice(0, itemEvidenceLimit).map((e) => e.id);
+  if(a.statement)return {ids,kind:a.statement.status==="accepted"?"statement":"claim",status:a.statement.status,modality:a.statement.modality,source:a.statement.epistemic_type,valid_time:a.statement.valid_mode,date:day(learnedUs),text:excerpt(a.text,terms)};
   const v = a.assertion;
   if (!v)
     return {

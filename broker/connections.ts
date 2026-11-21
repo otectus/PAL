@@ -13,19 +13,36 @@ import type { Core } from './core.ts';
 import type { CompatibleEndpoint, Session } from './types.ts';
 import { endpointOrigin, validEndpoint } from './compatible-endpoint.ts';
 import { ollamaHost } from './ollama.ts';
+import type { ProcessingClass } from './graph-memory/task-models.ts';
+
+export type CompatibleTaskDialect = 'chat_completions' | 'responses';
+export type TaskConnection = {
+  connectionRef: string;
+  connectionRevision: number;
+  credentialRef: string;
+  adapterId: 'ollama' | 'compatible';
+  endpoint: string;
+  processing: ProcessingClass;
+  dialect?: CompatibleTaskDialect;
+};
 
 export type ChatConnection = {
   id: string; kind: 'ollama' | 'compatible'; name: string; revision: number; created: number; updated: number;
   ollama?: { host: string }; compatible?: CompatibleEndpoint; migrated?: boolean;
+  task?: { processing?: ProcessingClass; dialect?: CompatibleTaskDialect };
 };
 export const connectionLimits = { connections: 24, name: 60 };
 const blankEndpoint: CompatibleEndpoint = { baseUrl: '', label: '', requiresKey: false, tools: false, images: false, streaming: true, usage: false, contextLength: 0, maxOutputTokens: 0 };
+const loopback = (value: string) => ['localhost', '127.0.0.1', '::1'].includes(new URL(value).hostname.replace(/^\[|\]$/gu, ''));
 
 export class ChatConnections {
   core: Core;
-  constructor(core: Core) { this.core = core; this.migrate(); }
+  private dependencyChecks = new Set<(connection: ChatConnection) => string | undefined>();
+  constructor(core: Core) { this.core = core; this.migrate(); this.bindLegacyCredential(); }
   private rows(): ChatConnection[] { return this.core.store.db.prepare('SELECT data FROM provider_connections ORDER BY rowid').all().map(row => JSON.parse(String(row.data))); }
   list() { return this.rows(); }
+  /** Lets background subsystems prevent deletion without coupling connections to their tables. */
+  addDependencyCheck(check: (connection: ChatConnection) => string | undefined) { this.dependencyChecks.add(check); return () => this.dependencyChecks.delete(check); }
   get(id: unknown, kind?: ChatConnection['kind']): ChatConnection {
     const found = this.rows().find(row => row.id === id);
     if (!found) throw new Error('That connection no longer exists. Choose another in Settings › Connections.');
@@ -46,12 +63,16 @@ export class ChatConnections {
       this.core.store.set('chatConnectionsMigrated', true);
     });
   }
+  private bindLegacyCredential() {
+    const original = this.rows().find(row => row.kind === 'compatible' && row.migrated && row.compatible?.baseUrl);
+    if (original) this.core.credentials.bindLegacyCompatible(`connection:${original.id}`, endpointOrigin(original.compatible!.baseUrl));
+  }
   /** Keeps the default connections (the Settings host and endpoint) in step with Settings. */
   syncDefault(kind: ChatConnection['kind'], settings: import('./types.ts').Settings) {
     const current = this.rows().find(row => row.kind === kind && row.migrated), now = Date.now();
     if (kind === 'ollama' && !settings.ollama?.host || kind === 'compatible' && !settings.compatible?.baseUrl) return;
     const value = kind === 'ollama' ? { ollama: { host: ollamaHost(settings.ollama.host) } } : { compatible: { ...settings.compatible } };
-    this.write({ id: current?.id || randomUUID(), kind, name: current?.name || (kind === 'ollama' ? 'Ollama (Settings default)' : settings.compatible.label || new URL(settings.compatible.baseUrl).host), revision: (current?.revision || 0) + 1, created: current?.created || now, updated: now, ...value, migrated: true });
+    this.write({ id: current?.id || randomUUID(), kind, name: current?.name || (kind === 'ollama' ? 'Ollama (Settings default)' : settings.compatible.label || new URL(settings.compatible.baseUrl).host), revision: (current?.revision || 0) + 1, created: current?.created || now, updated: now, ...value, ...(current?.task ? { task: current.task } : {}), migrated: true });
   }
   /** Adds or edits one connection; an edit needs the revision the person saw. */
   save(p: any): ChatConnection {
@@ -63,9 +84,17 @@ export class ChatConnections {
     if (typeof p.name !== 'string' || !p.name.trim() || p.name.trim().length > connectionLimits.name || /[\x00-\x1f\x7f]/.test(p.name)) throw new Error('Name the connection with 1–60 printable characters');
     if (!existing && this.rows().length >= connectionLimits.connections) throw new Error(`Keep at most ${connectionLimits.connections} connections`);
     const now = Date.now();
+    const processing = p.processing ?? existing?.task?.processing;
+    if (processing !== undefined && !['local', 'remote', 'cloud', 'unknown'].includes(processing)) throw new Error('Choose where this connection processes requests');
+    const dialect = p.dialect ?? existing?.task?.dialect;
+    if (dialect !== undefined && !['chat_completions', 'responses'].includes(dialect)) throw new Error('Choose Chat Completions or Responses for this compatible endpoint');
+    if (kind === 'ollama' && dialect !== undefined) throw new Error('An Ollama connection does not use an OpenAI-compatible dialect');
     const next: ChatConnection = { id: existing?.id || randomUUID(), kind, name: p.name.trim(), revision: (existing?.revision || 0) + 1, created: existing?.created || now, updated: now,
-      ...(kind === 'ollama' ? { ollama: { host: ollamaHost(p.host ?? existing?.ollama?.host) } } : { compatible: validEndpoint({ ...(p.endpoint || {}), label: p.name.trim() }, existing?.compatible || blankEndpoint) }) };
+      ...(kind === 'ollama' ? { ollama: { host: ollamaHost(p.host ?? existing?.ollama?.host) } } : { compatible: validEndpoint({ ...(p.endpoint || {}), label: p.name.trim() }, existing?.compatible || blankEndpoint) }),
+      ...((processing !== undefined || dialect !== undefined) ? { task: { ...(processing !== undefined ? { processing } : {}), ...(kind === 'compatible' ? { dialect: dialect ?? 'chat_completions' } : {}) } } : {}) };
     if (kind === 'compatible' && !next.compatible!.baseUrl) throw new Error('Enter the endpoint’s base URL');
+    const taskEndpoint = kind === 'ollama' ? next.ollama!.host : next.compatible!.baseUrl;
+    if (next.task?.processing === 'local' && !loopback(taskEndpoint)) throw new Error('Only a loopback connection can process on this computer; choose own server, cloud, or unknown');
     this.write(next);
     this.core.changed();
     return next;
@@ -74,12 +103,14 @@ export class ChatConnections {
   remove(id: unknown) {
     const connection = this.get(id), bound = this.core.store.sessions().filter(session => session.connectionId === connection.id);
     if (bound.length) throw new Error(`${bound.length} conversation${bound.length === 1 ? ' uses' : 's use'} this connection. Move or delete ${bound.length === 1 ? 'it' : 'them'} first.`);
+    for (const check of this.dependencyChecks) { const reason = check(connection); if (reason) throw new Error(reason); }
     this.core.store.db.prepare('DELETE FROM provider_connections WHERE id=?').run(connection.id);
     this.core.changed();
     return true;
   }
   /** The compatible endpoint a conversation uses: its connection's, or the one in Settings for older ones. */
   endpoint(session?: Session): CompatibleEndpoint {
+    this.bindLegacyCredential();
     if (session?.connectionId && session.provider === 'compatible') {
       // A conversation never falls back to another destination when its own connection is gone.
       const connection = this.rows().find(row => row.id === session.connectionId && row.kind === 'compatible');
@@ -88,11 +119,27 @@ export class ChatConnections {
     }
     return this.core.settings.compatible;
   }
+  /** A key-free, task-neutral route descriptor. The credential store resolves credentialRef separately. */
+  taskConnection(id: unknown): TaskConnection {
+    this.bindLegacyCredential();
+    const connection = this.get(id);
+    if (connection.kind === 'ollama') {
+      const endpoint = connection.ollama!.host;
+      const inferred: ProcessingClass = loopback(endpoint) ? 'local' : 'unknown';
+      return { connectionRef: `connection:${connection.id}`, connectionRevision: connection.revision, credentialRef: `connection:${connection.id}`, adapterId: 'ollama', endpoint,
+        processing: connection.task?.processing === 'local' && !loopback(endpoint) ? 'unknown' : connection.task?.processing ?? inferred };
+    }
+    const declared = connection.task?.processing ?? connection.compatible!.processing ?? 'unknown';
+    return { connectionRef: `connection:${connection.id}`, connectionRevision: connection.revision, credentialRef: `connection:${connection.id}`, adapterId: 'compatible', endpoint: connection.compatible!.baseUrl,
+      processing: declared === 'local' && !loopback(connection.compatible!.baseUrl) ? 'unknown' : declared, dialect: connection.task?.dialect ?? 'chat_completions' };
+  }
   /** For the interface: no keys, only whether the endpoint's origin has one. */
   snapshot() {
+    this.bindLegacyCredential();
     return this.rows().map(connection => ({ id: connection.id, kind: connection.kind, name: connection.name, revision: connection.revision, migrated: !!connection.migrated,
       ...(connection.ollama ? { host: connection.ollama.host } : {}),
-      ...(connection.compatible ? { endpoint: { ...connection.compatible }, keySet: !!this.core.credentials.key('compatible', endpointOrigin(connection.compatible.baseUrl)) } : {}),
+      ...(connection.compatible ? { endpoint: { ...connection.compatible }, keySet: !!this.core.credentials.key('compatible', endpointOrigin(connection.compatible.baseUrl), `connection:${connection.id}`) } : {}),
+      task: this.taskConnection(connection.id),
       conversations: this.core.store.sessions().filter(session => session.connectionId === connection.id).length }));
   }
 }
