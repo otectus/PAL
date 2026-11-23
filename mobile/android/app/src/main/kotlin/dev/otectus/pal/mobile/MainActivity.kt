@@ -997,13 +997,15 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
     var takeoverOpen by rememberSaveable(session.id) { mutableStateOf(false) }
     var acknowledged by remember(session.id, session.workbenchFamilies) { mutableStateOf<List<String>?>(null) }
     val takeoverNeeded = session.workbenchTakeover == "acknowledge" && state.has("workbench.takeover")
+    var failedSend by rememberSaveable(session.id) { mutableStateOf(false) }
     fun send() {
         if (takeoverNeeded && acknowledged == null) { takeoverOpen = true; return }
         val sentText = draft; val sentAttachments = attachments.map { it.id }.toSet(); val searchThisTurn = webSearch; val families = acknowledged
-        sending = true; error = null
+        if (sending || !canCompose || draft.isBlank() || storedDraft.conflict) return
+        sending = true; failedSend = false; error = null
         scope.launch {
             val action = try { repository.prepareSend(session.id, sentText, webSearch = searchThisTurn, workbenchAcknowledged = families) } catch (cancelled: CancellationException) { sending = false; throw cancelled } catch (failure: Exception) {
-                sending = false; error = failure.message
+                sending = false; failedSend = failure !is CommandPendingException; error = failure.message
                 if ((failure as? RemoteRequestException)?.code == "REVISION_CONFLICT") repository.selectSession(session.id)
                 return@launch
             }
@@ -1011,6 +1013,7 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
                 sending = false
                 // Like the desktop, web search applies to one accepted message only.
                 result.onSuccess { webSearch = false }.onFailure { failure ->
+                    failedSend = failure !is CommandPendingException
                     error = failure.message
                     if ((failure as? RemoteRequestException)?.code == "REVISION_CONFLICT") scope.launch { repository.selectSession(session.id) }
                 }
@@ -1053,6 +1056,20 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
     val activityItems = remember(messages) { messages.filterNot(Message::isConversationMessage) }
     val unknownSend = state.pendingCommands.firstOrNull { it.sessionId == session.id && it.method == "sessions.send" && it.status == "unknown" }
     val stopPending = state.pendingCommands.any { it.sessionId == session.id && it.method == "sessions.stop" }
+    var stoppingLocally by remember(session.id) { mutableStateOf(false) }
+    val canStop = busy && state.supports("sessions.stop")
+    val primarySending = sending || state.pendingCommands.any { it.sessionId == session.id && it.method == "sessions.send" && it.status != "unknown" }
+    val stop: () -> Unit = {
+        if (canStop && !stoppingLocally && !stopPending && session.status != "stopping") {
+            stoppingLocally = true
+            scope.launch {
+                try { repository.mutate("sessions.stop", buildJsonObject { put("sessionId", session.id) }, session.title) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) { error = failure.message }
+                finally { stoppingLocally = false }
+            }
+        }
+    }
     var reviewingOutcome by remember(session.id) { mutableStateOf(false) }
     val sendHint = when {
         session.mode == "linked" -> stringResource(R.string.conversation_linked_hint)
@@ -1164,6 +1181,9 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
                     TextButton({ activityOpen = false; reviewOpen = true }, modifier = Modifier.fillMaxWidth()) { Text(if (waitingApprovals.size > 1) stringResource(R.string.review_other_requests, waitingApprovals.first().title, waitingApprovals.size - 1) else stringResource(R.string.review_one_request, waitingApprovals.first().title), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 }
                 session.workbenchNote?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(horizontal = PALLayout.gutter, vertical = PALLayout.tight)) }
+                if (failedSend && unknownSend == null) Text(stringResource(R.string.transcript_send_failed),
+                    Modifier.padding(horizontal = PALLayout.groupGap).semantics { liveRegion = LiveRegionMode.Polite },
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 (error ?: state.lastError)?.let { Row(Modifier.fillMaxWidth().padding(horizontal = PALLayout.groupGap), verticalAlignment = Alignment.CenterVertically) {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                     IconButton({ error = null; scope.launch { repository.dismissError() } }) { Icon(Icons.Default.Close, stringResource(R.string.conversation_dismiss_error)) }
@@ -1173,10 +1193,10 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
                         Icon(Icons.AutoMirrored.Filled.List, null)
                         Text(stringResource(R.string.activity_label))
                     }
-                    if (state.supports("sessions.stop")) OutlinedButton(onClick = {
-                        scope.launch { runCatching { repository.mutate("sessions.stop", buildJsonObject { put("sessionId", session.id) }, session.title) }.onFailure { error = it.message } }
-                    }, enabled = !stopPending && session.status != "stopping") {
-                        Text(stringResource(if (stopPending || session.status == "stopping") R.string.transcript_stopping else R.string.action_stop))
+                    if (canStop && session.canQueue && draft.isNotBlank()) {
+                        TextButton(::send, enabled = canCompose && !storedDraft.conflict) {
+                            Text(stringResource(R.string.transcript_queue_action))
+                        }
                     }
                 }
                 if (state.connection !is ConnectionState.Online) ConnectionRecovery(state, repository::retry)
@@ -1213,11 +1233,16 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
             ConversationComposer(
                 sendFromKeyboard = remember(context) { UiPreferences.sendFromKeyboard(context) },
                 value = draft,
-                onValueChange = { if (it.length <= 100_000) { draft = it; repository.editDraft(session.id, it) } },
+                onValueChange = { if (it.length <= 100_000) { failedSend = false; draft = it; repository.editDraft(session.id, it) } },
                 enabled = session.mode == "managed" && session.draftIncluded && draftEditable && !sending,
                 placeholder = stringResource(if (busy && session.canQueue) R.string.queue_message else R.string.compose_message, state.assistantName),
                 canSend = draft.isNotBlank() && canCompose && !storedDraft.conflict,
                 onSend = ::send,
+                onStop = if (canStop) stop else null,
+                stopping = stoppingLocally || stopPending || session.status == "stopping",
+                sending = primarySending,
+                retrySend = failedSend && unknownSend == null,
+                queue = busy && session.canQueue,
                 modifier = Modifier.heightIn(max = (room * 0.32f).coerceAtLeast(PALLayout.shortField)),
                 leadingContent = if (canAttach) { {
                     Box {

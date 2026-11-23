@@ -53,4 +53,8 @@
     <string name="transcript_remove_desktop_attachment">Remove %1$s from the draft</string>
     <string name="transcript_interrupted">Response interrupted</string>
     <string name="transcript_failed">Response failed</string>
+    <string name="transcript_stop_response">Stop response</string>
+    <string name="transcript_queue_action">Queue message</string>
+    <string name="transcript_retry_send">Retry send</string>
+    <string name="transcript_send_failed">Couldn’t send your message. Your draft is saved.</string>
 </resources>

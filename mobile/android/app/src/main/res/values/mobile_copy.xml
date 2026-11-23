@@ -33,7 +33,7 @@
     <string name="mobile_check_the_desktop_and_try_again_your_conversations">Check the desktop and try again. Your conversations and drafts stay on this phone.</string>
     <string name="mobile_checked">Checked</string>
     <string name="mobile_checking_with_the_desktop">Checking with the desktop…</string>
-    <string name="mobile_checking_with_the_pc">Checking with the PC…</string>
+    <string name="mobile_checking_with_the_pc">Checking with the desktop…</string>
     <string name="mobile_choose_how_requests_replies_problems_and_timers_alert">Choose how requests, replies, problems and timers alert you</string>
     <string name="mobile_choose_one_above_or_type_the_id_as">Choose one above, or type the ID as the provider names it.</string>
     <string name="mobile_clear_this_projects_memory">Clear this project\'s memory</string>
@@ -79,16 +79,16 @@
     <string name="mobile_forget_receipts">Forget receipts</string>
     <string name="mobile_forget_this_desktop">Forget this desktop</string>
     <string name="mobile_full_access_this_phone_will_control_pal_as">Full access: this phone will control PAL as you do at the desktop, including files, terminals and settings, until you revoke it there.</string>
-    <string name="mobile_get_this_public_signed_answer_to_the_pc">Get this public signed answer to the PC: copy or share it, then paste it, or save it to a file and choose Load response file…, in PAL Settings → PAL Mobile. Confirm there only if the six words match.</string>
+    <string name="mobile_get_this_public_signed_answer_to_the_pc">Get this public signed answer to the desktop: copy or share it, then paste it, or save it to a file and choose Load response file…, in PAL Settings → PAL Mobile. Confirm there only if the six words match.</string>
     <string name="mobile_grant_this_phone_a_project_in_desktop_remote">Grant this phone a project in desktop Remote settings.</string>
     <string name="mobile_hidden_from_recall_physical_removal">Hidden from recall · physical removal %1$s</string>
     <string name="mobile_hidden_from_recall_physical_removal_not_checked_yet">Hidden from recall · physical removal not checked yet</string>
     <string name="mobile_hidden_from_recall_physically_removed">Hidden from recall · physically removed</string>
     <string name="mobile_hide_unavailable_providers">Hide unavailable providers</string>
-    <string name="mobile_i_confirmed_on_the_pc">I confirmed on the PC</string>
+    <string name="mobile_i_confirmed_on_the_pc">I confirmed on the desktop</string>
     <string name="mobile_inbox_clear">Inbox clear</string>
     <string name="mobile_inspect_or_forget">Inspect or forget</string>
-    <string name="mobile_ive_checked_them_on_the_pc">I\'ve checked them on the PC</string>
+    <string name="mobile_ive_checked_them_on_the_pc">I\'ve checked them on the desktop</string>
     <string name="mobile_ive_completed_it">I\'ve completed it</string>
     <string name="mobile_keep_mine">Keep mine</string>
     <string name="mobile_keeps_a_private_notification_and_the_desktop_connection">Keeps a private notification and the desktop connection while PAL is closed, so requests, replies and timers can alert you.</string>
@@ -110,7 +110,7 @@
     <string name="mobile_no_conversations">No conversations</string>
     <string name="mobile_no_matching_memory_records">No matching memory records.</string>
     <string name="mobile_no_models_listed_enter_the_model_id_below">No models listed. Enter the model ID below.</string>
-    <string name="mobile_no_models_loaded_check_the_provider_on_your">No models loaded. Check the provider on your PC, then refresh.</string>
+    <string name="mobile_no_models_loaded_check_the_provider_on_your">No models loaded. Check the provider on your desktop, then refresh.</string>
     <string name="mobile_no_pinned_replies_yet_pin_a_reply_with">No pinned replies yet. Pin a reply with its star.</string>
     <string name="mobile_not_yet">Not yet</string>
     <string name="mobile_notification_settings">Notification settings</string>
@@ -125,13 +125,13 @@
     <string name="mobile_open_link">Open link ↗</string>
     <string name="mobile_open_memory">Open memory</string>
     <string name="mobile_other_answer">Other answer</string>
-    <string name="mobile_outcome_unknown_check_it_on_the_pc">Outcome unknown · check it on the PC</string>
+    <string name="mobile_outcome_unknown_check_it_on_the_pc">Outcome unknown · check it on the desktop</string>
     <string name="mobile_paired_desktop">Paired desktop · %1$s</string>
     <string name="mobile_pairing_couldnt_continue">Pairing couldn\'t continue</string>
     <string name="mobile_pairing_needs_attention">Pairing needs attention</string>
     <string name="mobile_pal_connection_details">PAL connection details</string>
-    <string name="mobile_pal_couldnt_ask_your_pc_whether_it_confirmed">PAL couldn\'t ask your PC whether it confirmed this pairing. Save it only if the PC showed these same six words and you confirmed there; otherwise this phone keeps a pairing the PC doesn\'t have.</string>
-    <string name="mobile_pal_couldnt_confirm_these_with_the_desktop_check">PAL couldn\'t confirm these with the desktop. Check each one on the PC; nothing is sent again automatically.</string>
+    <string name="mobile_pal_couldnt_ask_your_pc_whether_it_confirmed">PAL couldn\'t ask your desktop whether it confirmed this pairing. Save it only if the desktop showed these same six words and you confirmed there; otherwise this phone keeps a pairing the desktop doesn\'t have.</string>
+    <string name="mobile_pal_couldnt_confirm_these_with_the_desktop_check">PAL couldn\'t confirm these with the desktop. Check each one on the desktop; nothing is sent again automatically.</string>
     <string name="mobile_pal_keeps_a_private_copy_on_this_phone">PAL keeps a private copy on this phone. You review it before anything is uploaded.</string>
     <string name="mobile_pal_mobile_cannot_read_its_private_data_on">PAL Mobile cannot read its private data on this phone. Removing it lets you pair again; anything in it, including unsent drafts, is already unreadable. On the desktop, revoke the old pairing for this phone.</string>
     <string name="mobile_pal_mobile_channel">PAL Mobile %1$s (%2$s) · %3$s channel</string>
@@ -188,8 +188,8 @@
     <string name="mobile_secure_connection_needs_repair">Secure connection needs repair</string>
     <string name="mobile_send_answers">Send answers</string>
     <string name="mobile_send_the_answer_another_way">Send the answer another way</string>
-    <string name="mobile_send_the_answer_to_the_pc">Send the answer to the PC</string>
-    <string name="mobile_send_the_pairing_response_to_your_pc">Send the pairing response to your PC</string>
+    <string name="mobile_send_the_answer_to_the_pc">Send the answer to the desktop</string>
+    <string name="mobile_send_the_pairing_response_to_your_pc">Send the pairing response to your desktop</string>
     <string name="mobile_session">Session</string>
     <string name="mobile_settings_updated">Settings updated</string>
     <string name="mobile_share_response">Share response</string>
@@ -204,7 +204,7 @@
     <string name="mobile_the_desktop_is_currently_blocking_remote_actions">The desktop is currently blocking remote actions.</string>
     <string name="mobile_the_model_list_could_not_be_loaded_you">The model list could not be loaded. You can still enter a model ID below.</string>
     <string name="mobile_the_request_you_opened_was_already_answered_or">The request you opened was already answered or has ended.</string>
-    <string name="mobile_these_desktop_actions_were_never_confirmed_check_them">These desktop actions were never confirmed. Check them on the PC before replacing the pairing:</string>
+    <string name="mobile_these_desktop_actions_were_never_confirmed_check_them">These desktop actions were never confirmed. Check them on the desktop before replacing the pairing:</string>
     <string name="mobile_this_device_can_review_this_request_but_cannot">This device can review this request but cannot answer it.</string>
     <string name="mobile_this_device_has_read_only_settings_access">This device has read-only settings access.</string>
     <string name="mobile_this_endpoint_doesnt_list_its_models_enter_the">This endpoint doesn\'t list its models. Enter the model ID below.</string>
@@ -232,7 +232,7 @@
     <string name="mobile_verified_capture">Verified capture</string>
     <string name="mobile_waiting_for_the_desktop_to_confirm_the_access">Waiting for the desktop to confirm the access reduction after reconnect…</string>
     <string name="mobile_web_search_provider">Web search provider</string>
-    <string name="mobile_your_pc_has_this_answer_check_that_it">Your PC has this answer. Check that it shows these six words, then confirm there.</string>
+    <string name="mobile_your_pc_has_this_answer_check_that_it">Your desktop has this answer. Check that it shows these six words, then confirm there.</string>
     <string name="mobile_an_image_could_not_be_added">An image could not be added.</string>
     <string name="mobile_assertions">Assertions</string>
     <string name="mobile_authentication_signature_unavailable">Authentication signature unavailable</string>
@@ -258,5 +258,5 @@
     <string name="mobile_start_it_again">Start it again.</string>
     <string name="mobile_the_tool_server">the tool server</string>
     <string name="mobile_yes">Yes</string>
-    <string name="mobile_your_pc_hasnt_confirmed_this_pairing_yet_paste">Your PC hasn\'t confirmed this pairing yet. Paste the response there, compare the six words and confirm, then try again.</string>
+    <string name="mobile_your_pc_hasnt_confirmed_this_pairing_yet_paste">Your desktop hasn\'t confirmed this pairing yet. Paste the response there, compare the six words and confirm, then try again.</string>
 </resources>

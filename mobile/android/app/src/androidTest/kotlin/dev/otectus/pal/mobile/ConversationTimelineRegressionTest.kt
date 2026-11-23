@@ -8,6 +8,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import dev.otectus.pal.mobile.data.SessionScrollPosition
@@ -149,6 +152,29 @@ class ConversationTimelineRegressionTest {
         compose.mainClock.advanceTimeBy(64)
         compose.onNodeWithTag("conversationCompletionAnnouncement")
             .assertContentDescriptionEquals("Response interrupted")
+    }
+
+    @Test
+    fun sendAndStopUseOneTargetAndPendingStopCannotRepeat() {
+        val busy = mutableStateOf(false)
+        val stopping = mutableStateOf(false)
+        var sends = 0
+        var stops = 0
+        compose.setContent {
+            MaterialTheme {
+                ConversationComposer("Follow up", {}, "Message PAL", true, true, { sends++ },
+                    onStop = if (busy.value) ({ stops++; stopping.value = true }) else null, stopping = stopping.value)
+            }
+        }
+        val send = compose.onNodeWithContentDescription("Send message")
+        val bounds = send.fetchSemanticsNode().boundsInRoot
+        send.performClick()
+        compose.runOnIdle { check(sends == 1); busy.value = true }
+        val stop = compose.onNodeWithContentDescription("Stop response")
+        check(stop.fetchSemanticsNode().boundsInRoot == bounds)
+        stop.performClick()
+        compose.onNodeWithContentDescription("Stopping…").assertIsNotEnabled()
+        compose.runOnIdle { check(stops == 1 && sends == 1) }
     }
 
     private fun message(id: String, text: String = "A response") = Message(

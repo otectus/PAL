@@ -28,6 +28,7 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import dev.otectus.pal.mobile.data.SessionScrollPosition
@@ -239,38 +240,64 @@ internal fun ConversationComposer(
     modifier: Modifier = Modifier,
     leadingContent: (@Composable () -> Unit)? = null,
     sendFromKeyboard: Boolean = false,
+    onStop: (() -> Unit)? = null,
+    stopping: Boolean = false,
+    sending: Boolean = false,
+    retrySend: Boolean = false,
+    queue: Boolean = false,
 ) {
-    Surface(modifier = modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = BorderStroke(PALLayout.hairline, MaterialTheme.colorScheme.outlineVariant)) {
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            enabled = enabled,
-            placeholder = { Text(placeholder, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            minLines = 1,
-            maxLines = 8,
-            shape = MaterialTheme.shapes.extraLarge,
-            leadingIcon = leadingContent,
-            trailingIcon = {
-                FilledIconButton(onClick = onSend, enabled = canSend, modifier = Modifier.size(PALLayout.target)) {
-                    Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.transcript_send))
+    val progress = if (onStop != null) stopping else sending
+    val actionLabel = stringResource(when {
+        stopping && onStop != null -> R.string.transcript_stopping
+        onStop != null -> R.string.transcript_stop_response
+        sending -> R.string.conversation_sending
+        retrySend -> R.string.transcript_retry_send
+        queue -> R.string.transcript_queue_action
+        else -> R.string.transcript_send
+    })
+    Surface(modifier = modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Row(Modifier.widthIn(max = PALLayout.readingWidth).fillMaxWidth().padding(horizontal = PALLayout.groupGap, vertical = PALLayout.small),
+                horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalAlignment = Alignment.Bottom) {
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    enabled = enabled,
+                    placeholder = { Text(placeholder, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    minLines = 1,
+                    maxLines = 8,
+                    shape = MaterialTheme.shapes.extraLarge,
+                    leadingIcon = leadingContent,
+                    keyboardOptions = KeyboardOptions(imeAction = if (sendFromKeyboard) ImeAction.Send else ImeAction.Default),
+                    keyboardActions = KeyboardActions(onSend = { if (canSend) onSend() }),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                        disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    ),
+                    modifier = Modifier.weight(1f).onPreviewKeyEvent { event ->
+                        if (event.isCtrlPressed && event.key == Key.Enter) {
+                            if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0 && canSend) onSend()
+                            true
+                        } else false
+                    }.semantics { contentDescription = placeholder }.testTag("messageComposer"),
+                )
+                FilledIconButton(onClick = onStop ?: onSend, enabled = !progress && (onStop != null || canSend),
+                    colors = if (onStop == null) IconButtonDefaults.filledIconButtonColors()
+                        else IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer),
+                    modifier = Modifier.padding(bottom = PALLayout.tight).size(PALLayout.target).semantics {
+                        contentDescription = actionLabel
+                    }) {
+                    when {
+                        progress -> CircularProgressIndicator(Modifier.size(PALLayout.iconMedium), strokeWidth = PALLayout.focusStroke)
+                        onStop != null -> Icon(painterResource(R.drawable.ic_stop), null)
+                        retrySend -> Icon(Icons.Default.Refresh, null)
+                        else -> Icon(Icons.AutoMirrored.Filled.Send, null)
+                    }
                 }
-            },
-            keyboardOptions = KeyboardOptions(imeAction = if (sendFromKeyboard) ImeAction.Send else ImeAction.Default),
-            keyboardActions = KeyboardActions(onSend = { if (canSend) onSend() }),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-                disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-            ),
-            modifier = Modifier.widthIn(max = PALLayout.readingWidth).fillMaxWidth()
-                .padding(horizontal = PALLayout.gutter, vertical = PALLayout.small).onPreviewKeyEvent { event ->
-                if (event.isCtrlPressed && event.key == Key.Enter) {
-                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0 && canSend) onSend()
-                    true
-                } else false
-            }.semantics { contentDescription = placeholder }.testTag("messageComposer"),
-        ) }
+            }
+        }
     }
 }
 

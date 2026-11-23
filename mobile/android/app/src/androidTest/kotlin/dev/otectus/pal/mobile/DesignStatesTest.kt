@@ -158,7 +158,7 @@ class DesignStatesTest {
                     ConversationTimeline(rows, scene == "streaming", session.status, Modifier.weight(1f)) { message ->
                         MessageBubble(repository, state, message)
                     }
-                    ConversationComposer("", {}, "Message PAL", true, false, {})
+                    ConversationComposer("", {}, "Message PAL", true, false, {}, onStop = if (scene == "streaming") ({}) else null)
                 }
             }
             else -> Column {
