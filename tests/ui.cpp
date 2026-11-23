@@ -2909,20 +2909,27 @@ Unicode: café ✦ 日本語
         const auto motionTrace=connect(petApp,&Controller::motionChanged,this,[&]{tracePointerState("motionChanged");});
         const auto disconnectTrace=qScopeGuard([&]{disconnect(motionTrace);});
 
-        // Every selectable connected avatar maps dragging to the same bounded,
-        // authored ping-pong route; exercise the live pixels below with PAL.
+        // The default PAL is deliberately one rigid full-body reference image. Every illustrated
+        // appearance remains a connected animated surface with the same bounded carry route.
         for(const auto &entry:petApp->avatars()){
             const auto avatar=entry.toMap(),definition=avatar.value("puppet").toMap();
             const auto sequences=definition.value("surfaceSequences").toMap();
             const auto motions=sequences.value("motions").toMap(),routes=sequences.value("routes").toMap();
+            QVERIFY2(definition.value("presentation").toString()=="reference",qPrintable(avatar.value("id").toString()));
+            const auto parts=definition.value("parts").toList();QCOMPARE(parts.size(),1);
+            if(definition.value("static").toBool()){
+                QVERIFY(sequences.isEmpty());
+                QVERIFY(!parts.first().toMap().value("surfaceMotion").toBool());
+                QVERIFY(parts.first().toMap().value("surfaceFrames").toList().isEmpty());
+                continue;
+            }
             const auto carry=routes.value("carry").toMap();
             const auto frames=carry.value("frames").toList();
-            QVERIFY2(definition.value("presentation").toString()=="reference",qPrintable(avatar.value("id").toString()));
             QCOMPARE(motions.value("dragging").toString(),QString("carry"));
             QCOMPARE(carry.value("loopMode").toString(),QString("pingPong"));
             QCOMPARE(carry.value("loopStart").toInt(),15);
             QVERIFY(frames.size()>30&&frames.first().toInt()==0);
-            const auto parts=definition.value("parts").toList();QCOMPARE(parts.size(),1);
+            QVERIFY(parts.first().toMap().value("surfaceMotion").toBool());
             const int available=parts.first().toMap().value("surfaceFrames").toList().size();
             QVERIFY(available<=384);QVERIFY(frames.last().toInt()<=available);
         }
@@ -2967,6 +2974,12 @@ Unicode: café ✦ 日本語
             moveOnPet(outside);
             if(!layerSurface){QEvent leave(QEvent::Leave);QCoreApplication::sendEvent(pet,&leave);}
         };
+        const auto visiblePixels=[&]{
+            const auto frame=pet->grabWindow();if(frame.isNull())return -1;
+            int opaque=0;for(int y=0;y<frame.height();++y)for(int x=0;x<frame.width();++x)
+                if(qAlpha(frame.pixel(x,y))>200)++opaque;
+            return opaque;
+        };
         const auto releaseCarry=[&](const QVariantList &frames,int gentleFrame){
             if(!layerSurface)leavePet();
             releaseOnPet(outside);
@@ -2982,6 +2995,26 @@ Unicode: café ✦ 日本語
             }else QTRY_COMPARE(petApp->motion(),QString("land"));
             leavePet();
         };
+
+        // PAL's static robot still renders and participates in pointer behavior; it simply keeps
+        // its one authored full-body frame instead of borrowing the illustrated gesture atlas.
+        QVERIFY(!call("settings.update",{{"avatar",petApp->defaultAvatar()}}).contains("error"));
+        QTRY_COMPARE(petApp->avatar().value("id").toString(),petApp->defaultAvatar());
+        QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith("pal-surface.png"));
+        QTRY_VERIFY(puppet->property("ready").toBool());
+        QCOMPARE(puppet->property("surfaceFrame").toInt(),0);
+        QVERIFY(visiblePixels()>pet->width()*pet->height()/8);
+        leavePet();moveOnPet(center);QTRY_COMPARE(petApp->motion(),QString("hoverBlush"));
+        QCOMPARE(puppet->property("surfaceFrame").toInt(),0);
+        clickOnPet(center);QTRY_COMPARE(petApp->motion(),QString("clickBlush"));QTRY_VERIFY(titled("PAL Panel"));
+        QCOMPARE(puppet->property("surfaceFrame").toInt(),0);
+        QVERIFY(visiblePixels()>pet->width()*pet->height()/8);
+        petApp->closePanel();leavePet();QTRY_COMPARE_WITH_TIMEOUT(petApp->motion(),QString("idle"),3000);
+
+        QVERIFY(!call("settings.update",{{"avatar","pal_classic"}}).contains("error"));
+        QTRY_COMPARE(petApp->avatar().value("id").toString(),QString("pal_classic"));
+        QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith("pal_classic-surface.png"));
+        QTRY_VERIFY(puppet->property("ready").toBool());
         leavePet();moveOnPet(center);
         QTRY_COMPARE(petApp->motion(),QString("hoverBlush"));
         QTRY_COMPARE_WITH_TIMEOUT(puppet->property("surfaceFrame").toInt(),hoverFrame,3000);
@@ -3168,6 +3201,7 @@ Unicode: café ✦ 日本語
     void fluidAvatarAnimation(){
         QDir().mkpath("/tmp/pal-ui-evidence");
         app->closePanel();
+        const auto originalAvatar=app->state().value("settings").toMap().value("avatar");
         QQuickItem *player=nullptr;
         const auto restore=qScopeGuard([&]{
             if(player){
@@ -3177,10 +3211,11 @@ Unicode: café ✦ 日本語
                 player->setProperty("followAppMotion",true);
             }
             app->endDrag();app->setPetInteracting(false);
-            app->rpc("settings.update",{{"topmost",true},{"quiet",false},{"reducedMotion",false},{"motionIntensity",.7},{"scale",1.0}});
+            app->rpc("settings.update",{{"avatar",originalAvatar},{"topmost",true},{"quiet",false},{"reducedMotion",false},{"motionIntensity",.7},{"scale",1.0}});
             restoreWorkspace();
         });
-        QVERIFY(!call("settings.update",{{"topmost",false},{"quiet",false},{"reducedMotion",false},{"motionIntensity",1.},{"scale",1.5},{"roaming",false}}).contains("error"));
+        QVERIFY(!call("settings.update",{{"avatar","pal_classic"},{"topmost",false},{"quiet",false},{"reducedMotion",false},{"motionIntensity",1.},{"scale",1.5},{"roaming",false}}).contains("error"));
+        QTRY_COMPARE(app->avatar().value("id").toString(),QString("pal_classic"));
         QQuickWindow *pet=nullptr;
         QTRY_VERIFY((pet=titled("PAL Pet")));
         player=pet->findChild<QQuickItem*>("gesturePlayer");QVERIFY(player);
@@ -3191,6 +3226,7 @@ Unicode: café ✦ 日本語
         };
         auto puppet=findPuppet(player);QVERIFY(puppet);
         QTRY_VERIFY(puppet->property("ready").toBool());
+        QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith("pal_classic-surface.png"));
         app->setPetInteracting(true);
         QTRY_COMPARE_WITH_TIMEOUT(app->motion(),QString("idle"),8000);
         const auto readRig=[&]{return player->property("rig").value<QJSValue>().toVariant().toMap();};
@@ -3260,6 +3296,9 @@ Unicode: café ✦ 日本語
         auto customAvatar=app->avatar();auto customPuppet=customAvatar.value("puppet").toMap();
         // This synthetic catalog deliberately tests authored static poses;
         // PAL's reference presentation instead freezes to the source drawing.
+        QVERIFY(!customPuppet.value("static").toBool());
+        const auto customParts=customPuppet.value("parts").toList();QCOMPARE(customParts.size(),1);
+        QVERIFY(customParts.first().toMap().value("surfaceMotion").toBool());
         customPuppet.remove("presentation");
         auto customChannels=customPuppet.value("channels").toMap();
         customChannels.insert("avatarProbe",QVariantMap{{"min",-3.0},{"max",3.0},{"omega",20.0}});
