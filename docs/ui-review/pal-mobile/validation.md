@@ -1,49 +1,43 @@
 # PAL Mobile UI review validation
 
-This record separates the saved pre-change Android build from the post-change build. The `before/` gallery is complete; `after/` will be populated and this record finalized after the implementation owner hands off the changed source.
+## Device and build provenance
 
-## Isolated device
+- All Android work used the disposable Android 15 / API 35 `x86_64` AVD `emulator-5604` through private ADB server port `5049`. The attached personal Pixel 10 Pro was never selected or modified.
+- Baseline source was `322d9817f3e508daf92b676e139a1b428b49d9cf`; app SHA-256 `85111d0ef296ca7e6c068e03b2f91e9fddb9d252a0793885248dcfaac23f1a19`.
+- Delivery app is PAL Mobile 2.0.0 / 2000000, SHA-256 `e30baebf4692a9ec64da4f75603fb3cadb277819834e09f105086f792fc9c40b`; delivery test APK SHA-256 `08dc4e983dee8a80ac5e7825eaafc0d41dd305fec583c42c56d68ca236a05604`.
+- The final composition gallery was rendered from app `e11fc8091655d64abc4297c10e0e9f147faed9db53dc3d814fa308b907300129`; delivery differs only in localized transfer-integrity and unnamed-phone wording. The unchanged live shell gallery was captured on candidate `0789755e59b560bae9531a0b5cc1e2e0e14e3ae86e6b34d1d284e4929085557e`; the pairing gallery was refreshed on composition-equivalent predecessor `9412b3635eca1256ffa6155983155a93aec1b7405c52d8ef77f0fe3406ddf3a8`.
 
-- Android 15 / API 35 `x86_64` disposable AVD, serial `emulator-5604`.
-- Private ADB server port `5049`; all installs, package clears, rotations, font-scale changes, permission changes, and captures explicitly selected `emulator-5604`.
-- The attached personal Pixel 10 Pro was never selected or modified.
-- Display: 1080 x 2400 portrait and 2400 x 1080 landscape. The large-text checks used Android `font_scale=2.0`.
+## Checks actually run
 
-## Before build
+- Baseline builds passed. Baseline standalone instrumentation: 27 discovered, 22 passed, 5 explicit paired-fixture skips, 0 failed. Baseline paired gate: 5/5 checkpoints passed.
+- Delivery clean-state `AndroidJUnitRunner`: 33 discovered, 27 passed, 6 explicit fixture-argument skips, 0 failed. It includes exact posture punctuation/scroll visibility, growing-status timeline follow, completion announcement, pairing/IME entry, compatibility, Markdown, and conversation behavior tests.
+- Focused release gate on the composition-final APK: `ConversationTimelineRegressionTest`, `CompatibilityScreensTest`, and `PairingSmokeTest`, 12/12 passed.
+- Delivery paired network-return gate: both explicit tests passed and all 5 checkpoints were reached. SAS matched; the phone completed pairing, returned the fixture reply, the broker recorded exactly one user row, revision-bound pin/archive restored, and disconnect/reconnect resynchronized.
+- Final `DesignStatesTest -e palCapture true`: 1/1 passed and emitted 46 settled screenshots (23 real-composable scenes in both themes).
+- Reduced-motion smoke: Android window, transition, and animator scales were set to zero; fresh pairing retained Scan and manual-offer actions, then scales were restored.
 
-- Source: `322d9817f3e508daf92b676e139a1b428b49d9cf` with no tracked Android production changes.
-- App: PAL Mobile 2.0.0 / 2000000, SHA-256 `85111d0ef296ca7e6c068e03b2f91e9fddb9d252a0793885248dcfaac23f1a19`.
-- Original instrumentation APK: SHA-256 `d101b11bd20801211d7a77d1a238f91b796bf254215465eaca6e95f698c7fe5a`.
-- The APKs were copied to `build/pal-mobile-review/before/` before any production UI edit and were reinstalled for the baseline fixture run.
+## Runtime journeys and gallery inventory
 
-## Before checks actually run
+`before/` contains 50 PNGs. `after/` contains:
 
-- `:app:assembleDebug :app:assembleDebugAndroidTest`: passed.
-- Standalone `AndroidJUnitRunner`: 27 discovered, 22 passed and 5 fixture-argument-only tests skipped by assumption, 0 failed. This covered pairing entry, conversation/activity separation, streaming updates, Latest behavior, composer IME send, multiline drafts, compatibility payloads, links/sources, research navigation, and companion header.
-- `node tools/mobile-paired-check.ts --serial emulator-5604 --pairing network --keep-pairing`: passed both explicit tests and all 5 checkpoints. The phone returned its answer, six words matched, pinned TLS connected, one user send produced one fixture Ollama reply, revision-bound pin/archive restored, disconnect/reconnect resynchronized, and the broker recorded exactly one user row.
-- `DesignStatesTest -e palCapture true`: passed 1/1 after semantic scene checks and compositor settling. It rendered 28 real-composable fixtures in light and dark themes: connecting, reconnecting, signing in, disconnected, unreachable, repair, locked, unreadable cache, approval, empty, streaming, long history, activity, and failed activity.
-- Real UI journeys: fresh pairing, manual offer, invalid offer error, connected and offline chats, Inbox, Work limited-access fallback, Desktop, Settings, scoped Desktop access, chat transcript, Android camera denial, and the in-app camera fallback.
-- IME visibility was verified from `dumpsys input_method` (`mInputShown=true`) for pairing, chat, and 200% landscape chat captures. Draft text remained in the composer across the 200%/landscape recreation.
+- `01`–`03`: fresh pairing, manual offer, and real IME with `Verify offer` visible above the keyboard (`mInputShown=true`).
+- `13`–`18`: connected Chats, Inbox, Work limited-access fallback, scoped Desktop, Settings, and the real paired transcript.
+- `19`–`21`: chat IME plus 200%-font landscape with and without the real IME; the draft survived recreation.
+- `25-reduced-motion-pairing.png`: the no-animation-scale pairing smoke.
+- `fixture-{light,dark}-*.png`: 46 final scenes covering connection/recovery states, approval, empty/streaming/long history, activity/failure, owner settings, rich Markdown, and link/question/submitting/unconfirmed/offline requests.
 
-## Before gallery
+Semantic XML and IME dumps are under `build/pal-mobile-review/after/live/`; full runner logs are under `build/pal-mobile-review/after/logs/`; delivery paired evidence is under `build/pal-mobile-review/after/paired-delivery/`.
 
-The curated images are under `before/`:
+## Adverse and lifecycle evidence
 
-- `01`–`05`: pairing portrait/manual/IME/200%-text/landscape.
-- `07`, `09`–`12`: offline cached transcript and the four reachable shell destinations.
-- `13`–`18`: connected Chats, Inbox, Work, Desktop, Settings, and transcript from an isolated live broker.
-- `19`–`21`: chat IME, 200%-text landscape, and 200%-text landscape with the IME visibly open.
-- `22`–`24`: invalid-offer error, connected scoped Desktop access, and real camera-permission denial fallback.
-- `fixture-{light,dark}-*.png`: deterministic real-composable state coverage listed above.
+- On preview app `d9f2acba3cb3d5f3063ae82fc7a4a3ba196f0f793184db60d3749aca8bf8a712`, a real streamed fixture answer was interrupted after the partial row `Hello from Ollama.` appeared. After timeout the app showed Offline while retaining the row. Resuming the broker reconnected in about 3 seconds and reconciled the same row to `Hello from Ollama. Your conversation is ready.` Evidence: `build/pal-mobile-review/polish/{logs/stream-loss-recovery.txt,screens/stream-*.png,stream-*.xml}`.
+- A separate actual broker freeze/reconnect retained an unsent draft and returned to Connected in about 3 seconds. `am kill` after backgrounding a draft killed the process; cold launch restored the selected conversation and draft.
+- Small-phone (720 x 1280 at 320 dpi), tablet/rail (1600 x 2560 at 320 dpi), `en-XA`, `ar-XB` with forced RTL, 200% font, portrait/landscape recreation, scoped Desktop access, and Android camera-denial fallback were exercised. The small-phone IME retained a usable composer, though little transcript/header content remained visible.
+- Headless-emulator `gfxinfo` reported zero rendered frames, so no frame-performance claim is made.
 
-## Limits
+## Scope and limits
 
-- No personal phone, owner profile, owner broker state, physical camera, physical biometrics, TalkBack service, Doze, lock screen, cellular/VPN transition, or hardware cutout was exercised.
-- The paired fixture broker offered synthetic Ollama and scoped fixture projects only. It did not exercise hosted providers, real desktop actions, or private desktop data.
-- The streaming screenshot is a deterministic real-composable fixture. The paired broker journey validated a streamed fixture reply end to end, but its short reply completed too quickly for a stable shell screenshot.
-- The approval screenshot is a deterministic real-composable fixture. The baseline isolated broker did not create a real sensitive owner approval.
-- Post-change checks and comparisons remain pending.
-
-## Evidence outside the committed gallery
-
-Machine-readable summaries, semantic XML, IME dumps, APK copies/hashes, and full logs are under `build/pal-mobile-review/before/`. The authoritative paired summary is `build/pal-mobile-review/before/paired-live2/summary.json`; the standalone and design-state outputs are `build/pal-mobile-review/before/logs/instrumentation.txt` and `build/pal-mobile-review/before/logs/design-states-instrumentation-rerun.txt`.
+- The delivery paired result is real network/TLS/SAS behavior against a disposable broker and synthetic Ollama/project fixture. It does not use owner data, hosted providers, private desktop actions, or a personal desktop profile.
+- Approval, request variations, richer Markdown, owner-settings index, monitoring-off, and replacement states are deterministic real-composable fixtures beyond the isolated broker's grant; the broker did not create a real sensitive owner approval.
+- No personal phone, physical camera, physical biometrics, TalkBack service, Doze, lock screen, cellular/VPN transition, or hardware cutout was exercised. Camera validation covers Android denial and app fallback, not successful physical capture.
+- The long stream-loss reproduction is from the preview build. Final delivery independently passed clean instrumentation and the paired/reconnect gate, but the long interruption was not repeated after the wording-only delivery rebuild.

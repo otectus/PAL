@@ -1,9 +1,13 @@
 package dev.otectus.pal.mobile
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import dev.otectus.pal.mobile.protocol.ConversationBehavior
 import dev.otectus.pal.mobile.protocol.Message
 import dev.otectus.pal.mobile.protocol.WireCodec
@@ -17,7 +21,13 @@ class CompatibilityScreensTest {
 
     private fun show(json: String) {
         val behavior = WireCodec.json.decodeFromString(ConversationBehavior.serializer(), json)
-        compose.setContent { MaterialTheme { androidx.compose.foundation.layout.Column { ConversationStyleContent(behavior) } } }
+        compose.setContent {
+            MaterialTheme {
+                androidx.compose.foundation.layout.Column(Modifier.verticalScroll(rememberScrollState())) {
+                    ConversationStyleContent(behavior)
+                }
+            }
+        }
     }
 
     // The desktop's answer for a conversation without a style: profile and posture are JSON null.
@@ -34,8 +44,9 @@ class CompatibilityScreensTest {
     @Test fun aPostureWithoutAProfileRenders() {
         show("""{"source":"session","profile":null,"posture":{"label":"Careful","pinned":true},"standingInstructions":true,"warnings":["Tool ceiling applies"]}""")
         compose.onNodeWithText("No style · set for this conversation").assertIsDisplayed()
-        compose.onNodeWithText("Posture: Careful · pinned to this conversation").assertIsDisplayed()
-        compose.onNodeWithText("Tool ceiling applies").assertIsDisplayed()
+        compose.onNodeWithText("Posture: Careful · pinned to this conversation").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("This conversation also has standing instructions.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Tool ceiling applies").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun bothAndAnOlderSparseAnswerRender() {
