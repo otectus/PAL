@@ -21,4 +21,6 @@ The live broker produced a partial reply, exposed Stop in the composer, and reta
 
 The after gallery also covers the exact URL before opening, a required question, submission in progress, an unconfirmed answer, rich Markdown and the owner settings index. [Request link](after/fixture-light-request-link.png) · [Question](after/fixture-dark-request-question.png) · [Submission](after/fixture-light-request-submitting.png) · [Unconfirmed answer](after/fixture-dark-request-unconfirmed.png) · [Markdown](after/fixture-dark-markdown.png) · [Owner settings](after/fixture-light-owner-settings.png)
 
+Three supplemental live captures show the new-conversation form, conversation settings and connection diagnostics. The pre-edit gallery has no separate capture of these three views. [New conversation](after/supplemental-new-conversation.png) · [Conversation settings](after/supplemental-conversation-settings.png) · [Connection diagnostics](after/supplemental-connection-diagnostics.png)
+
 Browse the [complete baseline](before/) and [complete after gallery](after/) for the remaining states.
