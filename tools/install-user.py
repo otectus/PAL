@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--prefix', type=Path, default=Path.home() / '.local')
@@ -23,11 +24,23 @@ subprocess.run([cmake, '--install', str(repo / 'build'), '--prefix', str(prefix)
 
 # Arch's Qt and Node remain system dependencies. Bundle the optional layer-shell
 # integration when development used a locally extracted package.
+def install_library(source, destination):
+    # A running workspace or overlay may still have the previous inode mapped.
+    # Finish writing the replacement before making it visible to new processes.
+    with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as staged:
+        temporary = Path(staged.name)
+    try:
+        shutil.copy2(source, temporary)
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 if (local / 'lib/libLayerShellQtInterface.so.6').exists():
-    shutil.copy2(local / 'lib/libLayerShellQtInterface.so.6', prefix / 'lib/pal/libLayerShellQtInterface.so.6')
+    install_library(local / 'lib/libLayerShellQtInterface.so.6', prefix / 'lib/pal/libLayerShellQtInterface.so.6')
     plugins = prefix / 'lib/pal/plugins/wayland-shell-integration'
     plugins.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(local / 'lib/qt6/plugins/wayland-shell-integration/liblayer-shell.so', plugins)
+    install_library(local / 'lib/qt6/plugins/wayland-shell-integration/liblayer-shell.so', plugins / 'liblayer-shell.so')
 
 def desktop_quote(value):
     # Apply Exec's argument quoting before encoding the token as a key-file string.
