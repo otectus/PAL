@@ -66,7 +66,7 @@ fun PALMarkdown(value: String) {
     val codeBackground = MaterialTheme.colorScheme.surfaceContainerHighest
     val resources = LocalResources.current
     SelectionContainer {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PALLayout.groupGap)) {
             document.nodes().forEach { MarkdownBlock(it, 0, linkColor, codeBackground, resources) }
         }
     }
@@ -128,11 +128,11 @@ private fun CodeBlock(source: String, language: String) {
                 TextButton({
                     context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(languageLabel, source))
                     copied = true
-                }, modifier = Modifier.heightIn(min = 48.dp)) {
+                }, modifier = Modifier.heightIn(min = PALLayout.target)) {
                     Text(stringResource(if (copied) R.string.markdown_code_copied else R.string.markdown_copy_code))
                 }
             }
-            Text(source.trimEnd('\n'), Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 4.dp),
+            Text(source.trimEnd('\n'), Modifier.horizontalScroll(rememberScrollState()).padding(bottom = PALLayout.tight),
                 fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium, softWrap = false)
         }
     }
@@ -154,7 +154,7 @@ private fun MarkdownTable(table: TableBlock, linkColor: Color, codeBackground: C
         Column(Modifier.horizontalScroll(rememberScrollState())) { rows.forEachIndexed { index, (row, header) ->
             Row(Modifier.background(if (header) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)) {
                 row.nodes().forEachIndexed { column, cell ->
-                Text(cell.inlineText(linkColor, codeBackground, resources), Modifier.width(widths.getOrElse(column) { 120.dp }).padding(PALLayout.small),
+                Text(cell.inlineText(linkColor, codeBackground, resources), Modifier.width(widths.getOrElse(column) { markdownTableColumnWidth(1).dp }).padding(PALLayout.small),
                     style = MaterialTheme.typography.bodyMedium, fontWeight = if (header) FontWeight.Bold else FontWeight.Normal,
                     textAlign = when ((cell as? TableCell)?.alignment) {
                         TableCell.Alignment.CENTER -> TextAlign.Center

@@ -16,6 +16,11 @@ import androidx.compose.ui.unit.dp
 import dev.otectus.pal.mobile.data.LocalAttachment
 import dev.otectus.pal.mobile.protocol.DraftAttachment
 
+private object AttachmentTokens {
+    val cardMinWidth = 216.dp
+    val cardMaxWidth = 280.dp
+}
+
 @Composable
 internal fun LocalAttachmentCard(
     attachment: LocalAttachment,
@@ -93,7 +98,7 @@ private fun AttachmentCard(
         border = BorderStroke(PALLayout.hairline, MaterialTheme.colorScheme.outlineVariant),
         shape = MaterialTheme.shapes.medium,
     ) {
-        Column(Modifier.widthIn(min = 216.dp, max = 280.dp).padding(PALLayout.groupGap),
+        Column(Modifier.widthIn(min = AttachmentTokens.cardMinWidth, max = AttachmentTokens.cardMaxWidth).padding(PALLayout.groupGap),
             verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                 icon()

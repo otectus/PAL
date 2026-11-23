@@ -9,6 +9,8 @@
     <string name="transcript_stopping">Stopping…</string>
     <string name="transcript_stop">Stop</string>
     <string name="transcript_working">Working on it…</string>
+    <string name="transcript_complete">Response complete</string>
+    <string name="transcript_stopped">Turn stopped</string>
     <string name="transcript_updated">Updated reply</string>
     <string name="transcript_latest">Latest messages</string>
     <plurals name="transcript_new_messages">

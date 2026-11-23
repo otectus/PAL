@@ -39,9 +39,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.delay
 
-private object ConversationTokens {
+internal object ConversationTokens {
     val messageGap = 22.dp
     val transcriptVerticalPadding = 18.dp
+    val activityHeight = 640.dp
+    val headerMinHeight = 240.dp
+    val portraitMinHeight = 300.dp
 }
 
 internal fun restoredScrollIndex(position: SessionScrollPosition?, messages: List<Message>, hasOlder: Boolean): Int {
@@ -94,20 +97,36 @@ internal fun ConversationTimeline(
         }
     }
     val conversationIds = remember(conversation) { conversation.mapTo(HashSet(), Message::id) }
-    LaunchedEffect(sessionId, list, conversation) {
+    val currentConversationIds by rememberUpdatedState(conversationIds)
+    val currentPositionChanged by rememberUpdatedState(onPositionChanged)
+    LaunchedEffect(sessionId, list) {
         snapshotFlow {
             if (list.isScrollInProgress) null else Triple(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset, follow)
         }.distinctUntilChanged().collectLatest { position ->
             if (position == null || sessionId.isBlank()) return@collectLatest
             delay(250)
             val visibleKey = list.layoutInfo.visibleItemsInfo.firstOrNull()?.key as? String
-            onPositionChanged(SessionScrollPosition(
+            currentPositionChanged(SessionScrollPosition(
                 sessionId = sessionId,
-                anchorMessageId = visibleKey?.takeIf(conversationIds::contains),
+                anchorMessageId = visibleKey?.takeIf(currentConversationIds::contains),
                 itemIndex = position.first,
                 offset = position.second,
                 following = position.third,
             ))
+        }
+    }
+    var completionMessage by remember(sessionId) { mutableIntStateOf(0) }
+    var previousBusy by remember(sessionId) { mutableStateOf(busy) }
+    var previousStatus by remember(sessionId) { mutableStateOf(status) }
+    LaunchedEffect(busy, status) {
+        val wasBusy = previousBusy
+        val oldStatus = previousStatus
+        previousBusy = busy
+        previousStatus = status
+        if (wasBusy && !busy) {
+            completionMessage = if (oldStatus == "stopping") R.string.transcript_stopped else R.string.transcript_complete
+            delay(3_000)
+            completionMessage = 0
         }
     }
     // Count only rows appended after the last-seen tail. Loading older history prepends rows and
@@ -153,19 +172,24 @@ internal fun ConversationTimeline(
                         liveRegion = LiveRegionMode.Polite
                         stateDescription = displayedStatus
                     }, verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        if (status == "waiting") Icon(Icons.Default.Info, null, Modifier.size(18.dp))
-                        else CircularProgressIndicator(Modifier.size(PALLayout.iconSmall), strokeWidth = 2.dp)
+                        horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                        if (status == "waiting") Icon(Icons.Default.Info, null, Modifier.size(PALLayout.iconMedium))
+                        else CircularProgressIndicator(Modifier.size(PALLayout.iconSmall), strokeWidth = PALLayout.focusStroke)
                         Text(displayedStatus, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
-                else Spacer(Modifier.height(1.dp))
+                else if (completionMessage != 0) Row(Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                    Icon(Icons.Default.Info, null, Modifier.size(PALLayout.iconSmall), tint = MaterialTheme.colorScheme.primary)
+                    Text(stringResource(completionMessage), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+                }
+                else Spacer(Modifier.height(PALLayout.hairline))
             }
         }
         if (!follow) FilledTonalButton(onClick = { follow = true }, modifier = Modifier.align(Alignment.BottomCenter).padding(PALLayout.groupGap).testTag("latestMessages").semantics {
             liveRegion = LiveRegionMode.Polite
         },
-            elevation = ButtonDefaults.filledTonalButtonElevation(defaultElevation = 4.dp)) {
+            elevation = ButtonDefaults.filledTonalButtonElevation(defaultElevation = PALLayout.tight)) {
             Text((when {
                 newMessages > 0 -> pluralStringResource(R.plurals.transcript_new_messages, newMessages, newMessages)
                 tail != null && tail.id == seenTailId && tail.revision != seenRevision -> stringResource(R.string.transcript_updated)
@@ -234,31 +258,31 @@ internal fun ActivityPanel(
     val activity = items.filterNot(Message::isConversationMessage).sortedByDescending(Message::time)
     ModalBottomSheet(onDismiss, modifier = Modifier.testTag("activityPanel"), sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = PALLayout.inset, vertical = PALLayout.tight), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Activity", Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineSmall)
+                Text(stringResource(R.string.conversation_activity), Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineSmall)
             }
-            TextButton(onRefresh, enabled = !loading, modifier = Modifier.heightIn(min = 48.dp)) {
-                Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(4.dp)); Text("Refresh")
+            TextButton(onRefresh, enabled = !loading, modifier = Modifier.heightIn(min = PALLayout.target)) {
+                Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(PALLayout.tight)); Text(stringResource(R.string.conversation_refresh))
             }
-            TextButton(onDismiss, modifier = Modifier.heightIn(min = 48.dp)) {
-                Icon(Icons.Default.Close, null); Spacer(Modifier.width(4.dp)); Text("Close")
+            TextButton(onDismiss, modifier = Modifier.heightIn(min = PALLayout.target)) {
+                Icon(Icons.Default.Close, null); Spacer(Modifier.width(PALLayout.tight)); Text(stringResource(R.string.conversation_close))
             }
         }
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp)) }
-        if (activity.isEmpty() && agents.isEmpty() && !loading && error == null) Text("No activity for this session.", modifier = Modifier.padding(20.dp))
-        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 640.dp), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)) {
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = PALLayout.inset)) }
+        if (activity.isEmpty() && agents.isEmpty() && !loading && error == null) Text(stringResource(R.string.conversation_no_activity), modifier = Modifier.padding(PALLayout.inset))
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = ConversationTokens.activityHeight), contentPadding = PaddingValues(horizontal = PALLayout.gutter, vertical = PALLayout.groupGap)) {
             if (agents.isNotEmpty()) {
-                item { Text("Subagents · ${agents.size}", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 8.dp)) }
+                item { Text(pluralStringResource(R.plurals.conversation_subagents, agents.size, agents.size), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = PALLayout.small)) }
                 items(agents, key = { "agent-${it.id}" }) { agent -> AgentActivityRow(agent, canOpenAgent(agent), onOpenAgent) }
-                if (activity.isNotEmpty()) item { HorizontalDivider(Modifier.padding(vertical = 8.dp)); Text("Tool activity", style = MaterialTheme.typography.titleSmall) }
+                if (activity.isNotEmpty()) item { HorizontalDivider(Modifier.padding(vertical = PALLayout.small)); Text(stringResource(R.string.conversation_tool_activity), style = MaterialTheme.typography.titleSmall) }
             }
             items(activity, key = { it.id }) { itemContent(it) }
             // Older records stay on the desktop until asked for; the list says so instead of ending.
-            if (hasOlder) item(key = "olderActivity") { OutlinedButton(onLoadOlder, enabled = !loadingOlder, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).testTag("olderActivity")) { Text(if (loadingOlder) "Loading older activity…" else "Load older activity") } }
+            if (hasOlder) item(key = "olderActivity") { OutlinedButton(onLoadOlder, enabled = !loadingOlder, modifier = Modifier.fillMaxWidth().padding(vertical = PALLayout.small).testTag("olderActivity")) { Text(stringResource(if (loadingOlder) R.string.conversation_loading_older_activity else R.string.conversation_load_older_activity)) } }
         }
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(PALLayout.sectionGap))
     }
 }
 
@@ -267,10 +291,10 @@ private fun AgentActivityRow(agent: Agent, canOpen: Boolean, onOpen: (Agent) -> 
     var expanded by rememberSaveable(agent.id) { mutableStateOf(false) }
     Surface(
         shape = MaterialTheme.shapes.medium,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        border = BorderStroke(PALLayout.hairline, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth().padding(vertical = PALLayout.tight),
     ) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.fillMaxWidth().padding(PALLayout.groupGap), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             Row(
                 Modifier.fillMaxWidth().clickable { expanded = !expanded }.heightIn(min = PALLayout.target),
                 verticalAlignment = Alignment.CenterVertically,
@@ -288,8 +312,8 @@ private fun AgentActivityRow(agent: Agent, canOpen: Boolean, onOpen: (Agent) -> 
                 agent.detail?.takeIf(String::isNotBlank)?.let {
                     Text(it, color = if (agent.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                agent.parentId?.let { Text("Parent · ${it.take(8)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                if (canOpen) TextButton({ onOpen(agent) }, modifier = Modifier.align(Alignment.End)) { Text("Open conversation") }
+                agent.parentId?.let { Text(stringResource(R.string.conversation_agent_parent, it.take(8)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                if (canOpen) TextButton({ onOpen(agent) }, modifier = Modifier.align(Alignment.End)) { Text(stringResource(R.string.conversation_open_conversation)) }
             }
         }
     }
@@ -306,14 +330,14 @@ internal fun MessageSources(sources: List<kotlinx.serialization.json.JsonObject>
         ((source["title"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf(String::isNotBlank) ?: url) to url
     }.distinctBy { it.second }
     if (entries.isEmpty()) return
-    Column(Modifier.padding(top = 8.dp).testTag("messageSources")) {
+    Column(Modifier.padding(top = PALLayout.small).testTag("messageSources")) {
         Text(stringResource(R.string.transcript_sources), modifier = Modifier.semantics { heading() },
             style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         entries.forEach { (title, url) ->
             val safe = safeLink(url)
             val openDescription = stringResource(R.string.transcript_open_source, title)
-            if (safe != null) TextButton({ onOpen(safe) }, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = openDescription }) {
+            if (safe != null) TextButton({ onOpen(safe) }, contentPadding = PaddingValues(horizontal = PALLayout.none, vertical = PALLayout.tight),
+                modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target).semantics { contentDescription = openDescription }) {
                 Text("$title · ${java.net.URI(safe).host}", modifier = Modifier.fillMaxWidth(), maxLines = 2,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
             } else Text(stringResource(R.string.transcript_unavailable_source, title), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
