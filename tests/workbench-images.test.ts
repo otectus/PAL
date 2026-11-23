@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import sharp from 'sharp';
 import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
@@ -322,4 +323,166 @@ test('IM15 an MCP image becomes an artifact; structured content and resource lin
   assert.doesNotMatch(JSON.stringify(result), new RegExp(image.slice(0, 40).replace(/[+/]/g, '.')), 'the bytes are not inlined into the result');
   const version = f.core.workbench.artifacts.version(session.id, result.artifacts[0].artifactId);
   assert.deepEqual([version.image?.width, version.provenance.kind, version.provenance.tool], [20, 'mcp', 'render']);
+});
+
+test('image production binds a mask to its exact target version, not merely an equal-size image', async t => {
+  const f = await workbenchFixture(t);
+  await openaiConnection(f.core);
+  const session = await imageSession(f);
+  const first = await importImage(f.core, session.id, await png(64, 48, '#aa0000'), 'first.png', { cloud: true });
+  const second = await importImage(f.core, session.id, await png(64, 48, '#0000aa'), 'second.png', { cloud: true });
+  const mask = await f.core.rpc('images.mask', { sessionId: session.id, ...first, mask: b64(await png(64, 48, '#ffffff')) });
+  await assert.rejects(f.core.workbench.media.prepare(session.id, { operation: 'masked-edit', prompt: 'change it', references: [{ ...second, role: 'target' }], mask: { artifactId: mask.artifactId, versionId: mask.versionId }, protectOutside: true },
+    { connectionId: f.core.settings.workbench.imageConnections[0].id, origin: 'user' }), /not drawn on the selected target version/);
+});
+
+test('reference-only creation keeps guide roles explicit through provider adapters', async t => {
+  const f = await workbenchFixture(t);
+  await openaiConnection(f.core, { billingAcknowledged: true });
+  const backend = providerFetch({ 'https://api.openai.com/v1/images/edits': async () => json({ data: [{ b64_json: b64(await png(48, 48, '#00aa55')) }] }) });
+  f.core.workbench.media.fetch = backend.fetch;
+  const session = await imageSession(f), guide = await importImage(f.core, session.id, await png(32, 32, '#663399'), 'style.png', { cloud: true });
+  const started = await f.core.rpc('images.generate', { sessionId: session.id, connectionId: f.core.settings.workbench.imageConnections[0].id,
+    request: { operation: 'reference', prompt: 'a new poster', references: [{ ...guide, role: 'style' }] } });
+  await until(() => f.core.workbench.operations.get(started.operationId).state === 'completed');
+  assert.match(backend.calls[0].body.prompt, /none of the reference images is an edit target/i);
+  assert.match(backend.calls[0].body.prompt, /Reference image 1 is a style guide/);
+  assert.equal(backend.calls[0].body.images.length, 1);
+  const operation = f.core.workbench.operations.get(started.operationId), recipe = await f.core.workbench.media.recipe(session.id, { operationId: operation.id });
+  assert.equal(recipe.request.references[0].role, 'style');
+  assert.equal(recipe.request.references.some(ref => ref.role === 'target'), false);
+  assert.equal(recipe.output.destination, 'conversation-artifacts');
+  assert.deepEqual(recipe.backend.cost, { kind: 'provider-account', note: 'May be billed by the configured provider' });
+});
+
+test('configured image estimates are validated, retained for older clients, and captured without price assumptions', async t => {
+  const f = await workbenchFixture(t);
+  const connection = await openaiConnection(f.core, { estimate: { perImage: 0.125, currency: 'usd' } });
+  assert.deepEqual(f.core.workbench.media.publicConnection(connection).estimate, { perImage: 0.125, currency: 'USD' });
+  const session = await imageSession(f), prepared = await f.core.workbench.media.prepare(session.id, { prompt: 'two estimated images', count: 2 }, { connectionId: connection.id, origin: 'user' });
+  const recipe = await f.core.workbench.media.recipe(session.id, { operationId: prepared.operation.id });
+  assert.deepEqual(recipe.backend.cost, { kind: 'provider-account', note: 'May be billed by the configured provider', amount: 0.25, currency: 'USD', source: 'configured estimate' });
+  const { estimate: _estimate, ...olderClient } = f.core.settings.workbench.imageConnections[0];
+  await f.core.updateSettings({ workbench: { imageConnections: [olderClient] } });
+  assert.deepEqual(f.core.settings.workbench.imageConnections[0].estimate, { perImage: 0.125, currency: 'USD' }, 'omission retains the estimate');
+  await assert.rejects(f.core.updateSettings({ workbench: { imageConnections: [{ ...f.core.settings.workbench.imageConnections[0], estimate: { perImage: -1, currency: 'US' } }] } }), /nonnegative.*three-letter/);
+  await f.core.updateSettings({ workbench: { imageConnections: [{ ...f.core.settings.workbench.imageConnections[0], estimate: null }] } });
+  assert.equal(f.core.settings.workbench.imageConnections[0].estimate, undefined, 'null explicitly clears the estimate');
+});
+
+test('an unalignable protected result is private until explicitly accepted', async t => {
+  const f = await workbenchFixture(t);
+  await openaiConnection(f.core, { billingAcknowledged: true });
+  const backend = providerFetch({ 'https://api.openai.com/v1/images/edits': async () => json({ data: [{ b64_json: b64(await png(64, 64, '#00ff00')) }, { b64_json: b64(await png(64, 64, '#0000ff')) }] }) });
+  f.core.workbench.media.fetch = backend.fetch;
+  const session = await imageSession(f), target = await importImage(f.core, session.id, await png(64, 48, '#ff0000'), 'target.png', { cloud: true });
+  const mask = await f.core.rpc('images.mask', { sessionId: session.id, ...target, mask: b64(await png(64, 48, '#ffffff')) });
+  const before = f.core.workbench.artifacts.list(session.id, { kind: 'image' }).artifacts.length;
+  const started = await f.core.rpc('images.generate', { sessionId: session.id, connectionId: f.core.settings.workbench.imageConnections[0].id,
+    request: { operation: 'masked-edit', prompt: 'change it', count: 2, references: [{ ...target, role: 'target' }], mask: { artifactId: mask.artifactId, versionId: mask.versionId }, protectOutside: true } });
+  await until(() => f.core.workbench.operations.get(started.operationId).state === 'failed');
+  let operation = f.core.workbench.operations.get(started.operationId);
+  assert.equal(operation.error?.code, 'protection_alignment');
+  assert.equal(operation.results.length, 0);
+  assert.equal(f.core.workbench.artifacts.list(session.id, { kind: 'image' }).artifacts.length, before, 'candidate bytes are not an artifact');
+  const [candidate, secondCandidate]: any[] = operation.details!.unprotectedCandidates as any[];
+  const preview = await f.core.workbench.media.previewCandidate(session.id, operation.id, candidate.candidateId);
+  assert.match(preview.data, /^data:image\/png;base64,/);
+  const other = await imageSession(f);
+  await assert.rejects(f.core.workbench.media.previewCandidate(other.id, operation.id, candidate.candidateId), /another conversation/);
+  // Simulate a crash after artifact publication but before operation details/results were updated.
+  const recipe = await f.core.workbench.media.recipe(session.id, { operationId: operation.id }), candidateBytes = await f.core.workbench.media.candidates.read(operation.id, candidate);
+  const crashPublished = await f.core.workbench.artifacts.install({ sessionId: session.id, bytes: candidateBytes, mime: candidate.mime, name: 'crash-published.png', source: 'model-generation', operationId: operation.id,
+    provenance: { kind: 'generation', recipeDigest: recipe.digest, candidateId: candidate.candidateId, outputIndex: candidate.index, operationId: operation.id } });
+  // Acceptance is local and remains possible after the original provider connection is removed.
+  await f.core.updateSettings({ workbench: { imageConnections: [] } });
+  const [accepted, acceptedAgain, acceptedSecond] = await Promise.all([
+    f.core.workbench.media.acceptUnprotected(session.id, operation.id, candidate.candidateId),
+    f.core.workbench.media.acceptUnprotected(session.id, operation.id, candidate.candidateId),
+    f.core.workbench.media.acceptUnprotected(session.id, operation.id, secondCandidate.candidateId),
+  ]);
+  assert.equal(accepted.versionId, crashPublished.versionId, 'retry recovered the artifact published before the simulated crash');
+  assert.equal(acceptedAgain.versionId, accepted.versionId, 'concurrent duplicate acceptance is idempotent');
+  assert.match(String(acceptedSecond.provenance.protection), /explicitly accepted this unprotected/);
+  operation = f.core.workbench.operations.get(operation.id);
+  assert.deepEqual(new Set(operation.results.map(item => item.versionId)), new Set([accepted.versionId, acceptedSecond.versionId]), 'concurrent candidate acceptances preserve both results');
+  const acceptedRows = f.core.workbench.artifacts.store.db.prepare("SELECT data FROM artifact_versions WHERE json_extract(data,'$.operationId')=?").all(operation.id).map(row => JSON.parse(String(row.data)));
+  assert.equal(acceptedRows.filter(version => version.provenance?.candidateId === candidate.candidateId).length, 1);
+  assert.match((await f.core.workbench.media.previewCandidate(session.id, operation.id, candidate.candidateId)).data, /^data:image\/png;base64,/, 'accepted candidate remains previewable through authorized artifact bytes');
+});
+
+test('normal and restart ComfyUI completion share strict finalization and a snapshotted recipe', async t => {
+  const f = await workbenchFixture(t);
+  const comfy = await fakeComfy(t, { runMs: 100000 });
+  await f.core.updateSettings({ workbench: { imageConnections: [{ name: 'Studio', kind: 'comfyui', origin: comfy.origin, route: 'local', budget: { imagesPerDay: 0, modelMayStart: false } }] } });
+  const connectionId = f.core.settings.workbench.imageConnections[0].id;
+  await f.core.rpc('images.importWorkflow', { connectionId, name: 'Masked edit', graph: workflow(true, true) });
+  const session = await imageSession(f), target = await importImage(f.core, session.id, await png(80, 60, '#112233'));
+  const mask = await f.core.rpc('images.mask', { sessionId: session.id, ...target, mask: b64(await png(80, 60, '#ffffff')) });
+  const request = { operation: 'masked-edit', prompt: 'paint it pink', references: [{ ...target, role: 'target' }], mask: { artifactId: mask.artifactId, versionId: mask.versionId }, protectOutside: true };
+  const first = await f.core.rpc('images.generate', { sessionId: session.id, connectionId, request });
+  await until(() => f.core.workbench.operations.get(first.operationId).state === 'running');
+  await comfy.finish(f.core.workbench.operations.get(first.operationId).remoteId!);
+  await until(() => f.core.workbench.operations.get(first.operationId).state === 'completed');
+  const firstOperation = f.core.workbench.operations.get(first.operationId), firstVersion = f.core.workbench.artifacts.version(session.id, firstOperation.results[0].artifactId, firstOperation.results[0].versionId);
+  const second = await f.core.rpc('images.generate', { sessionId: session.id, connectionId, request: { ...request, prompt: 'paint it pink after restart' } });
+  await until(() => f.core.workbench.operations.get(second.operationId).state === 'running');
+  const secondRemote = f.core.workbench.operations.get(second.operationId).remoteId!;
+  const recipe = await f.core.workbench.media.recipe(session.id, { operationId: second.operationId });
+  assert.equal(recipe.workflow?.snapshotDigest.length, 64);
+  assert.deepEqual(recipe.workflow?.dependencies.missingNodes, []);
+  assert.equal((recipe.workflow?.graph as any)['11'].class_type, 'LoadImage');
+  await f.core.close();
+  await comfy.finish(secondRemote);
+  const reopened = new Core(new Store(f.state));
+  try {
+    await until(() => reopened.workbench.operations.get(second.operationId).state === 'completed', 10000);
+    const recovered = reopened.workbench.operations.get(second.operationId), recoveredVersion = reopened.workbench.artifacts.version(session.id, recovered.results[0].artifactId, recovered.results[0].versionId);
+    assert.deepEqual(recoveredVersion.parents.map(parent => parent.relation), ['target', 'mask']);
+    assert.match(String(recoveredVersion.provenance.protection), /verified unchanged/);
+    assert.equal(recoveredVersion.policyId, firstVersion.policyId);
+    assert.equal(recoveredVersion.sha256, firstVersion.sha256, 'live and recovered outputs use the same verification/protection bytes path');
+    assert.equal(comfy.state.prompts.length, 2, 'restart queried the recorded prompt and did not submit again');
+  } finally { await reopened.close(); }
+});
+
+test('portable recipes require destination/remap review, import assets locally, and never submit', async t => {
+  const f = await workbenchFixture(t);
+  await openaiConnection(f.core, { billingAcknowledged: true });
+  const backend = providerFetch({ 'https://api.openai.com/v1/images/edits': async () => json({ data: [{ b64_json: b64(await png(64, 48, '#abcdef')) }] }) });
+  f.core.workbench.media.fetch = backend.fetch;
+  const source = await imageSession(f), target = await importImage(f.core, source.id, await png(64, 48, '#123456'), 'portable-target.png', { cloud: true });
+  const mask = await f.core.rpc('images.mask', { sessionId: source.id, ...target, mask: b64(await png(64, 48, '#ffffff')) });
+  const started = await f.core.rpc('images.generate', { sessionId: source.id, connectionId: f.core.settings.workbench.imageConnections[0].id,
+    request: { operation: 'masked-edit', prompt: 'portable edit', references: [{ ...target, role: 'target' }], mask: { artifactId: mask.artifactId, versionId: mask.versionId }, protectOutside: true } });
+  await until(() => f.core.workbench.operations.get(started.operationId).state === 'completed');
+  const recipe = await f.core.workbench.media.recipe(source.id, { operationId: started.operationId });
+  const destination = await imageSession(f);
+  await assert.rejects(f.core.rpc('images.recipe', { sessionId: destination.id, recipeId: recipe.recipeId }), /another conversation/);
+  const missingPath = join(f.directory, 'recipe-without-inputs.pal-image.json');
+  await f.core.rpc('images.exportRecipe', { sessionId: source.id, recipeId: recipe.recipeId, path: missingPath });
+  const missingReview = await f.core.rpc('images.inspectRecipeFile', { sessionId: destination.id, path: missingPath, connectionId: f.core.settings.workbench.imageConnections[0].id });
+  assert.equal(missingReview.ready, false); assert.ok(missingReview.inputs.every((input: any) => !input.embedded && !input.exactMatches.length));
+  await assert.rejects(f.core.rpc('images.importRecipeFile', { sessionId: destination.id, path: missingPath, connectionId: f.core.settings.workbench.imageConnections[0].id, expectedDigest: missingReview.digest }), /Map input ref-1/);
+  await assert.rejects(f.core.rpc('images.importRecipeFile', { sessionId: destination.id, path: missingPath, connectionId: f.core.settings.workbench.imageConnections[0].id, expectedDigest: missingReview.digest,
+    inputMap: { 'ref-1': { artifactId: target.artifactId, versionId: target.versionId } } }), /not available in this conversation/);
+  const portablePath = join(f.directory, 'recipe-with-inputs.pal-image.json');
+  const exported = await f.core.rpc('images.exportRecipe', { sessionId: source.id, recipeId: recipe.recipeId, path: portablePath, includeInputs: true });
+  assert.ok(exported.bytes > 0);
+  await assert.rejects(f.core.rpc('images.inspectRecipeFile', { sessionId: destination.id, path: portablePath }), /destination image connection explicitly/);
+  const review = await f.core.rpc('images.inspectRecipeFile', { sessionId: destination.id, path: portablePath, connectionId: f.core.settings.workbench.imageConnections[0].id });
+  assert.equal(review.submitted, false); assert.equal(review.ready, true);
+  assert.deepEqual(review.inputs.map((input: any) => [input.inputId, input.exactMatches.length, input.embedded]), [['ref-1', 0, true], ['mask', 0, true]]);
+  const imported = await f.core.rpc('images.importRecipeFile', { sessionId: destination.id, path: portablePath, connectionId: f.core.settings.workbench.imageConnections[0].id, expectedDigest: review.digest, importEmbeddedInputs: ['ref-1', 'mask'] });
+  assert.equal(imported.submitted, false); assert.equal(backend.calls.length, 1, 'import made no provider request');
+  const importedTarget = f.core.workbench.artifacts.version(destination.id, imported.recipe.request.references[0].artifactId, imported.recipe.request.references[0].versionId);
+  const importedMask = f.core.workbench.artifacts.version(destination.id, imported.recipe.request.mask!.artifactId, imported.recipe.request.mask!.versionId);
+  assert.deepEqual(importedTarget.policy, { remote: false, cloud: false }, 'embedded input defaults to local only');
+  assert.equal(importedMask.parents[0].versionId, importedTarget.versionId, 'mask is rebound to the exact imported target');
+  await assert.rejects(f.core.workbench.media.prepareReplay(destination.id, imported.recipe.recipeId, { origin: 'user' }), /may only be processed on this computer/);
+  const tamperedPath = join(f.directory, 'tampered.pal-image.json'), tampered = (await readFile(portablePath, 'utf8')).replace('portable edit', 'tampered edit');
+  await writeFile(tamperedPath, tampered);
+  await assert.rejects(f.core.rpc('images.inspectRecipeFile', { sessionId: destination.id, path: tamperedPath, connectionId: f.core.settings.workbench.imageConnections[0].id }), /match.*digest/);
+  await f.core.workbench.media.removeSession(destination.id);
+  await assert.rejects(f.core.workbench.media.recipe(destination.id, { recipeId: imported.recipe.recipeId }), /missing or unreadable/);
 });

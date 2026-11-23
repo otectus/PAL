@@ -97,6 +97,9 @@ Rectangle {
             implicitHeight:body.implicitHeight+(contentWidth>width?Theme.minimumTarget:0)
             contentWidth:Math.max(width,body.contentWidth);contentHeight:height
             flickableDirection:Flickable.HorizontalFlick;clip:true
+            interactive: contentWidth > width
+            boundsBehavior: Flickable.StopAtBounds
+            Component.onCompleted: App.routeMessageWheel(messageViewport)
             onWidthChanged:body.overflowWidth=0
             ScrollBar.horizontal:CScrollBar {}
             TextArea {
@@ -104,6 +107,7 @@ Rectangle {
                 property bool formatting:false
                 property real overflowWidth:0
                 property var codeHeaders: []
+                property string formattedMessageId: ""
                 function expandForOverflow(){if(contentWidth>width+1)overflowWidth=Math.ceil(contentWidth)}
                 function scheduleFormat(){
                     if(card.message.role==="tool"||card.workbench){formatTimer.stop();codeHeaders=[];return}
@@ -116,6 +120,7 @@ Rectangle {
                     if(card.message.role==="tool"||card.workbench){codeHeaders=[];return}
                     formatting=true
                     codeHeaders=App.formatMessage(textDocument,messageViewport.width,Theme.space2,Theme.compactHeight,Theme.bodyLeading)||[]
+                    formattedMessageId = card.message.id
                     formatting=false
                 }
                 // QTextDocument emits textChanged for block-format edits too. Those edits are this
@@ -153,7 +158,8 @@ Rectangle {
                 Timer { id:formatTimer;interval:32;onTriggered:body.formatDocument() }
             }
             Repeater {
-                model: body.codeHeaders
+                // A recycled delegate can still hold fence positions from the previous message.
+                model: body.formattedMessageId === card.message.id ? body.codeHeaders : []
                 Rectangle {
                     id:codeHeader
                     required property var modelData

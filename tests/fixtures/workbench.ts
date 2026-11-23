@@ -65,11 +65,11 @@ export async function until(check: () => boolean | Promise<boolean>, timeout = 8
  * A Core with a private state directory, a project folder and a scripted Ollama server. `steps` answer
  * successive /api/chat requests; the last step repeats. `requests` holds every chat request body.
  */
-export async function workbenchFixture(t: any, steps: Step[] = [() => ({ content: 'Done.' })], options: { cloud?: boolean } = {}) {
+export async function workbenchFixture(t: any, steps: Step[] = [() => ({ content: 'Done.' })], options: { cloud?: boolean; contextWindow?: number } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'pal-workbench-')), state = join(directory, 'state'), project = join(directory, 'project');
   await mkdir(project); await mkdir(state);
   const requests: any[] = [];
-  const catalog = [model('chat:latest', ['completion', 'tools', 'vision']), model('text-tools:latest', ['completion', 'tools']), model('plain:latest', ['completion']), model('cloudy:cloud', ['completion', 'tools'], { remote_host: 'https://ollama.com' }), model('see:latest', ['completion', 'vision'])];
+  const catalog = [model('chat:latest', ['completion', 'tools', 'vision']), model('text-tools:latest', ['completion', 'tools'], options.contextWindow ? {model_info:{'llama.context_length': options.contextWindow}} : {}), model('plain:latest', ['completion']), model('cloudy:cloud', ['completion', 'tools'], { remote_host: 'https://ollama.com' }), model('see:latest', ['completion', 'vision'])];
   const server = createServer(async (req, res: ServerResponse) => {
     let text = ''; for await (const chunk of req) text += chunk;
     const body = text ? JSON.parse(text) : {};

@@ -33,7 +33,8 @@ export type ImageCapabilities = {
   notes: string[];
   billed: boolean;
 };
-export type ImageReference = { artifactId: string; versionId: string; role: 'edit-base' | 'subject' | 'composition' | 'style' | 'mask' };
+export type ImageReferenceRole = 'target' | 'edit-base' | 'subject' | 'composition' | 'style';
+export type ImageReference = { artifactId: string; versionId: string; role: ImageReferenceRole };
 export type ImageRequest = {
   operation: ImageOperation;
   prompt: string;
@@ -64,7 +65,16 @@ export type ImageEvent =
   | { type: 'warning'; message: string }
   | { type: 'continuation'; id: string };
 /** Inputs the service resolved for one submission: bytes never leave the broker except to the chosen backend. */
-export type ResolvedInputs = { references: { bytes: Buffer; mime: string; width: number; height: number; role: ImageReference['role'] }[]; mask?: { bytes: Buffer; width: number; height: number } };
+export type ResolvedImage = { bytes: Buffer; mime: string; width: number; height: number; role: ImageReferenceRole };
+export type ResolvedInputs = {
+  /** The exact image being edited. `edit-base` is an accepted inbound alias, normalized to target. */
+  target?: ResolvedImage;
+  /** Images that guide a result but are not the edit target and never receive its mask. */
+  guides: ResolvedImage[];
+  /** Compatibility view for callers and adapters: target first, followed by guides. */
+  references: ResolvedImage[];
+  mask?: { bytes: Buffer; width: number; height: number };
+};
 export interface ImageBackend {
   describe(): ImageCapabilities;
   validate(request: ImageRequest): { request: ImageRequest; adjustments: string[] };

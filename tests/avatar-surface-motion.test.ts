@@ -71,32 +71,82 @@ test('portrait expressions preserve the neutral silhouette, hair and costume out
 
 test('new neutral artwork preserves reference colors and blinks only registered visible eyes', async t => {
   const sources = Object.fromEntries(avatarCatalog.map(entry => [entry.id, entry.authoring]));
-  for (const id of ['pal_classic', 'pal_gothic', 'pal_punk_unmasked', 'cynthia', 'genga', 'kippy', 'pomni', 'rem', 'sarah', 'sylva', 'witty']) {
+  for (const id of ['pal', 'pal_classic', 'pal_gothic', 'pal_punk_unmasked', 'cynthia', 'genga', 'kippy', 'pomni', 'rem', 'sarah', 'sylva', 'witty']) {
     const directory = 'artwork/avatars/' + id;
-    await t.test(id, {skip: !existsSync(directory + '/front.png') || !existsSync('reference/' + id + '.png')}, async () => {
+    const referencePath = id === 'pal' ? 'reference/pal-front.png' : 'reference/' + id + '.png';
+    await t.test(id, {skip: !existsSync(directory + '/front.png') || !existsSync(referencePath)}, async () => {
       const cfg = sources[id];
       const [left, top, width, height] = cfg.crop;
-      const reference = await sharp('reference/' + id + '.png').extract({left, top, width, height}).ensureAlpha().raw().toBuffer();
-      const open = await sharp(directory + '/front.png').ensureAlpha().raw().toBuffer();
-      const closed = await sharp(directory + '/blink.png').ensureAlpha().raw().toBuffer();
+      const referenceImage = sharp(referencePath).extract({left, top, width, height});
+      const {data: reference, info: referenceInfo} = await referenceImage.ensureAlpha().raw().toBuffer({resolveWithObject: true});
+      const {data: open, info: openInfo} = await sharp(directory + '/front.png').ensureAlpha().raw().toBuffer({resolveWithObject: true});
+      const {data: closed, info: closedInfo} = await sharp(directory + '/blink.png').ensureAlpha().raw().toBuffer({resolveWithObject: true});
       const registration = JSON.parse(readFileSync(directory + '/registration.json', 'utf8'));
-      assert.equal(open.length, reference.length);
-      assert.equal(closed.length, open.length);
+      assert.deepEqual([openInfo.width, openInfo.height], [referenceInfo.width, referenceInfo.height], id + ': neutral dimensions');
+      assert.deepEqual([closedInfo.width, closedInfo.height], [openInfo.width, openInfo.height], id + ': blink dimensions');
       assert.equal(registration.targets.length, cfg.eyes.length);
       if (id === 'rem') assert.equal(cfg.eyes.length, 1, 'the fringe-covered eye is never invented or repainted');
       if (id === 'witty') assert.equal(cfg.eyes.length, 1, 'the mint X is a fixed mark, only the visible eye blinks');
       let changes = 0;
-      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-        const at = (y * width + x) * 4;
+      for (let y = 0; y < openInfo.height; y++) for (let x = 0; x < openInfo.width; x++) {
+        const at = (y * openInfo.width + x) * 4;
         assert.equal(open[at + 3], closed[at + 3], id + ': blinking preserves the silhouette');
         if (open[at + 3]) assert.deepEqual(open.subarray(at, at + 3), reference.subarray(at, at + 3), id + ': original RGB');
         if ([0, 1, 2].some(c => open[at + c] !== closed[at + c])) {
-          assert.ok(cfg.eyes.some(([ex, ey, ew, eh]: number[]) => x + left >= ex && x + left < ex + ew && y + top >= ey && y + top < ey + eh), id + ': changes stay inside visible eyelids');
+          const sourceX = x + left, sourceY = y + top;
+          assert.ok(cfg.eyes.some(([ex, ey, ew, eh]: number[]) => sourceX >= ex && sourceX < ex + ew && sourceY >= ey && sourceY < ey + eh), id + ': changes stay inside visible eyelids');
           changes++;
         }
       }
       assert.ok(changes > 100, id + ': eyelids actually close');
     });
+  }
+});
+
+test('default PAL cups both lower cheeks in the gentle and strong shy holds, including blinks', async () => {
+  const avatar = avatarCatalog.find(entry => entry.id === 'pal')!;
+  assert.equal(avatar.default, true);
+  const rig = JSON.parse(readFileSync(`assets/${avatar.rig}`, 'utf8'));
+  const part = rig.parts[0], shy = rig.surfaceSequences.routes.shy;
+  const {data, info} = await sharp(`assets/${rig.texture}`).ensureAlpha().raw().toBuffer({resolveWithObject: true});
+  const [nx, ny, nw, nh] = part.sourceRect;
+  const neutral = await sharp(data, {raw:info}).extract({left:nx, top:ny, width:nw, height:nh})
+    .resize(400, 400).ensureAlpha().raw().toBuffer();
+  // The authored fingertip targets are x=345..380/y=270..320 in the
+  // 1024-square neutral coordinate system. These slightly generous 400px
+  // regions stay beside and below the eyes while covering the lower visor
+  // edges. Head tilt can move the pale shell through them, but only graphite
+  // fingers add enough neutral-gray pixels over the neutral dark face on both
+  // sides. Requiring the same pixels in the open and blink cells prevents an
+  // eyelid repaint from masquerading as cheek contact.
+  const cheeks = [
+    {name:'viewer-left', left:132, top:103, width:24, height:32},
+    {name:'viewer-right', left:244, top:103, width:24, height:32},
+  ];
+  const contactPixels = (openRect:number[], blinkRect:number[], cheek:typeof cheeks[number]) => {
+    let count = 0;
+    for (let y = cheek.top; y < cheek.top + cheek.height; y++) for (let x = cheek.left; x < cheek.left + cheek.width; x++) {
+      const neutralAt = (y * 400 + x) * 4;
+      const openAt = ((openRect[1] + y) * info.width + openRect[0] + x) * 4;
+      const blinkAt = ((blinkRect[1] + y) * info.width + blinkRect[0] + x) * 4;
+      const neutralLight = (neutral[neutralAt] + neutral[neutralAt + 1] + neutral[neutralAt + 2]) / 3;
+      const rgb = [data[openAt], data[openAt + 1], data[openAt + 2]];
+      const light = (rgb[0] + rgb[1] + rgb[2]) / 3;
+      if (neutral[neutralAt + 3] > 200 && neutralLight < 35
+          && data[openAt + 3] > 200 && Math.max(...rgb) - Math.min(...rgb) < 20
+          && light >= 35 && light <= 140
+          && data.readUInt32LE(openAt) === data.readUInt32LE(blinkAt)) count++;
+    }
+    return count;
+  };
+  for (const index of [24, 51]) {
+    const id = shy.frames[index], frame = part.surfaceFrames[id - 1];
+    assert.deepEqual(frame.sourceRect.slice(2), [400, 400], `pal/shy-${index}: open hold dimensions`);
+    assert.deepEqual(frame.blinkSourceRect.slice(2), [400, 400], `pal/shy-${index}: blink hold dimensions`);
+    for (const cheek of cheeks) {
+      const count = contactPixels(frame.sourceRect, frame.blinkSourceRect, cheek);
+      assert.ok(count >= 80, `pal/shy-${index}/${cheek.name}: ${count} stable graphite pixels must visibly cup the lower cheek in open and blink art`);
+    }
   }
 });
 
@@ -319,6 +369,10 @@ test('every manifest surface atlas preserves neutral art, planted gestures and f
     const rig = JSON.parse(readFileSync('assets/' + avatar.rig, 'utf8'));
     const part = rig.parts[0];
     const {data, info} = await sharp('assets/' + rig.texture).raw().toBuffer({resolveWithObject: true});
+    if (avatar.id === 'pal') {
+      assert.equal(avatar.default, true, 'PAL remains the default avatar');
+      assert.notEqual(rig.static, true, 'the default PAL participates in the complete gesture and blink suite');
+    }
     if (rig.static) {
       assert.equal(rig.presentation, 'reference');
       assert.equal(part.surfaceMotion, false);
@@ -327,6 +381,18 @@ test('every manifest surface atlas preserves neutral art, planted gestures and f
       continue;
     }
     const sourceDir = 'artwork/avatars/' + avatar.id;
+    if (avatar.id === 'pal') {
+      assert.deepEqual(part.sourceRect, [0, 0, 1024, 1024], 'PAL keeps its exact full-size neutral tile');
+      for (const [index, frame] of part.surfaceFrames.entries())
+        assert.deepEqual(frame.sourceRect.slice(2), [400, 400], `pal/frame-${index + 1}: fixed gesture-cell dimensions`);
+      const reference = await sharp('reference/pal-front.png').ensureAlpha().raw().toBuffer({resolveWithObject: true});
+      assert.deepEqual([reference.info.width, reference.info.height], [1024, 1024], 'tracked PAL neutral dimensions');
+      for (let y = 0; y < 1024; y++) {
+        const atlasStart = ((part.sourceRect[1] + y) * info.width + part.sourceRect[0]) * 4;
+        assert.deepEqual(data.subarray(atlasStart, atlasStart + 1024 * 4),
+          reference.data.subarray(y * 1024 * 4, (y + 1) * 1024 * 4), `pal/neutral row ${y}: exact tracked pixels`);
+      }
+    }
     await t.test(avatar.id + ': exact visible neutral source pixels', {
       skip: !existsSync(sourceDir + '/registration.json') || !existsSync(sourceDir + '/front.png')
         ? 'authoring sources are optional; packed runtime art is checked below' : false
@@ -357,12 +423,35 @@ test('every manifest surface atlas preserves neutral art, planted gestures and f
     assert.ok(info.width*info.height*4 <= 256*1024*1024, 'atlas stays within Qt image allocation limit');
     const hoverFrame=rig.surfaceSequences.routes.shy.frames[24];
     assert.ok(part.surfaceFrames[hoverFrame-1].blinkSourceRect, 'held hover pose can blink');
-    for (const frame of [part, ...part.surfaceFrames].filter(frame => frame.blinkSourceRect)) {
+    const blinkChanges = (frame: any, label: string) => {
       const [x, y, w, h] = frame.sourceRect, [bx, by, bw, bh] = frame.blinkSourceRect;
-      assert.deepEqual([bw, bh], [w, h], avatar.id + ': blink cell matches its open pose');
-      assert.ok(bx >= 0 && by >= 0 && bx + bw <= info.width && by + bh <= info.height, avatar.id + ': blink cell fits atlas');
-      for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++)
-        assert.equal(data[((y + yy) * info.width + x + xx) * 4 + 3], data[((by + yy) * info.width + bx + xx) * 4 + 3], avatar.id + ': blinking preserves pose silhouette');
+      assert.deepEqual([bw, bh], [w, h], label + ': blink cell matches its open pose');
+      assert.ok(bx >= 0 && by >= 0 && bx + bw <= info.width && by + bh <= info.height, label + ': blink cell fits atlas');
+      let changed = 0;
+      for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) {
+        const open = ((y + yy) * info.width + x + xx) * 4;
+        const closed = ((by + yy) * info.width + bx + xx) * 4;
+        assert.equal(data[open + 3], data[closed + 3], label + ': blinking preserves pose silhouette');
+        if ([0, 1, 2].some(channel => data[open + channel] !== data[closed + channel])) changed++;
+      }
+      return changed;
+    };
+    for (const [index, frame] of [part, ...part.surfaceFrames].entries()) {
+      if (frame.blinkSourceRect) blinkChanges(frame, `${avatar.id}/frame-${index}`);
+    }
+    if (avatar.id === 'pal') {
+      assert.ok(part.blinkSourceRect, 'PAL neutral can blink');
+      assert.ok(blinkChanges(part, 'pal/neutral') > 100, 'PAL neutral eyes visibly close');
+      for (const [name, route] of Object.entries<any>(rig.surfaceSequences.routes)) {
+        const endpoint = part.surfaceFrames[route.frames.at(-1) - 1];
+        const changes = blinkChanges(endpoint, `pal/${name}/held`);
+        if (avatar.authoring.heldEyes?.[name]?.closed) assert.equal(changes, 0, `pal/${name}: authored closed eyes remain exact`);
+        else assert.ok(changes > 100, `pal/${name}: held eyes visibly close`);
+      }
+      const hover = part.surfaceFrames[rig.surfaceSequences.routes.shy.frames[24] - 1];
+      const hoverChanges = blinkChanges(hover, 'pal/shyHover/held');
+      if (avatar.authoring.heldEyes?.shyHover?.closed) assert.equal(hoverChanges, 0, 'pal/shyHover: authored closed eyes remain exact');
+      else assert.ok(hoverChanges > 100, 'pal/shyHover: held eyes visibly close');
     }
     const rects = [part.sourceRect, ...part.surfaceFrames.map((frame: any) => frame.sourceRect)];
     // Use the top edge of the visible eye boxes, so expressions do not change

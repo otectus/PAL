@@ -8,7 +8,7 @@ import { Store } from '../broker/store.ts';
 import { JsonLines } from '../broker/wire.ts';
 import { validateAction } from '../broker/desktop.ts';
 import type { Hooks } from '../broker/providers.ts';
-import { defaultPersonality, personalityMaxLength } from '../broker/personality.ts';
+import { defaultPersonality, formerPalPersonality, legacyDefaultPersonality, personalityMaxLength } from '../broker/personality.ts';
 
 async function setup(t: any) {
   const directory=await mkdtemp(join(tmpdir(),'pal-test-'));
@@ -32,9 +32,38 @@ test('folder activation opens only the creation UI and rejects nonlocal or inval
   }
   assert.equal(events.length,1);
 });
+test('upgrading clears only the stock personality and permits explicit later choices', async t => {
+  const cases = [
+    { version: 0, saved: legacyDefaultPersonality, expected: '' },
+    { version: 1, saved: formerPalPersonality, expected: '' },
+    { version: 1, saved: legacyDefaultPersonality, expected: legacyDefaultPersonality },
+    { version: 1, saved: formerPalPersonality + '\nMy edit.', expected: formerPalPersonality + '\nMy edit.' },
+    { version: 1, saved: '', expected: '' },
+  ];
+  for (const { version, saved, expected } of cases) {
+    const directory = await mkdtemp(join(tmpdir(), 'pal-personality-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const old = new Store(directory);
+    old.set('settings', { personality: saved, assistantName: 'Jules', quiet: true });
+    old.set('pal.identityMigration', version);
+    old.set('settingsRevision', '7');
+    old.close();
+    const upgraded = new Store(directory);
+    try {
+      assert.equal(upgraded.settings().personality, expected);
+      assert.equal(upgraded.settings().assistantName, 'Jules');
+      assert.equal(upgraded.settings().quiet, true);
+      assert.equal(upgraded.get('settingsRevision', ''), expected === saved ? '7' : '8');
+      upgraded.set('settings', { personality: formerPalPersonality });
+    } finally { upgraded.close(); }
+    const reopened = new Store(directory);
+    try { assert.equal(reopened.settings().personality, formerPalPersonality); }
+    finally { reopened.close(); }
+  }
+});
 test('personality defaults migrate, edits persist, and invalid patches are atomic',async t=>{
   const {core,directory,session,getHooks}=await setup(t);
-  assert.equal(core.settings.personality,defaultPersonality);
+  assert.equal(core.settings.personality,'');
   core.store.set('settings',{quiet:true});
   assert.equal(core.store.settings().personality,defaultPersonality);
   assert.equal(core.snapshot().personality.defaultText,defaultPersonality);

@@ -3,6 +3,9 @@
  * runtime and how each limit is enforced before they run; a bounded Code Lab permission the user gave can
  * cover Code Lab runs, never commands. Git tools only read.
  */
+import { lineDiff } from '../file-proposals.ts';
+import { validateProgram } from './program.ts';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { completed, declined, failed, routeAllowed, type ToolResultV1 } from '../tools/contracts.ts';
 import type { ToolSpec } from '../tools/registry.ts';
@@ -26,25 +29,82 @@ export function registerAnalysisTools(workbench: Workbench) {
     const d = operation.details || {};
     const data = { ...describeOperation(operation), exitCode: d.exitCode, durationMs: d.durationMs, stdout: String(d.stdout || '').slice(0, 16000), stderr: String(d.stderr || '').slice(0, 8000), ...(d.truncated ? { outputTruncated: true } : {}), ...(d.outputProblem ? { outputProblem: d.outputProblem } : {}), ...(d.changedFiles ? { changedFiles: d.changedFiles, changeNote: d.changeNote } : {}) };
     return operation.state === 'completed' ? completed(`Finished with exit status ${d.exitCode}${operation.results.length ? `; ${operation.results.length} output file${operation.results.length === 1 ? '' : 's'} kept as artifacts` : ''}. A finished run is not proof that its conclusion is right.`, data, { ...(operation.results.length ? { artifacts: operation.results } : {}), operationId: operation.id })
-      : { schema: 1, status: 'failed', summary: operation.error?.message || `The run ended ${operation.state}.`, data, operationId: operation.id, error: { code: operation.error?.code || operation.state, message: operation.error?.message || operation.state, retry: 'explicit' } };
+      : { schema: 1, status: 'failed', summary: operation.error?.message || `The run ended ${operation.state}.`, data, operationId: operation.id, ...(operation.results.length ? { artifacts: operation.results } : {}), error: { code: operation.error?.code || operation.state, message: operation.error?.message || operation.state, retry: 'explicit' } };
   };
   registry.register({
     name: 'codelab_run', family: 'analysis', core: true, effects: { execute: true },
-    description: 'Run Python 3 in PAL’s isolated Code Lab: no network, no access to the user’s files except the artifact versions you pass as inputs (read-only at /work/input/<name>). Write results to /work/output; they become artifacts. numpy, matplotlib and Pillow are available. The user reviews the code first unless they allowed Code Lab runs for a while.',
-    input: z.strictObject({ code: z.string().min(1).max(64 * 1024), inputs: z.array(z.strictObject({ artifactId: id, versionId: id })).max(8).optional(), purpose: z.string().min(1).max(300) }),
+    description: 'Run isolated Python or SQL on selected read-only artifact versions. Use /work/inputs.json for their ordered paths, /work/parameters.json for parameters, and /work/output for output files. SQL queries see input1, input2, etc. For notebook steps, previous files are under /work/steps/1/... . Set sharedPython for an all-Python notebook whose cells share variables in a fresh interpreter. Use parentId to review a revision. Cite the output file, row and column for numerical claims.',
+    input: z.strictObject({ code: z.string().max(65536), language: z.enum(['python','sql']).optional(), sharedPython: z.boolean().optional(), parentId: id.optional(),
+      steps: z.array(z.strictObject({ name: z.string().min(1).max(120), code: z.string().min(1).max(65536), language: z.enum(['python','sql']) })).max(12).optional(),
+      parameters: z.record(z.string(), z.union([z.string(),z.number(),z.boolean(),z.array(z.string())])).optional(),
+      inputs: z.array(z.strictObject({ artifactId: id, versionId: id })).max(8).optional(), purpose: z.string().min(1).max(300) }),
     available: analysis,
     run: guard(async ({ sessionId, signal, turnId }, args) => {
+      const request = { ...args, origin: 'model' as const, turnId, signal, approval: 'individual' as const };
+      const program = validateProgram(request);
+      const sourceRefs = args.inputs || [];
+      const base = args.parentId ? await workbench.analyses.open(sessionId, args.parentId) : undefined;
+      const policyRefs = base ? [...sourceRefs, ...workbench.operations.get(args.parentId).inputs] : sourceRefs;
+      const policy = policyRefs.length ? workbench.artifacts.inherit(sessionId, policyRefs) : undefined;
+      if (policy && !routeAllowed((await workbench.route(sessionId, signal)).route, policy))
+        return failed('destination', 'The selected analysis materials cannot be processed by this conversation’s model', 'never');
       const grant = lab().grantFor(sessionId);
       if (!grant) {
         const status = await lab().status();
-        const answer = await workbench.core.approval(sessionId, { kind: 'execution', title: `Run analysis code: ${args.purpose.slice(0, 80)}?`,
-          detail: [`Purpose: ${args.purpose}`, `Inputs: ${(args.inputs || []).length ? (args.inputs || []).map((ref: any) => { try { return workbench.artifacts.version(sessionId, ref.artifactId, ref.versionId).name; } catch { return 'unavailable input'; } }).join(', ') : 'none'}`,
-            `Runtime: Python ${status.runtime.python}; no network; read-only inputs; outputs up to 20 files.`, `Memory: ${status.enforced.memory}. Processes: ${status.enforced.processes}.`, '', args.code.slice(0, 6000) + (args.code.length > 6000 ? '\n…' : '')].join('\n'),
-          choices: ['allow', 'deny'], fields: { reviewComplete: args.code.length <= 48 * 1024, purpose: args.purpose } });
+        const versions = sourceRefs.map((ref: {artifactId:string;versionId:string}) => workbench.artifacts.version(sessionId, ref.artifactId, ref.versionId));
+        const review = (program.sharedPython ? 'Shared Python variables, clean start for each run.\n' : '') + program.cells.map(c => [c.name + ' (' + c.language + ')', ...c.code.split('\n').map((line, i) => String(i + 1) + '  ' + line)].join('\n')).join('\n\n');
+        let diff = '';
+        if (base) {
+          const before = base.steps.length ? JSON.stringify(base.steps, null, 2) : base.code;
+          try { diff = lineDiff(before, program.codeText, 'analysis'); }
+          catch { diff = 'Large revision. The complete proposed code appears below.'; }
+        }
+        const answer = await workbench.core.approval(sessionId, { kind: 'execution', title: 'Run analysis code: ' + args.purpose.slice(0, 80) + '?',
+          detail: ['Purpose: ' + args.purpose, 'Inputs: ' + (versions.map((v: {name:string;versionId:string}) => v.name + ' @ ' + v.versionId).join(', ') || 'none'),
+            'Parameters: ' + JSON.stringify(program.parameters), 'Runtime: Python ' + status.runtime.python + '; no network; read-only inputs; outputs up to 20 files.',
+            'Memory: ' + status.enforced.memory + '. Processes: ' + status.enforced.processes, diff, review].filter(Boolean).join('\n\n'),
+          choices: ['allow', 'deny'], fields: { reviewComplete: true, purpose: args.purpose, digest: createHash('sha256').update(JSON.stringify([program.codeText, program.parameters, sourceRefs])).digest('hex') } });
         if (answer.choice !== 'allow') return declined(answer.cancelled ? 'Stopped before the code ran.' : 'The user declined running this code.');
       } else grant.usedRuns++;
-      const operation = await lab().run(sessionId, { code: args.code, inputs: args.inputs, purpose: args.purpose, origin: 'model', turnId, approval: grant ? 'grant' : 'individual', signal });
-      return runResult(operation);
+      if (analysis(workbench.core.store.session(sessionId))) return failed('disabled', 'Analysis is no longer enabled', 'never');
+      const operation = await lab().run(sessionId, { ...request, approval: grant ? 'grant' : 'individual' });
+      const result = runResult(operation);
+      return policy ? workbench.restricted(result, policy) : result;
+    }),
+  });
+  registry.register({
+    name: 'codelab_inspect', family: 'analysis', effects: { read: true },
+    description: 'Inspect the original method, parameters, versioned input slots, logs and output references of a Code Lab run in this conversation before explaining or revising it.',
+    input: z.strictObject({ operationId: id }), available: analysis,
+    run: guard(async ({ sessionId, signal, turnId }, args) => {
+      const operation = workbench.operations.get(args.operationId);
+      if (operation.sessionId !== sessionId || operation.kind !== 'codelab.run') return failed('not_found', 'Choose a Code Lab run from this conversation', 'never');
+      const policy = workbench.artifacts.inherit(sessionId, operation.inputs);
+      if (!routeAllowed((await workbench.route(sessionId, signal)).route, policy)) return failed('destination', 'The source policy does not allow this analysis to be sent to the model', 'never');
+      const draft = await workbench.analyses.open(sessionId, operation.id);
+      const data = { ...draft, outcome: operation.state, exitCode: operation.details?.exitCode, outputs: operation.results, stderr: String(operation.details?.stderr || '').slice(-4000), stdout: String(operation.details?.stdout || '').slice(-4000) };
+      if (!workbench.spendEvidence(sessionId, turnId, Buffer.byteLength(JSON.stringify(data)))) return failed('evidence-budget','The analysis exceeds the remaining evidence allowance for this turn','never');
+      return workbench.restricted(completed('Original analysis and results', data), policy);
+    }),
+  });
+  registry.register({
+    name: 'codelab_read_result', family: 'analysis', effects: { read: true },
+    description: 'Read a bounded page of a CSV or TSV output from an analysis in this conversation. Returned record numbers refer to the original version even after filtering. Cite its name, version, record and column.',
+    input: z.strictObject({ operationId: id, versionId: id, query: z.string().max(500).optional(), offset: z.int().min(0).optional(), limit: z.int().min(1).max(20).optional() }),
+    available: analysis,
+    run: guard(async ({ sessionId, turnId, signal }, args) => {
+      const operation = workbench.operations.get(args.operationId);
+      const output = operation.results.find(ref => ref.versionId === args.versionId);
+      if (operation.sessionId !== sessionId || operation.kind !== 'codelab.run' || !output)
+        return failed('not_found', 'Choose a result from this analysis', 'never');
+      const version = workbench.artifacts.version(sessionId, output.artifactId, output.versionId);
+      if (!routeAllowed((await workbench.route(sessionId, signal)).route, version.policy))
+        return failed('destination', 'The source policy does not allow sending these results to this model', 'never');
+      const table = await workbench.analyses.table({ sessionId, ...output, query: args.query, offset: args.offset, limit: args.limit || 5 });
+      const result = { name: version.name, ...output, ...table };
+      if (!workbench.spendEvidence(sessionId, turnId, Buffer.byteLength(JSON.stringify(result))))
+        return failed('evidence-budget','Select fewer rows to fit the evidence allowance','never');
+      return workbench.restricted(completed('Numbered records from ' + version.name, result), version.policy);
     }),
   });
   registry.register({

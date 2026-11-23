@@ -157,7 +157,6 @@
     <string name="work_branch">Branch %1$s</string>
     <string name="work_brief">Brief</string>
     <string name="work_change_s_permissions">Change %1$s\'s permissions</string>
-    <string name="work_compare">Compare</string>
     <string name="work_continue_from">Continue from %1$s</string>
     <string name="work_continue_research">Continue research</string>
     <string name="work_could_not_open_the_chosen_file">Could not open the chosen file</string>
@@ -214,4 +213,25 @@
     <string name="work_unpinned">Unpinned</string>
     <string name="work_use_in_this_conversation">Use %1$s in this conversation</string>
     <string name="work_web">Web</string>
+    <string name="work_codelab_ready">Isolated Code Lab ready</string>
+    <string name="work_codelab_unavailable">Code Lab is unavailable</string>
+    <string name="work_python">Python</string>
+    <string name="work_sql">SQL</string>
+    <string name="work_use_sample">Use sample</string>
+    <string name="work_analysis_name">Analysis name</string>
+    <string name="work_parameters_json">Parameters (JSON)</string>
+    <string name="work_input_files">Input files</string>
+    <string name="work_parameters_json_error">Parameters must be a JSON object</string>
+    <string name="work_saved_analyses">Saved analyses</string>
+    <string name="work_load">Load</string>
+    <string name="work_run_details">Run details</string>
+    <string name="work_save_analysis">Save analysis</string>
+    <string name="work_export_ready">Export ready</string>
+    <string name="work_export">Export</string>
+    <string name="work_compare_runs">Compare runs</string>
+    <string name="work_compare">Compare</string>
+    <string name="work_project_history">Project history</string>
+    <string name="work_schedule_weekly">Schedule weekly</string>
+    <string name="work_remove_analysis">Remove analysis</string>
+    <string name="work_analysis_scheduled">Analysis scheduled</string>
 </resources>

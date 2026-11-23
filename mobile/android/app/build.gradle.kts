@@ -13,8 +13,8 @@ android {
         applicationId = "dev.otectus.cere.mobile"
         minSdk = 30
         targetSdk = 37
-        versionCode = 2000000
-        versionName = "2.0.0"
+        versionCode = 2000001
+        versionName = "2.0.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

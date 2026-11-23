@@ -6,13 +6,16 @@
 import { registerCanvasTools } from './canvas-tools.ts';
 import { registerSkillTools } from './skill-tools.ts';
 import { limitedControlled, ownerControlled } from './authority.ts';
+import { ImageSets } from './artifacts/image-sets.ts';
+import { similarImages, selectColour, extendedCanvas, cutout, difference, credentials, deliver, deliverySample } from './artifacts/image-studio.ts';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Core } from './core.ts';
 import type { OllamaMessage, OllamaTool } from './ollama.ts';
 import type { Session } from './types.ts';
 import { completed, declined, failed, routeAllowed, sessionCapabilities, sourcePolicy, workspaceLimits, type DestinationPolicy, type ProcessingRoute, type ToolResultV1 } from './tools/contracts.ts';
-import { rm } from 'node:fs/promises';
+import { rm, open, rename, link, writeFile } from 'node:fs/promises';
+import { dirname, join, isAbsolute } from 'node:path';
 import { ToolRegistry } from './tools/registry.ts';
 import { confinementProblem, WorkspaceError } from './workspace/fsclient.ts';
 import { addPrivateLocation, sessionRoute } from './workspace/policy.ts';
@@ -29,6 +32,9 @@ import { registerImageTools, describeOperation } from './media/tools.ts';
 import { BackendRefusal } from './media/contracts.ts';
 import { contactSheet, flattenAnnotations, inspect, normalizeMask, transform, validSteps, blankCanvas } from './media/transforms.ts';
 import type { ArtifactRef } from './tools/contracts.ts';
+import { assist } from './execution/assistance.ts';
+import { AnalysisLibrary } from './execution/analyses.ts';
+import { compareResultTables } from './execution/compare-results.ts';
 import { Execution } from './execution/codelab.ts';
 import { Extractor } from './artifacts/extract.ts';
 import { registerAnalysisTools } from './execution/tools.ts';
@@ -59,6 +65,7 @@ export function validWorkbenchSettings(patch: unknown, current: WorkbenchSetting
 export type EditGrant = { id: string; sessionId: string; rootId: string; rootRevision: number; paths: string[]; created: number; expires: number; maxOperations: number; maxBytes: number; usedOperations: number; usedBytes: number };
 
 export class Workbench {
+  readonly imageSets = new ImageSets(this);
   core: Core;
   registry = new ToolRegistry();
   roots: WorkspaceRoots;
@@ -68,6 +75,7 @@ export class Workbench {
   media: MediaService;
   vision: Vision;
   execution: Execution;
+  analyses: AnalysisLibrary;
   extractor: Extractor;
   references: References;
   helpers: Helpers;
@@ -105,6 +113,7 @@ export class Workbench {
     this.media = new MediaService(core, this.artifacts, this.operations);
     this.vision = new Vision(core, this.artifacts);
     this.execution = new Execution(this);
+    this.analyses = new AnalysisLibrary(this);
     this.extractor = new Extractor(core.store.directory);
     this.references = new References(this);
     this.helpers = new Helpers(this);
@@ -433,7 +442,7 @@ export class Workbench {
     return { problem: this.problem, checked: this.probed, artifactRevision: this.artifactRevision, rootsRevision: this.rootsRevision, pendingChanges: pending, activeOperations: active, imageConnections: this.media.connections().filter(c => c.enabled).length, grants: this.activeGrants().map(({ id, sessionId, rootId, paths, expires, maxOperations, usedOperations, maxBytes, usedBytes }) => ({ id, sessionId, rootId, paths, expires, maxOperations, usedOperations, maxBytes, usedBytes })) };
   }
   static readOnly = ['workspace.roots', 'workspace.grants', 'files.list', 'files.stat', 'files.read', 'files.text', 'files.table', 'files.find', 'files.search', 'changes.list', 'changes.review', 'changes.trash',
-    'shelf.get', 'references.search', 'references.pin', 'references.preview', 'artifacts.list', 'artifacts.get', 'artifacts.derived', 'artifacts.thumbnail', 'artifacts.file', 'images.connections', 'images.capabilities', 'operations.list', 'operations.get', 'operations.partial', 'operations.usage', 'codelab.status'];
+    'shelf.get', 'references.search', 'references.pin', 'references.preview', 'artifacts.list', 'artifacts.get', 'artifacts.derived', 'artifacts.thumbnail', 'artifacts.file', 'images.connections', 'images.capabilities', 'operations.list', 'operations.get', 'operations.partial', 'operations.usage', 'operations.history', 'operations.compare', 'codelab.status', 'codelab.table', 'codelab.preflight', 'codelab.open', 'codelab.library', 'codelab.load'];
   private session(id: unknown) {
     if (typeof id !== 'string') throw new Error('Choose a conversation');
     const session = this.core.store.session(id);
@@ -461,6 +470,15 @@ export class Workbench {
       case 'workspace.grants': return this.activeGrants(this.session(p.sessionId).id);
       // The person at the desktop browses and previews directly; model-only limits (destinations, the turn budget) do not apply.
       case 'files.list': { const { root } = await this.rootFor(p); return list(root, normalizePath(p.path, root.path), { cursor: p.cursor, limit: p.limit, hidden: p.hidden === true || root.policy.hidden }); }
+      case 'codelab.inputFile': {
+        const { session, root } = await this.rootFor(p), rel = normalizePath(p.path, root.path);
+        readable(root, rel);
+        const file = await readText(root, rel);
+        if (p.version && p.version !== file.version) throw new Error('The file changed. Reload its preview before analyzing this version.');
+        const value = await this.artifacts.install({ sessionId: session.id, bytes: file.bytes, name: rel.split('/').pop()!, source: 'user-import',
+          policy: root.policy.destinations, provenance: {kind:'workspace-snapshot', root:root.id, path:rel, version:file.version} });
+        return {artifactId:value.artifactId, versionId:value.versionId};
+      }
       case 'files.stat': { const { root } = await this.rootFor(p); return statPath(root, normalizePath(p.path, root.path)); }
       case 'files.read': { const { root } = await this.rootFor(p); return readExcerpt(root, normalizePath(p.path, root.path), { startLine: p.startLine, lineCount: Math.min(Number(p.lineCount) || 300, 300) }); }
       case 'files.table': {
@@ -505,10 +523,45 @@ export class Workbench {
       default: return this.dispatchMedia(method, p);
     }
   }
+  async startUserImage(p:any, replaying=false, bind?:(operationId:string)=>void) {
+    const session = this.session(p.sessionId);
+    const replay = replaying ? await this.media.recipe(session.id, {recipeId:p.recipeId}) : null;
+    const connection = this.media.connection(replay?.backend.connectionId || p.connectionId);
+    const billed = replay ? replay.backend.billed : (await this.media.backend(connection,p.workflowId)).describe().billed;
+    if (billed && !connection.billingAcknowledged && p.acknowledgeBilling !== true) throw Object.assign(new Error(`${connection.name} may bill your account for each image. Confirm once to continue.`), { code: 'ACKNOWLEDGE_BILLING' });
+    if (p.acknowledgeBilling === true && !connection.billingAcknowledged) await this.core.updateSettings({ workbench: { imageConnections: this.media.connections().map(item => item.id === connection.id ? { ...item, billingAcknowledged: true } : item) } });
+    const prepared = replay ? await this.media.prepareReplay(session.id,replay.recipeId,{origin:'user',overrides:p.overrides}) : await this.media.prepare(session.id, p.request, { connectionId: connection.id, workflowId: p.workflowId, origin: 'user' });
+    bind?.(prepared.operation.id);
+    if (prepared.duplicate) return { ...describeOperation(prepared.operation), duplicate: true };
+    return describeOperation(await this.media.start(prepared.operation.id));
+  }
+  private async recognizeImage(sessionId:string, artifactId:string, versionId:string, region?:import('./media/vision.ts').Region, keepTranscript=false) {
+    const {version,data} = await this.artifacts.bytes(sessionId,artifactId,versionId);
+    const prepared = await analysisImage(data,region);
+    const {ocr} = await import('./media/vision.ts');
+    const result = await ocr(prepared.bytes,this.core.settings.workbench?.ocr?.languages || 'eng',AbortSignal.timeout(60_000));
+    const scaleX = prepared.sourceWidth / prepared.width, scaleY = prepared.sourceHeight / prepared.height;
+    const lines = result.slice(0,4000).map(line => ({...line, box:{
+      left: (region?.left || 0) + Math.floor(line.box.left * scaleX), top: (region?.top || 0) + Math.floor(line.box.top * scaleY),
+      width: Math.ceil(line.box.width * scaleX), height: Math.ceil(line.box.height * scaleY)
+    }}));
+    this.artifacts.version(sessionId,artifactId,version.versionId);
+    if (!region) this.core.store.db.prepare(`INSERT INTO image_analysis(version_id,ocr,boxes) VALUES(?,?,?)
+      ON CONFLICT(version_id) DO UPDATE SET ocr=excluded.ocr, boxes=excluded.boxes`).run(version.versionId,
+      lines.map(l => l.text).join(' ').slice(0,500000), JSON.stringify(lines.map(l => l.box)));
+    if (keepTranscript) {
+      const transcript=await this.artifacts.install({sessionId, name:version.name+' OCR.txt',
+        bytes:Buffer.from(lines.map(l=>l.text).join('\n')),mime:'text/plain',source:'derived',policy:version.policy,
+        parents:[{artifactId:version.artifactId,versionId:version.versionId,relation:'ocr'}],
+        provenance:{kind:'ocr',sourceVersion:version.versionId,...(region?{region}:{})}});
+      return {lines,image:prepared.note,transcript};
+    }
+    return { lines, image:prepared.note };
+  }
   private async dispatchMedia(method: string, p: any): Promise<any> {
     const owned = (operationId: unknown) => { const operation = this.operations.get(operationId); this.session(operation.sessionId); return operation; };
     switch (method) {
-      case 'artifacts.list': { const session = this.session(p.sessionId); return this.artifacts.list(session.id, { kind: p.kind, source: p.source, query: p.query, project: p.project === true, before: p.before, limit: p.limit }); }
+      case 'artifacts.list': { const session = this.session(p.sessionId); return this.artifacts.list(session.id, { kind: p.kind, source: p.source, query: p.query, project: p.project === true, scope: p.scope, collection: p.collection, before: p.before, limit: p.limit }); }
       case 'artifacts.get': {
         const session = this.session(p.sessionId), artifact = this.artifacts.artifact(p.artifactId), versions = this.artifacts.versions(session.id, artifact.id);
         return { artifact, versions: await Promise.all(versions.map(async version => ({ ...version, available: await this.artifacts.available(version), exports: this.artifacts.exports(version) }))) };
@@ -527,7 +580,7 @@ export class Workbench {
         const info = await stat(p.path); if (!info.isFile() || info.size > 100 * 1024 * 1024) throw new Error('Choose a regular file up to 100 MiB');
         const bytes = await readFile(p.path), name = p.path.split('/').pop() || 'file';
         // With an artifact ID, the file comes back from an external editor as that artifact's next version.
-        const base = p.artifactId ? this.artifacts.version(session.id, p.artifactId) : undefined;
+        const base = p.artifactId ? this.artifacts.version(session.id, p.artifactId, p.versionId) : undefined;
         const version = await this.artifacts.install({ sessionId: session.id, bytes, name, source: base ? 'derived' : 'user-import', policy: base ? base.policy : validDestinations(p.destinations),
           ...(base ? { artifactId: base.artifactId, parents: [{ artifactId: base.artifactId, versionId: base.versionId, relation: 'external-edit' }] } : {}), provenance: { kind: base ? 'external-edit' : 'import', name: safeName(name) } });
         return version;
@@ -574,6 +627,14 @@ export class Workbench {
         const bytes = await zipFilesAsync(entries), policy = this.artifacts.inherit(session.id, p.items);
         return this.artifacts.install({ sessionId: session.id, bytes, name: safeName(p.name, 'bundle') + '.zip', mime: 'application/zip', source: 'derived', policy, parents: p.items.map((item: any) => ({ ...item, relation: 'bundled' })), provenance: { kind: 'bundle', items: manifest.length } });
       }
+      case 'images.kits': return this.imageSets.library(this.session(p.sessionId).id);
+      case 'images.saveKit':
+      case 'images.saveSet': return this.imageSets.save(this.session(p.sessionId).id,p,method === 'images.saveSet');
+      case 'images.openSet': return this.imageSets.open(this.session(p.sessionId).id,p);
+      case 'images.renderSet': return this.imageSets.render(this.session(p.sessionId).id,p);
+      case 'images.previewMember':
+      case 'images.renderMember':
+      case 'images.approveMember': return this.imageSets.member(this.session(p.sessionId).id,p,method==='images.previewMember'?'preview':method==='images.renderMember'?'render':'approve');
       case 'images.connections': return { connections: this.media.connections().map(connection => this.media.publicConnection(connection)), vision: this.vision.settings() };
       case 'images.capabilities': { const value = await this.media.capabilities(p.connectionId, p.workflowId); return { ...value, summary: this.media.capabilitiesSummary(value.capabilities) }; }
       case 'images.test': return this.media.test(p.connectionId);
@@ -589,32 +650,56 @@ export class Workbench {
       }
       case 'images.reviewWorkflow': return this.media.reviewWorkflow(p.connectionId, p.workflowId, p);
       case 'images.select': return this.media.select(this.session(p.sessionId).id, p.ref ?? null);
-      case 'images.generate': {
-        // The person at the desktop pressing Generate is the approval; billed backends need the cost note acknowledged once.
-        const session = this.session(p.sessionId), connection = this.media.connection(p.connectionId);
-        const backend = await this.media.backend(connection, p.workflowId);
-        if (backend.describe().billed && !connection.billingAcknowledged && p.acknowledgeBilling !== true) throw Object.assign(new Error(`${connection.name} may bill your account for each image. Confirm once to continue.`), { code: 'ACKNOWLEDGE_BILLING' });
-        if (p.acknowledgeBilling === true && !connection.billingAcknowledged) await this.core.updateSettings({ workbench: { imageConnections: this.media.connections().map(item => item.id === connection.id ? { ...item, billingAcknowledged: true } : item) } });
-        const prepared = await this.media.prepare(session.id, p.request, { connectionId: connection.id, workflowId: p.workflowId, origin: 'user' });
-        if (prepared.duplicate) return { ...describeOperation(prepared.operation), duplicate: true };
-        return describeOperation(await this.media.start(prepared.operation.id));
+      case 'images.exportRecipe': {
+        const session = this.session(p.sessionId);
+        if (typeof p.path !== 'string' || !isAbsolute(p.path)) throw new Error('Choose a destination file');
+        const payload = await this.media.exportPortableRecipe(session.id,p.recipeId,{includeInputs:p.includeInputs===true});
+        const stage = join(dirname(p.path),'.pal-image-recipe-'+randomUUID());
+        await writeFile(stage,payload.json,{flag:'wx',mode:0o600});
+        try {
+          if (p.replace===true) await rename(stage,p.path);
+          else await link(stage,p.path);
+        } finally {await rm(stage,{force:true});}
+        return {path:p.path,bytes:payload.bytes};
       }
+      case 'images.inspectRecipeFile':
+      case 'images.importRecipeFile': {
+        const session = this.session(p.sessionId);
+        if (typeof p.path!=='string' || !isAbsolute(p.path)) throw new Error('Choose an image recipe file');
+        const file=await open(p.path,'r');
+        let json:string;
+        try {
+          const info=await file.stat();
+          if (!info.isFile() || info.size>140*1024*1024) throw new Error('Choose a recipe file up to 140 MiB');
+          json=await file.readFile('utf8');
+        } finally {await file.close();}
+        return method==='images.inspectRecipeFile' ? this.media.inspectPortableRecipe(session.id,json,p) : this.media.importPortableRecipe(session.id,json,p);
+      }
+      case 'images.recipe': return this.media.recipe(this.session(p.sessionId).id,p);
+      case 'images.previewCandidate': return this.media.previewCandidate(this.session(p.sessionId).id,p.operationId,p.candidateId);
+      case 'images.acceptUnprotected': return this.media.acceptUnprotected(this.session(p.sessionId).id,p.operationId,p.candidateId);
+      case 'images.replay':
+      case 'images.generate': return this.startUserImage(p, method==='images.replay');
       case 'images.preview': {
         // Validation only: what would be sent and what would be adjusted, before the user commits.
         const session = this.session(p.sessionId), connection = this.media.connection(p.connectionId), backend = await this.media.backend(connection, p.workflowId);
         const request = this.media.validRequest(p.request), { request: validated, adjustments } = backend.validate(request);
         await this.media.resolve(session.id, validated, backend.describe().route);
-        return { request: validated, adjustments, capabilities: this.media.capabilitiesSummary(backend.describe()) };
+        return { request: validated, adjustments, capabilities: this.media.capabilitiesSummary(backend.describe()),
+          ...(connection.estimate ? {estimate:{currency:connection.estimate.currency,perImage:connection.estimate.perImage,total:connection.estimate.perImage * validated.count}} : {}) };
       }
       case 'images.transform': {
         const session = this.session(p.sessionId), { version, data } = await this.artifacts.bytes(session.id, p.artifactId, p.versionId), result = await transform(data, validSteps(p.steps));
         return this.artifacts.install({ sessionId: session.id, artifactId: version.artifactId, bytes: result.bytes, mime: result.mime, name: version.name.replace(/\.[a-z]+$/i, '') + '.' + result.mime.slice(6), source: 'derived', policy: version.policy,
           parents: [{ artifactId: version.artifactId, versionId: version.versionId, relation: 'transform' }], provenance: { kind: 'transform', steps: JSON.stringify(p.steps).slice(0, 2000), notes: result.notes } });
       }
+      case 'images.markup':
       case 'images.saveEdit': {
         // The editor's flattened annotations become a new version; the recipe (shapes, labels) is kept with it so it stays editable.
         const session = this.session(p.sessionId), { version, data } = await this.artifacts.bytes(session.id, p.artifactId, p.versionId);
         const layer = decodePng(p.layer), flattened = await flattenAnnotations(data, layer);
+        if (method === 'images.markup') return this.artifacts.install({sessionId:session.id,bytes:flattened,mime:'image/png',name:'Markup guide for '+version.name,
+          source:'derived',policy:version.policy,parents:[{artifactId:version.artifactId,versionId:version.versionId,relation:'instruction-guide'}],provenance:{kind:'markup-guide'}});
         return this.artifacts.install({ sessionId: session.id, artifactId: version.artifactId, bytes: flattened, mime: 'image/png', name: version.name.replace(/\.[a-z]+$/i, '') + '.png', source: 'derived', policy: version.policy,
           parents: [{ artifactId: version.artifactId, versionId: version.versionId, relation: 'annotated' }], provenance: { kind: 'annotation', recipe: typeof p.recipe === 'string' ? p.recipe.slice(0, 200_000) : '' } });
       }
@@ -633,10 +718,59 @@ export class Workbench {
         return this.artifacts.install({ sessionId: session.id, bytes: await contactSheet(images), mime: 'image/png', name: 'contact sheet.png', source: 'derived', policy: this.artifacts.inherit(session.id, p.items), parents: p.items.map((item: any) => ({ ...item, relation: 'sheet' })), provenance: { kind: 'contact-sheet', items: p.items.length } });
       }
       case 'images.inspect': { const session = this.session(p.sessionId), { version, data } = await this.artifacts.bytes(session.id, p.artifactId, p.versionId); return { ...(await inspect(data)), provenance: version.provenance }; }
-      case 'images.ocr': {
-        const session = this.session(p.sessionId), { data } = await this.artifacts.bytes(session.id, p.artifactId, p.versionId), prepared = await analysisImage(data, p.region);
-        const { ocr } = await import('./media/vision.ts');
-        return { lines: await ocr(prepared.bytes, this.core.settings.workbench?.ocr?.languages || 'eng', AbortSignal.timeout(60_000)), image: prepared.note };
+      case 'images.ocr': return this.recognizeImage(this.session(p.sessionId).id, p.artifactId, p.versionId, p.region, p.keepTranscript===true);
+      case 'images.indexText': {
+        const session = this.session(p.sessionId);
+        const page = this.artifacts.list(session.id, { kind:'image', scope:p.scope, before:p.before, limit:4 });
+        let indexed = 0, skipped = 0;
+        for (const image of page.artifacts) {
+          if (this.core.store.db.prepare("SELECT 1 FROM image_analysis WHERE version_id=? AND boxes IS NOT NULL").get(image.latestVersionId)) { skipped++; continue; }
+          try { await this.recognizeImage(session.id, image.id, image.latestVersionId); indexed++; }
+          catch (e:any) { if (['unavailable','missing_language'].includes(e.code)) throw e; skipped++; }
+        }
+        return { indexed, skipped, before:page.before };
+      }
+      case 'images.similar': return similarImages(this.artifacts,this.session(p.sessionId).id,p,p.scope);
+      case 'images.deliverySample': return deliverySample(this.artifacts,this.session(p.sessionId).id,p);
+      case 'images.deliveryPreview':
+      case 'images.deliver': {
+        const sessionId=this.session(p.sessionId).id;
+        return deliver(this.artifacts,sessionId,p,method==='images.deliveryPreview',
+          async recipeId=>(await this.media.exportPortableRecipe(sessionId,recipeId)).json);
+      }
+      case 'images.credentials': {
+        const {version,data} = await this.artifacts.bytes(this.session(p.sessionId).id,p.artifactId,p.versionId);
+        return credentials(data,version.image?.format || '');
+      }
+      case 'images.difference': {
+        const id = this.session(p.sessionId).id;
+        const [a,b] = await Promise.all([p,p.other].map(r => this.artifacts.bytes(id,r.artifactId,r.versionId)));
+        return difference(a.data,b.data);
+      }
+      case 'images.selectColour': {
+        const {data} = await this.artifacts.bytes(this.session(p.sessionId).id,p.artifactId,p.versionId);
+        const png = await selectColour(data,p.point,p.tolerance,p.invert === true,p.mode === 'subject');
+        return { overlay:'data:image/png;base64,' + png.toString('base64') };
+      }
+      case 'images.region':
+      case 'images.cutout':
+      case 'images.extend': {
+        const sessionId = this.session(p.sessionId).id, {version,data} = await this.artifacts.bytes(sessionId,p.artifactId,p.versionId);
+        const parent = {artifactId:version.artifactId,versionId:version.versionId};
+        const install = (bytes:Buffer, kind:string, name:string, extra:Record<string,unknown> = {}) => this.artifacts.install({
+          sessionId,bytes,name,mime:'image/png',source:'derived',policy:version.policy,
+          parents:[{...parent,relation:kind}],provenance:{kind,...extra}});
+        if (method === 'images.region') {
+          const result = await transform(data,validSteps([{...p.region,op:'crop'}]));
+          return install(result.bytes,'region','Region of '+version.name,{region:p.region});
+        }
+        if (method === 'images.cutout') return install(await cutout(data,decodePng(p.mask)),'cutout','Cutout of '+version.name);
+        const result = await extendedCanvas(data,p.ratio);
+        const target = await install(result.bytes,'extension-base','Expanded '+version.name,{ratio:p.ratio,sourceBounds:result.sourceBounds});
+        const mask = await this.artifacts.install({sessionId,bytes:result.mask,name:'Expansion mask.png',mime:'image/png',source:'derived',policy:target.policy,
+          parents:[{artifactId:target.artifactId,versionId:target.versionId,relation:'mask-base'}],label:'mask',
+          provenance:{kind:'mask',base:target.versionId}});
+        return {target,mask};
       }
       case 'images.analyze': {
         // The person asks the configured helper directly; the same permission check applies.
@@ -649,8 +783,29 @@ export class Workbench {
         const prepared = await analysisImage(data, p.region);
         return { answer: await this.vision.ask(prepared.bytes, String(p.question || 'Describe this image.'), AbortSignal.timeout(120_000), () => {}), helper: this.vision.settings(), image: prepared.note };
       }
-      case 'operations.list': return this.operations.list(this.session(p.sessionId).id, { active: p.active === true, limit: p.limit, before: p.before }).map(describeForUi);
-      case 'operations.get': { const operation = owned(p.id); return { ...describeForUi(operation), events: this.operations.events(operation.id) }; }
+      case 'operations.list': return this.operations.list(this.session(p.sessionId).id, { active: p.active === true, limit: p.limit, before: p.before }).map(op => {
+        const row=describeForUi(op);
+        if (op.kind === 'codelab.run' || op.kind.startsWith('command.')) {
+          const { stdout, stderr, cells, ...details } = row.details;
+          row.details = { ...details, stdout: String(stdout || '').slice(-2000), stderr: String(stderr || '').slice(-2000) };
+        }
+        return row;
+      });
+      case 'operations.get': {
+        if (typeof p.id === 'string' && this.core.research.library.has(p.id)) {
+          const run = this.core.research.get(p.id);
+          this.session(run.sessionId);
+          return { operationId: run.id, researchId: run.id, sessionId: run.sessionId, kind: 'research.run', label: run.title || run.question,
+            state: run.state, summary: run.summary, created: run.created, updated: run.updated, error: run.error, results: run.report ? [run.report] : [],
+            inputs: [], details: { sourceCount: run.evidence.length, pageReads: run.pageReads, modelCalls: run.callsUsed }, events: run.activity.slice(-50) };
+        }
+        const operation = owned(p.id);
+        const source = operation.turnId ? this.core.store.sessionDatabase(operation.sessionId)
+          .prepare("SELECT id FROM messages WHERE session_id=? AND json_extract(data,'$.turnId')=? AND json_extract(data,'$.role')='user' ORDER BY rowid LIMIT 1")
+          .get(operation.sessionId, operation.turnId) : undefined;
+        return { ...describeForUi(operation), ...(source ? { originatingMessageId:String(source.id) } : {}),
+          ...(operation.witness.root ? {witness:{root:operation.witness.root}} : {}), cancellationDetail:operation.cancellation, events: this.operations.events(operation.id) };
+      }
       case 'operations.partial': owned(p.id); return { data: this.media.partial(p.id) };
       case 'operations.usage': return this.operations.usage(this.session(p.sessionId).id);
       case 'operations.check': {
@@ -669,15 +824,57 @@ export class Workbench {
         const operation = this.operations.update(prepared.operation.id, { details: { ...prepared.operation.details, retryOf: previous.id } });
         return describeOperation(await this.media.start(operation.id));
       }
-      case 'codelab.status': return this.execution.status();
-      case 'codelab.run': {
-        // The person at the desktop pressing Run is the approval for their own code.
+      case 'operations.history': {
         const session = this.session(p.sessionId);
-        void this.execution.run(session.id, { code: p.code, inputs: p.inputs, purpose: p.purpose || 'Run from the Workbench', origin: 'user', approval: 'user', timeoutSeconds: p.timeoutSeconds }).catch(() => {});
-        return true;
+        const ids = p.project === true ? this.analyses.projectSessions(session.id) : [session.id];
+        const scoped = Array.isArray(p.allowedSessions) ? ids.filter(id => p.allowedSessions.includes(id)) : ids;
+        const operations = this.operations.history(scoped, p).map(op => {
+          const row = describeForUi(op);
+          return { ...row, details: { durationMs: row.details.durationMs, exitCode: row.details.exitCode }, cursor: op.created + ':' + op.id };
+        });
+        const research = this.core.research.library.history(scoped, p);
+        return [...operations, ...research].sort((a, b) => b.created - a.created || b.operationId.localeCompare(a.operationId))
+          .slice(0, Math.min(100, Math.max(1, Number(p.limit) || 50)));
       }
+      case 'operations.compare': {
+        const ids = this.analyses.projectSessions(this.session(p.sessionId).id);
+        const left = this.operations.get(p.left), right = this.operations.get(p.right);
+        if (![left,right].every(op => ids.includes(op.sessionId))) throw new Error('Compare runs in the same project');
+        const values = (op: typeof left) => {
+          const files = (refs: ArtifactRef[]) => refs.map(ref => {
+            try { const v = this.artifacts.version(op.sessionId, ref.artifactId, ref.versionId); return { name: v.name, sha256: v.sha256 }; }
+            catch { return { missing: ref.versionId }; }
+          });
+          return { purpose: op.label, state: op.state, code: files(op.inputs.filter(r => r.purpose === 'code')),
+            inputs: files(op.inputs.filter(r => r.purpose !== 'code')), parameters: op.details?.parameters ?? op.details?.request ?? {},
+            runtime: op.details?.runtime ?? op.backend, exitCode: op.details?.exitCode, durationMs: op.details?.durationMs,
+            outputs: files(op.results), changedFiles: op.details?.changedFiles, usage: op.usage, error: op.error?.message };
+        };
+        const a = values(left), b = values(right);
+        const differences = (Object.keys(a) as (keyof typeof a)[]).filter(k => JSON.stringify(a[k]) !== JSON.stringify(b[k]))
+          .map(field => ({ field, before: a[field] ?? null, after: b[field] ?? null }));
+        const key = typeof p.key === 'string' ? p.key.split(',').map((s: string) => s.trim()).filter(Boolean) : p.key;
+        const tables = await compareResultTables(this.artifacts, left, right, { keys: key, mode: p.mode });
+        return { left: left.id, right: right.id, differences, ...tables };
+      }
+      case 'codelab.status': return this.execution.status(p.sessionId ? this.session(p.sessionId).id : undefined);
+      case 'codelab.run': return this.execution.launch(this.session(p.sessionId).id, { ...p, origin: 'user', approval: 'user', signal: undefined, turnId: undefined });
       case 'codelab.grant': return this.execution.grantRuns({ ...p, sessionId: this.session(p.sessionId).id });
-      case 'codelab.revoke': { const removed = this.execution.grants.delete(p.id); this.core.changed(); return removed; }
+      case 'codelab.revoke': {
+        if (p.sessionId && this.execution.grants.get(p.id)?.sessionId !== this.session(p.sessionId).id) throw new Error('Choose a grant from this conversation');
+        const removed = this.execution.grants.delete(p.id); this.core.changed(); return removed;
+      }
+      case 'codelab.assist': this.session(p.sessionId); return this.track(assist(this, p));
+      case 'codelab.preflight': return this.analyses.preflight(this.session(p.sessionId).id, p);
+      case 'codelab.sample': return this.analyses.sample(this.session(p.sessionId).id);
+      case 'codelab.open': return this.analyses.open(this.session(p.sessionId).id, p.operationId);
+      case 'codelab.save': return this.analyses.save(this.session(p.sessionId).id, p.operationId, p.name);
+      case 'codelab.library': return this.analyses.list(this.session(p.sessionId).id);
+      case 'codelab.load': return this.analyses.load(this.session(p.sessionId).id, p.id);
+      case 'codelab.remove': return this.analyses.remove(this.session(p.sessionId).id, p.id);
+      case 'codelab.schedule': return this.analyses.schedule(this.session(p.sessionId).id, p.id, p.days, p.authorizerDeviceId);
+      case 'codelab.export': return this.analyses.export(this.session(p.sessionId).id, p.operationId, p.outputs);
+      case 'codelab.table': case 'codelab.exportRows': return this.analyses.table({ ...p, sessionId: this.session(p.sessionId).id }, method === 'codelab.exportRows');
       case 'commands.run': {
         const session = this.session(p.sessionId), root = this.roots.get(session.id, p.rootId);
         void this.execution.command(session.id, root, { argv: p.argv, cwd: p.cwd ? normalizePath(p.cwd, root.path) : '', network: p.network === true, timeoutSeconds: p.timeoutSeconds, origin: 'user' }).catch(() => {});
@@ -688,8 +885,10 @@ export class Workbench {
   }
   /** A deleted conversation's roots, change sets, staged bytes, operations and private workspace go with it. */
   removeSession(sessionId: string) {
+    for (const grant of this.execution.grants.values()) if (grant.sessionId === sessionId) this.execution.grants.delete(grant.id);
     this.registry.forgetSession(sessionId); this.routes.delete(sessionId); this.media.selections.delete(sessionId);
     void this.artifacts.removeSession(sessionId).catch(() => {});
+    void this.media.removeSession(sessionId).catch(() => {});
     this.operations.removeSession(sessionId);
     for (const grant of [...this.grants.values()]) if (grant.sessionId === sessionId) this.grants.delete(grant.id);
     this.changes.removeSession(sessionId);
@@ -722,7 +921,7 @@ function decodePng(value: unknown) {
   return bytes;
 }
 function describeForUi(operation: import('./operations/store.ts').Operation) {
-  return { ...describeOperation(operation), kind: operation.kind, origin: operation.origin, created: operation.created, updated: operation.updated, backend: operation.backend || null, details: operation.details || {}, usage: operation.usage || null, results: operation.results, inputs: operation.inputs, remote: !!operation.remoteId };
+  return { ...describeOperation(operation), sessionId: operation.sessionId, turnId: operation.turnId, parentId: operation.parentId, groupId: operation.groupId, kind: operation.kind, origin: operation.origin, created: operation.created, updated: operation.updated, backend: operation.backend || null, details: operation.details || {}, usage: operation.usage || null, results: operation.results, inputs: operation.inputs, remote: !!operation.remoteId };
 }
 
 /** Extraction options a client or model may set: page range, CSV delimiter, hidden sheets. */

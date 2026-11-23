@@ -34,6 +34,13 @@ const rootPolicy = z.strictObject({ write: z.boolean().optional(), organize: z.b
 const bounded = (bytes: number) => z.record(z.string(), z.unknown()).refine(value => JSON.stringify(value).length <= bytes, `At most ${bytes} bytes`);
 const families = z.strictObject({ files: z.boolean().optional(), images: z.boolean().optional(), analysis: z.boolean().optional(), host: z.boolean().optional() });
 
+const labLanguage = z.enum(['python', 'sql']);
+const labInputs = z.array(z.strictObject({ artifactId: uuid, versionId: uuid.optional() })).max(8);
+const labCells = z.array(z.strictObject({ name: z.string().min(1).max(120), code: z.string().min(1).max(65536), language: labLanguage })).max(12);
+const labProgram = {
+  sessionId, sharedPython: z.boolean().optional(), inputs: labInputs.optional(), parameters: bounded(16384).optional(), code: z.string().max(65536),
+  language: labLanguage.optional(), steps: labCells.optional(), parentId: uuid.optional(), analysisId: uuid.optional(),
+};
 type Entry = { schema: z.ZodType; kind: OwnerKind; feature: OwnerFeature; sensitive?: string[] };
 const stream = (feature: OwnerFeature, schema: z.ZodType): Entry => ({ schema, kind: 'stream', feature });
 const read = (feature: OwnerFeature, schema: z.ZodType): Entry => ({ schema, kind: 'read', feature });
@@ -128,8 +135,27 @@ export const ownerOperations: Record<string, Entry> = {
   'workbench.operations.get': read(W, z.strictObject({ sessionId, operationId: ref })),
   'workbench.operations.cancel': mutation(W, z.strictObject({ sessionId, operationId: ref })),
   'workbench.operations.retry': signed(W, z.strictObject({ sessionId, operationId: ref, confirmed: z.boolean().optional() })),
-  'workbench.codelab.status': read(W, z.strictObject({})),
-  'workbench.codelab.run': signed(W, z.strictObject({ sessionId, code: z.string().min(1).max(200_000), inputs: z.array(z.strictObject({ artifactId: ref, versionId: ref.optional() })).max(20).optional(), purpose: z.string().max(200).optional(), timeoutSeconds: z.number().int().min(1).max(3600).optional() })),
+  // Code Lab requests deliberately name the conversation.  This gives the remote adapter an
+  // unambiguous project boundary before it reaches the shared Workbench service.
+  'workbench.codelab.status': read(W, z.strictObject({ sessionId: sessionId.optional() })),
+  'workbench.codelab.sample': mutation(W, z.strictObject({ sessionId })),
+  'workbench.codelab.grant': signed(W, z.strictObject({ sessionId, minutes: z.number().int().min(1).max(240).optional(), maxRuns: z.number().int().min(1).max(50).optional() })),
+  'workbench.codelab.revoke': mutation(W, z.strictObject({ sessionId, id: uuid })),
+  'workbench.codelab.preflight': read(W, z.strictObject(labProgram)),
+  'workbench.codelab.assist': signed(W, z.strictObject({ sessionId, request: z.string().min(1).max(4000), mode: z.enum(['explain','revise','plan']), code: labProgram.code, language: labLanguage, inputs: labInputs, parameters: labProgram.parameters, analysisId: uuid.optional(), operationId: uuid.optional(), result: z.strictObject({artifactId: uuid, versionId: uuid, row: z.number().int().positive().optional(), column: z.string().max(300).optional()}).optional() }), ['code','request','parameters']),
+  'workbench.codelab.open': read(W, z.strictObject({ sessionId, operationId: ref })),
+  'workbench.codelab.library': read(W, z.strictObject({ sessionId })),
+  'workbench.codelab.load': read(W, z.strictObject({ sessionId, id: ref })),
+  'workbench.codelab.export': signed(W, z.strictObject({ sessionId, operationId: ref, outputs: z.array(ref).max(20).optional() })),
+  'workbench.codelab.table': read(W, z.strictObject({ sessionId, artifactId: ref, versionId: ref, query: z.string().max(1000).optional(), sort: z.string().max(200).optional(), direction: z.enum(['asc', 'desc']).optional(), offset: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(200).optional() })),
+  'workbench.codelab.exportRows': signed(W, z.strictObject({ sessionId, artifactId: ref, versionId: ref, query: z.string().max(1000).optional(), sort: z.string().max(200).optional(), direction: z.enum(['asc', 'desc']).optional(), rows: z.array(z.number().int().positive()).max(500).optional() })),
+  'workbench.codelab.schedule': signed(W, z.strictObject({ sessionId, id: ref, days: z.number().int().min(0).max(365) })),
+  'workbench.codelab.remove': mutation(W, z.strictObject({ sessionId, id: ref })),
+  'workbench.codelab.save': signed(W, z.strictObject({ sessionId, operationId: ref, name: z.string().min(1).max(120) })),
+  'workbench.codelab.run': signed(W, z.strictObject({ ...labProgram, purpose: z.string().max(300).optional(), notify: z.boolean().optional(), reuseSteps: z.boolean().optional(), timeoutSeconds: z.number().int().min(1).max(600).optional() }), ['code','steps','parameters']),
+  // History is project-wide, but callers must still name a scoped session and its exact project.
+  'workbench.operations.history': read(W, z.strictObject({ sessionId, project: ref.optional(), limit: z.number().int().min(1).max(100).optional(), since: z.number().int().nonnegative().optional(), until: z.number().int().nonnegative().optional(), query: z.string().max(500).optional(), kind: z.string().max(80).optional(), state: z.string().max(80).optional(), before: z.string().max(200).optional() })),
+  'workbench.operations.compare': read(W, z.strictObject({ sessionId, left: ref, right: ref, key: z.union([z.string().max(1000), z.array(z.string().max(200)).max(20)]).optional(), mode: z.enum(['position']).optional() })),
   'workbench.commands.run': signed(W, z.strictObject({ sessionId, rootId: ref, argv: z.array(z.string().max(4096)).min(1).max(200), cwd: relPath.optional(), network: z.boolean().optional(), timeoutSeconds: z.number().int().min(1).max(3600).optional() })),
   'workbench.images.connections': read(W, z.strictObject({})),
   'workbench.images.capabilities': read(W, z.strictObject({ connectionId: ref, workflowId: ref.optional() })),

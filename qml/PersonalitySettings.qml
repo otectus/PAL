@@ -113,7 +113,7 @@ CSection {
         text:editor.length+" / "+personality.maximumLength+" characters"+(personality.dirty?" · Unsaved changes":"")
         color:editor.length>personality.maximumLength?Theme.danger:Theme.muted;font.pixelSize:Theme.secondary
     }
-    CText { text:"Personality changes voice and manner, not permissions. Leave blank for a neutral voice. Restore default fills the editor; Save applies it.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { text:"Use neutral voice clears the editor. Choose Save changes to apply your draft to future replies.";color:Theme.muted;font.pixelSize:Theme.secondary }
     GridLayout {
         Layout.fillWidth:true;columns:width>=Theme.formBreakpoint?3:1;columnSpacing:Theme.space2;rowSpacing:Theme.space2
         CButton {
@@ -127,9 +127,9 @@ CSection {
             onClicked:{personality.adopt(App.state.settings||{});personality.error="";personality.feedback=""}
         }
         CButton {
-            objectName:"personalityReset";text:"Restore default personality";Layout.fillWidth:true
-            enabled:personality.requestId<0&&App.state.personality?.defaultText!==undefined&&editor.text!==App.state.personality.defaultText
-            onClicked:editor.text=App.state.personality.defaultText
+            objectName:"personalityReset";text:"Use neutral voice";Layout.fillWidth:true
+            enabled:personality.requestId<0&&editor.text!==""
+            onClicked:editor.text=""
         }
     }
     CText { objectName:"personalityError";visible:!!personality.error;text:personality.error;color:Theme.danger;font.pixelSize:Theme.secondary }

@@ -75,8 +75,10 @@ Item {
     }
     onVisibleChanged: {
         if (!visible) pendingFocusSession = ""
+        else if (pendingAnchor) Qt.callLater(restoreAnchor)
         else if (follow) Qt.callLater(followLatest)
     }
+    Connections { target: WorkbenchState; function onMessageTargetChanged() { Qt.callLater(chat.consumeMessageTarget) } }
     readonly property var agents: App.session.agents || []
     readonly property var activeAgents: agents.filter(agent => ["starting", "running", "waiting"].indexOf(agent.status) >= 0)
     property var pendingApprovals: []
@@ -205,10 +207,29 @@ Item {
     property bool restoringEditor:false
     property var trackedEditor:({cursor:0,selectionStart:0,selectionEnd:0})
     property var editorRestore:null
-    property double viewRestoredAt:0
     property var pendingAnchor:null
     property var settlingAnchor:null
     property var trackedAnchor:({anchorId:"",anchorOffset:0,atEnd:true})
+    property string messageTargetKey:""
+    property int messageTargetPages:0
+    property bool messageTargetWaiting:false
+    function consumeMessageTarget() {
+        const target = WorkbenchState.messageTarget
+        if (!target || target.sessionId !== sessionId || target.sessionId !== App.selectedId) return
+        const key = target.sessionId + ":" + target.messageId
+        if (key !== messageTargetKey) { messageTargetKey = key; messageTargetPages = 0; messageTargetWaiting = false }
+        if (App.transcriptRow(target.messageId) >= 0) {
+            cancelAnchorRestore()
+            pendingAnchor = { id: String(target.messageId), offset: 0 }
+            follow = false
+            WorkbenchState.messageTarget = null
+            Qt.callLater(restoreAnchor)
+            return
+        }
+        // Request only bounded history while this exact conversation remains selected.
+        if (!App.hasOlderMessages || messageTargetPages >= 8) { WorkbenchState.messageTarget = null; return }
+        if (!messageTargetWaiting) { messageTargetPages++; messageTargetWaiting = true; App.loadOlderMessages() }
+    }
     // Announce meaningful turn transitions once. Streaming text stays available to read at the user's pace.
     readonly property string spokenStatus: {
         if (!sessionId) return ""
@@ -351,7 +372,10 @@ Item {
     // The message at the top of the conversation and how far into it the reader is.
     function computeAnchor(){
         // A hidden page (Sessions, Settings…) keeps the last position the reader saw.
-        if(!chat.visible||!scroll.visible||chat.pendingAnchor||chat.settlingAnchor)return null
+        if(!chat.visible||!chat.Window.window?.visible||!scroll.visible||chat.pendingAnchor||chat.settlingAnchor)return null
+        // Preserve the saved fraction across window switches. Sampling a delegate as it
+        // reflows at each new width can gradually move the anchor into an adjacent message.
+        if(viewPristine && !follow && trackedAnchor.anchorId)return null
         if(!App.session.id||scroll.count===0||chat.follow||scroll.atYEnd)return {anchorId:"",anchorOffset:0,atEnd:true}
         for(const probe of [1,scroll.spacing+2]){
             const index=scroll.indexAt(scroll.width/2,scroll.contentY+probe)
@@ -369,6 +393,7 @@ Item {
     }
     function restoreView(view){
         editorRestoreTimer.stop();editorRestore=null;restoringEditor=false
+        cancelAnchorRestore()
         restoringView=true
         const owner=sessionId
         const serial=++restoreSerial
@@ -382,6 +407,7 @@ Item {
         }
         pendingAnchor=view&&v.atEnd===false&&v.anchorId?{id:String(v.anchorId),offset:Number(v.anchorOffset)||0}:null
         const restoreReadingPosition = !!pendingAnchor
+        if (restoreReadingPosition) anchorTimeout.start()
         if (view) trackedAnchor = restoreReadingPosition
             ? {anchorId:pendingAnchor.id, anchorOffset:pendingAnchor.offset, atEnd:false}
             : {anchorId:"", anchorOffset:0, atEnd:true}
@@ -389,26 +415,50 @@ Item {
         Qt.callLater(() => {
             if (owner !== App.selectedId || serial !== restoreSerial) return
             if (restoreReadingPosition) restoreAnchor()
-            else if (view) followLatest()
-            else scroll.contentY = App.session.scroll || 0
+            else if (!view && viewPristine && App.session.scroll > 0) scroll.contentY = App.session.scroll
+            else followLatest()
             if (view && v.focus === "composer") focusComposer()
             // Focus and the platform text input settle after the editor's text is applied. Restore
             // the range after that handoff, and briefly verify it against late Wayland focus updates.
             if(view)Qt.callLater(()=>{if(owner===App.selectedId&&serial===restoreSerial)scheduleEditorRestore(v,owner,serial)})
         })
-        remoteView=viewKey(view);viewBaseline=view?remoteView:"";viewRestoredAt=Date.now();viewPristine=true
+        remoteView=viewKey(view);viewBaseline=view?remoteView:"";viewPristine=true
         restoringView=false
+    }
+    function cancelAnchorRestore() {
+        anchorTimeout.stop()
+        anchorSettle.stop()
+        pendingAnchor = null
+        settlingAnchor = null
+    }
+    function takeScrollControl() {
+        cancelAnchorRestore()
+        viewPristine = false
+        follow = false
+    }
+    function finishScroll() {
+        if (scroll.atYEnd) follow = true
+        trackedAnchor = computeAnchor() || trackedAnchor
+    }
+    function jumpToLatest() {
+        cancelAnchorRestore()
+        viewPristine = false
+        scroll.cancelFlick()
+        follow = true
+        trackedAnchor = {anchorId:"", anchorOffset:0, atEnd:true}
+        scroll.positionViewAtEnd()
     }
     // Restores by message, not pixels: the same message stays on top when widths reflow.
     function restoreAnchor(){
         if(!pendingAnchor||!App.session.id)return
         const row=App.transcriptRow(pendingAnchor.id)
-        if(row<0){if(Date.now()-viewRestoredAt>5000){pendingAnchor=null;follow=true;scroll.positionViewAtEnd()}return}
+        if(row<0 || row>=scroll.count || scroll.height<=0)return
+        anchorTimeout.stop()
         restoringView=true
         scroll.positionViewAtIndex(row,ListView.Beginning)
         placeAnchor(row,pendingAnchor.offset)
         // Cards finish formatting a moment later; keep the anchor in place until they settle.
-        settlingAnchor={row:row,offset:pendingAnchor.offset,passes:6};anchorSettle.restart()
+        settlingAnchor={id:pendingAnchor.id,offset:pendingAnchor.offset,passes:6};anchorSettle.restart()
         pendingAnchor=null;follow=false
         restoringView=false
     }
@@ -422,7 +472,6 @@ Item {
     onSessionIdChanged: {
         if(pendingFocusSession!==sessionId)pendingFocusSession=""
         submissionRecovery.close()
-        anchorSettle.stop();settlingAnchor=null
         referenceError="";referencePreview=""
         if (draftSession) {
             draftTimer.stop()
@@ -440,6 +489,7 @@ Item {
         attachmentError="";sendAfterSave=false;saveQueued=false
         activityPanel.expanded=false;trackedAnchor={anchorId:"",anchorOffset:0,atEnd:true}
         restoreView(incoming?.editor?.view || App.session.view)
+        Qt.callLater(consumeMessageTarget)
     }
     Component.onDestruction: { App.setListening(false);saveDraft(true) }
     // Below its minimum height the page scrolls, so every control stays reachable.
@@ -534,10 +584,16 @@ Item {
             spacing:chat.compactWidth?Theme.space3:Theme.space4;cacheBuffer:300;reuseItems:true
             boundsBehavior:Flickable.StopAtBounds
             // Dragging the scrollbar is reading too: it must stop new output from pulling the view down.
-            ScrollBar.vertical: CScrollBar { onPressedChanged: if(pressed){chat.follow=false;chat.viewPristine=false}else if(scroll.atYEnd)chat.follow=true }
+            ScrollBar.vertical: CScrollBar {
+                onPressedChanged: {
+                    if (pressed) chat.takeScrollControl()
+                    else chat.finishScroll()
+                }
+            }
             model: App.transcript
             delegate: Item {
                 id: transcriptRow
+                required property int index
                 required property var entry
                 readonly property var message: entry
                 readonly property bool authoredByUser: entry.role === "user" && entry.kind !== "delegation"
@@ -583,13 +639,22 @@ Item {
                 }
                 Text { visible: scroll.count===0 && !!App.session.id && !chat.busy; text: chat.linked ? "Linked terminal · lifecycle observation only. Continue this conversation in its terminal. Once it ends, use CLI history to hand it to PAL." : App.session.nativeId ? "This session will continue its CLI context when you send a message." : "Your session is ready. Tell me what you have in mind."; width: parent.width; wrapMode: Text.Wrap; color: Theme.muted; font.pixelSize: Theme.body;horizontalAlignment:Text.AlignHCenter }
             }
-            onMovementStarted:{chat.follow=false;chat.viewPristine=false}
+            onMovementStarted: chat.takeScrollControl()
+            // Markdown formatting, image loading and composer resizing can change the bottom
+            // after the last message notification. Coalesce until the new layout is available.
+            onContentHeightChanged: if (chat.follow) Qt.callLater(chat.followLatest)
+            onAtYEndChanged: if (!atYEnd && chat.follow) Qt.callLater(chat.followLatest)
+            onHeightChanged: {
+                if (chat.pendingAnchor) Qt.callLater(chat.restoreAnchor)
+                else if (chat.follow) Qt.callLater(chat.followLatest)
+            }
+            onCountChanged: if (chat.pendingAnchor) Qt.callLater(chat.restoreAnchor)
             onContentYChanged:if(!chat.restoringView&&!chat.pendingAnchor)anchorTracker.restart()
             // Long histories load in bounded pages; reaching the top requests the previous one.
             onAtYBeginningChanged:if(atYBeginning&&App.hasOlderMessages)App.loadOlderMessages()
-            onMovementEnded:if(atYEnd)chat.follow=true
+            onMovementEnded: chat.finishScroll()
         }
-        CButton { visible: !chat.follow && !!App.session.id; anchors.bottom: parent.bottom; anchors.horizontalCenter: parent.horizontalCenter; text: qsTr("Latest messages"); iconName:"down"; primary: true; onClicked: {chat.follow=true;scroll.positionViewAtEnd()} }
+        CButton { objectName:"latestMessages"; visible: !chat.follow && !!App.session.id; anchors.bottom: parent.bottom; anchors.horizontalCenter: parent.horizontalCenter; text: qsTr("Latest messages"); iconName:"down"; primary: true; onClicked: chat.jumpToLatest() }
     }
     ActivityPanel {
         id:activityPanel;objectName:"activityPanel";visible:!!App.session.id&&(chat.busy||App.activityCount>0||chat.agents.length>0||App.hasOlderMessages);Layout.fillWidth:true
@@ -806,6 +871,14 @@ Item {
     readonly property string sendHint:sendKey==="button"?"Send button sends · Enter new line":sendKeyName+" sends · "+newLineHint
     RpcClient { id:referenceRpc; scope: App.selectedId }
     RpcClient { id:pinRpc }
+    function insertPendingImageText() {
+        if (!visible || !composer.enabled || !draftHydrated || draftSession !== App.selectedId) return
+        const text = WorkbenchState.takeImageText(draftSession)
+        if (text) composer.insert(composer.cursorPosition, (composer.text ? "\n" : "") + text)
+    }
+    readonly property bool canInsertImageText: visible && composer.enabled && draftHydrated && draftSession === App.selectedId
+    onCanInsertImageTextChanged: if (canInsertImageText) Qt.callLater(insertPendingImageText)
+    Connections { target: WorkbenchState; function onPendingImageTextChanged() { Qt.callLater(chat.insertPendingImageText) } }
     Connections { target:WorkbenchState;function onInsertIntoComposer(sessionId,text){if(sessionId!==App.selectedId||!composer.enabled)return;composer.insert(composer.cursorPosition,(composer.text&&!/\s$/.test(composer.text.slice(0,composer.cursorPosition))?"\n":"")+text)} }
     ReferencePicker {
         id:referencePicker;parent:composerCard;sessionId:App.selectedId
@@ -858,17 +931,27 @@ Item {
         if(params.webSearch&&hasWebSources)params.webConstraints=webConstraints()
         if(references.length)params.references=references.map(r=>Object.assign({},r))
         pendingReferences=JSON.stringify(references);referenceError="";setSubmissionError(pendingSession,"")
-        sendRequest=App.rpc("session.send",params);follow=true
+        sendRequest=App.rpc("session.send",params);jumpToLatest()
     }
     Timer { id:draftTimer;interval:600;onTriggered:chat.saveDraft(false) }
     Timer { id:editorRestoreTimer;interval:0;onTriggered:chat.applyEditorRestore() }
     Timer { id:anchorTracker;interval:150;onTriggered:chat.trackedAnchor=chat.computeAnchor()||chat.trackedAnchor }
     Timer {
+        id: anchorTimeout
+        interval: 5000
+        onTriggered: {
+            chat.pendingAnchor = null
+            chat.follow = true
+            chat.followLatest()
+        }
+    }
+    Timer {
         id:anchorSettle;interval:50;repeat:true
         onTriggered:{
             const settling=chat.settlingAnchor
             if(!settling||!chat.viewPristine||scroll.moving){stop();chat.settlingAnchor=null;return}
-            chat.restoringView=true;chat.placeAnchor(settling.row,settling.offset);chat.restoringView=false
+            const row=App.transcriptRow(settling.id)
+            if(row>=0){chat.restoringView=true;chat.placeAnchor(row,settling.offset);chat.restoringView=false}
             if(--settling.passes<=0){stop();chat.settlingAnchor=null;chat.trackedAnchor=chat.computeAnchor()||chat.trackedAnchor}
         }
     }
@@ -934,17 +1017,32 @@ Item {
     Connections {
         target:App
         function onMessagesChanged() {
+            if (chat.messageTargetWaiting) { chat.messageTargetWaiting = false; Qt.callLater(chat.consumeMessageTarget) }
             if (chat.unconfirmedSend && chat.sendRequest < 0 && chat.draftSession === App.selectedId) chat.settleUnconfirmedSend()
             if (chat.pendingAnchor) Qt.callLater(chat.restoreAnchor)
             else if (chat.follow) Qt.callLater(chat.followLatest)
         }
         function onStateChanged() {
             chat.syncApprovals()
-            if (chat.follow) Qt.callLater(chat.followLatest)
         }
     }
     function followLatest() {
-        if (visible && follow && !pendingQuestions.length) scroll.positionViewAtEnd()
+        if (!visible || !follow || scroll.moving || scroll.atYEnd || scroll.height <= 0 || pendingQuestions.length) return
+        if (!scroll.itemAtIndex(scroll.count - 1)) {
+            // A tall reply can grow past the viewport after Markdown formatting. Jumping
+            // straight to an unmeasured last row recycles that reply and starts its layout
+            // over. Keep its measured end visible while the following rows are created.
+            const bottom = scroll.contentY + scroll.height - 1
+            const row = scroll.itemAt(1, bottom) || scroll.itemAt(1, bottom - scroll.spacing - 1)
+            // If the following rows cannot all fit near the viewport, jump directly to the tail.
+            if (row && row.height > scroll.height && row.y + row.height > bottom + 1
+                    && (scroll.count - row.index - 1) * Theme.compactHeight <= scroll.height + scroll.cacheBuffer) {
+                scroll.contentY = row.y + row.height - scroll.height / 2
+                Qt.callLater(followLatest)
+                return
+            }
+        }
+        scroll.positionViewAtEnd()
     }
     onPendingQuestionsChanged: if (follow && pendingQuestions.length) Qt.callLater(() => {
         if (visible && follow && pendingQuestions.length && scroll.footerItem) scroll.contentY = Math.max(scroll.originY, Math.min(scroll.footerItem.y, scroll.originY + scroll.contentHeight - scroll.height))

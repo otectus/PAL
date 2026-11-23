@@ -10,7 +10,6 @@ import { Store } from '../broker/store.ts';
 import { messageTokens, OllamaAdapter, ollamaContext, ollamaHost, ollamaModels } from '../broker/ollama.ts';
 import type { OllamaMessage } from '../broker/ollama.ts';
 import type { Hooks } from '../broker/providers.ts';
-import { defaultPersonality } from '../broker/personality.ts';
 
 const model = (id: string, capabilities = ['completion','tools','vision','thinking']) => ({ model: id, name: id, capabilities, details: { parameter_size: '3B' } });
 const catalog = [model('chat:latest'), model('plain:latest',['completion']), model('remote-cloud',['completion','tools']), model('embed:latest',['embedding'])];
@@ -178,13 +177,21 @@ test('streamed Unicode, thinking and conversation history survive disconnect and
 
 test('Ollama uses the saved personality on the next turn and never stores it in conversation history',async t=>{
   const f=await fixture(t),s=await session(f);
-  for(const personality of [defaultPersonality,'Be calm and direct.','']){
-    await f.core.updateSettings({personality});await f.core.send({id:s.id,text:'Hello'});await finished(f.core,s.id);
+  assert.equal(f.core.settings.personality,'');
+  for(const {personality,text} of [
+    {personality:undefined,text:'New profile'},
+    {personality:'Be calm and direct.',text:'Custom profile'},
+    {personality:undefined,text:'Same custom profile'},
+    {personality:'',text:'Cleared profile'},
+  ]){
+    if(personality!==undefined)await f.core.updateSettings({personality});
+    await f.core.send({id:s.id,text});await finished(f.core,s.id);
     assert.equal(f.core.store.session(s.id).status,'idle');
     const messages=f.requests.at(-1).messages,system=messages[0];
     assert.equal(system.role,'system');assert.equal(messages.filter((m:any)=>m.role==='system').length,1);
-    assert.ok(personality?system.content.includes(personality):system.content.includes('neutral voice'));
-    if(personality!==defaultPersonality)assert.ok(!system.content.includes(defaultPersonality));
+    if(f.core.settings.personality){assert.ok(system.content.includes(f.core.settings.personality));assert.doesNotMatch(system.content,/No added persona is selected/);}
+    else {assert.match(system.content,/No added persona is selected/);assert.match(system.content,/clear, helpful, neutral voice/);}
+    assert.doesNotMatch(system.content,/sharp-tongued desktop companion/);
     assert.match(system.content,/You cannot answer approvals yourself/);
     assert.match(system.content,/Desktop control and provider delegation are disabled/);
     assert.ok(f.core.store.get<OllamaMessage[]>('ollama:'+s.id,[]).every(m=>m.role!=='system'));
@@ -202,7 +209,11 @@ test('a personality edit during an Ollama tool round waits until the next user t
   const s=await session(f,true);await f.core.updateSettings({categories:['timers']});
   await f.core.send({id:s.id,text:'Set a timer'});await finished(f.core,s.id);
   assert.equal(f.requests.length,2);
-  for(const request of f.requests){assert.ok(request.messages[0].content.includes(defaultPersonality));assert.doesNotMatch(request.messages[0].content,/"Daemona"/);}
+  for(const request of f.requests){
+    assert.match(request.messages[0].content,/No added persona is selected/);
+    assert.match(request.messages[0].content,/Current assistant name[^\n]+"PAL"/);
+    assert.doesNotMatch(request.messages[0].content,/New quiet voice|"Daemona"|sharp-tongued desktop companion/);
+  }
   await f.core.send({id:s.id,text:'Thanks'});await finished(f.core,s.id);
   assert.match(f.requests[2].messages[0].content,/New quiet voice/);
   assert.match(f.requests[2].messages[0].content,/"Daemona"/);

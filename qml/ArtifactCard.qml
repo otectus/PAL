@@ -72,6 +72,10 @@ Rectangle {
             Flow {
                 Layout.fillWidth: true; spacing: Theme.space1; visible: !!card.version && !card.error
                 CButton { objectName: "artifactOpen"; text: card.image ? "View" : card.reference.purpose === "research-report" ? "Read" : "Open"; implicitHeight: Theme.compactHeight; quiet: true; onClicked: card.openIt() }
+                CButton { text: "Analyze in Code Lab"; quiet: true; implicitHeight: Theme.compactHeight
+                    onClicked: WorkbenchState.openAnalysis(card.sessionId, {inputs: [card.reference]}) }
+                CButton { visible: !!card.version?.operationId; text: "View producing run"; quiet: true; implicitHeight: Theme.compactHeight
+                    onClicked: WorkbenchState.openAnalysis(card.version.sessionId, {operationId: card.version.operationId}) }
                 CButton { objectName: "artifactSaveAs"; text: "Save as…"; implicitHeight: Theme.compactHeight; quiet: true; onClicked: card.saveAs() }
                 CButton { objectName: "artifactUse"; text: "Use in next message"; implicitHeight: Theme.compactHeight; quiet: true; visible: card.image || (card.version && card.version.mime.startsWith("text/"))
                     onClicked: rpc.call("artifacts.useInDraft", { sessionId: card.sessionId, artifactId: card.reference.artifactId, versionId: card.reference.versionId }, value => { card.notice = value.error ? "" : "Attached to your draft"; card.error = value.error || "" }) }

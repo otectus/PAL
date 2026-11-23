@@ -1,5 +1,6 @@
 import { readFileSync,unlinkSync,readdirSync } from 'node:fs';
 import { resolve,join } from 'node:path';
+import { eraseImageRecipeCopies } from './media/recipes.ts';
 import { eraseResearchCopies } from './research/library.ts';
 import type { Store } from './store.ts';
 import type { Session } from './types.ts';
@@ -38,6 +39,20 @@ export function eraseWorkingCopies(store:Store,session:Session,matches:ErasureMa
   }
   const runKey='workflow-run:'+session.id,run=store.get<any>(runKey,null);if(run)store.set(runKey,{...scrub(run),...(identified(run.messageId,run.turnId,run.sourceEventId)?{prompt:removedText}:{})});
   store.set('workflow:results',store.get<any[]>('workflow:results',[]).flatMap(row=>row.sessionId===session.id?(identified(row.messageId,row.turnId,row.sourceEventId)?[]:[scrub(row)]):[row]));
+  eraseImageRecipeCopies(store.directory,session.id,matches);
+  for (const row of store.db.prepare("SELECT id,data FROM operations WHERE session_id=? AND kind LIKE 'image.%'").all(session.id)) {
+    const operation=JSON.parse(String(row.data));
+    if (matches(String(row.data))) {
+      operation.label=scrub(operation.label);
+      if (operation.details?.request) operation.details.request=scrub(operation.details.request);
+      if (operation.details?.backendText) operation.details.backendText=scrub(operation.details.backendText);
+      store.db.prepare('UPDATE operations SET data=? WHERE id=?').run(JSON.stringify(operation),row.id);
+    }
+  }
+  if(store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='image_analysis'").get()) {
+    const rows=store.db.prepare("SELECT i.version_id,i.ocr FROM image_analysis i JOIN artifact_versions v ON v.id=i.version_id JOIN artifacts a ON a.id=v.artifact_id WHERE a.session_id=?").all(session.id);
+    for(const row of rows) if(matches(String(row.ocr))) store.db.prepare("UPDATE image_analysis SET ocr='',boxes=NULL WHERE version_id=?").run(row.version_id);
+  }
   const removedResearch=eraseResearchCopies(store,session.id,matches);
   eraseArtifactCopies(store,session,matches,scrub,removedResearch);
 }

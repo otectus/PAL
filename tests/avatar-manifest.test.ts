@@ -5,6 +5,7 @@ import { avatarCatalog, avatarFor, avatarIds, authoringAvatars, defaultAvatar, p
 
 test('the manifest owns every canonical ID, legacy alias, default and authoring selection', () => {
   assert.deepEqual(avatarIds, avatarCatalog.map(entry => entry.id));
+  assert.equal(defaultAvatar, 'pal');
   assert.equal(avatarFor(null).id, defaultAvatar);
   assert.equal(avatarFor('missing').id, defaultAvatar);
   assert.equal(validateAvatar('pal'), 'pal');
@@ -18,9 +19,14 @@ test('the manifest owns every canonical ID, legacy alias, default and authoring 
     assert.equal(validateAvatar(entry.id), entry.id);
     assert.equal(avatarFor(entry.id), entry);
     for (const alias of entry.aliases) assert.equal(validateAvatar(alias), entry.id);
-    assert.deepEqual(authoringAvatars([entry.id]), entry.id === "pal" ? [] : [entry]);
+    const definition = JSON.parse(readFileSync(new URL('../assets/' + entry.rig, import.meta.url), 'utf8'));
+    assert.deepEqual(authoringAvatars([entry.id]), definition.static ? [] : [entry]);
   }
-  assert.deepEqual(authoringAvatars([]), avatarCatalog.filter(entry => entry.id !== "pal"));
+  assert.deepEqual(authoringAvatars([]), avatarCatalog.filter(entry => {
+    const definition = JSON.parse(readFileSync(new URL('../assets/' + entry.rig, import.meta.url), 'utf8'));
+    return !definition.static;
+  }));
+  assert.deepEqual(authoringAvatars([defaultAvatar]), [avatarFor(defaultAvatar)], 'the default PAL remains an authored animated avatar');
   for (const invalid of ['', '../nova', 'unknown', {}, 1, undefined]) assert.throws(() => validateAvatar(invalid), /avatar/);
   assert.throws(() => authoringAvatars(['unknown']), /Unknown avatar source/);
 });
@@ -52,6 +58,7 @@ test('all manifest entries reference their shipped rig, portraits and connected 
     const portrait = readFileSync(new URL('../assets/' + entry.portrait, import.meta.url));
     assert.equal(portrait.subarray(1, 4).toString(), 'PNG', entry.id);
     assert.equal(rig.texture, `${entry.id}-surface.png`);
+    if (entry.id === defaultAvatar) assert.notEqual(rig.static, true, 'the default PAL must never regress to a fixed frame');
     if (rig.static) {
       assert.equal(rig.presentation, 'reference');
       assert.equal(rig.surfaceSequences, null);

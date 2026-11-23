@@ -151,6 +151,7 @@ public:
     // proseWidth: the visible width; paragraphs wrap there even when a table or code block is wider.
     Q_INVOKABLE QString messageCodeAt(QQuickTextDocument *document, int position) const;
     Q_INVOKABLE QVariantList formatMessage(QQuickTextDocument *document, qreal proseWidth, qreal spacing, qreal headerHeight, qreal lineHeight);
+    Q_INVOKABLE void routeMessageWheel(QObject *viewport);
     Q_INVOKABLE QString chooseFolder();
     Q_INVOKABLE QString chooseImage();
     Q_INVOKABLE QString chooseFile();

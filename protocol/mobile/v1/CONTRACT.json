@@ -210,6 +210,12 @@
       "workbench.artifacts.export",
       "workbench.artifacts.bundle",
       "workbench.operations.retry",
+      "workbench.codelab.grant",
+      "workbench.codelab.assist",
+      "workbench.codelab.export",
+      "workbench.codelab.exportRows",
+      "workbench.codelab.schedule",
+      "workbench.codelab.save",
       "workbench.codelab.run",
       "workbench.commands.run",
       "workbench.images.generate",
@@ -1618,7 +1624,9 @@
       "result": "the desktop service result (broker/remote/owner.ts)"
     },
     "workbench.codelab.status": {
-      "params": {},
+      "params": {
+        "sessionId": "optional uuid"
+      },
       "kind": "read",
       "feature": "workbench.remote.v1",
       "role": "owner",
@@ -1628,6 +1636,7 @@
       "params": {
         "sessionId": "uuid",
         "code": "string",
+        "language": "optional python|sql",
         "inputs": {
           "optional": [
             {
@@ -1636,13 +1645,20 @@
             }
           ]
         },
+        "parameters": "optional object",
+        "steps": "optional list of named Python or SQL cells",
+        "parentId": "optional uuid",
+        "analysisId": "optional uuid",
         "purpose": "optional string",
-        "timeoutSeconds": "optional number"
+        "reuseSteps": "optional boolean",
+        "notify": "optional boolean",
+        "timeoutSeconds": "optional integer 1–600",
+        "sharedPython": "optional boolean; Python cells share one clean interpreter"
       },
       "kind": "signed",
       "feature": "workbench.remote.v1",
       "role": "owner",
-      "result": "the desktop service result (broker/remote/owner.ts)"
+      "result": "validated operationId; operations.get reports progress and the final outcome"
     },
     "workbench.commands.run": {
       "params": {
@@ -3211,6 +3227,218 @@
       "feature": "settings.owner.v1",
       "role": "owner",
       "result": "{id, text, location, sourceId, title, versionId?}"
+    },
+    "workbench.codelab.sample": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "sample draft with pinned revenue data"
+    },
+    "workbench.codelab.grant": {
+      "params": {
+        "sessionId": "uuid",
+        "maxRuns": "optional integer",
+        "minutes": "optional integer"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "bounded conversation execution grant"
+    },
+    "workbench.codelab.revoke": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "whether the grant was removed"
+    },
+    "workbench.codelab.preflight": {
+      "params": {
+        "sessionId": "uuid",
+        "code": "string",
+        "language": "optional python|sql",
+        "inputs": {
+          "optional": [
+            {
+              "artifactId": "string",
+              "versionId": "optional string"
+            }
+          ]
+        },
+        "parameters": "optional object",
+        "steps": "optional list of named Python or SQL cells",
+        "parentId": "optional uuid",
+        "analysisId": "optional uuid",
+        "sharedPython": "optional boolean; Python cells share one clean interpreter"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "input columns, worksheets, sample records, package and replay warnings"
+    },
+    "workbench.codelab.assist": {
+      "params": {
+        "sessionId": "uuid",
+        "inputs": {
+          "optional": [
+            {
+              "artifactId": "string",
+              "versionId": "optional string"
+            }
+          ]
+        },
+        "parameters": "optional object",
+        "code": "string",
+        "language": "python|sql",
+        "mode": "plan|revise|explain",
+        "request": "string",
+        "operationId": "optional uuid",
+        "analysisId": "optional uuid",
+        "result": "optional versioned output, record and column"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "proposal with explanation, plan and unified diff"
+    },
+    "workbench.codelab.open": {
+      "params": {
+        "sessionId": "uuid",
+        "operationId": "uuid"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "editable run with original versioned inputs"
+    },
+    "workbench.codelab.library": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "project analyses visible to this phone"
+    },
+    "workbench.codelab.load": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "saved analysis draft with version and runtime warnings"
+    },
+    "workbench.codelab.export": {
+      "params": {
+        "sessionId": "uuid",
+        "operationId": "uuid",
+        "outputs": "optional list of output version IDs"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "analysis ZIP artifact reference"
+    },
+    "workbench.codelab.table": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "uuid",
+        "versionId": "uuid",
+        "query": "optional string",
+        "sort": "optional column",
+        "direction": "optional asc|desc",
+        "offset": "optional integer",
+        "limit": "optional integer"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "columns, numbered source records, match count and parse warnings"
+    },
+    "workbench.codelab.exportRows": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "uuid",
+        "versionId": "uuid",
+        "query": "optional string",
+        "sort": "optional column",
+        "direction": "optional asc|desc",
+        "rows": "optional source record numbers"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "CSV artifact reference"
+    },
+    "workbench.codelab.schedule": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid",
+        "days": "integer, zero disables"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "updated saved analysis"
+    },
+    "workbench.codelab.remove": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "whether analysis was removed"
+    },
+    "workbench.codelab.save": {
+      "params": {
+        "sessionId": "uuid",
+        "operationId": "uuid",
+        "name": "string"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "saved analysis"
+    },
+    "workbench.operations.history": {
+      "params": {
+        "sessionId": "uuid",
+        "project": "optional project ID",
+        "before": "optional opaque cursor",
+        "limit": "optional integer",
+        "query": "optional string",
+        "kind": "optional operation kind",
+        "state": "optional operation state",
+        "since": "optional epoch milliseconds",
+        "until": "optional epoch milliseconds"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "page of visible runs with cursors"
+    },
+    "workbench.operations.compare": {
+      "params": {
+        "sessionId": "uuid",
+        "left": "uuid",
+        "right": "uuid",
+        "key": "optional string",
+        "mode": "optional key|position"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "recorded field differences"
     }
   },
   "dto": {

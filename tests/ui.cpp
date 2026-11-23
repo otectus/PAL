@@ -22,6 +22,7 @@
 #include <QTextList>
 #include <QAbstractTextDocumentLayout>
 #include <QScreen>
+#include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQmlExpression>
@@ -973,7 +974,8 @@ kill -KILL $$
     void personalitySettings(){
         auto editor=openSetting("personalityText");QVERIFY(editor);
         const auto original=app->state().value("settings").toMap().value("personality").toString();
-        QVERIFY(original.contains("You are PAL, a sharp-tongued desktop companion"));
+        QCOMPARE(original,QString());
+        QCOMPARE(app->state().value("personality").toMap().value("defaultText").toString(),QString());
         QCOMPARE(editor->property("text").toString(),original);
         QVERIFY(!item("personalitySave")->isEnabled());
         const auto restore=qScopeGuard([&]{app->rpc("settings.update",{{"personality",original}});click("tab_Chat");});
@@ -997,11 +999,14 @@ kill -KILL $$
         QVERIFY(item("personalityError")->property("text").toString().contains("control characters"));
         QCOMPARE(editor->property("text").toString(),QString("Invalid")+QChar(1));
         QCOMPARE(app->state().value("settings").toMap().value("personality").toString(),QString("Saved in another window"));
-        editor->setProperty("text","");click("personalitySave");
-        QTRY_COMPARE(app->state().value("settings").toMap().value("personality").toString(),QString());
-        click("personalityReset");QCOMPARE(editor->property("text").toString(),original);
-        QCOMPARE(app->state().value("settings").toMap().value("personality").toString(),QString());
-        click("personalitySave");QTRY_COMPARE(app->state().value("settings").toMap().value("personality").toString(),original);
+        auto neutral=item("personalityReset");QVERIFY(neutral);
+        QCOMPARE(neutral->property("text").toString(),QString("Use neutral voice"));
+        QVERIFY(neutral->isEnabled());click("personalityReset");
+        QCOMPARE(editor->property("text").toString(),QString());
+        QCOMPARE(app->state().value("settings").toMap().value("personality").toString(),QString("Saved in another window"));
+        QVERIFY(!neutral->isEnabled());QVERIFY(item("personalitySave")->isEnabled());
+        click("personalitySave");QTRY_COMPARE(app->state().value("settings").toMap().value("personality").toString(),QString());
+        QVERIFY(!item("personalitySave")->isEnabled());QVERIFY(!neutral->isEnabled());
         QVERIFY(openSetting("personalityText"));QTest::qWait(100);capture("personality-settings");
     }
     // Q01/Q03: a saved style only fills the editor, the existing Save applies it, and the preview
@@ -1660,6 +1665,105 @@ kill -KILL $$
         QTRY_COMPARE(linkColor(),QColor("#8bc7f2"));
         QCOMPARE(document->toPlainText(),prose);
         capture("pal-theme-restored");
+    }
+    void transcriptScrolling() {
+        click("tab_Chat");
+        auto model = static_cast<TranscriptModel*>(static_cast<QSortFilterProxyModel*>(app->transcript())->sourceModel());
+        QSignalSpy resets(model, &QAbstractItemModel::modelReset);
+        const auto session = createSession("codex", "Transcript scrolling");
+        QTRY_COMPARE(app->selectedId(), session);
+        QTRY_VERIFY(resets.count() >= 2);
+        auto chat = item("chatView"), list = item("messageList");
+        QVERIFY(chat && list);
+        auto message = [](const QString &id, const QString &text) {
+            return QVariantMap{{"id", id}, {"text", text}, {"role", "assistant"}};
+        };
+        const auto paragraphs = QStringLiteral("## Section heading\n\nAn ordinary paragraph in the reply.\n\n").repeated(48);
+        const auto wide = QStringLiteral("\n```cpp\n") + QString(240, 'x') + "\n```\n";
+        model->reset({message("first", "Start"), message("rich", paragraphs + wide), message("last", "Latest message")});
+        emit app->messagesChanged();
+        QTRY_VERIFY(item("messageBody_last"));
+        auto y = [&] { return list->property("contentY").toDouble(); };
+        auto latestVisible = [&] {
+            const auto body = item("messageBody_last");
+            if (!body) return false;
+            const auto bottom = body->mapToItem(list, QPointF(0, body->height())).y();
+            return bottom > 0 && bottom <= list->height() + 1;
+        };
+        QTest::qWait(350); // Allow deferred Markdown formatting and ListView layout to finish.
+        QVERIFY(list->property("atYEnd").toBool());
+        QVERIFY(latestVisible());
+        QSignalSpy layoutMovement(list, SIGNAL(contentYChanged()));
+        QTest::qWait(200);
+        QCOMPARE(layoutMovement.count(), 0);
+
+        // Restore a position inside a reply taller and wider than the transcript.
+        const QVariantMap view{{"atEnd", false}, {"anchorId", "rich"}, {"anchorOffset", 5000}};
+        QVERIFY(QMetaObject::invokeMethod(chat, "restoreView", Q_ARG(QVariant, QVariant(view))));
+        QTRY_COMPARE(topMessageId(), QString("rich"));
+        QTest::qWait(350);
+        const auto point = list->mapToScene(QPointF(list->width()/2, list->height()/2));
+        auto body = item("messageBody_rich"), horizontal = item("messageViewport_rich");
+        QVERIFY(body && horizontal && body->contains(body->mapFromScene(point)));
+        QVERIFY(horizontal->property("contentWidth").toDouble() > horizontal->width());
+        const auto before = y();
+        QTest::wheelEvent(window, point, QPoint(-8, -120));
+        QTRY_VERIFY(y() > before + 10);
+        QCOMPARE(horizontal->property("contentX").toDouble(), 0.);
+        QTRY_VERIFY(!list->property("moving").toBool());
+
+        // Trackpads report small deltas on the other axis even on a vertical swipe.
+        QPointingDevice pad("Test touchpad", 10, QInputDevice::DeviceType::TouchPad,
+                            QPointingDevice::PointerType::Finger, QInputDevice::Capability::Position, 5, 0);
+        auto swipe = [&](QPoint delta) {
+            auto deliver = [&](Qt::ScrollPhase phase, QPoint pixels) {
+                QWheelEvent event(point, window->mapToGlobal(point), pixels, pixels * 2,
+                                  Qt::NoButton, Qt::NoModifier, phase, false, Qt::MouseEventSynthesizedBySystem, &pad);
+                event.setTimestamp(ulong(QDateTime::currentMSecsSinceEpoch()));
+                QCoreApplication::sendEvent(window, &event);
+                QTest::qWait(16);
+            };
+            deliver(Qt::ScrollBegin, {});
+            for (int i = 0; i < 8; ++i) deliver(Qt::ScrollUpdate, delta);
+            deliver(Qt::ScrollEnd, {});
+        };
+        const auto beforeSwipe = y();
+        swipe(QPoint(-1, -20));
+        QVERIFY(y() > beforeSwipe + 40);
+        QTRY_VERIFY(!list->property("moving").toBool());
+        const auto beforePan = horizontal->property("contentX").toDouble();
+        swipe(QPoint(-20, 0));
+        QVERIFY(horizontal->property("contentX").toDouble() > beforePan + 40);
+
+        // A streaming revision below the viewport must leave the reader in place.
+        const auto reading = y();
+        model->upsert(message("last", paragraphs));
+        emit app->messagesChanged();
+        QTest::qWait(250);
+        QVERIFY(std::abs(y() - reading) < 2);
+
+        // An outstanding saved anchor can arrive with a later history page. Latest supersedes it.
+        const QVariantMap missing{{"atEnd", false}, {"anchorId", "older"}, {"anchorOffset", 0}};
+        QVERIFY(QMetaObject::invokeMethod(chat, "restoreView", Q_ARG(QVariant, QVariant(missing))));
+        click("latestMessages");
+        model->prepend({message("older", "Earlier history")});
+        emit app->messagesChanged();
+        QTest::qWait(350);
+        QVERIFY(chat->property("follow").toBool());
+        QVERIFY(list->property("atYEnd").toBool());
+        QVERIFY(latestVisible());
+        model->upsert(message("last", paragraphs + paragraphs + wide));
+        emit app->messagesChanged();
+        QTest::qWait(350);
+        QVERIFY(list->property("atYEnd").toBool());
+        QVERIFY(latestVisible());
+        QTest::wheelEvent(window, point, QPoint(-8, 120));
+        QTRY_VERIFY(!list->property("atYEnd").toBool());
+        QTRY_VERIFY(!list->property("moving").toBool());
+        QTest::wheelEvent(window, point, QPoint(-8, -360));
+        QTRY_VERIFY(list->property("atYEnd").toBool());
+        QTRY_VERIFY(chat->property("follow").toBool());
+        QVERIFY(latestVisible());
     }
     void markdownMessages(){
         click("tab_Chat");
@@ -2858,7 +2962,8 @@ Unicode: café ✦ 日本語
             call("settings.update",original);restoreWorkspace();
             if(layerSurface)moveDesktopPointer(originalPointer);
         });
-        QVERIFY(!call("settings.update",{{"avatar","pal_classic"},{"topmost",layerSurface},{"hidden",false},
+        const QString defaultAvatar=petApp->defaultAvatar();
+        QVERIFY(!call("settings.update",{{"avatar",defaultAvatar},{"topmost",layerSurface},{"hidden",false},
                                            {"quiet",false},{"reducedMotion",false},{"motionIntensity",1.0},
                                            {"roaming",false},{"scale",pointerScale},{"idleEnergy","calm"},
                                            {"bypassCliPermissions",false}}).contains("error"));
@@ -2877,7 +2982,7 @@ Unicode: café ✦ 日本語
         // A preceding test can still have a settings snapshot queued. Motion
         // preview must target this host before we inject its pointer events.
         QTRY_COMPARE(petApp->state().value("settings").toMap().value("topmost").toBool(),layerSurface);
-        QTRY_COMPARE(petApp->avatar().value("id").toString(),QString("pal_classic"));
+        QTRY_COMPARE(petApp->avatar().value("id").toString(),defaultAvatar);
         petApp->closePanel();
         if(layerSurface){moveDesktopPointer(petApp->petPosition()+QPoint(-30,-30));QTest::qWait(100);}
         petApp->setPetHovered(false);petApp->setPetInteracting(false);
@@ -2896,7 +3001,7 @@ Unicode: café ✦ 日本語
             return false;
         })());
         QTRY_VERIFY(puppet->property("ready").toBool());
-        QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith("pal_classic-surface.png"));
+        QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith(defaultAvatar+"-surface.png"));
         QTRY_COMPARE_WITH_TIMEOUT(petApp->motion(),QString("idle"),8000);
         QElapsedTimer pointerTraceClock;pointerTraceClock.start();
         const bool tracePointer=qEnvironmentVariableIsSet("PAL_TRACE_POINTER");
@@ -2909,14 +3014,16 @@ Unicode: café ✦ 日本語
         const auto motionTrace=connect(petApp,&Controller::motionChanged,this,[&]{tracePointerState("motionChanged");});
         const auto disconnectTrace=qScopeGuard([&]{disconnect(motionTrace);});
 
-        // The default PAL is deliberately one rigid full-body reference image. Every illustrated
-        // appearance remains a connected animated surface with the same bounded carry route.
+        // Every appearance remains a connected surface with the same bounded carry route.
+        // Static catalog entries stay supported, but the default PAL must exercise this path.
         for(const auto &entry:petApp->avatars()){
             const auto avatar=entry.toMap(),definition=avatar.value("puppet").toMap();
             const auto sequences=definition.value("surfaceSequences").toMap();
             const auto motions=sequences.value("motions").toMap(),routes=sequences.value("routes").toMap();
             QVERIFY2(definition.value("presentation").toString()=="reference",qPrintable(avatar.value("id").toString()));
             const auto parts=definition.value("parts").toList();QCOMPARE(parts.size(),1);
+            if(avatar.value("id").toString()==defaultAvatar)
+                QVERIFY2(!definition.value("static").toBool(),"the default PAL must never regress to a fixed frame");
             if(definition.value("static").toBool()){
                 QVERIFY(sequences.isEmpty());
                 QVERIFY(!parts.first().toMap().value("surfaceMotion").toBool());
@@ -2996,25 +3103,8 @@ Unicode: café ✦ 日本語
             leavePet();
         };
 
-        // PAL's static robot still renders and participates in pointer behavior; it simply keeps
-        // its one authored full-body frame instead of borrowing the illustrated gesture atlas.
-        QVERIFY(!call("settings.update",{{"avatar",petApp->defaultAvatar()}}).contains("error"));
-        QTRY_COMPARE(petApp->avatar().value("id").toString(),petApp->defaultAvatar());
-        QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith("pal-surface.png"));
-        QTRY_VERIFY(puppet->property("ready").toBool());
-        QCOMPARE(puppet->property("surfaceFrame").toInt(),0);
+        // Exercise hover, click and carry against the actual default PAL artwork.
         QVERIFY(visiblePixels()>pet->width()*pet->height()/8);
-        leavePet();moveOnPet(center);QTRY_COMPARE(petApp->motion(),QString("hoverBlush"));
-        QCOMPARE(puppet->property("surfaceFrame").toInt(),0);
-        clickOnPet(center);QTRY_COMPARE(petApp->motion(),QString("clickBlush"));QTRY_VERIFY(titled("PAL Panel"));
-        QCOMPARE(puppet->property("surfaceFrame").toInt(),0);
-        QVERIFY(visiblePixels()>pet->width()*pet->height()/8);
-        petApp->closePanel();leavePet();QTRY_COMPARE_WITH_TIMEOUT(petApp->motion(),QString("idle"),3000);
-
-        QVERIFY(!call("settings.update",{{"avatar","pal_classic"}}).contains("error"));
-        QTRY_COMPARE(petApp->avatar().value("id").toString(),QString("pal_classic"));
-        QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith("pal_classic-surface.png"));
-        QTRY_VERIFY(puppet->property("ready").toBool());
         leavePet();moveOnPet(center);
         QTRY_COMPARE(petApp->motion(),QString("hoverBlush"));
         QTRY_COMPARE_WITH_TIMEOUT(puppet->property("surfaceFrame").toInt(),hoverFrame,3000);
@@ -3214,8 +3304,9 @@ Unicode: café ✦ 日本語
             app->rpc("settings.update",{{"avatar",originalAvatar},{"topmost",true},{"quiet",false},{"reducedMotion",false},{"motionIntensity",.7},{"scale",1.0}});
             restoreWorkspace();
         });
-        QVERIFY(!call("settings.update",{{"avatar","pal_classic"},{"topmost",false},{"quiet",false},{"reducedMotion",false},{"motionIntensity",1.},{"scale",1.5},{"roaming",false}}).contains("error"));
-        QTRY_COMPARE(app->avatar().value("id").toString(),QString("pal_classic"));
+        const QString defaultAvatar=app->defaultAvatar();
+        QVERIFY(!call("settings.update",{{"avatar",defaultAvatar},{"topmost",false},{"quiet",false},{"reducedMotion",false},{"motionIntensity",1.},{"scale",1.5},{"roaming",false}}).contains("error"));
+        QTRY_COMPARE(app->avatar().value("id").toString(),defaultAvatar);
         QQuickWindow *pet=nullptr;
         QTRY_VERIFY((pet=titled("PAL Pet")));
         player=pet->findChild<QQuickItem*>("gesturePlayer");QVERIFY(player);
@@ -3226,7 +3317,7 @@ Unicode: café ✦ 日本語
         };
         auto puppet=findPuppet(player);QVERIFY(puppet);
         QTRY_VERIFY(puppet->property("ready").toBool());
-        QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith("pal_classic-surface.png"));
+        QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith(defaultAvatar+"-surface.png"));
         app->setPetInteracting(true);
         QTRY_COMPARE_WITH_TIMEOUT(app->motion(),QString("idle"),8000);
         const auto readRig=[&]{return player->property("rig").value<QJSValue>().toVariant().toMap();};
@@ -3294,8 +3385,8 @@ Unicode: café ✦ 日本語
         // same avatar id: reduced motion must resample and repaint without a frame tick.
         player->setProperty("followAppMotion",false);player->setProperty("motion","idle");
         auto customAvatar=app->avatar();auto customPuppet=customAvatar.value("puppet").toMap();
-        // This synthetic catalog deliberately tests authored static poses;
-        // PAL's reference presentation instead freezes to the source drawing.
+        // This synthetic catalog deliberately tests authored static poses after
+        // proving the default PAL itself supplies the animated surface catalog.
         QVERIFY(!customPuppet.value("static").toBool());
         const auto customParts=customPuppet.value("parts").toList();QCOMPARE(customParts.size(),1);
         QVERIFY(customParts.first().toMap().value("surfaceMotion").toBool());
@@ -3373,6 +3464,8 @@ Unicode: café ✦ 日本語
             QTRY_COMPARE_WITH_TIMEOUT(puppet->property("surfaceFrame").toInt(),0,3000);
             const auto definition=app->avatar().value("puppet").toMap();
             QCOMPARE(definition.value("presentation").toString(),QString("reference"));
+            if(avatarId==app->defaultAvatar())
+                QVERIFY2(!definition.value("static").toBool(),"the default PAL must render every connected surface pose");
             if (definition.value("static").toBool()) {
                 QCOMPARE(puppet->property("surfaceFrame").toInt(), 0);
                 continue;
@@ -6069,6 +6162,66 @@ private slots:
     }
     // The Workbench end to end through the real broker: browse a folder, preview and edit a file, review and
     // apply the change, open an image in the editor and the runs pane, in the workspace and the compact panel.
+    void imageProductionAcceptance(){
+        const auto session=createSession("ollama","Image production","fixture-chat:latest");
+        QVERIFY(!session.isEmpty());
+        app->select(session);
+        QQuickView view;
+        view.setResizeMode(QQuickView::SizeRootObjectToView);
+        view.rootContext()->setContextProperty("App",app.get());
+        view.setSource(QUrl::fromLocalFile(QString(PAL_SOURCE_DIR)+"/qml/ArtifactBrowser.qml"));
+        QCOMPARE(view.status(),QQuickView::Ready);
+        view.resize(330,830);
+        auto *browser=view.rootObject();
+        QQmlExpression background(QQmlEngine::contextForObject(browser),browser,"Theme.background");
+        view.setColor(background.evaluate().value<QColor>());
+        browser->setProperty("sessionId",session);
+        view.show();
+        window=&view;
+        QTRY_VERIFY_WITH_TIMEOUT(browser->property("genuineEmpty").toBool(),5000);
+        QVERIFY(!item("artifactQuery"));
+        capture("images-empty-library");
+        browser->setProperty("filtersExpanded",true);
+        QTRY_VERIFY(item("artifactScope"));
+        browser->setProperty("filtersExpanded",false);
+        const auto sketch=call("images.sketch",{{"sessionId",session},{"width",128},{"height",96}});
+        QVERIFY2(!sketch.contains("error"),qPrintable(sketch.value("error").toString()));
+        const QVariantMap ref{{"artifactId",sketch.value("artifactId")},{"versionId",sketch.value("versionId")},{"name","sketch.png"}};
+        QTRY_VERIFY_WITH_TIMEOUT(item("artifactTile_0"),5000);
+        QTRY_VERIFY(item("artifactQuery"));
+        auto *search=item("artifactQuery");
+        search->setProperty("text","missing-image");
+        QVERIFY(QMetaObject::invokeMethod(search,"textEdited"));
+        QTRY_VERIFY_WITH_TIMEOUT(browser->property("filteredEmpty").toBool(),5000);
+        search->setProperty("text","sketch");
+        QVERIFY(QMetaObject::invokeMethod(search,"textEdited"));
+        QTRY_VERIFY_WITH_TIMEOUT(item("artifactTile_0"),5000);
+        QVERIFY(QMetaObject::invokeMethod(browser,"openProduction",Q_ARG(QVariant,QVariantList{ref})));
+        QTRY_VERIFY_WITH_TIMEOUT(item("imageKitPreview"),5000);
+        click("imageKitPreview");
+        QTRY_VERIFY_WITH_TIMEOUT(item("imageKitExport") && item("imageKitExport")->isEnabled(),10000);
+        capture("images-export-preview");
+        QTest::keyClick(&view,Qt::Key_Escape);
+        QTRY_VERIFY(!item("imageKitPreview"));
+        click("artifactTile_0");
+        QTRY_VERIFY(item("imageView"));
+        click("imageView");
+        QTRY_VERIFY_WITH_TIMEOUT(item("imageCanvas"),5000);
+        auto *editor=item("imageWorkbench");
+        QVERIFY(editor);
+        QTRY_COMPARE(editor->property("naturalWidth").toInt(),128);
+        const QVariantMap point{{"x",32},{"y",32}};
+        editor->setProperty("tool","background");
+        QVERIFY(QMetaObject::invokeMethod(editor,"smartSelect",Q_ARG(QVariant,point)));
+        QTRY_COMPARE_WITH_TIMEOUT(editor->property("tool").toString(),QString("mask"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(item("imageSaveMask") && item("imageSaveMask")->isEnabled(),5000);
+        capture("images-selected-background");
+        // The selected version remains the target when the new mask enters the prompt.
+        QVERIFY(QMetaObject::invokeMethod(editor,"saveMask",Q_ARG(QVariant,QString("Recolor the background"))));
+        QTRY_COMPARE_WITH_TIMEOUT(browser->property("target").toMap().value("versionId").toString(),ref.value("versionId").toString(),5000);
+        QVERIFY(browser->property("maskMatchesTarget").toBool());
+        window=nullptr;
+    }
     void workbenchAcceptance(){
         window=reviewWorkspace();QVERIFY(window);click("tab_Chat");
         const QString project=data.path()+"/workbench-project";
@@ -6215,6 +6368,68 @@ private slots:
         QQuickView narrow;narrow.setResizeMode(QQuickView::SizeRootObjectToView);narrow.setColor(window->color());narrow.rootContext()->setContextProperty("App",app.get());narrow.setSource(QUrl::fromLocalFile(QString(PAL_SOURCE_DIR)+"/qml/ResearchPane.qml"));QCOMPARE(narrow.status(),QQuickView::Ready);narrow.resize(288,450);narrow.rootObject()->setProperty("sessionId",session);narrow.rootObject()->setProperty("currentView","new");narrow.show();QTest::qWait(500);
         auto narrowPane=visual(narrow.rootObject(),"researchPane");QVERIFY(narrowPane);
         auto narrowQuestion=visual(narrow.rootObject(),"researchQuestion");QVERIFY(narrowQuestion);const auto rect=narrowQuestion->mapRectToScene(narrowQuestion->boundingRect());QVERIFY(rect.left()>=-.5&&rect.right()<=narrow.width()+.5);QVERIFY(narrow.grabWindow().save(evidence+"/research-narrow.png"));narrow.hide();
+    }
+    void runsPaneFocusedAcceptance() {
+        const auto session = createSession("ollama", "Code Lab sample", "fixture-chat:latest");
+        QVERIFY(!session.isEmpty());
+        QVERIFY(!call("settings.update", {{"workbench", QVariantMap{{"codeLab", QVariantMap{{"enabled", true}}}}}}).contains("error"));
+        QQuickView view;
+        view.rootContext()->setContextProperty("App", app.get());
+        view.rootContext()->setContextProperty("testSession", session);
+        const auto base = QUrl::fromLocalFile(QString(PAL_SOURCE_DIR) + "/qml/RunsUiFixture.qml");
+        QQmlComponent component(view.engine());
+        component.setData(R"(import QtQuick
+Flickable {
+    width: 760; height: 660; clip: true; contentHeight: pane.implicitHeight
+    RunsPane { id: pane; width: parent.width; height: implicitHeight; sessionId: testSession }
+})", base);
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        view.setContent(base, &component, component.create(view.rootContext()));
+        view.setColor(QColor("#10161e"));
+        view.show();
+        auto item = [&](const QString &name) { return view.rootObject()->findChild<QQuickItem*>(name); };
+        auto click = [&](const QString &name) {
+            auto control = item(name);
+            if (!control || !control->isVisible() || !control->isEnabled()) return false;
+            const auto midpoint = QPointF(control->width()/2, control->height()/2);
+            auto root = view.rootObject();
+            const auto y = control->mapToScene(midpoint).y() + root->property("contentY").toReal();
+            root->setProperty("contentY", qBound(0.0, y-view.height()/2, qMax(0.0,root->property("contentHeight").toReal()-view.height())));
+            QTest::qWait(80);
+            auto position = control->mapToScene(midpoint).toPoint();
+            if (!QRect(QPoint(0,0),view.size()).contains(position)) return false;
+            QTest::mouseClick(&view, Qt::LeftButton, Qt::NoModifier, position);
+            return true;
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(item("codeLabToggle"), 5000);
+        QVERIFY(click("codeLabToggle"));
+        QTRY_VERIFY_WITH_TIMEOUT(item("codeLabSample") && item("codeLabSample")->isVisible(), 5000);
+        QVERIFY(click("codeLabSample"));
+        QTRY_VERIFY_WITH_TIMEOUT(item("codeLabCode") && item("codeLabCode")->property("text").toString().contains("savefig"), 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(item("codeLabRun")->isEnabled(), 5000);
+        QVERIFY(click("codeLabRun"));
+        QVariantMap chart;
+        QVERIFY2(waitFor([&]{
+            const auto catalog = call("artifacts.list", {{"sessionId",session}, {"query","plot.png"}});
+            for (const auto &file : catalog.value("artifacts").toList()) {
+                const auto version = file.toMap().value("latest").toMap();
+                if (version.value("kind") == "image") { chart = version; return true; }
+            }
+            return false;
+        }, 25000), "Sample did not produce its chart through the Run button");
+        const auto runId = chart.value("provenance").toMap().value("operationId").toString();
+        QVERIFY(!runId.isEmpty());
+        QVariantMap result;
+        QTRY_VERIFY_WITH_TIMEOUT((result = call("operations.get", {{"id",runId}})).value("state") == "completed", 6000);
+        QCOMPARE(result.value("results").toList().size(), 2);
+        QCOMPARE(call("codelab.open", {{"sessionId",session},{"operationId",runId}}).value("inputs").toList().size(), 1);
+        QVERIFY(click("codeLabToggle"));
+        view.rootObject()->setProperty("contentY", 0);
+        QTest::qWait(300);
+        const auto evidence = QString(PAL_SOURCE_DIR) + "/build/codelab-validation";
+        QVERIFY(QDir().mkpath(evidence));
+        QVERIFY(view.grabWindow().save(evidence + "/runs-pane.png"));
+        view.hide();
     }
     void cleanupTestCase(){
         QString runtime=data.path()+"/runtime";

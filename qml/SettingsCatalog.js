@@ -32,7 +32,7 @@ var categories = [
         settings: [
             {label: "Assistant name", target: "assistantName", keywords: "rename identity call nickname"},
             {label: "Personality text", target: "personalityText", keywords: "prompt instructions tone style edit"},
-            {label: "Restore default personality", target: "personalityReset", keywords: "reset original"},
+            {label: "Use neutral voice", target: "personalityReset", keywords: "reset clear blank default no persona"},
             {label: "Saved styles", target: "behaviorPresetPicker", keywords: "presets profiles named personality load save library"},
             {label: "Preview personality instructions", target: "personalityPreviewToggle", keywords: "prompt preview exact instructions block"},
             {label: "Style details and checkpoints", target: "behaviorPresetDetails", keywords: "traits tone formality warmth humor directness posture tool limits formatting checks emoji checkpoint restore"},

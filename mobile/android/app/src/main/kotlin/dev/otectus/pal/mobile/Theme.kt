@@ -1,9 +1,11 @@
 package dev.otectus.pal.mobile
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -141,7 +143,13 @@ private val PALShapes = Shapes(
 )
 
 @Composable fun PALTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) Night else Day, typography = PALType, shapes = PALShapes, content = content)
+    // Android's stretch effect can make bounded panes and their enclosing sheets appear to
+    // jump when a drag reaches either edge. PAL has many nested, independently scrollable
+    // menus, dialogs and sheets, so keep their bounds firm and apply this policy once for every
+    // LazyColumn and verticalScroll below the app theme.
+    CompositionLocalProvider(LocalOverscrollFactory provides null) {
+        MaterialTheme(colorScheme = if (isSystemInDarkTheme()) Night else Day, typography = PALType, shapes = PALShapes, content = content)
+    }
 }
 
 internal object PALBrand {

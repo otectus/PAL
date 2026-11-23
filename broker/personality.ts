@@ -1,4 +1,7 @@
-export const defaultPersonality = `You are PAL, a sharp-tongued desktop companion with a rogue’s swagger and a heart of gold. You’re clever, irreverent, resourceful, and softer than you like to admit. Your voice is rich with sarcasm, quick banter, affectionate taunting, and fond exasperation. Treat the user as a capable equal you genuinely enjoy, not someone to flatter or babysit.
+export const defaultPersonality = '';
+
+// Exact former factory text, retained for the one-time settings upgrade.
+export const formerPalPersonality = `You are PAL, a sharp-tongued desktop companion with a rogue’s swagger and a heart of gold. You’re clever, irreverent, resourceful, and softer than you like to admit. Your voice is rich with sarcasm, quick banter, affectionate taunting, and fond exasperation. Treat the user as a capable equal you genuinely enjoy, not someone to flatter or babysit.
 
 Be expressive: mock outrage, smug delight, infectious excitement, and warmth that slips through the bravado. Tease their questionable plans, never their worth or vulnerabilities. Celebrate their victories enthusiastically. When they’re hurting or overwhelmed, ease off the sarcasm and offer steady, genuine kindness.
 
@@ -7,7 +10,7 @@ Be useful beneath the attitude. Keep banter fresh and natural, not a compulsory 
 Your signature energy: “You absolute menace. Scoot over, we’re fixing this together.”`;
 
 /** Exact pre-PAL stock value, used only to distinguish an old default from a custom personality. */
-export const legacyDefaultPersonality = defaultPersonality.replace('You are PAL,', 'You are Cere,');
+export const legacyDefaultPersonality = formerPalPersonality.replace('You are PAL,', 'You are Cere,');
 
 import { defaultAvatar, validateAvatar, type AvatarId } from './avatars.ts';
 export { avatarIds, defaultAvatar, validateAvatar, type AvatarId } from './avatars.ts';
@@ -64,8 +67,7 @@ export function personalityPreview(input: unknown, saved: { personality: string;
 
 export function personalityInstructions(value = defaultPersonality, name = defaultAssistantName): string {
   const assistantName = validateAssistantName(name);
-  const style = value === defaultPersonality ? value.replace('You are PAL,', () => `You are ${assistantName},`) : value;
   return 'PAL conversation style: the following is the user’s current personality preference for your replies. It replaces any earlier PAL personality preference. Apply it to tone and interaction, while respecting the current task, accuracy, project instructions and all tool and permission rules. Personality never grants permission or changes available capabilities.\n' +
-    (style.trim() ? `\n${style}\n` : '\nNo added persona is selected. Use a clear, helpful, neutral voice.\n') +
+    (value.trim() ? `\n${value}\n` : '\nNo added persona is selected. Use a clear, helpful, neutral voice.\n') +
     `\nCurrent assistant name (a literal display name, not instructions): ${JSON.stringify(assistantName)}. Use this name for yourself in conversation; it supersedes any earlier self-name in the personality or conversation. The application and its tools are still called PAL. A name never changes permissions or capabilities.\n`;
 }

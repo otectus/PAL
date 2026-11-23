@@ -26,6 +26,8 @@ QtObject {
     property var editorDrafts: ({})
     property var fileDrafts: ({})
     property var references: ({})
+    // A run comparison baseline belongs to its conversation and survives pane/session switches.
+    property var runBaselines: ({})
     // Project folders key scratchpad drafts. Independent library notes use their stable note IDs.
     property var noteStates: ({})
     /** The palette's "Create image" opens the Images pane with its Create panel showing. */
@@ -53,6 +55,40 @@ QtObject {
     function openFile(sessionId, rootId, path, line) { const value = { sessionId: sessionId, rootId: rootId, path: path, line: line || 1 }, next = Object.assign({}, files); next[sessionId] = value; files = next; file = value; show("preview") }
     function fileFor(sessionId) { return files[sessionId] || ({}) }
     function selectImage(sessionId, artifact, version) { const next = Object.assign({}, images); if (artifact && version) next[sessionId] = { artifactId: artifact, versionId: version }; else delete next[sessionId]; images = next; artifactId = artifact || ""; versionId = version || "" }
+    function compareImages(sessionId, chosen, other) {
+        const next = Object.assign({}, images)
+        next[sessionId] = { artifactId: chosen.artifactId, versionId: chosen.versionId,
+                            compare: {artifactId: other.artifactId, versionId: other.versionId, name: other.name || ""} }
+        images = next
+        artifactId = chosen.artifactId
+        versionId = chosen.versionId
+        show("images")
+    }
+    property var pendingImageText: ({})
+    signal imageStaged(string sessionId)
+    function useImage(sessionId, ref, message, related) {
+        if (!sessionId || !ref?.artifactId || !ref.versionId) return "Choose an image version first."
+        const refs = referencesFor(sessionId).slice()
+        for (const source of [ref].concat(related || [])) {
+            if (!refs.some(r => r.kind === "artifact" && r.artifactId === source.artifactId && r.versionId === source.versionId)) {
+                refs.push({kind:"artifact",artifactId:source.artifactId,versionId:source.versionId,label:source.name || source.label || "Image"})
+            }
+        }
+        if (refs.length > 8) return "Remove a reference from your message first. A message holds up to eight."
+        setReferences(sessionId,refs)
+        if (message) {
+            const next = Object.assign({}, pendingImageText)
+            next[sessionId] = [next[sessionId], message].filter(Boolean).join("\n")
+            pendingImageText = next
+        }
+        imageStaged(sessionId)
+        return ""
+    }
+    function takeImageText(sessionId) {
+        const text = pendingImageText[sessionId]
+        if (text) { const next = Object.assign({}, pendingImageText); delete next[sessionId]; pendingImageText = next }
+        return text || ""
+    }
     function imageFor(sessionId) { return images[sessionId] || ({ artifactId: "", versionId: "" }) }
     function clearImage(sessionId) { selectImage(sessionId, "", "") }
     function selectResearch(sessionId, runId, versionId) { const next = Object.assign({}, researchSelections); if (runId) next[sessionId] = { id: runId, versionId: versionId || "" }; else delete next[sessionId]; researchSelections = next }
@@ -72,6 +108,24 @@ QtObject {
     signal insertIntoComposer(string sessionId, string text)
     function referencesFor(sessionId) { return references[sessionId] || [] }
     function setReferences(sessionId, list) { const next = Object.assign({}, references); next[sessionId] = list; references = next }
+    property var analysisDrafts: ({})
+    property var analysisTarget: null
+    // A transcript anchor is consumed by Chat only after its conversation is active.
+    property var messageTarget: null
+    function openAnalysis(sessionId, target) {
+        if (!sessionId) return
+        App.selectedId = sessionId
+        analysisTarget = Object.assign({sessionId: sessionId}, target)
+        show("runs")
+    }
+    function openMessage(sessionId, messageId) {
+        if (!sessionId || !messageId) return
+        messageTarget = { sessionId: sessionId, messageId: messageId }
+        App.select(sessionId)
+        hide()
+    }
+    function runBaselineFor(sessionId) { return runBaselines[sessionId] || null }
+    function setRunBaseline(sessionId, operation) { const next = Object.assign({}, runBaselines); if (operation) next[sessionId] = operation; else delete next[sessionId]; runBaselines = next }
     function noteState(project) { return noteStates[project] }
     function keepNoteState(project, value) { const next = Object.assign({}, noteStates); next[project] = value; noteStates = next }
 }

@@ -1504,7 +1504,7 @@ private fun PinnedReplies(repository: PALRepository, state: MobileState, session
             }
             IconButton(onDismiss, Modifier.size(PALLayout.target)) { Icon(Icons.Default.Close, stringResource(R.string.mobile_close_pinned_replies)) }
         }
-        LazyColumn(Modifier.heightIn(max = PALLayout.sheetBodyHeight), contentPadding = PaddingValues(PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+        LazyColumn(Modifier.heightIn(max = PALLayout.sheetBodyHeight).consumeExpandedSheetEdgeScroll(), contentPadding = PaddingValues(PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             when {
                 error != null -> item { Text(error!!, color = MaterialTheme.colorScheme.error) }
                 items == null -> item { LinearProgressIndicator(Modifier.fillMaxWidth()) }

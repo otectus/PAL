@@ -71,6 +71,8 @@ internal fun WorkScreen(repository: PALRepository, state: MobileState, activity:
     val current = WorkTab.entries.find { it.name == tab } ?: WorkTab.Files
     val conversations = state.sessions.filter { !it.archived }
     var sessionId by rememberSaveable { mutableStateOf(preferredSessionId ?: conversations.firstOrNull()?.id.orEmpty()) }
+    var pendingLabArtifact by rememberSaveable { mutableStateOf("") }
+    var pendingLabVersion by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(preferredSessionId) { if (preferredSessionId != null) sessionId = preferredSessionId }
     val online = state.connection is ConnectionState.Online
     if (!online) return RecoveryPage(state, repository::retry)
@@ -98,8 +100,8 @@ internal fun WorkScreen(repository: PALRepository, state: MobileState, activity:
                     when (current) {
                         WorkTab.Files -> FilesTab(repository, state, activity, sessionId)
                         WorkTab.Changes -> ChangesTab(repository, state, activity, sessionId)
-                        WorkTab.Library -> LibraryTab(repository, state, activity, sessionId)
-                        WorkTab.Runs -> RunsTab(repository, state, activity, sessionId)
+                        WorkTab.Library -> LibraryTab(repository, state, activity, sessionId) { artifact, version -> pendingLabArtifact=artifact; pendingLabVersion=version; tab=WorkTab.Runs.name }
+                        WorkTab.Runs -> RunsTab(repository, state, activity, sessionId, pendingLabArtifact, pendingLabVersion, consumedPending = { pendingLabArtifact=""; pendingLabVersion="" }, openSettings = { openOwnerSection("Desktop settings", sessionId) })
                         WorkTab.Research -> ResearchTab(repository, state, activity, sessionId) { openOwnerSection("Desktop settings", sessionId) }
                         WorkTab.Canvas -> CanvasTab(repository, state, activity, sessionId)
                         WorkTab.Notes -> NotesTab(repository, state, sessionId)
@@ -593,7 +595,7 @@ private fun ChangesTab(repository: PALRepository, state: MobileState, activity: 
 // ── Library (artifacts) ──────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun LibraryTab(repository: PALRepository, state: MobileState, activity: FragmentActivity, sessionId: String) {
+private fun LibraryTab(repository: PALRepository, state: MobileState, activity: FragmentActivity, sessionId: String, useInCodeLab: (String,String)->Unit) {
     val strings = androidx.compose.ui.platform.LocalResources.current
 
     val scope = rememberCoroutineScope()
@@ -689,6 +691,7 @@ private fun LibraryTab(repository: PALRepository, state: MobileState, activity: 
                         .onSuccess { (meta, bytes) -> pendingSave = (meta.str("name") ?: "download") to bytes; save.launch(meta.str("name") ?: "download") }.onFailure { error = it.message }
                     progress = null } }) { Text(stringResource(R.string.work_download_original)) }
                 OutlinedButton({ scope.launch { runCatching { repository.mutate("workbench.artifacts.useInDraft", buildJsonObject { put("sessionId", sessionId); put("artifactId", id) }) }.onSuccess { info = strings.getString(R.string.work_added_to_the_conversations_desktop_draft) }.onFailure { error = it.message } } }) { Text(stringResource(R.string.work_use_in_draft)) }
+                OutlinedButton({ latest?.str("versionId")?.let { useInCodeLab(id,it) } }, enabled = !latest?.str("versionId").isNullOrBlank()) { Text("Use in Code Lab") }
                 OutlinedButton({ scope.launch { runCatching { repository.mutate("workbench.artifacts.update", buildJsonObject { put("sessionId", sessionId); put("artifactId", id); put("pinned", !current.isTrue("pinned")) }) }.onSuccess { info = if (current.isTrue("pinned")) strings.getString(R.string.work_unpinned) else strings.getString(R.string.session_pinned); load() }.onFailure { error = it.message } } }) { Text(if (current.isTrue("pinned")) stringResource(R.string.work_unpin) else stringResource(R.string.work_pin)) }
             }
             preview?.let { Image(it.asImageBitmap(), stringResource(R.string.work_preview), Modifier.fillMaxWidth().heightIn(max = PALLayout.desktopPreviewHeight)) }
@@ -718,7 +721,7 @@ private fun LibraryTab(repository: PALRepository, state: MobileState, activity: 
 // ── Runs ─────────────────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun RunsTab(repository: PALRepository, state: MobileState, activity: FragmentActivity, sessionId: String) {
+private fun RunsTab(repository: PALRepository, state: MobileState, activity: FragmentActivity, sessionId: String, pendingArtifact: String, pendingVersion: String, consumedPending: () -> Unit, openSettings: () -> Unit) {
     val strings = androidx.compose.ui.platform.LocalResources.current
 
     val scope = rememberCoroutineScope()
@@ -730,12 +733,155 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
     var error by remember { mutableStateOf<String?>(null) }
     var info by remember { mutableStateOf<String?>(null) }
     var confirmBilling by remember { mutableStateOf<String?>(null) }
+    var language by rememberSaveable(sessionId) { mutableStateOf("python") }
+    var purpose by rememberSaveable(sessionId) { mutableStateOf("Run from PAL Mobile") }
+    var parametersText by rememberSaveable(sessionId) { mutableStateOf("{}") }
+    var artifacts by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var inputJson by rememberSaveable(sessionId) { mutableStateOf("[]") }
+    val selectedInputs = remember(inputJson) { Json.parseToJsonElement(inputJson).objects() }
+    var parentRun by rememberSaveable(sessionId) { mutableStateOf("") }
+    var analysisId by rememberSaveable(sessionId) { mutableStateOf("") }
+    var recipeId by rememberSaveable(sessionId) { mutableStateOf("") }
+    var inspect by remember(sessionId) { mutableStateOf<JsonObject?>(null) }
+    var pendingRun by remember { mutableStateOf<JsonObject?>(null) }
+    var reviewWarnings by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var sharedPython by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var recompute by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var notify by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var question by rememberSaveable(sessionId) { mutableStateOf("") }
+    var proposal by remember { mutableStateOf<JsonObject?>(null) }
+    var proposalBase by remember { mutableStateOf("") }
+    var proposalMode by remember { mutableStateOf("") }
+    var saved by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var selectedRun by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
+    var runDetail by remember { mutableStateOf<JsonObject?>(null) }
+    var history by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var projectHistory by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var historySearch by rememberSaveable(sessionId) { mutableStateOf("") }
+    var historyBefore by remember(sessionId, historySearch, projectHistory) { mutableStateOf("") }
+    var historyHasMore by remember { mutableStateOf(false) }
+    var selectedOwner by rememberSaveable(sessionId) { mutableStateOf(sessionId) }
+    var selectedKind by rememberSaveable(sessionId) { mutableStateOf("") }
+    var compareLeft by rememberSaveable(sessionId) { mutableStateOf("") }
+    var compareRight by rememberSaveable(sessionId) { mutableStateOf("") }
+    var comparison by remember { mutableStateOf<JsonObject?>(null) }
+    var labStatus by remember { mutableStateOf<JsonObject?>(null) }
+    var stepsJson by rememberSaveable(sessionId) { mutableStateOf("[]") }
+    val steps = remember(stepsJson) { Json.parseToJsonElement(stepsJson).objects() }
+    LaunchedEffect(pendingArtifact, pendingVersion) {
+        if (pendingArtifact.isNotBlank() && pendingVersion.isNotBlank()) {
+            val ref = buildJsonObject { put("artifactId", pendingArtifact); put("versionId", pendingVersion) }
+            if (selectedInputs.none { it.str("artifactId") == pendingArtifact && it.str("versionId") == pendingVersion })
+                if (selectedInputs.size < 8) inputJson = JsonArray(selectedInputs + ref).toString()
+                else error = strings.getString(R.string.lab_input_limit)
+            consumedPending()
+        }
+    }
+    val projectId = state.sessions.firstOrNull { it.id == sessionId }?.projectId
     fun load() = scope.launch { runCatching { repository.read("workbench.operations.list", buildJsonObject { put("sessionId", sessionId); put("limit", 40) }) }.onSuccess { runs = it.objects() }.onFailure { error = it.message } }
     LaunchedEffect(sessionId) {
         load()
+        runCatching { repository.request("workbench.codelab.status", buildJsonObject { put("sessionId", sessionId) }) as JsonObject }.onSuccess { labStatus = it }.onFailure { error = it.message }
+        runCatching { repository.request("workbench.artifacts.list", buildJsonObject { put("sessionId", sessionId); put("limit", 50) }) }.onSuccess { value -> artifacts = (value as? JsonObject)?.list("artifacts") ?: value.objects() }.onFailure { error = it.message }
+        runCatching { repository.request("workbench.codelab.library", buildJsonObject { put("sessionId", sessionId) }) }.onSuccess { saved = it.objects() }.onFailure { error = it.message }
+
         runCatching { repository.read("workbench.images.connections", buildJsonObject {}) as JsonObject }.onSuccess { value -> connections = value.list("connections").filter { it.isTrue("enabled") }; if (connectionId.isEmpty()) connectionId = connections.firstOrNull()?.str("id").orEmpty() }
     }
     LaunchedEffect(state.cursor) { load() }
+    LaunchedEffect(sessionId, projectHistory, projectId, historySearch, historyBefore) {
+        if (historyBefore.isBlank()) { history = emptyList(); historyHasMore = false }
+        if (historySearch.isNotBlank()) kotlinx.coroutines.delay(240)
+        try {
+            val page = repository.read("workbench.operations.history", buildJsonObject {
+                put("sessionId",sessionId); put("limit",25)
+                if (projectHistory && projectId != null) put("project",projectId)
+                if (historySearch.isNotBlank()) put("query",historySearch)
+                if (historyBefore.isNotBlank()) put("before",historyBefore)
+            }).objects()
+            history = if (historyBefore.isBlank()) page else (history + page).distinctBy { it.str("operationId") }
+            historyHasMore = page.size == 25
+        } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { error = failure.message }
+    }
+    LaunchedEffect(selectedRun, selectedOwner, selectedKind) {
+        runDetail = null
+        val id = selectedRun ?: return@LaunchedEffect
+        try {
+            do {
+                val latest = repository.read("workbench.operations.get",buildJsonObject { put("sessionId",selectedOwner); put("operationId",id) }).jsonObject
+                runDetail = latest
+                val active = latest.str("state") in setOf("running","queued","dispatching","cancel_requested","planning","searching","reading","synthesizing")
+                if (active) kotlinx.coroutines.delay(1500)
+            } while (active)
+        } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { error = failure.message }
+    }
+    val selectedRecipe = labStatus?.list("recipes")?.find { it.str("id") == recipeId }
+    val canRun = labStatus?.let { it.isTrue("enabled") && it.isTrue("available") } == true
+    fun params() = Json.parseToJsonElement(parametersText).jsonObject
+    fun updateFiles() = scope.launch {
+        runCatching { repository.read("workbench.artifacts.list", buildJsonObject {
+            put("sessionId",sessionId); put("project",true); put("limit",100)
+        }).jsonObject.list("artifacts") }.onSuccess { artifacts = it }.onFailure { error = it.message }
+    }
+    fun setDraft(draft: JsonObject) {
+        sharedPython = draft.isTrue("sharedPython")
+        code = draft.str("code").orEmpty()
+        stepsJson = JsonArray(draft.list("steps")).toString()
+        purpose = draft.str("purpose") ?: purpose
+        language = draft.str("language") ?: "python"
+        parametersText = (draft["parameters"] ?: JsonObject(emptyMap())).toString()
+        inputJson = JsonArray(draft.list("slots").ifEmpty { draft.list("inputs") }.map { slot -> buildJsonObject {
+            put("artifactId",slot.str("artifactId")); put("versionId",slot.str("versionId"))
+            if (slot["available"] == JsonPrimitive(false)) { put("missing",true); put("name",slot.str("name")) }
+        } }).toString()
+        parentRun = draft.str("parentId") ?: draft.str("operationId").orEmpty()
+        analysisId = draft.str("id").orEmpty()
+        recipeId = draft.str("recipeId") ?: labStatus?.list("recipes")?.find { it.str("code") == code }?.str("id").orEmpty()
+        reviewWarnings = ""
+        error = (draft["warnings"] as? JsonArray)?.joinToString("\n") { it.jsonPrimitive.content }
+        inspect = null
+        updateFiles()
+    }
+    fun reviewPayload() = buildJsonObject {
+        require(selectedInputs.none { it.isTrue("missing") }) { strings.getString(R.string.lab_missing_input) }
+        put("sessionId", sessionId); put("inputs", JsonArray(selectedInputs)); put("parameters", params())
+        put("code", code); put("language",language); put("steps",JsonArray(steps)); put("sharedPython",sharedPython && steps.isNotEmpty())
+        if (parentRun.isNotEmpty()) put("parentId",parentRun)
+        if (analysisId.isNotEmpty()) put("analysisId",analysisId)
+    }
+    suspend fun startRun(payload: JsonObject) {
+        val result = signed(activity, repository, "workbench.codelab.run", payload, strings.getString(R.string.work_run_this_code_in_code_lab)).jsonObject
+        parentRun = result.str("operationId").orEmpty()
+        info = strings.getString(R.string.work_running_in_code_lab_on_the_desktop)
+        load()
+    }
+    fun preflight(launch: Boolean) = scope.launch {
+        busy = true
+        try {
+            val args = reviewPayload()
+            val check = repository.read("workbench.codelab.preflight",args).jsonObject
+            inspect = check
+            val warnings = (check["warnings"] as? JsonArray)?.joinToString("\n") { it.jsonPrimitive.content }.orEmpty()
+            error = null
+            if (launch) {
+                val run = buildJsonObject { args.forEach { (key,value) -> put(key,value) }; put("purpose",purpose); put("notify",notify); put("reuseSteps",recompute) }
+                if (warnings.isBlank()) startRun(run) else { reviewWarnings = warnings; pendingRun = run }
+            } else info = warnings
+        } catch (failure: Exception) { error = failure.message } finally { busy = false }
+    }
+    fun ask(mode: String) = scope.launch {
+        busy = true
+        try {
+            val original = code
+            val result = signed(activity, repository, "workbench.codelab.assist", buildJsonObject {
+                put("sessionId",sessionId); put("mode",mode); put("request",question); put("language",language); put("code",original)
+                put("inputs",JsonArray(selectedInputs)); put("parameters",params())
+                if (parentRun.isNotEmpty()) put("operationId",parentRun)
+                if (analysisId.isNotEmpty()) put("analysisId",analysisId)
+            }, strings.getString(R.string.lab_review)).jsonObject
+            proposalBase = original; proposalMode = mode; proposal = result
+        } catch (failure: Exception) { error = failure.message } finally { busy = false }
+    }
     fun generate(acknowledge: Boolean) = scope.launch {
         error = null
         runCatching { signed(activity, repository, "workbench.images.generate", buildJsonObject {
@@ -748,12 +894,89 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
         item { Status(error, info) }
         item {
             Text(stringResource(R.string.work_analysis_code_lab), Modifier.semantics { heading() }, style = MaterialTheme.typography.titleSmall)
-            OutlinedTextField(code, { code = it }, Modifier.fillMaxWidth().heightIn(min = PALLayout.codeEditorHeight), textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                placeholder = { Text(stringResource(R.string.work_python_3_run_in_the_desktops_isolated_code)) })
-            Button({ scope.launch {
-                runCatching { signed(activity, repository, "workbench.codelab.run", buildJsonObject { put("sessionId", sessionId); put("code", code); put("purpose", "Run from PAL Mobile") }, strings.getString(R.string.work_run_this_code_in_code_lab)) }
-                    .onSuccess { info = strings.getString(R.string.work_running_in_code_lab_on_the_desktop); load() }.onFailure { error = it.message }
-            } }, enabled = code.isNotBlank()) { Icon(Icons.Default.PlayArrow, null); Text(stringResource(R.string.desktop_run)) }
+            labStatus?.let { status ->
+                Text(status.str("problem") ?: stringResource(if (canRun) R.string.work_codelab_ready else R.string.work_codelab_unavailable))
+                if (!canRun) TextButton(onClick = openSettings) { Text(stringResource(R.string.lab_inspect_settings)) }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                TextButton({ scope.launch {
+                    runCatching { repository.mutate("workbench.codelab.sample", buildJsonObject { put("sessionId",sessionId) }).jsonObject }
+                        .onSuccess(::setDraft).onFailure { error = it.message }
+                } }) { Text(stringResource(R.string.work_use_sample)) }
+                labStatus?.list("recipes")?.forEach { r ->
+                    FilterChip(recipeId == r.str("id"), {
+                        recipeId = r.str("id").orEmpty(); code = r.str("code").orEmpty(); purpose = r.str("label").orEmpty()
+                        language = "python"; stepsJson = "[]"; parentRun = ""; analysisId = ""; parametersText = "{}"
+                    }, { Text(r.str("label").orEmpty()) })
+                }
+            }
+            Text(stringResource(R.string.work_input_files), style = MaterialTheme.typography.labelMedium)
+            selectedInputs.forEachIndexed { i, ref ->
+                val file = artifacts.find { it.str("id") == ref.str("artifactId") }
+                Text(stringResource(R.string.lab_pinned,i+1,if (ref.isTrue("missing")) strings.getString(R.string.lab_replace_input,ref.str("name")) else file?.str("name") ?: ref.str("artifactId").orEmpty(),ref.str("versionId").orEmpty().take(8)))
+                Row {
+                    if (i > 0) TextButton({ inputJson = JsonArray(selectedInputs.toMutableList().apply { add(i-1,removeAt(i)) }).toString(); inspect = null }) { Text(stringResource(R.string.lab_up)) }
+                    TextButton({ inputJson = JsonArray(selectedInputs.filterIndexed { n,_ -> n != i }).toString(); inspect = null }) { Text(stringResource(R.string.action_remove)) }
+                }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                artifacts.forEach { a ->
+                    val id = a.str("id") ?: return@forEach
+                    val version = a.str("latestVersionId") ?: return@forEach
+                    val selected = selectedInputs.any { it.str("artifactId") == id && it.str("versionId") == version }
+                    FilterChip(selected, {
+                        val ref = buildJsonObject { put("artifactId",id); put("versionId",version) }
+                        val next = selectedInputs.toMutableList()
+                        val missing = next.indexOfFirst { it.isTrue("missing") }
+                        if (selected) next.removeAll { it.str("versionId") == version } else if (missing >= 0) next[missing] = ref else next.add(ref)
+                        inputJson = JsonArray(next).toString()
+                        inspect = null
+                    }, { Text(a.str("name") ?: id) }, enabled = selected || selectedInputs.size < 8 || selectedInputs.any { it.isTrue("missing") })
+                }
+            }
+            TextButton({ preflight(false) }, enabled = !busy) { Text(stringResource(R.string.lab_review_inputs)) }
+            selectedRecipe?.list("fields")?.forEach { field ->
+                val key = field.str("key") ?: return@forEach
+                val current = runCatching { params().str(key) }.getOrNull().orEmpty()
+                fun setParam(v: String) { parametersText = JsonObject(runCatching { params().toMap() }.getOrDefault(emptyMap()) + (key to JsonPrimitive(v))).toString() }
+                OutlinedTextField(current, ::setParam, Modifier.fillMaxWidth(), label = { Text(field.str("label") ?: key) })
+                if (field.str("type") == "column") FlowRow {
+                    val names = inspect?.list("slots")?.firstOrNull()?.get("columns") as? JsonArray
+                    names?.forEach { c -> val name = c.jsonPrimitive.content; FilterChip(current == name, { setParam(name) }, { Text(name) }) }
+                }
+            }
+            CodeLabEditor(code, { code = it }, language, { language = it }, purpose, { purpose = it }, parametersText, { parametersText = it },
+                steps, { stepsJson = JsonArray(it).toString() }, canRun && !busy) { preflight(true) }
+            if (steps.isNotEmpty()) FilterChip(sharedPython,{ sharedPython = !sharedPython },{Text(stringResource(R.string.lab_share_python))})
+            if (parentRun.isNotEmpty() && !sharedPython) FilterChip(recompute, { recompute = !recompute }, { Text(stringResource(R.string.lab_unchanged)) })
+            FilterChip(notify, { notify = !notify }, { Text(stringResource(R.string.lab_notify)) })
+            OutlinedTextField(question,{question=it},Modifier.fillMaxWidth(),label={Text(stringResource(R.string.lab_question))})
+            FlowRow {
+                listOf("explain" to R.string.lab_explain, "revise" to R.string.lab_revise, "plan" to R.string.lab_plan).forEach { (mode,label) ->
+                    TextButton({ ask(mode) }, enabled = !busy && question.isNotBlank()) { Text(stringResource(label)) }
+                }
+            }
+            val grant = labStatus?.obj("grant")
+            if (grant != null) Text(stringResource(R.string.lab_grant,(grant.int("maxRuns") ?: 0) - (grant.int("usedRuns") ?: 0)))
+            if (canRun) TextButton({ scope.launch {
+                runCatching {
+                    val args = buildJsonObject { put("sessionId",sessionId); grant?.str("id")?.let { put("id",it) } }
+                    if (grant == null) signed(activity,repository,"workbench.codelab.grant",args,strings.getString(R.string.lab_grant_runs))
+                    else repository.mutate("workbench.codelab.revoke",args)
+                    repository.read("workbench.codelab.status",buildJsonObject { put("sessionId",sessionId) }).jsonObject
+                }.onSuccess { labStatus = it }.onFailure { error = it.message }
+            } }) { Text(stringResource(if (grant == null) R.string.lab_grant_runs else R.string.lab_end_grant)) }
+        }
+        if (saved.isNotEmpty()) item {
+            Text(stringResource(R.string.work_saved_analyses), Modifier.semantics { heading() }, style = MaterialTheme.typography.titleSmall)
+            saved.forEach { item -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(item.str("name") ?: item.str("id").orEmpty(), Modifier.weight(1f), maxLines = 1)
+                TextButton({ scope.launch { runCatching { repository.request("workbench.codelab.load", buildJsonObject { put("sessionId", sessionId); put("id", item.str("id").orEmpty()) }) as JsonObject }.onSuccess { loaded ->
+                    setDraft(loaded)
+                }.onFailure { error = it.message } } }) { Text(stringResource(R.string.work_load)) }
+                TextButton({ scope.launch { val days=if ((item.int("days") ?: 0)>0) 0 else 7; runCatching { signed(activity, repository, "workbench.codelab.schedule", buildJsonObject { put("sessionId", sessionId); put("id", item.str("id").orEmpty()); put("days", days) }, strings.getString(R.string.work_schedule_weekly)) }.onSuccess { value -> info = if(days==0) "Schedule disabled" else strings.getString(R.string.work_analysis_scheduled); runCatching { repository.request("workbench.codelab.library", buildJsonObject { put("sessionId",sessionId) }) }.onSuccess { saved=it.objects() } }.onFailure { error = it.message } } }) { Text(if ((item.int("days") ?: 0)>0) "Disable schedule" else stringResource(R.string.work_schedule_weekly)) }
+                TextButton({ scope.launch { runCatching { repository.mutate("workbench.codelab.remove", buildJsonObject { put("sessionId", sessionId); put("id", item.str("id").orEmpty()) }) }.onSuccess { saved = saved.filterNot { entry -> entry.str("id") == item.str("id") } }.onFailure { error = it.message } } }) { Text(stringResource(R.string.work_remove_analysis)) }
+            } }
         }
         if (connections.isNotEmpty()) item {
             Text(stringResource(R.string.work_create_an_image), Modifier.semantics { heading() }, style = MaterialTheme.typography.titleSmall)
@@ -769,8 +992,74 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
                 supportingContent = { Text(runState(state) + (run.str("message")?.let { " · $it" } ?: "")) },
                 trailingContent = {
                     if (state in setOf("running", "queued", "dispatching", "awaiting_approval")) TextButton({ scope.launch { runCatching { repository.mutate("workbench.operations.cancel", buildJsonObject { put("sessionId", sessionId); put("operationId", id) }) }.onSuccess { load() }.onFailure { error = it.message } } }) { Text(stringResource(R.string.action_cancel)) }
+                }, modifier = Modifier.clickable {
+                    selectedKind = run.str("kind").orEmpty(); selectedOwner = sessionId; selectedRun = id
                 })
         }
+        runDetail?.let { detail -> item {
+            Text(stringResource(R.string.work_run_details), Modifier.semantics { heading() }, style = MaterialTheme.typography.titleSmall)
+            Text(detail.str("label").orEmpty() + " · " + runState(detail.str("state").orEmpty()))
+            detail.str("summary")?.let { Text(it) }
+            detail.str("error")?.let { Text(it,color=MaterialTheme.colorScheme.error) }
+            detail.obj("details")?.let { d -> SelectionContainer { Text(listOfNotNull(d.str("stdout"),d.str("stderr")).joinToString("\n"),style=MaterialTheme.typography.bodySmall.copy(fontFamily=FontFamily.Monospace)) } }
+            if (detail.str("kind") == "codelab.run" && selectedOwner == sessionId) TextButton({ scope.launch {
+                runCatching { repository.read("workbench.codelab.open",buildJsonObject { put("sessionId",sessionId);put("operationId",selectedRun) }).jsonObject }
+                    .onSuccess(::setDraft).onFailure { error = it.message }
+            } }) { Text(stringResource(R.string.lab_reopen)) }
+            val outputs = detail.list("results").mapNotNull { it as? JsonObject }.filter { it.str("artifactId") != null && it.str("versionId") != null }
+            if (outputs.isNotEmpty()) CodeLabResultExplorer(repository, activity, selectedOwner, outputs, selectedRun.takeIf { detail.str("kind") == "codelab.run" })
+            if (detail.str("kind") == "codelab.run") Row { TextButton({ scope.launch { selectedRun?.let { id -> runCatching { signed(activity, repository, "workbench.codelab.save", buildJsonObject { put("sessionId", selectedOwner); put("operationId", id); put("name",detail.obj("details")?.str("purpose")?.take(120)?.ifBlank { purpose.take(120) } ?: purpose.take(120)) }, strings.getString(R.string.work_save_analysis)) }.onSuccess { runCatching { repository.request("workbench.codelab.library", buildJsonObject { put("sessionId", sessionId) }) }.onSuccess { saved = it.objects() } }.onFailure { error = it.message } } } }) { Text(stringResource(R.string.work_save_analysis)) }
+                TextButton({ scope.launch { selectedRun?.let { id -> runCatching { signed(activity, repository, "workbench.codelab.export", buildJsonObject { put("sessionId", selectedOwner); put("operationId", id) }, strings.getString(R.string.work_export)) }.onSuccess { info = strings.getString(R.string.work_export_ready) }.onFailure { error = it.message } } } }) { Text(stringResource(R.string.work_export)) } }
+        } }
+        if (runs.size >= 2 || compareLeft.isNotBlank()) item {
+            Text(stringResource(R.string.work_compare_runs), Modifier.semantics { heading() }, style = MaterialTheme.typography.titleSmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { runs.take(20).forEach { row -> val id = row.str("operationId") ?: row.str("id").orEmpty(); FilterChip(compareLeft == id, { compareLeft = id }, { Text("A ${id.takeLast(6)}") }); FilterChip(compareRight == id, { compareRight = id }, { Text("B ${id.takeLast(6)}") }) } }
+            TextButton({ scope.launch { runCatching { repository.request("workbench.operations.compare", buildJsonObject { put("sessionId", sessionId); put("left", compareLeft); put("right", compareRight) }) as JsonObject }.onSuccess { comparison = it }.onFailure { error = it.message } } }, enabled = compareLeft.isNotBlank() && compareRight.isNotBlank() && compareLeft != compareRight) { Text(stringResource(R.string.work_compare)) }
+            comparison?.list("differences")?.forEach { difference ->
+                val d=difference as? JsonObject ?: return@forEach
+                Text(d.str("field").orEmpty(), fontWeight=FontWeight.SemiBold)
+                Text("Before: ${d["before"]}\nAfter: ${d["after"]}", style=MaterialTheme.typography.bodySmall.copy(fontFamily=FontFamily.Monospace))
+            }
+        }
+        item {
+            Text(stringResource(R.string.work_project_history), Modifier.semantics { heading() }, style = MaterialTheme.typography.titleSmall)
+            OutlinedTextField(historySearch, { historySearch = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.lab_history_query)) })
+            if (projectId != null) FilterChip(projectHistory, { projectHistory = !projectHistory }, { Text(stringResource(R.string.lab_across_project)) })
+        }
+        items(history, key = { "history:" + it.str("operationId") }) { row ->
+            val id = row.str("operationId").orEmpty()
+            ListItem(headlineContent = { Text(row.str("label").orEmpty()) },
+                supportingContent = { Text(runState(row.str("state").orEmpty())) },
+                modifier = Modifier.clickable {
+                    selectedKind = row.str("kind").orEmpty(); selectedOwner = row.str("sessionId") ?: sessionId; selectedRun = id
+                },
+                trailingContent = { if (row.str("kind") != "research.run") TextButton({
+                    if (compareLeft.isBlank() || compareRight.isNotBlank()) { compareLeft=id;compareRight="" } else compareRight=id
+                }) { Text(stringResource(R.string.work_compare)) } })
+        }
+        if (historyHasMore) item { TextButton({ historyBefore = history.lastOrNull()?.str("cursor").orEmpty() }) { Text(stringResource(R.string.lab_older)) } }
+    }
+    pendingRun?.let { payload ->
+        AlertDialog(onDismissRequest = { pendingRun = null }, title = { Text(stringResource(R.string.lab_check)) }, text = { Text(reviewWarnings) },
+            confirmButton = { TextButton({ pendingRun = null; scope.launch { runCatching { startRun(payload) }.onFailure { error = it.message } } }) { Text(stringResource(R.string.lab_last_check)) } },
+            dismissButton = { TextButton({pendingRun=null}) {Text(stringResource(R.string.action_cancel))} })
+    }
+    proposal?.let { proposed ->
+        AlertDialog(onDismissRequest = { proposal=null }, title={ Text(stringResource(R.string.lab_review)) }, text={
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(proposed.str("explanation").orEmpty())
+                (proposed["plan"] as? JsonArray)?.forEach { Text(it.jsonPrimitive.content) }
+                SelectionContainer { Text(proposed.str("diff").orEmpty(),fontFamily=FontFamily.Monospace) }
+            }
+        }, confirmButton = {
+            if (proposalMode == "revise") TextButton({
+                if (code == proposalBase) {
+                    code = proposed.str("code").orEmpty()
+                    if (steps.isNotEmpty()) stepsJson = JsonArray(steps.toMutableList().apply { set(0,JsonObject(first() + ("code" to JsonPrimitive(code)))) }).toString()
+                } else error = strings.getString(R.string.lab_stale_edit)
+                proposal = null
+            }) { Text(stringResource(R.string.lab_apply)) }
+        }, dismissButton={TextButton({proposal=null}) {Text(stringResource(R.string.action_cancel))}})
     }
     confirmBilling?.let { message ->
         AlertDialog({ confirmBilling = null }, title = { Text(stringResource(R.string.work_this_image_service_may_bill_you)) }, text = { Text(message) },

@@ -117,13 +117,15 @@ test('legacy avatar ids are normalized before persistence and identity conflict 
 });
 
 test('names remain literal data in instructions and voice previews without rewriting custom personality', () => {
+  assert.equal(defaultPersonality, '');
   assert.equal(validateAssistantName('🜁 Étoile'), '🜁 Étoile');
   assert.equal(validateAssistantName('x'.repeat(64)), 'x'.repeat(64));
   for (const name of ['Daemona', '$&', 'Nova "the bright"', '<b>Nova</b>']) {
     const instructions = personalityInstructions(defaultPersonality, name);
-    assert.ok(instructions.includes(`You are ${name},`));
+    assert.match(instructions, /No added persona is selected/);
     assert.ok(instructions.includes(JSON.stringify(name)));
     assert.ok(!instructions.includes('You are PAL,'));
+    assert.ok(!instructions.includes('sharp-tongued desktop companion'));
     assert.ok(voiceTestLine(name).startsWith(`Hello, I'm ${name}.`));
   }
   const custom = 'You are PAL. Keep the PAL project well documented.';
@@ -132,6 +134,25 @@ test('names remain literal data in instructions and voice previews without rewri
   assert.match(personalityInstructions('', 'Daemona'), /neutral voice/);
   assert.match(personalityInstructions('', 'Daemona'), /"Daemona"/);
   assert.match(personalityInstructions('', 'PAL'), /"PAL"/);
+});
+
+test('new, custom, and cleared identities preserve an explicit neutral personality default', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'pal-neutral-identity-'));
+  const core = new Core(new Store(directory));
+  t.after(async () => { await core.close(); await rm(directory, {recursive:true, force:true}); });
+  assert.equal(core.settings.personality, '');
+  assert.match(personalityInstructions(core.settings.personality, core.settings.assistantName), /No added persona is selected/);
+  await core.updateSettings({personality:'Be gently curious.', assistantName:'Nova'});
+  assert.equal(core.settings.personality, 'Be gently curious.');
+  assert.match(personalityInstructions(core.settings.personality, core.settings.assistantName), /Be gently curious/);
+  assert.match(personalityInstructions(core.settings.personality, core.settings.assistantName), /"Nova"/);
+  await core.updateSettings({personality:null});
+  assert.equal(core.settings.personality, '');
+  const cleared = personalityInstructions(core.settings.personality, core.settings.assistantName);
+  assert.match(cleared, /No added persona is selected/);
+  assert.doesNotMatch(cleared, /Be gently curious|sharp-tongued desktop companion/);
+  const reopened = new Store(directory);
+  try { assert.equal(reopened.settings().personality, ''); } finally { reopened.close(); }
 });
 
 test('identity saves tolerate unrelated snapshot lag but reject stale identity and mixed settings patches', async t => {

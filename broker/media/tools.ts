@@ -15,7 +15,7 @@ import { inspect, transform, validSteps } from './transforms.ts';
 import { analysisImage, ocr } from './vision.ts';
 
 const id = z.string().regex(/^[0-9a-f-]{36}$/);
-const reference = z.strictObject({ artifactId: id, versionId: id, role: z.enum(['edit-base', 'subject', 'composition', 'style']).optional() });
+const reference = z.strictObject({ artifactId: id, versionId: id, role: z.enum(['target', 'edit-base', 'subject', 'composition', 'style']).optional() });
 const options = {
   connectionId: id.optional().describe('Image connection from images_capabilities; the first enabled one when omitted'),
   count: z.int().min(1).max(4).optional(), size: z.string().max(20).optional().describe('Exact pixels such as 1536x1024, where the backend takes sizes'),
@@ -40,7 +40,7 @@ export function registerImageTools(workbench: Workbench) {
     try { return await run(context, args); }
     catch (error: any) {
       if (context.signal.aborted) throw error;
-      if (error instanceof BackendRefusal) return failed(error.code, error.message, ['invalid', 'unsupported_parameter', 'missing_reference', 'mask_mismatch'].includes(error.code) ? 'explicit' : 'never');
+      if (error instanceof BackendRefusal) return failed(error.code, error.message, ['invalid', 'unsupported_parameter', 'missing_reference', 'missing_target', 'mask_mismatch', 'mask_target_mismatch'].includes(error.code) ? 'explicit' : 'never');
       return failed('failed', String(error?.message || error).slice(0, 600), 'never');
     }
   };
@@ -101,13 +101,13 @@ export function registerImageTools(workbench: Workbench) {
   });
   registry.register({
     name: 'images_generate', family: 'images', core: true, effects: { network: true, spend: true },
-    description: 'Make new images from a prompt with a configured image backend. The user sees the backend and cost before it runs (unless they set a budget). Returns artifact IDs; you will not see the pixels unless you analyse them.',
-    input: z.strictObject({ prompt: z.string().min(1).max(8000), ...options }), available: imagesAvailable,
-    run: guard(async (context, args) => { const { connectionId, ...request } = args; return runJob(context, { ...request, operation: 'generate', references: [] }, connectionId); }),
+    description: 'Make new images from a prompt with a configured image backend. Optional subject/composition/style references guide a new image and are never silently treated as an edit target. The user sees the backend and cost before it runs (unless they set a budget).',
+    input: z.strictObject({ prompt: z.string().min(1).max(8000), references: z.array(reference).max(16).optional(), ...options }), available: imagesAvailable,
+    run: guard(async (context, args) => { const { connectionId, ...request } = args; const references = request.references || []; return runJob(context, { ...request, operation: references.length ? 'reference' : 'generate', references }, connectionId); }),
   });
   registry.register({
     name: 'images_edit', family: 'images', core: true, effects: { network: true, spend: true },
-    description: 'Edit images: give the exact artifact and version IDs (from images_list) as references, the first with role "edit-base". Optional mask (an artifact the user painted) and protectOutside to keep pixels outside it unchanged. Creates new versions; originals stay.',
+    description: 'Edit images: give the exact artifact and version IDs (from images_list), with exactly one role "target" (legacy "edit-base" also works). Other images are subject/composition/style guides. Optional mask must have been painted on that exact target version.',
     input: z.strictObject({ prompt: z.string().min(1).max(8000), references: z.array(reference).min(1).max(16), mask: z.strictObject({ artifactId: id, versionId: id, feather: z.int().min(0).max(64).optional() }).optional(), protectOutside: z.boolean().optional(), ...options }),
     available: imagesAvailable,
     run: guard(async (context, args) => { const { connectionId, ...request } = args; return runJob(context, { ...request, operation: request.mask ? 'masked-edit' : 'edit' }, connectionId); }),

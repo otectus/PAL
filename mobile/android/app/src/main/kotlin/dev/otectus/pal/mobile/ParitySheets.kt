@@ -15,6 +15,10 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -23,6 +27,7 @@ import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Velocity
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -44,6 +49,17 @@ import java.util.concurrent.TimeUnit
 import java.io.InputStream
 import java.io.ByteArrayOutputStream
 
+/** Stops a scrollable child at its own vertical bounds instead of flinging its parent sheet. */
+private object ExpandedSheetEdgeConnection : NestedScrollConnection {
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) =
+        Offset(x = 0f, y = available.y)
+
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity) =
+        Velocity(x = 0f, y = available.y)
+}
+
+internal fun Modifier.consumeExpandedSheetEdgeScroll(): Modifier = nestedScroll(ExpandedSheetEdgeConnection)
+
 /**
  * Consistent full-height treatment for secondary tasks. The bounded inner column avoids an
  * over-wide form on tablets while the scrolling body and fixed action area remain usable in
@@ -57,6 +73,34 @@ internal fun AncillarySheetScaffold(
     subtitle: String? = null,
     busy: Boolean,
     onDismiss: () -> Unit,
+    action: (@Composable RowScope.() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = { if (!busy) onDismiss() },
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+        AncillarySheetLayout(
+            title = title,
+            subtitle = subtitle,
+            busy = busy,
+            onDismiss = onDismiss,
+            action = action,
+            modifier = Modifier.fillMaxWidth().imePadding().fillMaxHeight(0.94f).consumeExpandedSheetEdgeScroll(),
+            content = content,
+        )
+    }
+}
+
+/** The shared responsive sheet layout, separated from its modal window for geometry testing. */
+@Composable
+internal fun AncillarySheetLayout(
+    title: String,
+    subtitle: String? = null,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
     action: (@Composable RowScope.() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -88,25 +132,23 @@ internal fun AncillarySheetScaffold(
             )
         }
     }
-    ModalBottomSheet(
-        onDismissRequest = { if (!busy) onDismiss() },
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-    ) {
-        BoxWithConstraints(Modifier.fillMaxWidth().imePadding().fillMaxHeight(0.94f).semantics { paneTitle = title }) {
-            val compact = maxHeight < PALLayout.compactHeight
-            val wholePageScroll = rememberScrollState()
-            val bodyScroll = rememberScrollState()
-            // Keep the fields in the same composition when IME insets change. Replacing the body
-            // at the height breakpoint disposes its focused editor and closes the keyboard.
-            Column(Modifier.fillMaxHeight().widthIn(max = PALLayout.readingWidth).fillMaxWidth()
-                .align(Alignment.TopCenter).then(if (compact) Modifier.verticalScroll(wholePageScroll) else Modifier)) {
-                Header()
-                HorizontalDivider()
-                Column(Modifier.fillMaxWidth().then(if (compact) Modifier else Modifier.weight(1f).verticalScroll(bodyScroll))
-                    .padding(padding), verticalArrangement = Arrangement.spacedBy(spacing), content = content)
-                Footer()
-            }
+    BoxWithConstraints(modifier.semantics { paneTitle = title }) {
+        val compact = maxHeight < PALLayout.compactHeight
+        // This scroll offset belongs to the content, not to either layout mode. Insets can move
+        // a sheet across the compact breakpoint while a fling or IME animation is in progress;
+        // separate states reset the visible content as the scrollable moves from the body to the
+        // whole sheet and make the lower edge appear to jump.
+        val scroll = rememberScrollState()
+        // Keep the fields in the same composition when IME insets change. Replacing the body at
+        // the height breakpoint disposes its focused editor and closes the keyboard. The same
+        // scroll state also preserves its position across that modifier handoff.
+        Column(Modifier.fillMaxHeight().widthIn(max = PALLayout.readingWidth).fillMaxWidth()
+            .align(Alignment.TopCenter).then(if (compact) Modifier.verticalScroll(scroll) else Modifier)) {
+            Header()
+            HorizontalDivider()
+            Column(Modifier.fillMaxWidth().then(if (compact) Modifier else Modifier.weight(1f).verticalScroll(scroll))
+                .padding(padding), verticalArrangement = Arrangement.spacedBy(spacing), content = content)
+            Footer()
         }
     }
 }

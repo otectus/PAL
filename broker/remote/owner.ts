@@ -48,6 +48,13 @@ export class OwnerOps {
     if (operation.sessionId !== sessionId) throw remoteError('SCOPE_DENIED', 'That run belongs to another conversation.');
     return operation;
   }
+  private authorizeAnalysis(device: Device, sessionId: string, analysisId?: string) {
+    this.session(device, sessionId);
+    if (!analysisId) return;
+    const entry = this.core.workbench.analyses.list(sessionId).find(row => row.id === analysisId);
+    if (!entry) throw remoteError('SCOPE_DENIED', 'That saved analysis is unavailable to this device.');
+    this.session(device, entry.sourceSessionId);
+  }
   /** Resolve a research ID through the canonical service before authorizing the run's conversation. */
   private async researchRun(device: Device, id: string) {
     const run: any = await this.rpc('research.get', { id });
@@ -213,11 +220,62 @@ export class OwnerOps {
 
       // ── Workbench: runs, Code Lab, commands ──────────────────────────────────────────────────
       case 'workbench.operations.list': { this.session(device, p.sessionId); const { sessionId, ...rest } = p; return this.rpc('operations.list', { sessionId, ...rest }); }
-      case 'workbench.operations.get': this.session(device, p.sessionId); this.operation(p.sessionId, p.operationId); return this.rpc('operations.get', { id: p.operationId });
+      case 'workbench.operations.get': {
+        this.session(device, p.sessionId);
+        if (this.core.research.library.has(p.operationId)) {
+          if (this.core.research.get(p.operationId).sessionId !== p.sessionId) throw remoteError('SCOPE_DENIED', 'That investigation belongs to another conversation');
+        } else this.operation(p.sessionId, p.operationId);
+        return this.rpc('operations.get', { id: p.operationId });
+      }
       case 'workbench.operations.cancel': this.session(device, p.sessionId); this.operation(p.sessionId, p.operationId); return this.rpc('operations.cancel', { id: p.operationId });
       case 'workbench.operations.retry': this.session(device, p.sessionId); this.operation(p.sessionId, p.operationId); return this.rpc('operations.retry', { id: p.operationId, ...(p.confirmed ? { confirmed: true } : {}) });
-      case 'workbench.codelab.status': return this.rpc('codelab.status');
-      case 'workbench.codelab.run': this.session(device, p.sessionId); return this.rpc('codelab.run', { sessionId: p.sessionId, code: p.code, ...(p.inputs ? { inputs: p.inputs } : {}), purpose: p.purpose || 'Run from PAL Mobile', ...(p.timeoutSeconds ? { timeoutSeconds: p.timeoutSeconds } : {}) });
+      case 'workbench.codelab.status': if (p.sessionId) this.session(device, p.sessionId); return this.rpc('codelab.status', { sessionId: p.sessionId });
+      case 'workbench.codelab.sample': this.session(device, p.sessionId); return this.rpc('codelab.sample', { sessionId: p.sessionId });
+      case 'workbench.codelab.grant': this.session(device, p.sessionId); return this.rpc('codelab.grant', { sessionId: p.sessionId, minutes: p.minutes, maxRuns: p.maxRuns });
+      case 'workbench.codelab.revoke': this.session(device, p.sessionId); return this.rpc('codelab.revoke', { sessionId: p.sessionId, id: p.id });
+      case 'workbench.codelab.preflight': this.authorizeAnalysis(device, p.sessionId, p.analysisId); return this.rpc('codelab.preflight', p);
+      case 'workbench.codelab.assist': this.authorizeAnalysis(device, p.sessionId, p.analysisId); return this.rpc('codelab.assist', p);
+      case 'workbench.codelab.open': this.session(device, p.sessionId); this.operation(p.sessionId, p.operationId); return this.rpc('codelab.open', { sessionId: p.sessionId, operationId: p.operationId });
+      case 'workbench.codelab.save': this.session(device, p.sessionId); this.operation(p.sessionId, p.operationId); return this.rpc('codelab.save', { sessionId: p.sessionId, operationId: p.operationId, name: p.name });
+      case 'workbench.codelab.library': {
+        this.session(device, p.sessionId);
+        const rows = await this.rpc('codelab.library', { sessionId: p.sessionId });
+        // Saved analyses are project-visible only when their originating conversation is visible too.
+        return Array.isArray(rows) ? rows.filter(row => { try { return row && typeof row.sourceSessionId === 'string' && !!this.session(device, row.sourceSessionId); } catch { return false; } }) : rows;
+      }
+      case 'workbench.codelab.load': {
+        this.authorizeAnalysis(device, p.sessionId, p.id);
+        return this.rpc('codelab.load', { sessionId: p.sessionId, id: p.id });
+      }
+      case 'workbench.codelab.export': this.session(device, p.sessionId); this.operation(p.sessionId, p.operationId); return this.rpc('codelab.export', { sessionId: p.sessionId, operationId: p.operationId, ...(p.outputs ? { outputs: p.outputs } : {}) });
+      case 'workbench.codelab.table': this.session(device, p.sessionId); await this.rpc('artifacts.get', { sessionId: p.sessionId, artifactId: p.artifactId }); return this.rpc('codelab.table', { sessionId: p.sessionId, artifactId: p.artifactId, versionId: p.versionId, ...(p.query ? { query: p.query } : {}), ...(p.sort ? { sort: p.sort } : {}), ...(p.direction ? { direction: p.direction } : {}), ...(p.offset !== undefined ? { offset: p.offset } : {}), ...(p.limit ? { limit: p.limit } : {}) });
+      case 'workbench.codelab.exportRows': this.session(device, p.sessionId); await this.rpc('artifacts.get', { sessionId: p.sessionId, artifactId: p.artifactId }); return this.rpc('codelab.exportRows', { sessionId: p.sessionId, artifactId: p.artifactId, versionId: p.versionId, ...(p.query ? { query: p.query } : {}), ...(p.sort ? { sort: p.sort } : {}), ...(p.direction ? { direction: p.direction } : {}), ...(p.rows ? { rows: p.rows } : {}) });
+      case 'workbench.codelab.schedule': {
+        this.authorizeAnalysis(device, p.sessionId, p.id);
+        return this.rpc('codelab.schedule', { sessionId: p.sessionId, id: p.id, days: p.days, authorizerDeviceId: device.id });
+      }
+      case 'workbench.codelab.remove': {
+        this.authorizeAnalysis(device, p.sessionId, p.id);
+        return this.rpc('codelab.remove', { sessionId: p.sessionId, id: p.id });
+      }
+      case 'workbench.codelab.run':
+        this.authorizeAnalysis(device, p.sessionId, p.analysisId);
+        return this.rpc('codelab.run', { ...p, purpose: p.purpose || 'Run from PAL Mobile' });
+      case 'workbench.operations.history': {
+        const session = this.session(device, p.sessionId);
+        if (p.project && p.project !== this.router.projectFor(device, session.cwd).id)
+          throw remoteError('SCOPE_DENIED', 'History is limited to this conversation’s granted project.');
+        const allowed = this.core.workbench.analyses.projectSessions(session.id).filter(id => {
+          try { this.session(device, id); return true; } catch { return false; }
+        });
+        return this.rpc('operations.history', { ...p, project: !!p.project, allowedSessions: allowed });
+      }
+      case 'workbench.operations.compare': {
+        this.session(device, p.sessionId);
+        const left = this.core.workbench.operations.get(p.left), right = this.core.workbench.operations.get(p.right);
+        this.session(device, left.sessionId); this.session(device, right.sessionId);
+        return this.rpc('operations.compare', { sessionId: p.sessionId, left: p.left, right: p.right, ...(p.key ? { key: p.key } : {}), ...(p.mode ? { mode: p.mode } : {}) });
+      }
       case 'workbench.commands.run': this.session(device, p.sessionId); return this.rpc('commands.run', { sessionId: p.sessionId, rootId: p.rootId, argv: p.argv, ...(p.cwd ? { cwd: p.cwd } : {}), network: p.network === true, ...(p.timeoutSeconds ? { timeoutSeconds: p.timeoutSeconds } : {}) });
 
       // ── Workbench: images ────────────────────────────────────────────────────────────────────

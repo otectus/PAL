@@ -2,9 +2,11 @@
 // Register authored drawings, bake premultiplied optical-flow inbetweens, pack
 // bounded native surface sequences. Run from the repository root.
 import sharp from 'sharp';
+import {packSurfaceAtlas} from './avatar-surface-atlas.mjs';
+import {bakeArticulatedSurface} from './articulated-surface.mjs';
 import {sheetComponents} from './avatar-sheet.mjs';
 import {applyHeldEyes} from './avatar-eyes.mjs';
-import {authoringAvatars,avatarRoutes} from '../broker/avatars.ts';
+import {authoringAvatars,avatarCatalog,avatarRoutes} from '../broker/avatars.ts';
 import {mkdir,readFile,writeFile,rename} from 'node:fs/promises';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
@@ -12,8 +14,9 @@ const run=promisify(execFile),args=process.argv.slice(2);
 const blinkOnly=args.includes('--blink-only'),carryOnly=args.includes('--carry-only');
 if(blinkOnly&&carryOnly)throw Error('--blink-only and --carry-only cannot be combined');
 const positional=args.filter(arg=>arg!=='--blink-only'&&arg!=='--carry-only');
-const interpolate=blinkOnly?null:positional.shift();
-if(!blinkOnly&&!interpolate) throw Error('Usage: node tools/prepare-avatar-poses.mjs INTERPOLATOR [--carry-only] [avatar ...]\n       node tools/prepare-avatar-poses.mjs --blink-only [avatar ...]');
+const articulatedOnly=positional.length>0&&positional.every(id=>avatarCatalog.some(entry=>entry.id===id&&entry.authoring.jointSource));
+const interpolate=blinkOnly||articulatedOnly?null:positional.shift();
+if(!blinkOnly&&!articulatedOnly&&!interpolate) throw Error('Usage: node tools/prepare-avatar-poses.mjs INTERPOLATOR [--carry-only] [avatar ...]\n       node tools/prepare-avatar-poses.mjs [--blink-only|--carry-only] pal');
 const requestedIds=positional.length>0,avatars=authoringAvatars(positional);
 const ids=avatars.map(avatar=>avatar.id),sourceConfig=Object.fromEntries(avatars.map(avatar=>[avatar.id,avatar.authoring]));
 const raw=path=>sharp(path).ensureAlpha().raw().toBuffer({resolveWithObject:true});
@@ -74,7 +77,11 @@ async function updateHeldBlinks(id,cfg){
 }
 if(blinkOnly){
  let changed=0;
- for(const id of ids){const cfg=sourceConfig[id];if(!cfg)throw Error(`${id}: missing source registration`);changed+=await updateHeldBlinks(id,cfg);}
+ for(const id of ids){
+  const cfg=sourceConfig[id];
+  if(cfg.jointSource){await bakeArticulatedSurface(id,cfg.jointSource,'blink');changed++;}
+  else changed+=await updateHeldBlinks(id,cfg);
+ }
  if(!changed)throw Error('No heldEyes configuration found');
  process.exit(0);
 }
@@ -165,8 +172,11 @@ function baseline(image){
  for(let y=Math.floor(h*.7);y<h;y++){let count=0;for(let x=Math.floor(w*.18);x<w*.82;x++)if(data[(y*w+x)*4+3]>180)count++;if(count>12)sole=y;}
  return sole;
 }
-const motions={wave:'wave',greeting:'wave',goodbye:'wave',thinking:'thinking',ponder:'thinking',curious:'thinking',skeptical:'thinking',explainOpen:'present',explainSweep:'present',speaking:'present',listen:'present',approval:'present',celebrate:'celebrate',success:'celebrate',fistPump:'celebrate',shy:'shy',blush:'shy',hoverBlush:'shy',clickBlush:'shy',dragging:'carry'};
 for(const id of ids){
+ if(sourceConfig[id].jointSource){
+  await bakeArticulatedSurface(id,sourceConfig[id].jointSource,carryOnly?'carry':'all');
+  continue;
+ }
  const dir=`artwork/avatars/${id}`,original=await raw(`${dir}/front.png`),originalBlink=await raw(`${dir}/blink.png`);
  const cfg=sourceConfig[id];
  if(!cfg)throw Error(`${id}: missing source registration`);
@@ -312,23 +322,9 @@ for(const id of ids){
   frames.push(...await bakeSurfaceRoute({cache,name,neutralPath,targetX,targetY,ground:registration.ground}));
   console.log(`${id}/${name}: registered and interpolated`);
  }
- const columns=16,atlasW=W*columns,atlasH=fullH+Math.ceil((frames.length+7)/columns)*H,atlas=Buffer.alloc(atlasW*atlasH*4);
- function blit(data,w,h,left,top){for(let y=0;y<h;y++)data.copy(atlas,((top+y)*atlasW+left)*4,y*w*4,(y+1)*w*4);}
- blit(open,fullW,fullH,0,0);blit(closed,fullW,fullH,fullW,0);
- let cell=0;const nextRect=()=>{const r=[cell%columns*W,fullH+Math.floor(cell/columns)*H,W,H];cell++;return r;};
- const metadata=[],routes={};
- for(let i=0;i<frames.length;i++){
-  const f=frames[i],sourceRect=nextRect(),entry={sourceRect};blit(f.data,W,H,sourceRect[0],sourceRect[1]);
-  if(f.closed){entry.blinkSourceRect=nextRect();blit(f.closed,W,H,entry.blinkSourceRect[0],entry.blinkSourceRect[1]);}
-  metadata.push(entry);(routes[f.name]||={frames:[0],frameMs:1000/60,holdMs:f.name==='shy'?1400:850}).frames.push(i+1);
- }
- routes.carry.loopMode='pingPong';routes.carry.loopStart=15;
- const rig={texture:`${id}-surface.png`,presentation:'reference',parts:[{name:'reference',bone:'root',sourceRect:[0,0,fullW,fullH],blinkSourceRect:[fullW,0,fullW,fullH],rect:[96-176*fullW/referenceHeight/2,202-176*fullH/referenceHeight,176*fullW/referenceHeight,176*fullH/referenceHeight],surfaceMotion:true,z:0,surfaceFrames:metadata}],surfaceSequences:{routes,motions}};
- const packedPath=`assets/${id}-surface.png`;
- await sharp(atlas,{raw:{width:atlasW,height:atlasH,channels:4}}).png().toFile(packedPath+'.tmp');
- await rename(packedPath+'.tmp',packedPath);
- await writeFile(`assets/${id}-surface-rig.json`,JSON.stringify(rig,null,2)+'\n');
+ const rect=[96-176*fullW/referenceHeight/2,202-176*fullH/referenceHeight,176*fullW/referenceHeight,176*fullH/referenceHeight];
+ const rig=await packSurfaceAtlas({id,open,closed,fullW,fullH,W,H,rect,frames});
  if(id==='pal_classic'){const base=JSON.parse(await readFile('assets/pal-rig.json','utf8'));await writeFile('assets/pal-rig.json',JSON.stringify({...base,...rig},null,2)+'\n');}
  await writeFile(`${dir}/registration.json`,JSON.stringify(registration,null,2)+'\n');
- console.log(`${id}: ${frames.length} frames, ${atlasW}x${atlasH}, grounded at ${ground}`);
+ console.log(`${id}: ${frames.length} frames, grounded at ${ground}`);
 }

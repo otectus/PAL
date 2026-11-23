@@ -1,10 +1,10 @@
 # PAL — Personal Assistant for Linux
 
-The current desktop and Android versions are **2.0.0**. The mobile header shows the installed app version beneath PAL. [What changed in 2.0.0](CHANGELOG.md#200---2026-11-22)
+The current desktop and Android versions are **2.0.1**. The mobile header shows the installed app version beneath PAL. [What changed in 2.0.1](CHANGELOG.md#201---2026-11-23)
 
 [Download PAL Mobile 2.0.0 for Android](https://github.com/otectus/PAL/releases/download/mobile-dev-v2.0.0/pal-mobile-v2.0.0-dev.apk) · [Release notes and checksums](https://github.com/otectus/PAL/releases/tag/mobile-dev-v2.0.0)
 
-PAL Mobile requires Android 11 or later. To upgrade from Cere Mobile 0.1.5, open the APK from the link above and choose **Update**. Keeping the existing app installed preserves its pairing and local data. The 0.1.5 update checker expects the former repository name and can miss this release. The APK uses the existing development package and signing certificate. Pair with PAL Desktop 2.0.0 for the full set of supported features. [Mobile setup](docs/mobile/SETUP.md) · [Feature matrix](docs/FEATURE-MATRIX.md) · [Release channels](docs/mobile/RELEASES.md)
+PAL Mobile requires Android 11 or later. To upgrade from Cere Mobile 0.1.5, open the APK from the link above and choose **Update**. Keeping the existing app installed preserves its pairing and local data. The 0.1.5 update checker expects the former repository name and can miss this release. The APK uses the existing development package and signing certificate. PAL Desktop 2.0.1 retains mobile protocol 1.1 for this APK. [Mobile setup](docs/mobile/SETUP.md) · [Feature matrix](docs/FEATURE-MATRIX.md) · [Release channels](docs/mobile/RELEASES.md)
 
 Desktop 0.1.6 introduced configurable project memory review. In **Settings → Knowledge**, select a review model, inspect its recommendations and choose which supporting excerpts PAL may retain. The review inbox can forecast expiry and protect existing memories. [Setup and backlog preservation](docs/memory/operations.md#desktop-016-rollout-and-backlog-preservation)
 
@@ -118,7 +118,7 @@ Use your compositor’s configuration interface to bind `pal toggle` to a conven
 
 Roaming starts disabled. When enabled, PAL slowly follows the mouse across your displays, easing into motion at up to 75 logical pixels per second and stopping short of the pointer. Small pointer movements do not make her shuffle constantly. Hovering or using her menu, opening either interface, a reply, completion or approval bubble beside her, dragging, fullscreen apps, task activity, hiding, quiet mode, and reduced motion pause following. The old roaming-area presets are replaced by following across the available screens.
 
-The 23 illustrated avatars have six full-body routes: wave, thinking, open-hand presentation, celebration, a timid blush with both hands against the cheeks, and a dangling/flailing pickup loop. Their original front-view reference supplies the resting pose. Generated gesture frames preserve the character’s clothing, colors and silhouette, with uniform scaling and room for extended hands. Standing gestures keep their feet planted; carried poses bend their knees and swing their feet freely. The source sheets and generation prompts live locally under `artwork/avatars/{id}/`, outside version control.
+All 24 companions can wave, think, present, celebrate, blush on hover or click, and dangle when picked up. The default robot moves at its shoulders, elbows, wrists, hips and knees. Its cyan eyes follow the gesture. Standing gestures keep the feet planted, while the pickup loop lets the feet swing. The other companions use drawn pose sheets stored locally under `artwork/avatars/{id}/` with their generation prompts.
 
 ![PAL (Classic) demonstrating the six illustrated gestures: wave, thinking, open-hand presentation, celebration, timid blush and the pickup flail, each with its expression badge](screenshots/gestures.png)
 
@@ -160,11 +160,11 @@ After authoring, run `tools/test-virtual-desktop.sh node --test tests/avatar-sur
 
 Saving an avatar also applies its theme. The robot uses pearl and cyan. **PAL (Classic)**, **PAL (Punk)** and **PAL (Punk - No Mask)** use cool blue; **PAL (Gothic)** pairs blue with darker charcoal and lace-inspired violet accents; **Daemona** uses black, dark red and crimson; **Jade** uses black and vibrant reds; **Nova** uses black, violet and purple; **Soap** uses tan and muted navy. **Brandy** pairs olive and denim blue; **Archy** uses cyan and blue; **Ghost** uses bone and muted slate; **Violet** uses purple and lilac; **Leafy** uses green and cream; **Cachy** uses teal; **Usagi** uses lavender, pink and cyan. **Cynthia** uses ivory, gold and crimson; **Genga** uses plum and magenta; **Kippy** uses sky blue and orange; **Pomni** uses indigo, red and gold; **Rem** uses periwinkle and lilac; **Sarah** uses obsidian and gold; **Sylva** uses rose pink and sky blue; **Witty** pairs obsidian with mint green and violet. Colors follow the character throughout the compact panel, menus, conversation cards, portrait frames, desktop bubbles, mood badges, motion preview and window portrait. The tray icon always shows PAL Mobile’s white speech-bubble face with cyan eyes. The theme follows the saved avatar immediately and across restarts; unsaved selections leave the current theme in place. New artwork was generated with built-in imagegen; the selected source sheets and prompts are kept locally under `artwork/avatars/{id}/`, outside version control.
 
-![The default PAL robot and all 24 alternative avatars standing side by side](screenshots/avatars.png)
+![The default PAL robot and the 23 alternative avatars standing side by side](screenshots/avatars.png)
 
 ![The compact panel in the PAL, Daemona, Jade, Nova and Soap color themes](screenshots/themes.png)
 
-The default personality is a warm, sharp-tongued rogue; edit the multiline text to replace it, or save an empty personality field for a neutral voice. **Restore default personality** fills only the personality editor with the original text for review before saving. The selected name takes precedence over an old self-name in personality text without rewriting your saved text. Changes apply on the next turn in existing and new managed Codex, Claude, AntiGravity, Ollama and API conversations; running turns retain their current instructions. Personality and names do not change permissions or project instructions. External linked terminals retain their own configuration until handed to PAL. The application, integration names and window identifiers remain PAL.
+PAL uses a neutral voice by default. The Personality field starts empty. Enter and save a style to customize replies, or choose **Use neutral voice** and save to clear it. The selected name takes precedence over an old self-name in personality text without rewriting your saved text. Changes apply on the next turn in existing and new managed Codex, Claude, AntiGravity, Ollama and API conversations; running turns retain their current instructions. Personality and names do not change permissions or project instructions. External linked terminals retain their own configuration until handed to PAL. The application, integration names and window identifiers remain PAL.
 
 ## Sessions, workflows, and companion tools
 
@@ -358,7 +358,9 @@ After `python3 tools/install-user.py --prefix DIR` (which touches no session), `
 
 `node tools/check-ollama.ts MODEL [codex|claude]` exercises real Ollama conversation, recall after disconnect, an approved saved `printf` command, and optional provider delegation. It creates its own isolated broker/project, uses normal provider usage, and prints the evidence directory containing `report.json`, `broker.log`, and the test database. Only the known test command and exact test delegation are approved. Backend tests and native UI checks use local Ollama fixtures with no inference usage.
 
-The avatar source art, transparent extractions, eyelid edits, gesture sheets, portraits and built-in imagegen prompts are kept outside the repository. The preparation tools and the source-pixel check in `tests/avatar-surface-motion.test.ts` read them from `artwork/avatars/`; without that directory the check is skipped. Rebuild the deterministic runtime assets with Sharp (from `npm ci`) and OpenCV for offline interpolation:
+The default robot’s neutral drawing and mechanical joint keyframes are tracked in `reference/pal-front.png` and `reference/pal-joints.json`. Run `node tools/prepare-avatar-poses.mjs pal` to rebuild its six routes and held blinks. Run `node tools/prepare-avatar-portraits.mjs pal` to rebuild the cyan display expressions.
+
+The other avatars’ transparent extractions, eyelid edits, gesture sheets, portraits and built-in imagegen prompts are kept outside the repository. The preparation tools and the source-pixel check in `tests/avatar-surface-motion.test.ts` read them from `artwork/avatars/`; without that directory the check is skipped. Rebuild the deterministic runtime assets with Sharp (from `npm ci`) and OpenCV for offline interpolation:
 
 ```sh
 c++ -O2 -std=c++17 tools/interpolate-avatar-poses.cpp -o build/interpolate-avatar-poses $(pkg-config --cflags opencv5) -lopencv_video -lopencv_imgcodecs -lopencv_imgproc -lopencv_core

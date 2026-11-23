@@ -37,7 +37,7 @@ function events(provider:ApiProvider, tools=false):any[] {
 async function fixture(t:any,provider:ApiProvider,fetcher?:typeof fetch){
   const directory=await mkdtemp(join(tmpdir(),'pal-api-'));t.after(()=>rm(directory,{recursive:true,force:true}));
   const output:any[]=[],requests:{url:string;init:any;body:any}[]=[],calls:any[]=[];let history:OllamaMessage[]=[];
-  const adapter=new ApiAdapter(session(provider),{token:'test',native(){},event:e=>output.push(e),approve:async()=>({choice:'deny'}),personality:()=> 'Helpful'}, {
+  const adapter=new ApiAdapter(session(provider),{token:'test',native(){},event:e=>output.push(e),approve:async()=>({choice:'deny'}),personality:()=> ''}, {
     load:()=>structuredClone(history),save:messages=>{history=structuredClone(messages);},tools:()=>[tool],call:async(name,args)=>{calls.push({name,args});return {ok:true};},
   },{key:()=> 'test-secret',...(provider==='compatible'?{endpoint:()=>compatibleEndpoint}:{}),fetch:fetcher|| (async(url,init)=>{requests.push({url:String(url),init,body:JSON.parse(String(init?.body))});return sse(events(provider,requests.length===1));})});
   t.after(()=>adapter.close());return{adapter,output,requests,calls,directory,history:()=>history};
@@ -47,7 +47,11 @@ for(const provider of apiProviders)test(`${provider}: assistant name refreshes b
   f.adapter.hooks.assistantName = () => name;
   await f.adapter.send('Hello'); await f.adapter.task;
   const system = (body: any): string => body.instructions || body.system || body.systemInstruction?.parts[0].text || body.messages.find((m: any) => m.role === 'system').content;
-  for (const request of f.requests) assert.match(system(request.body), /"Daemona"/);
+  for (const request of f.requests) {
+    assert.match(system(request.body), /"Daemona"/);
+    assert.match(system(request.body), /No added persona is selected/);
+    assert.doesNotMatch(system(request.body), /sharp-tongued desktop companion/);
+  }
   assert.ok(f.history().every(message => message.role !== 'system'));
   name = 'PAL'; await f.adapter.send('Hello again'); await f.adapter.task;
   assert.match(system(f.requests.at(-1)!.body), /"PAL"/);
@@ -133,7 +137,7 @@ test('Claude API requests use the catalog output ceiling and context window',asy
   const models=await apiModels('anthropic',{key:()=> 'private',fetch:async()=>Response.json({data:[{id:'claude-test',display_name:'Claude Test',max_input_tokens:1000000,max_tokens:128000}],has_more:false})});
   assert.equal(models[0].contextLength,1000000);assert.equal(models[0].maxOutputTokens,128000);
   const bodies:any[]=[];let history:OllamaMessage[]=[];
-  const adapter=new ApiAdapter(session('anthropic'),{token:'test',native(){},event(){},approve:async()=>({choice:'deny'}),personality:()=> 'Helpful'},
+  const adapter=new ApiAdapter(session('anthropic'),{token:'test',native(){},event(){},approve:async()=>({choice:'deny'}),personality:()=> ''},
     {load:()=>structuredClone(history),save:messages=>{history=structuredClone(messages);},tools:()=>[],call:async()=>({})},
     {key:()=> 'private',fetch:async(_url,init)=>{bodies.push(JSON.parse(String(init?.body)));return sse(events('anthropic'));}},{contextLength:models[0].contextLength,maxOutputTokens:models[0].maxOutputTokens});
   t.after(()=>adapter.close());

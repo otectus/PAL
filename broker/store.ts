@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { chmodSync, existsSync } from 'node:fs';
 import { paths, privateDir } from './paths.ts';
 import { defaultSettings } from './types.ts';
-import { assistantIdentity, defaultAssistantName, defaultPersonality, legacyDefaultPersonality } from './personality.ts';
+import { assistantIdentity, defaultAssistantName, defaultPersonality, formerPalPersonality, legacyDefaultPersonality } from './personality.ts';
 import type { Session, Message, Settings, SessionFolder, AgentActivity } from './types.ts';
 const activeAgent=(agent:AgentActivity)=>['starting','running','waiting'].includes(agent.status);
 function withoutRetiredAvatarAppearance(value: unknown): unknown {
@@ -73,6 +73,26 @@ export class Store {
       CREATE INDEX IF NOT EXISTS sessions_folder ON sessions(json_extract(data,'$.folderId'));
       CREATE INDEX IF NOT EXISTS sessions_project ON sessions(json_extract(data,'$.cwd'));`);
     this.migrateWorkbench();
+    this.migrateIdentity();
+  }
+
+  private migrateIdentity() {
+    if (this.get<number>('pal.identityMigration', 0) >= 2) return;
+    this.transaction(() => {
+      const version = this.get<number>('pal.identityMigration', 0);
+      if (version >= 2) return;
+      const saved = this.get<Partial<Settings>>('settings', {});
+      const rename = version < 1 && saved.assistantName === 'Cere';
+      // After the first rebrand, the pre-PAL text could only have been chosen explicitly.
+      const clearPersona = saved.personality === formerPalPersonality || (version < 1 && saved.personality === legacyDefaultPersonality);
+      if (rename || clearPersona) {
+        if (rename) saved.assistantName = defaultAssistantName;
+        if (clearPersona) saved.personality = defaultPersonality;
+        this.set('settings', saved);
+        this.set('settingsRevision', String(BigInt(this.get('settingsRevision', '0')) + 1n));
+      }
+      this.set('pal.identityMigration', 2);
+    });
   }
   /**
    * Workbench tables, added once and only ever extended. The migration is additive: no existing row is
@@ -150,15 +170,6 @@ export class Store {
   settings(): Settings {
     const raw = this.get<Omit<Partial<Settings>, 'avatar'> & { avatar?: Settings['avatar'] | 'cere' }>('settings', {});
     const saved = withoutRetiredAvatarAppearance(raw) as Partial<Settings>;
-    // Name and personality were independently configurable. Migrate each former stock value exactly once,
-    // then preserve an intentional future choice of "Cere" (or the old persona text) like any other custom value.
-    if (this.get<number>('pal.identityMigration', 0) < 1) {
-      let changed = false;
-      if (saved.assistantName === 'Cere') { saved.assistantName = defaultAssistantName; changed = true; }
-      if (saved.personality === legacyDefaultPersonality) { saved.personality = defaultPersonality; changed = true; }
-      if (changed) this.set('settings', saved);
-      this.set('pal.identityMigration', 1);
-    }
     // Rewrite the old public avatar id once it is read so subsequent clients and
     // snapshots see only the canonical catalog id.
     const identity = assistantIdentity(saved);

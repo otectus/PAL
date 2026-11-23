@@ -76,7 +76,15 @@ ColumnLayout {
     function transition(task,state,completion){changeTask({op:"transition",taskId:task.id,expectedTaskRevision:task.revision,state:state,completion:completion})}
     function openDone(task){doneTask=task;passingResults=[];doneNote.text="";doneDialog.open();passingRequest=App.rpc("results.list",{cwd:capsule.cwd||App.session.cwd,limit:50})}
     function loadProject(){capsuleOwner="";if(App.selectedId){call("capsules.get",{sessionId:App.selectedId});relatedRequest=App.rpc("sessions.list",{cwd:App.session.cwd,limit:100})}}
-    function loadRecipes(){call("recipes.list",{})}
+    property var savedAnalyses: []
+    RpcClient { id: analysisRpc; scope: App.selectedId || "" }
+    function loadAnalyses() {
+        savedAnalyses = []
+        if (App.selectedId && !App.session?.temporary) analysisRpc.call("codelab.library", {sessionId: App.selectedId}, value => {
+            if (!value.error) savedAnalyses = value
+        })
+    }
+    function loadRecipes(){loadAnalyses();call("recipes.list",{})}
     function loadResults(){call("results.list",{limit:100})}
     function refresh(){if(requestId>=0){refreshPending=true;return}if(tab===0)loadProject();else if(tab===1){loadRecipes();loadSchedules()}else loadResults()}
     function chooseRecipe(){
@@ -109,7 +117,7 @@ ColumnLayout {
     }
     function deactivate(){active=false;capsuleOwner="";refreshPending=false}
     function focusInitial(){forceActiveFocus()}
-    onActiveSessionChanged:{capsuleOwner="";relatedRequest=-1;relatedSessions=[];if(active){syncCapsule(null);if(tab===0)refresh()}}
+    onActiveSessionChanged:{capsuleOwner="";relatedRequest=-1;relatedSessions=[];if(active){syncCapsule(null);if(tab===0)refresh();else if(tab===1)loadAnalyses()}}
     onTabChanged:if(active)refresh()
 
     CText { visible:!App.selectedId&&workflow.tab!==2;text:"Select a saved session to use project workflows.";color:Theme.amber }
@@ -269,6 +277,14 @@ ColumnLayout {
             CText { text:workflow.preview?.permissions?.description||"";color:Theme.amber;font.pixelSize:Theme.caption }
             CButton { objectName:"createRecipeDraft";Layout.fillWidth:true;text:"I reviewed this · create draft";primary:true;enabled:workflow.requestId<0;onClicked:workflow.call("recipes.createDraft",{previewToken:workflow.preview.token,reviewed:true}) }
             CButton { objectName:"scheduleRecipe";Layout.fillWidth:true;text:"Schedule this reviewed recipe…";enabled:workflow.requestId<0;onClicked:{scheduleLabel.text=workflow.selectedRecipe?.name||"";scheduleDialog.open()} }
+        }
+        CSection {
+            title: qsTr("Saved analyses")
+            visible: workflow.savedAnalyses.length > 0
+            Repeater { model: workflow.savedAnalyses
+                CButton { required property var modelData; Layout.fillWidth: true; text: modelData.name
+                    onClicked: WorkbenchState.openAnalysis(App.selectedId, {analysisId: modelData.id}) }
+            }
         }
         // M14: reviewed recipes at set times. Any change to the recipe or its permissions pauses a schedule.
         CSection {

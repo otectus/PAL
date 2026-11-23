@@ -10,6 +10,7 @@
 #include <QQmlContext>
 #include <QQuickItem>
 #include <QQuickTextDocument>
+#include <QWheelEvent>
 #include <QTextBlock>
 #include <QTextFragment>
 #include <QTextCursor>
@@ -1231,6 +1232,27 @@ QString Controller::messageCodeAt(QQuickTextDocument *quickDocument, int positio
         block = block.next();
     }
     return lines.join('\n');
+}
+
+// A wheel event can carry both axes. A horizontal Flickable will consume angle deltas
+// even when the horizontal component is only a small fraction of the vertical one.
+class MessageWheelFilter final : public QObject {
+public:
+    using QObject::QObject;
+protected:
+    bool eventFilter(QObject *, QEvent *event) override {
+        if (event->type() != QEvent::Wheel) return false;
+        auto wheel = static_cast<QWheelEvent *>(event);
+        if (wheel->phase() == Qt::ScrollBegin || wheel->phase() == Qt::ScrollEnd) return false;
+        const QPoint delta = wheel->pixelDelta().isNull() ? wheel->angleDelta() : wheel->pixelDelta();
+        if (std::abs(delta.y()) <= std::abs(delta.x())) return false;
+        wheel->ignore(); // Let Qt deliver the original event and momentum to the vertical view.
+        return true;
+    }
+};
+
+void Controller::routeMessageWheel(QObject *viewport) {
+    if (viewport) viewport->installEventFilter(new MessageWheelFilter(viewport));
 }
 
 QVariantList Controller::formatMessage(QQuickTextDocument *quickDocument, qreal proseWidth, qreal spacing,

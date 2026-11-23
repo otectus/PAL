@@ -1895,7 +1895,7 @@ export class Core extends EventEmitter {
   checkingTimers = false;
   async checkTimers() {
     if (this.checkingTimers||this.recovery.pending) return;
-    if (!this.closed) { this.research.tick(); void this.schedules.tick().catch(() => {}); }
+    if (!this.closed) { this.research.tick(); void this.workbench.track(this.workbench.analyses.tick()).catch(() => {}); void this.schedules.tick().catch(() => {}); }
     this.checkingTimers = true;
     try {
       for (const t of this.store.timers()) if (!t.paused && t.due <= Date.now()) {

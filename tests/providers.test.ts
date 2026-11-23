@@ -10,7 +10,6 @@ import { CodexAdapter, ClaudeAdapter, CliCompatibilityError, claudeRestrictedHel
 import { ensureUserPath } from '../broker/paths.ts';
 import type { Hooks } from '../broker/providers.ts';
 import type { Session } from '../broker/types.ts';
-import { defaultPersonality } from '../broker/personality.ts';
 
 async function fixture(t: any) {
   const directory = await mkdtemp(join(tmpdir(), 'pal-permissions-'));
@@ -244,29 +243,35 @@ test('Claude remote sessions use the enforceable restricted CLI boundary', async
 });
 
 test('Codex refreshes personality between turns while retaining thread, user input and configured instructions', async t => {
-  const f=await fixture(t);let personality=defaultPersonality;
+  const f=await fixture(t);let personality='';
   const events:any[]=[];
   const hooks:Hooks={token:'fixture',event:e=>events.push(e),native(){},async approve(){},personality:()=>personality};
   const adapter=new CodexAdapter(f.session,hooks);t.after(()=>adapter.close());
-  await adapter.send('First question');await adapter.send('Same voice');
+  await adapter.send('First question');await adapter.send('Same neutral voice');
   personality='Be calm and direct.\nNo sarcasm.';await adapter.send('Next question',['/tmp/attached.png']);
+  await adapter.send('Same custom voice');
   personality='';await adapter.send('Neutral now');
   await adapter.close();
   const resumed=new CodexAdapter(f.session,hooks);t.after(()=>resumed.close());await resumed.send('After restart');
   const messages=await f.messages(),threads=messages.filter(m=>['thread/start','thread/resume'].includes(m.method));
   assert.equal(threads.length,4);assert.equal(threads[0].method,'thread/start');
-  assert.ok(threads[0].params.developerInstructions.includes(defaultPersonality));
+  assert.match(threads[0].params.developerInstructions,/No added persona is selected/);
+  assert.match(threads[0].params.developerInstructions,/clear, helpful, neutral voice/);
   assert.match(threads[1].params.developerInstructions,/Be calm and direct/);
-  assert.ok(!threads[1].params.developerInstructions.includes(defaultPersonality));
+  assert.doesNotMatch(threads[1].params.developerInstructions,/No added persona is selected/);
+  for(const thread of threads.slice(2)){
+    assert.match(thread.params.developerInstructions,/No added persona is selected/);
+    assert.doesNotMatch(thread.params.developerInstructions,/Be calm and direct/);
+  }
+  for(const thread of threads)assert.doesNotMatch(thread.params.developerInstructions,/sharp-tongued desktop companion/);
   for(const thread of threads){
     assert.match(thread.params.developerInstructions,/Existing project guidance must survive/);
     assert.equal(thread.params.baseInstructions,undefined);
     assert.equal(thread.params.approvalPolicy,'on-request');
   }
   for(const thread of threads.slice(1))assert.equal(thread.params.threadId,'permission-thread');
-  for(const thread of threads.slice(2))assert.match(thread.params.developerInstructions,/neutral voice/);
   const turns=messages.filter(m=>m.method==='turn/start');
-  assert.deepEqual(turns.map(m=>m.params.input[0].text),['First question','Same voice','Next question','Neutral now','After restart']);
+  assert.deepEqual(turns.map(m=>m.params.input[0].text),['First question','Same neutral voice','Next question','Same custom voice','Neutral now','After restart']);
   assert.deepEqual(turns[2].params.input[1],{type:'localImage',path:'/tmp/attached.png'});
   assert.ok(events.every(e=>e.type!=='error'));
 });
@@ -285,23 +290,25 @@ test('Codex refreshes a changed name without changing personality or interruptin
   name = 'PAL'; await adapter.send('Reset name');
   const threads = (await f.messages()).filter(m => ['thread/start','thread/resume'].includes(m.method));
   assert.equal(threads.length, 3);
-  assert.match(threads[1].params.developerInstructions, /You are Daemona,/);
-  assert.doesNotMatch(threads[1].params.developerInstructions, /You are PAL,/);
-  assert.match(threads[2].params.developerInstructions, /You are PAL,/);
+  assert.match(threads[1].params.developerInstructions, /Current assistant name[^\n]+"Daemona"/);
+  assert.doesNotMatch(threads[1].params.developerInstructions, /Current assistant name[^\n]+"PAL"/);
+  assert.match(threads[2].params.developerInstructions, /Current assistant name[^\n]+"PAL"/);
   for (const thread of threads.slice(1)) assert.equal(thread.params.threadId, 'permission-thread');
 });
 
 test('Claude appends the current personality on each resumed turn without replacing its system prompt',async t=>{
-  const f=await fixture(t);let personality=defaultPersonality;
+  const f=await fixture(t);let personality='';
   const adapter=new ClaudeAdapter({...f.session,provider:'claude'},{token:'fixture',event(){},native(){},async approve(){},personality:()=>personality});
   t.after(()=>adapter.close());
-  for(const next of [defaultPersonality,'Be quietly encouraging.','']){
+  for(const next of ['','Be quietly encouraging.','Be quietly encouraging.','']){
     personality=next;await adapter.send('User question');await once(adapter.process!,'exit');
   }
   const messages=await f.messages(),args=messages.filter(m=>m.args).map(m=>m.args);
   const prompts=messages.filter(m=>m.personality),instructions=prompts.map(m=>m.personality);
-  assert.ok(instructions[0].includes(defaultPersonality));assert.match(instructions[1],/Be quietly encouraging/);
-  assert.ok(!instructions[1].includes(defaultPersonality));assert.match(instructions[2],/neutral voice/);
+  assert.match(instructions[0],/No added persona is selected/);assert.match(instructions[1],/Be quietly encouraging/);
+  assert.match(instructions[2],/Be quietly encouraging/);assert.doesNotMatch(instructions[2],/No added persona is selected/);
+  assert.match(instructions[3],/No added persona is selected/);assert.doesNotMatch(instructions[3],/Be quietly encouraging/);
+  for(const instruction of instructions)assert.doesNotMatch(instruction,/sharp-tongued desktop companion/);
   for(const a of args){assert.ok(!a.includes('--system-prompt'));assert.ok(!a.includes('--append-system-prompt'));assert.equal(a[a.indexOf('--permission-mode')+1],'manual');assert.equal(a[a.indexOf('--system-prompt-snapshot')+1],'off');}
   for(const prompt of prompts){assert.equal(prompt.mode,0o600);await assert.rejects(stat(prompt.path),{code:'ENOENT'});}
   assert.equal(args[1][args[1].indexOf('--resume')+1],'claude-permission-thread');
@@ -313,8 +320,8 @@ test('Claude picks up a new assistant name on the next resumed turn', async t =>
   t.after(() => adapter.close());
   for (const next of ['PAL', 'Daemona']) { name = next; await adapter.send('Hello'); await once(adapter.process!, 'exit'); }
   const prompts = (await f.messages()).filter(m => m.personality);
-  assert.match(prompts[0].personality, /You are PAL,/);
-  assert.match(prompts[1].personality, /You are Daemona,/);
+  assert.match(prompts[0].personality, /Current assistant name[^\n]+"PAL"/);
+  assert.match(prompts[1].personality, /Current assistant name[^\n]+"Daemona"/);
   assert.equal(prompts[1].mode, 0o600);
 });
 

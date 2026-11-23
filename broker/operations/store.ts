@@ -53,7 +53,27 @@ export type Operation = {
 export class OperationStore {
   store: Store;
   changed: (operation: Operation) => void = () => {};
-  constructor(store: Store) { this.store = store; }
+  constructor(store: Store) {
+    this.store = store;
+    // Older builds recorded a finished local process as completed even when it reported failure.
+    const incorrect = store.db.prepare(`SELECT data FROM operations WHERE state='completed'
+      AND kind IN ('codelab.run','command.run','command.host')
+      AND ((json_type(data,'$.details.exitCode')='integer' AND json_extract(data,'$.details.exitCode')!=0)
+        OR coalesce(json_extract(data,'$.details.signal'),'')!='' OR coalesce(json_extract(data,'$.details.outputProblem'),'')!='')`).all();
+    if (incorrect.length) store.transaction(() => {
+      const patch = store.db.prepare("UPDATE operations SET state='failed',revision=?,data=? WHERE id=? AND state='completed'");
+      const event = store.db.prepare('INSERT INTO operation_events(operation_id,time,data) VALUES (?,?,?)');
+      for (const row of incorrect) {
+        const op = JSON.parse(String(row.data)) as Operation, details = op.details!;
+        op.state = 'failed';
+        op.revision++;
+        op.error ??= details.outputProblem ? {code:'output_failed', message:String(details.outputProblem)}
+          : {code:'process_exit', message:'Process ended with ' + (details.signal || 'status ' + details.exitCode)};
+        if (patch.run(op.revision, JSON.stringify(op), op.id).changes)
+          event.run(op.id, Date.now(), JSON.stringify({state:'failed', from:'completed', note:'Corrected from the recorded process result'}));
+      }
+    });
+  }
   static digest(value: unknown) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
   private save(operation: Operation, event: Record<string, unknown>) {
     this.store.transaction(() => {
@@ -97,6 +117,31 @@ export class OperationStore {
     const rows = this.store.db.prepare(`SELECT data FROM operations WHERE session_id=? ${p.active ? `AND state NOT IN (${terminalStates.map(() => '?').join(',')})` : ''} AND (? IS NULL OR updated < ?) ORDER BY updated DESC LIMIT ?`)
       .all(sessionId, ...(p.active ? terminalStates : []), p.before ?? null, p.before ?? null, limit);
     return rows.map(row => JSON.parse(String(row.data)) as Operation);
+  }
+  /** Filters apply to the full authorized history before paging. A tuple cursor preserves ties. */
+  history(sessionIds: string[], p: { limit?: number; before?: number | string; kind?: string; state?: string; query?: string; since?: number; until?: number }) {
+    const conditions = ['o.session_id IN (SELECT value FROM json_each(?))'];
+    const args: (string | number)[] = [JSON.stringify(sessionIds)];
+    if (p.kind) { conditions.push("(o.kind=? OR substr(o.kind,1,length(?)+1)=? || '.')"); args.push(p.kind, p.kind, p.kind); }
+    if (p.state) { conditions.push('o.state=?'); args.push(p.state); }
+    if (Number.isFinite(p.since)) { conditions.push('o.created>=?'); args.push(p.since!); }
+    if (Number.isFinite(p.until)) { conditions.push('o.created<=?'); args.push(p.until!); }
+    if (p.query?.trim()) {
+      const q = p.query.trim().toLowerCase();
+      conditions.push(`(instr(lower(json_extract(o.data,'$.label')),?) OR EXISTS
+        (SELECT 1 FROM json_each(o.data,'$.inputs') r JOIN artifact_versions v ON v.id=json_extract(r.value,'$.versionId') WHERE instr(lower(json_extract(v.data,'$.name')),?))
+        OR EXISTS (SELECT 1 FROM json_each(o.data,'$.results') r JOIN artifact_versions v ON v.id=json_extract(r.value,'$.versionId') WHERE instr(lower(json_extract(v.data,'$.name')),?)))`);
+      args.push(q, q, q);
+    }
+    if (typeof p.before === 'number') { conditions.push('o.created<?'); args.push(p.before); }
+    else if (p.before) {
+      const cursor = /^(\d+):([a-f0-9-]{36})$/.exec(p.before);
+      if (!cursor) throw new Error('Invalid history cursor');
+      conditions.push('(o.created,o.id)<(?,?)'); args.push(Number(cursor[1]), cursor[2]);
+    }
+    const limit = Math.max(1, Math.min(100, Number(p.limit) || 50));
+    return this.store.db.prepare('SELECT o.data FROM operations o WHERE ' + conditions.join(' AND ') + ' ORDER BY o.created DESC,o.id DESC LIMIT ?')
+      .all(...args, limit).map(row => JSON.parse(String(row.data)) as Operation);
   }
   active() { return this.store.db.prepare(`SELECT data FROM operations WHERE state NOT IN (${terminalStates.map(() => '?').join(',')})`).all(...terminalStates).map(row => JSON.parse(String(row.data)) as Operation); }
   events(id: string, limit = 50) { return this.store.db.prepare('SELECT time,data FROM operation_events WHERE operation_id=? ORDER BY id DESC LIMIT ?').all(id, limit).map(row => ({ time: Number(row.time), ...JSON.parse(String(row.data)) })); }

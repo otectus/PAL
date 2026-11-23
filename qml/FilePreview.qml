@@ -78,6 +78,11 @@ Item {
                 Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredWidth: preview.width; Layout.maximumWidth: preview.width; spacing: Theme.space1
                 CButton { objectName: "previewMarkdown"; visible: /\.(md|markdown)$/i.test(preview.target.path || "") && !preview.editing; text: preview.markdown ? "Source" : "Rendered"; quiet: true; onClicked: preview.markdown = !preview.markdown }
                 CButton { objectName: "previewEdit"; visible: !!preview.root && preview.root.policy.write && !preview.page.binary && !preview.editing; text: "Edit"; iconName: "edit"; onClicked: preview.startEditing() }
+                CButton { objectName: "previewAnalyze"; text: "Analyze in Code Lab"; quiet: true
+                    onClicked: rpc.call("codelab.inputFile", {sessionId: preview.sessionId, rootId: preview.target.rootId, path: preview.target.path, version: preview.page.version || undefined}, value => {
+                        if (value.error) preview.error = value.error
+                        else WorkbenchState.openAnalysis(preview.sessionId, {inputs: [value]})
+                    }) }
                 CButton { objectName: "previewOpen"; visible: !!preview.absolute; text: ""; iconName: "expand"; help: "Open in its application"; Accessible.name: "Open in its application"; onClicked: App.openPath(preview.absolute) }
                 CButton { objectName: "previewReveal"; visible: !!preview.absolute; text: ""; iconName: "projects"; help: "Show in the file manager"; Accessible.name: "Show in the file manager"; onClicked: App.openPath(preview.absolute.slice(0, preview.absolute.lastIndexOf("/"))) }
             }

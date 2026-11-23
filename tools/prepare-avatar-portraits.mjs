@@ -4,8 +4,14 @@ import sharp from 'sharp';
 import {rename} from 'node:fs/promises';
 import {sheetComponents} from './avatar-sheet.mjs';
 import {stabilizePortraitCells} from './portrait-consistency.mjs';
+import {authorPalPortraits} from './author-pal-portraits.mjs';
 import {authoringAvatars} from '../broker/avatars.ts';
 for(const {id,authoring:config,portrait} of authoringAvatars(process.argv.slice(2))){
+ if(config.portraitStyle==='oled'){
+  const result=await authorPalPortraits({file:`assets/${portrait}`,reference:`reference/${id}-front.png`,eyes:config.eyes});
+  console.log(`${id}: twelve OLED portraits authored from the tracked reference (${result.color})`);
+  continue;
+ }
  const source=`artwork/avatars/${id}/portrait-sheet.png`,meta=await sharp(source).metadata(),sourceCells=[];
  // Uneven gutters can leave another portrait's shoulders inside a square crop.
  // Separate the actual figures, then pack them at one shared scale with margin.

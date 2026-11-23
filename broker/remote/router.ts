@@ -42,7 +42,18 @@ export class Router {
   scopeReduced?:(id:string)=>void;
   /** Set by the gateway: changes a device's role (Pairing.setRole), and ends what the old role allowed. */
   roleChange?:(params:unknown)=>Device;roleReduced?:(id:string,wasOwner:boolean)=>void;
-  constructor(core:Core,registry:RemoteStore,revoke:(id:string)=>Promise<void>) {this.core=core;this.registry=registry;this.revoke=revoke;this.media=new MediaStore(this);this.parity=new Parity(this);this.captures=new Captures(this);this.ownerOps=new OwnerOps(this);this.transfers=new Transfers(this);this.terminals=new TerminalOps(this);}
+  constructor(core:Core,registry:RemoteStore,revoke:(id:string)=>Promise<void>) {this.core=core;this.registry=registry;this.revoke=revoke;this.media=new MediaStore(this);this.parity=new Parity(this);this.captures=new Captures(this);this.ownerOps=new OwnerOps(this);this.transfers=new Transfers(this);this.terminals=new TerminalOps(this);
+    this.core.workbench.analyses.canScheduleForDevice = (id, sessionId) => {
+      const device = this.registry.live(id);
+      if (!device || !this.ownerDevice(device)) return false;
+      try {
+        this.current(device);
+        // The authenticated owner reviewed the schedule. Use today's stored ceiling and project grants.
+        this.session({ ...device, connectionRole: 'owner' }, sessionId);
+        return true;
+      } catch { return false; }
+    };
+  }
   abortActions(deviceId?:string) {for(const action of this.actions.values())if(!deviceId||action.deviceId===deviceId)action.controller.abort(remoteError('AUTH_REVOKED','Remote action authority revoked.'));void this.captures.abort(deviceId);}
   recheckActions() {for(const action of this.actions.values())try{action.check();}catch(error){action.controller.abort(error);}}
   current(device:Device) {

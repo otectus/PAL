@@ -508,6 +508,15 @@ Rectangle {
         onFocusRequested: { shell.workbenchFocused = !shell.workbenchFocused; Qt.callLater(() => workbench.focusActiveTab()) }
         onCloseRequested: shell.closeWorkbench()
         onSettingsRequested:(category,target)=>{shell.navigate(3);Qt.callLater(()=>settingsPage.ensure().open(category,target))}
+        onWorkflowsRequested:shell.showWorkflows(0)
+    }
+    Connections {
+        target: WorkbenchState
+        function onImageStaged(sessionId) {
+            if (!shell.visible || sessionId !== App.selectedId || shell.page !== 0) return
+            if (!shell.wide) shell.closeWorkbench()
+            else { shell.workbenchFocused = false; Qt.callLater(() => conversation.focusComposer()) }
+        }
     }
     Connections { target:WorkbenchState;function onRequested(){if(shell.page!==0)shell.page=0;if(shell.wide)WorkbenchState.layout.dockOpen=true;Qt.callLater(()=>workbench.focusActiveTab())} }
     Connections { target:App;function onAttachmentRequested(path){shell.page=0} }

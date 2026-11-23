@@ -158,6 +158,37 @@ export class ResearchLibrary {
           : db.prepare('SELECT summary FROM research_runs').all();
     return rows.map((row) => JSON.parse(String(row.summary))).sort((a, b) => b.updated - a.updated);
   }
+  /** Lightweight, cursor-compatible rows for Runs history; callers supply only already-authorized sessions. */
+  history(sessionIds: string[], p: { query?: string; state?: string; kind?: string; since?: number; until?: number; before?: string | number; limit?: number } = {}) {
+    if (!sessionIds.length || (p.kind && !['research', 'research.run'].includes(p.kind))) return [];
+    const where = ['session_id IN (SELECT value FROM json_each(?))'];
+    const args: (string | number)[] = [JSON.stringify(sessionIds)];
+    const created = "json_extract(summary,'$.created')";
+    if (p.query?.trim()) {
+      where.push("instr(lower(coalesce(json_extract(summary,'$.title'),'') || ' ' || json_extract(summary,'$.question')),lower(?))>0");
+      args.push(p.query.trim());
+    }
+    if (p.state) {
+      if (p.state === 'running') where.push("json_extract(summary,'$.state') IN ('planning','searching','reading','synthesizing')");
+      else { where.push("json_extract(summary,'$.state')=?"); args.push(p.state); }
+    }
+    if (Number.isFinite(p.since)) { where.push(created + '>=?'); args.push(p.since!); }
+    if (Number.isFinite(p.until)) { where.push(created + '<=?'); args.push(p.until!); }
+    if (typeof p.before === 'number') { where.push(created + '<?'); args.push(p.before); }
+    else if (p.before) {
+      const match = /^(\d+):([a-f0-9-]{36})$/.exec(p.before);
+      if (!match) throw new Error('Invalid history cursor');
+      where.push('(' + created + ',id)<(?,?)'); args.push(Number(match[1]), match[2]);
+    }
+    const limit = Math.min(100, Math.max(1, Number(p.limit) || 50));
+    return this.store.db.prepare('SELECT summary FROM research_runs WHERE ' + where.join(' AND ') + ' ORDER BY ' + created + ' DESC,id DESC LIMIT ?')
+      .all(...args, limit).map(entry => {
+        const row: ReturnType<typeof metadata> = JSON.parse(String(entry.summary));
+        return { id: row.id, operationId: row.id, sessionId: row.sessionId, kind: 'research.run', label: row.title || row.question,
+          state: row.state, created: row.created, updated: row.updated, summary: row.summary, researchId: row.id,
+          results: row.report ? [row.report] : [], cursor: row.created + ':' + row.id };
+      });
+  }
   request(sessionId: string, requestId: string) {
     const row = this.store.db
       .prepare('SELECT id FROM research_runs WHERE session_id=? AND request_id=?')

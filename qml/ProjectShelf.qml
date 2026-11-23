@@ -51,6 +51,9 @@ Item {
             CText { text: row.label; elide: Text.ElideMiddle; wrapMode: Text.NoWrap; font.pixelSize: Theme.secondary }
             CText { visible: !!row.detail; text: row.detail; elide: Text.ElideRight; wrapMode: Text.NoWrap; color: Theme.muted; font.pixelSize: Theme.caption }
         }
+        CButton { visible: row.ref?.kind === "artifact"; Layout.row: row.narrow ? 2 : 1; Layout.column: 1
+            text: "Analyze in Code Lab"; quiet: true; implicitHeight: Theme.compactHeight
+            onClicked: WorkbenchState.openAnalysis(shelf.sessionId, {inputs: [row.ref]}) }
         CButton { visible: !!row.ref; Layout.row: row.narrow ? 1 : 0; Layout.column: row.narrow ? 1 : 2; text: "Use in next message"; quiet: true; implicitHeight: Theme.compactHeight; font.pixelSize: Theme.caption; Accessible.name: "Use " + row.label + " in the next message"; onClicked: shelf.use(row.ref) }
     }
     ScrollView {

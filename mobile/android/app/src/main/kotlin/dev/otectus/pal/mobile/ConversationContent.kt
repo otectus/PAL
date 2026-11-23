@@ -327,7 +327,7 @@ internal fun ActivityPanel(
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = PALLayout.inset)) }
         if (activity.isEmpty() && agents.isEmpty() && !loading && error == null) Text(stringResource(R.string.conversation_no_activity), modifier = Modifier.padding(PALLayout.inset))
-        LazyColumn(Modifier.fillMaxWidth().heightIn(max = ConversationTokens.activityHeight), contentPadding = PaddingValues(horizontal = PALLayout.gutter, vertical = PALLayout.groupGap)) {
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = ConversationTokens.activityHeight).consumeExpandedSheetEdgeScroll(), contentPadding = PaddingValues(horizontal = PALLayout.gutter, vertical = PALLayout.groupGap)) {
             if (agents.isNotEmpty()) {
                 item { Text(pluralStringResource(R.plurals.conversation_subagents, agents.size, agents.size), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = PALLayout.small)) }
                 items(agents, key = { "agent-${it.id}" }) { agent -> AgentActivityRow(agent, canOpenAgent(agent), onOpenAgent) }

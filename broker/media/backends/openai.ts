@@ -78,12 +78,17 @@ export class OpenAiImages implements ImageBackend {
   validate(request: ImageRequest) { return validateOpenai(this.describe(), request); }
   async *run(request: ValidatedImageRequest, inputs: ResolvedInputs, context: BackendContext): AsyncIterable<ImageEvent> {
     const editing = request.operation !== 'generate';
-    const body: Record<string, unknown> = { model: this.model, prompt: request.prompt, n: request.count, output_format: request.format,
+    const guideLabels = inputs.guides.map((guide, index) => `Reference image ${index + 1} is a ${guide.role} guide.`);
+    const providerPrompt = request.operation === 'reference'
+      ? [`Create a new image; none of the reference images is an edit target.`, ...guideLabels, request.prompt].join('\n')
+      : inputs.target && guideLabels.length ? [`Edit the first image as the target.`, ...guideLabels, request.prompt].join('\n') : request.prompt;
+    const body: Record<string, unknown> = { model: this.model, prompt: providerPrompt, n: request.count, output_format: request.format,
       ...(request.size ? { size: request.size } : {}), ...(request.quality ? { quality: request.quality } : {}), ...(request.background ? { background: request.background } : {}) };
     if (editing) {
       if (!inputs.references.length) throw new BackendRefusal('missing_reference', 'Choose the image to edit');
-      // The edit base goes first: OpenAI applies a mask to the first image.
-      const ordered = [...inputs.references.filter(ref => ref.role === 'edit-base'), ...inputs.references.filter(ref => ref.role !== 'edit-base')];
+      // A real target goes first because OpenAI applies a mask to the first image. Guide-only synthesis
+      // is deliberately labelled in the prompt so the first guide is never silently called a target.
+      const ordered = [...(inputs.target ? [inputs.target] : []), ...inputs.guides];
       body.images = ordered.map(ref => ({ image_url: dataUrl(ref.bytes, ref.mime) }));
       if (inputs.mask) body.mask = { image_url: dataUrl(await openaiMask(inputs.mask.bytes), 'image/png') };
     }

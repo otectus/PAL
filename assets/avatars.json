@@ -64,6 +64,9 @@
       "petShadow": "#36070c13"
     },
     "authoring": {
+      "jointSource": "pal-joints.json",
+      "portraitStyle": "oled",
+      "originalOffset": [281, 23],
       "crop": [281, 23, 461, 976],
       "eyes": [
         [421, 210, 48, 82],

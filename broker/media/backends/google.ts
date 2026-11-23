@@ -67,7 +67,9 @@ export class GoogleImages implements ImageBackend {
   async *run(request: ValidatedImageRequest, inputs: ResolvedInputs, context: BackendContext): AsyncIterable<ImageEvent> {
     const key = context.key();
     if (!key) throw new BackendRefusal('missing_key', 'Add a Google AI API key in Settings → Connections');
-    const input = [{ type: 'text', text: request.prompt }, ...inputs.references.map(ref => ({ type: 'image', mime_type: ref.mime, data: ref.bytes.toString('base64') }))];
+    const input: any[] = [{ type: 'text', text: request.operation === 'reference' ? 'Create a new image from the following guides; none is an edit target.\n' + request.prompt : request.prompt }];
+    if (inputs.target) input.push({ type: 'text', text: 'TARGET IMAGE — edit this exact image:' }, { type: 'image', mime_type: inputs.target.mime, data: inputs.target.bytes.toString('base64') });
+    for (const [index, guide] of inputs.guides.entries()) input.push({ type: 'text', text: `${guide.role.toUpperCase()} GUIDE ${index + 1}:` }, { type: 'image', mime_type: guide.mime, data: guide.bytes.toString('base64') });
     const body = { model: this.model, input, response_format: { type: 'image', mime_type: 'image/' + request.format, ...(request.aspectRatio ? { aspect_ratio: request.aspectRatio } : {}), ...(request.imageSize ? { image_size: request.imageSize } : {}) } };
     let produced = 0;
     // One request per image: Gemini returns one image per interaction.

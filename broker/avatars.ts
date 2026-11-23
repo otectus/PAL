@@ -14,6 +14,8 @@ const route = z.enum(avatarRoutes);
 const eyePose = z.object({ closed: z.boolean().optional(), eyes: z.array(ellipse.nullable()).min(1).max(2).optional() }).strict();
 const landmarks = z.object({ closed: z.boolean().optional(), eyes: z.array(point).min(1).max(2) }).strict();
 export const avatarAuthoringSchema = z.object({
+  portraitStyle: z.literal('oled').optional(),
+  jointSource: z.string().regex(/^[a-z0-9_-]+\.json$/).optional(),
   crop: rect, eyes: z.array(rect).min(1).max(2), bounds: rect,
   color: z.enum(['amber', 'bluegray', 'brown', 'cyan', 'green', 'olive', 'purple', 'red']),
   alphaCutoff: z.number().int().min(0).max(255).optional(),
@@ -88,6 +90,7 @@ export function authoringAvatars(ids: string[]): Avatar[] {
   // The sheet authoring tools need the local extraction, eyelid and gesture drawings.
   // A static reference already supplies its complete runtime artwork.
   return selected.filter(entry => {
+    if (entry.authoring.jointSource) return true;
     const definition = JSON.parse(readFileSync(new URL('../assets/' + entry.rig, import.meta.url), 'utf8'));
     return definition.static !== true;
   });

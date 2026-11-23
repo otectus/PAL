@@ -16,7 +16,7 @@ ColumnLayout {
     RpcClient { id: rpc }
     function refresh() { rpc.call("images.connections", {}, value => { if (!value.error) { const next = {}; for (const c of value.connections) next[c.id] = c; details = next } }) }
     function save(list, message) { error = ""; rpc.call("settings.update", { workbench: { imageConnections: list } }, value => { if (value.error) error = value.error; else { feedback = message || "Saved"; refresh() } }) }
-    function plain(c) { return { id: c.id, name: c.name, kind: c.kind, model: c.model, enabled: c.enabled, origin: c.origin, route: c.route, targetedInterrupt: c.targetedInterrupt, workflowId: c.workflowId, budget: c.budget } }
+    function plain(c) { return { id: c.id, name: c.name, kind: c.kind, model: c.model, enabled: c.enabled, origin: c.origin, route: c.route, targetedInterrupt: c.targetedInterrupt, workflowId: c.workflowId, estimate:c.estimate, budget: c.budget } }
     Component.onCompleted: refresh()
     Connections { target: App; function onStateChanged() { if (JSON.stringify(page.saved.imageConnections.map(c => c.revision)) !== page.lastRevisions) { page.lastRevisions = JSON.stringify(page.saved.imageConnections.map(c => c.revision)); page.refresh() } } }
     property string lastRevisions: ""
@@ -53,6 +53,12 @@ ColumnLayout {
                         CCheckBox { id: mayStart; Layout.fillWidth: false; implicitWidth: Theme.fieldLong; checked: modelData.budget.modelMayStart; text: App.assistantName + " may start jobs, up to" }
                         CSpinBox { id: perDay; from: 0; to: 500; value: modelData.budget.imagesPerDay; Accessible.name: "Images a day" }
                         CText { Layout.fillWidth: true; text: "images a day"; font.pixelSize: Theme.secondary } }
+                    CText { text:"Estimated price per image (optional)";color:Theme.muted;font.pixelSize:Theme.secondary }
+                    RowLayout {
+                        Layout.fillWidth:true
+                        CField { id:price; Layout.fillWidth:true; placeholderText:"Amount"; text:modelData.estimate ? String(modelData.estimate.perImage) : ""; validator:DoubleValidator {bottom:0;locale:"C";notation:DoubleValidator.StandardNotation} Accessible.name:"Estimated price per image" }
+                        CField { id:currency; Layout.preferredWidth:Theme.fieldShort; placeholderText:"USD"; maximumLength:3; text:modelData.estimate?.currency || "USD"; Accessible.name:"Currency code" }
+                    }
                     CCheckBox { id: enabled; checked: modelData.enabled; text: "Turned on" }
                     ColumnLayout {
                         visible: modelData.kind === "comfyui"; Layout.fillWidth: true; spacing: Theme.space1
@@ -79,7 +85,7 @@ ColumnLayout {
                             const list = page.saved.imageConnections.map(page.plain)
                             list[index] = Object.assign(list[index], { name: name.text.trim(), model: modelData.kind === "comfyui" ? "" : model.editText.trim(), origin: modelData.kind === "comfyui" ? origin.text.trim() : undefined,
                                 route: modelData.kind === "comfyui" ? ["local", "remote", "unknown"][route.currentIndex] : undefined, targetedInterrupt: modelData.kind === "comfyui" ? targeted.checked : undefined,
-                                enabled: enabled.checked, budget: { imagesPerDay: perDay.value, modelMayStart: mayStart.checked } })
+                                estimate:price.text.trim()?{perImage:Number(price.text),currency:currency.text.trim().toUpperCase()}:null, enabled: enabled.checked, budget: { imagesPerDay: perDay.value, modelMayStart: mayStart.checked } })
                             page.save(list, "Saved " + name.text.trim()) } }
                     }
                 }

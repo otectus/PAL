@@ -4,6 +4,33 @@ Notable changes to PAL, the desktop application and its broker, and to PAL Mobil
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-23
+
+### Added
+
+- **Code Lab notebooks.** On desktop or a full-access Android phone, start with the sample or pin versions of your own files. Combine Python and SQL cells, reuse unchanged steps, or share Python variables across cells in a fresh interpreter on each run.
+- **Traceable analysis results.** Compare tables by key, see which customers or groups account for a change between periods, and inspect the records behind a chart. Filtering and sorting preserve the original record numbers. Export selected rows, ask the conversation model to explain one, or review a proposed code change before running it.
+- **Saved analyses and replay.** Save a successful analysis for other conversations in the same project. Reopen it with the original inputs, substitute new files, or schedule it while the desktop broker is running. Export a ZIP with the code, parameters, input hashes, outputs, and a command to replay it with the original files.
+- **Workbench Runs history.** Search by purpose or filename across a conversation or project, follow live output, and reopen a research report. Choose a baseline to see which inputs, code, runtime, or results changed between runs.
+- **Image library.** Search conversation and project-shared images by prompt, tag, date, dimensions, or text recognized in a screenshot. Organize images into collections, find others with similar colors and layouts, and trace an edit back to its source version.
+- **Image editing and chat.** Choose the exact version to edit and add separate guides for subject, style, or composition. Select a subject or background, make a transparent cutout, expand the canvas, or highlight changed pixels between versions. Select part of a screenshot to read its text locally, ask about it in chat, or draft an issue.
+- **Image generation and recipes.** Follow progress, compare candidates, and see configured cost estimates and provider-reported usage in Images. Reuse a prompt or settings, branch from a result, or export a recipe with its optional source images and ComfyUI workflow.
+- **Image sets and export.** Save a style kit and regenerate individual assets while keeping their approved versions. Preview icon, documentation, and slide sizes before exporting a ZIP with a contact sheet, source manifest, or originals. Inspect embedded Content Credentials locally with `c2patool`.
+
+### Changed
+
+- The desktop Images pane now opens an empty library with a prompt field and actions to paste, import, or sketch. Library searches include older images and earlier versions, even when they are beyond the first page.
+- PAL Mobile gives assistant replies more room and keeps Send, Stop and Retry in the same place. Pairing keeps verification within reach above the keyboard, and the main screens show how to reconnect after an interruption.
+- PAL replies in a neutral writing style by default. You can customize it in Personality settings.
+
+### Fixed
+
+- **Run failures.** Code Lab and command runs now show a failure when the process exits with an error. PAL also corrects older runs whose recorded exit status shows they failed. In Code Lab, you can inspect the failed cell and any output files collected before the error.
+- **Protected image edits.** A mask stays tied to the version it was drawn on, including after a restart. If PAL cannot preserve pixels outside the mask, it holds the candidate for review before adding it to the library.
+- **Mobile scrolling.** New Chat, Activity and Pinned Replies stop at the end of their content, and their handles still dismiss them. Forms keep their scroll position when the keyboard changes the available height.
+- **Desktop conversation scrolling.** Vertical wheel and trackpad gestures continue through wide Markdown tables and code blocks. Choosing **Latest messages** takes you to the final reply even as Markdown finishes rendering. Scrolling back to an earlier message keeps it in place while a reply streams.
+- The default PAL robot now uses the full companion animation system, including idle motion, six articulated gestures, hover and click reactions, pickup and release, blinking, and twelve expressive portrait frames.
+
 ## [2.0.0] - 2026-11-22
 
 ### Added

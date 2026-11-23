@@ -27,6 +27,7 @@ Rectangle {
     property string approvalError:""
     signal closeRequested()
     signal settingsRequested(string category,string target)
+    signal workflowsRequested()
     readonly property bool docked: !compact && !focusedPane
     readonly property bool narrowHeader: compact && width < Theme.narrowPane
     readonly property string currentPaneLabel: tabs[paneIndex(WorkbenchState.tab)].label
@@ -345,6 +346,9 @@ Rectangle {
             function onRootsChanged() { if (previewLoader.item) previewLoader.item.roots = filesLoader.item.roots }
         }
         Connections { target:terminalLoader.item;ignoreUnknownSignals:true;function onLeaveRequested(){bench.focusActiveTab()} }
+        Connections { target:imagesLoader.item;ignoreUnknownSignals:true;function onSetupRequested(){bench.settingsRequested("connections","imageConnections")} }
+        Connections { target:runsLoader.item;ignoreUnknownSignals:true;function onSettingsRequested(category,target){bench.settingsRequested(category,target)} }
+        Connections { target:runsLoader.item;ignoreUnknownSignals:true;function onWorkflowsRequested(){bench.workflowsRequested()} }
         Connections { target:researchLoader.item;ignoreUnknownSignals:true;function onSettingsRequested(category,target){bench.settingsRequested(category,target)} }
     }
     RootSettings { id: rootSettings; onSaved: { if (filesLoader.item) filesLoader.item.refreshRoots(); bench.refreshRoots() } }

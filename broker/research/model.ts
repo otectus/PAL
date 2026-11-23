@@ -5,7 +5,7 @@ import { ollamaJson } from '../ollama.ts';
 import { apiJson } from '../api-providers.ts';
 import { isApiProvider } from '../provider-catalog.ts';
 
-export async function completeResearch(
+export async function completeSessionTask(
   core: Core,
   session: Session,
   prompt: string,
@@ -13,6 +13,7 @@ export async function completeResearch(
   beforeRequest?: () => Promise<void>,
   format?: Record<string, unknown>,
   onTruncated?: () => void,
+  kind = 'research',
 ): Promise<string> {
   const timeout = AbortSignal.any([signal, AbortSignal.timeout(300_000)]),
     options = session.modelOptions || {};
@@ -33,7 +34,7 @@ export async function completeResearch(
   const checkRoute = () => {
     timeout.throwIfAborted();
     if (initialRoute !== routeIdentity(core.store.session(session.id)))
-      throw new Error('The conversation model or destination changed. Retry research with the current settings.');
+      throw new Error('The conversation model or destination changed. Retry with the current settings.');
   };
   const authorize = async () => {
     checkRoute();
@@ -48,7 +49,7 @@ export async function completeResearch(
         session.id,
         '',
         Date.now(),
-        JSON.stringify({ calls: 1, kind: 'research', source: session.provider, model: session.model, ...usage }),
+        JSON.stringify({ calls: 1, kind, source: session.provider, model: session.model, ...usage }),
       );
   const messages = [{ role: 'user', content: prompt }];
   if (session.provider === 'ollama') {
@@ -72,7 +73,7 @@ export async function completeResearch(
     return String(value.message?.content || '').slice(0, 64_000);
   }
   const p = session.provider;
-  if (!isApiProvider(p)) throw new Error('Choose an Ollama or managed API conversation to run research');
+  if (!isApiProvider(p)) throw new Error('Choose an Ollama or managed API conversation for this request');
   core.usage.assertWithinBudget(p);
   const access = core.apiAccess(p, session.id);
   const max = options.maxOutputTokens || 4096;
@@ -130,3 +131,5 @@ export async function completeResearch(
           : value.choices?.[0]?.message?.content;
   return String(text || '').slice(0, 64_000);
 }
+
+export { completeSessionTask as completeResearch };

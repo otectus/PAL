@@ -122,6 +122,7 @@ async function xlsx(bytes: Buffer, warnings: string[], includeHidden: boolean) {
   if (rels) for (const node of walk(parseXml((await readMember(bytes, rels)).toString('utf8')))) if (local(node.name) === 'Relationship') relations.set(node.attributes.Id, node.attributes.Target);
   const sheets = [...walk(parseXml((await readMember(bytes, workbook)).toString('utf8')))].filter(node => local(node.name) === 'sheet');
   const units: Unit[] = [], names: string[] = [], hidden: string[] = [];
+  const headers: Record<string,string[]> = Object.create(null);
   let formulas = 0, cells = 0;
   for (const sheet of sheets) {
     const name = sheet.attributes.name || 'Sheet', state = sheet.attributes.state || 'visible';
@@ -133,7 +134,7 @@ async function xlsx(bytes: Buffer, warnings: string[], includeHidden: boolean) {
     const rows = [...walk(parseXml((await readMember(bytes, entry)).toString('utf8')))].filter(node => local(node.name) === 'row');
     const rendered: { row: number; text: string }[] = [];
     for (const row of rows) {
-      const parts: string[] = [];
+      const parts: string[] = [], values: string[] = [];
       for (const cell of row.children.filter(child => local(child.name) === 'c')) {
         const ref = cell.attributes.r || '', type = cell.attributes.t || 'n';
         const formula = cell.children.find(child => local(child.name) === 'f'), value = cell.children.find(child => local(child.name) === 'v');
@@ -141,8 +142,9 @@ async function xlsx(bytes: Buffer, warnings: string[], includeHidden: boolean) {
         let shown = type === 's' ? shared[Number(value?.text)] ?? '' : type === 'inlineStr' ? (inline ? textOf(inline) : '') : type === 'b' ? (value?.text === '1' ? 'TRUE' : 'FALSE') : value?.text ?? '';
         if (formula) { formulas++; shown = `=${formula.text}${value ? ` (cached: ${shown})` : ' (no cached value)'}`; }
         if (shown === '') continue;
-        cells++; parts.push(`${ref}: ${shown}`);
+        values.push(shown); cells++; parts.push(`${ref}: ${shown}`);
       }
+      if (parts.length && !headers[name]) headers[name] = values.slice(0, 300);
       if (parts.length) rendered.push({ row: Number(row.attributes.r) || rendered.length + 1, text: parts.join(' | ') });
     }
     for (let start = 0; start < rendered.length; start += limits.rowsPerUnit) {
@@ -153,7 +155,7 @@ async function xlsx(bytes: Buffer, warnings: string[], includeHidden: boolean) {
   if (hidden.length) warnings.push(`Hidden sheets were left out: ${hidden.join(', ')}`);
   if (formulas) warnings.push('Formulas are shown as written; their cached values come from the last time the file was saved and may be stale. Nothing was recalculated.');
   void columnName;
-  return { units, stats: { sheets: names, hiddenSheets: hidden, cells, formulas } };
+  return { units, stats: { sheets: names, headers, hiddenSheets: hidden, cells, formulas } };
 }
 async function html(text: string, warnings: string[]) {
   const { parseHTML } = await import('linkedom');

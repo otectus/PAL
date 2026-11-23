@@ -5,6 +5,7 @@ import { sheetComponents } from './avatar-sheet.mjs';
 import { authoringAvatars } from '../broker/avatars.ts';
 const directory = 'artwork/avatars';
 for (const {id, authoring: source} of authoringAvatars(process.argv.slice(2))) {
+  if (source.jointSource) continue; // Its transparent reference is already registered.
   const [left, top, width, height] = source.crop;
   const crop = { left, top, width, height };
   const open = await sharp(`reference/${id}.png`).extract(crop).ensureAlpha().raw().toBuffer();

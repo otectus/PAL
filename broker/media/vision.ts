@@ -34,7 +34,7 @@ export async function analysisImage(data: Buffer, region?: Region) {
   const reduced = longest > visionLimits.edge;
   const bytes = reduced ? await image.resize(visionLimits.edge, visionLimits.edge, { fit: 'inside' }).png().toBuffer() : await image.png().toBuffer();
   const out = await sharp(bytes).metadata();
-  return { bytes, width: out.width!, height: out.height!, note: `${region ? `Region ${region.width}×${region.height} at (${region.left}, ${region.top}) of ${meta.width}×${meta.height}` : `${meta.width}×${meta.height}`}${reduced ? `, reduced to ${out.width}×${out.height} for analysis` : ''}` };
+  return { bytes, width: out.width!, height: out.height!, sourceWidth: current.width!, sourceHeight: current.height!, note: `${region ? `Region ${region.width}×${region.height} at (${region.left}, ${region.top}) of ${meta.width}×${meta.height}` : `${meta.width}×${meta.height}`}${reduced ? `, reduced to ${out.width}×${out.height} for analysis` : ''}` };
 }
 
 export class Vision {

@@ -102,6 +102,7 @@ export class ComfyImages implements ImageBackend {
   validate(request: ImageRequest) {
     const capabilities = this.describe(), adjustments: string[] = [], next = { ...request };
     const refuse = (message: string): never => { throw new BackendRefusal('unsupported_parameter', message); };
+    if (request.operation === 'reference') refuse(`The workflow “${this.workflow.name}” has an edit-image binding, not separate guide inputs; choose a backend that supports reference-guided creation`);
     if (request.operation === 'generate' && capabilities.generate.state !== 'supported') refuse(`The workflow “${this.workflow.name}” edits images; choose a generation workflow`);
     if (request.operation !== 'generate' && capabilities.edit.state !== 'supported') refuse(`The workflow “${this.workflow.name}” only generates; choose an editing workflow`);
     if (request.mask && !this.workflow.bindings.mask && !request.protectOutside) refuse('This workflow has no mask input. Choose a masked-edit workflow, or keep pixels outside the selection by compositing.');
@@ -116,7 +117,7 @@ export class ComfyImages implements ImageBackend {
       const width = Number(match![1]), height = Number(match![2]);
       if (width % 8 || height % 8 || width > 4096 || height > 4096 || width < 64 || height < 64) refuse('Sizes are multiples of 8 from 64 to 4096');
     }
-    if (request.references.length > 1) { next.references = request.references.slice(0, 1); adjustments.push('This workflow takes one input image; only the edit base is used'); }
+    if (request.references.length > 1) { next.references = request.references.filter(ref => ref.role === 'target').slice(0, 1); adjustments.push('This workflow takes one target image; guide images are not sent'); }
     if (request.partials) { next.partials = false; adjustments.push('ComfyUI previews are not shown; the finished image appears when ready'); }
     return { request: next, adjustments };
   }
@@ -145,11 +146,12 @@ export class ComfyImages implements ImageBackend {
   }
   async *run(request: ValidatedImageRequest, inputs: ResolvedInputs, context: BackendContext): AsyncIterable<ImageEvent> {
     const b = this.workflow.bindings;
+    let produced = 0;
     for (let index = 0; index < request.count; index++) {
       const graph = structuredClone(this.graph);
       const set = (binding: ComfyBinding | undefined, value: unknown) => { if (binding && graph[binding.node]) graph[binding.node].inputs[binding.input] = value; };
       context.beforeDispatch();
-      if (b.image && inputs.references[0]) set(b.image, await this.upload(inputs.references[0].bytes, context, 'image'));
+      if (b.image && inputs.target) set(b.image, await this.upload(inputs.target.bytes, context, 'target'));
       if (b.mask && inputs.mask) { set(b.mask, await this.upload(await whiteMeansEdit(inputs.mask.bytes), context, 'mask')); if (graph[b.mask.node]?.inputs && 'channel' in graph[b.mask.node].inputs) graph[b.mask.node].inputs.channel = 'red'; }
       set(b.prompt, request.prompt); if (request.negativePrompt) set(b.negative, request.negativePrompt);
       const seed = request.seed !== undefined ? request.seed + index : Math.floor(Math.random() * 2 ** 32);
@@ -170,7 +172,7 @@ export class ComfyImages implements ImageBackend {
         throw new BackendRefusal(/not found|missing|does not exist/i.test(detail) ? 'missing_dependency' : 'workflow_rejected', `ComfyUI rejected the workflow${detail ? ': ' + detail : ''}`);
       }
       yield { type: 'accepted', remoteId: promptId };
-      yield* this.observe(promptId, clientId, context);
+      for await (const event of this.observe(promptId, clientId, context)) yield event.type === 'image' ? { ...event, index: produced++ } : event;
       yield { type: 'progress', note: `Seed ${seed}` };
     }
   }

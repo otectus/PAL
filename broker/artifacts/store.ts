@@ -30,7 +30,7 @@ export type ArtifactVersion = {
   image?: { width: number; height: number; format: string; alpha: boolean; transparent?: boolean; frames?: number; orientation?: number };
   label?: string;
 };
-export type Artifact = { id: string; sessionId: string; project: string; name: string; kind: ArtifactKind; created: number; updated: number; latestVersionId: string; versions: number; pinned: boolean; tags: string[]; shared: boolean };
+export type Artifact = { id: string; sessionId: string; project: string; name: string; kind: ArtifactKind; created: number; updated: number; latestVersionId: string; versions: number; pinned: boolean; tags: string[]; collections?: string[]; shared: boolean };
 export const artifactLimits = { bytes: 100 * 1024 * 1024, imagePixels: 64_000_000, thumbnail: 256, names: 200, tags: 12, perPage: 60 };
 const sha256 = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
 const uuid = /^[0-9a-f-]{36}$/;
@@ -65,7 +65,17 @@ export const safeName = (value: unknown, fallback = 'artifact') => {
 export class ArtifactStore {
   store: Store; directory: string;
   changed: () => void = () => {};
-  constructor(store: Store) { this.store = store; this.directory = join(store.directory, 'artifacts'); }
+  constructor(store: Store) {
+    this.store = store;
+    this.directory = join(store.directory, 'artifacts');
+    store.db.exec(`CREATE TABLE IF NOT EXISTS image_analysis (
+      version_id TEXT PRIMARY KEY REFERENCES artifact_versions(id) ON DELETE CASCADE,
+      ocr TEXT NOT NULL DEFAULT '', fingerprint BLOB, boxes TEXT
+    ); CREATE TABLE IF NOT EXISTS image_set_members (
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, version_id TEXT NOT NULL REFERENCES artifact_versions(id) ON DELETE CASCADE, member INTEGER NOT NULL,
+      operation_id TEXT, approved TEXT, PRIMARY KEY(session_id,version_id,member)
+    )`);
+  }
   objectsDir() { return privateDir(join(this.directory, 'objects')); }
   objectPath(hash: string) { if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error('Invalid artifact content'); return join(this.directory, 'objects', hash.slice(0, 2), hash); }
   /**
@@ -163,21 +173,73 @@ export class ArtifactStore {
     }
     return 'data:image/png;base64,' + png.toString('base64');
   }
-  /** Artifacts of a conversation (and, optionally, those shared with its project), newest first, a page at a time. */
-  list(sessionId: string, p: { kind?: unknown; source?: unknown; query?: unknown; project?: boolean; before?: unknown; limit?: unknown } = {}) {
-    const session = this.store.session(sessionId), limit = Math.min(Number(p.limit) || artifactLimits.perPage, 200);
-    const rows = this.store.db.prepare(`SELECT a.data FROM artifacts a WHERE EXISTS (SELECT 1 FROM artifact_refs r WHERE r.artifact_id=a.id AND ((r.owner_kind='session' AND r.owner_id=?)${p.project ? " OR (r.owner_kind='project' AND r.owner_id=?)" : ''}))
-      AND (? IS NULL OR a.updated < ?) ORDER BY a.updated DESC LIMIT ?`).all(...[sessionId, ...(p.project ? [session.cwd] : []), Number.isFinite(p.before) ? p.before as number : null, Number.isFinite(p.before) ? p.before as number : null, limit + 1]);
-    let artifacts = rows.map(row => JSON.parse(String(row.data)) as Artifact);
-    if (typeof p.kind === 'string' && p.kind) artifacts = artifacts.filter(item => item.kind === p.kind);
-    if (typeof p.query === 'string' && p.query.trim()) { const q = p.query.toLowerCase(); artifacts = artifacts.filter(item => item.name.toLowerCase().includes(q) || item.tags.some(tag => tag.toLowerCase().includes(q))); }
-    const page = artifacts.slice(0, limit).map(item => ({ ...item, latest: this.version(sessionId, item.id, item.latestVersionId) }));
-    if (typeof p.source === 'string' && p.source) return { artifacts: page.filter(item => item.latest.source === p.source), ...(rows.length > limit ? { before: page.at(-1)?.updated } : {}) };
-    return { artifacts: page, ...(rows.length > limit ? { before: page.at(-1)?.updated } : {}) };
+  /** Apply ownership and all filters before paging. The ID breaks ties within the same millisecond. */
+  list(sessionId: string, p: { kind?: unknown; source?: unknown; query?: unknown; project?: boolean; scope?: unknown; before?: unknown; limit?: unknown; collection?: unknown; provenanceKind?: string } = {}) {
+    const session = this.store.session(sessionId);
+    const limit = Math.max(1, Math.min(Math.floor(Number(p.limit)) || artifactLimits.perPage, 200));
+    const sessionScope = "(r.owner_kind='session' AND r.owner_id=?)";
+    const projectScope = "(r.owner_kind='project' AND r.owner_id=?)";
+    const scope = p.scope === 'project' ? projectScope : p.project ? sessionScope + ' OR ' + projectScope : sessionScope;
+    const owners = p.scope === 'project' ? [session.cwd] : p.project ? [sessionId, session.cwd] : [sessionId];
+    const access = 'EXISTS (SELECT 1 FROM artifact_refs r WHERE r.artifact_id=a.id AND (' + scope + '))';
+    const where = [access], params: (string | number)[] = [...owners];
+    if (typeof p.kind === 'string' && p.kind) { where.push("json_extract(a.data,'$.kind')=?"); params.push(p.kind); }
+    if (typeof p.source === 'string' && p.source) { where.push("json_extract(v.data,'$.source')=?"); params.push(p.source); }
+    if (p.provenanceKind) { where.push("json_extract(v.data,'$.provenance.kind')=?"); params.push(p.provenanceKind); }
+    if (typeof p.collection === 'string' && p.collection) {
+      where.push("EXISTS (SELECT 1 FROM json_each(a.data,'$.collections') c WHERE c.value=?)");
+      params.push(p.collection);
+    }
+    if (typeof p.query === 'string' && p.query.trim()) {
+      // A revision can be cropped or annotated after generation. Its original prompt and any text
+      // recognized on an earlier version should still lead the user back to the image.
+      let text = p.query.trim().slice(0, 300).replaceAll('×', 'x');
+      const conditions:string[] = [];
+      const relative = /\b(?:from\s+)?(last week|this week|yesterday|today)\s*$/i.exec(text);
+      if (relative) {
+        const first = new Date(); first.setHours(0, 0, 0, 0);
+        const period = relative[1].toLowerCase();
+        if (period.includes('week')) first.setDate(first.getDate() - (first.getDay()+6)%7 - (period==='last week' ? 7 : 0));
+        else if (period==='yesterday') first.setDate(first.getDate()-1);
+        const end = new Date(first); end.setDate(end.getDate() + (period.includes('week') ? 7 : 1));
+        conditions.push('history.created >= ? AND history.created < ?'); params.push(first.valueOf(),end.valueOf());
+        text = text.slice(0,relative.index).trim().replace(/^the\s+/i,'');
+      }
+      const fields = ["json_extract(a.data,'$.name')", "json_extract(a.data,'$.tags')", "json_extract(a.data,'$.collections')",
+        "json_extract(history.data,'$.name')", "json_extract(history.data,'$.provenance.prompt')", "json_extract(history.data,'$.provenance.revisedPrompt')",
+        "json_extract(history.data,'$.provenance.model')", "json_extract(history.data,'$.source')",
+        "json_extract(history.data,'$.image.width') || 'x' || json_extract(history.data,'$.image.height')",
+        "CASE WHEN json_extract(history.data,'$.image.transparent') THEN 'transparent' END", "date(history.created / 1000,'unixepoch','localtime')", "analysis.ocr"];
+      const searchable = fields.map(f => "coalesce(" + f + ",'')").join(" || ' ' || ");
+      for (const word of text.split(/\s+/).filter(Boolean).slice(0, 20)) {
+        conditions.push('instr(lower(' + searchable + '), lower(?)) > 0'); params.push(word);
+      }
+      where.push(`EXISTS (SELECT 1 FROM artifact_versions history
+        LEFT JOIN image_analysis analysis ON analysis.version_id=history.id
+        WHERE history.artifact_id=a.id AND ${conditions.join(' AND ')})`);
+    }
+    if (p.before !== undefined && p.before !== null && p.before !== '') {
+      const parts = String(p.before).split(':');
+      const time = Number(parts[0]);
+      if (!Number.isSafeInteger(time) || time < 0 || parts.length > 2 || (parts.length === 2 && !uuid.test(parts[1]))) throw new Error('Invalid library cursor');
+      where.push('(a.updated < ? OR (a.updated = ? AND a.id < ?))'); params.push(time, time, parts[1] || '');
+    }
+    const rows = this.store.db.prepare(`SELECT a.data, v.data AS latest FROM artifacts a
+      JOIN artifact_versions v ON v.id=json_extract(a.data,'$.latestVersionId')
+      WHERE ${where.join(' AND ')} ORDER BY a.updated DESC,a.id DESC LIMIT ?`).all(...params, limit + 1);
+    const artifacts = rows.slice(0, limit).map(row => ({ ...JSON.parse(String(row.data)) as Artifact, latest: JSON.parse(String(row.latest)) as ArtifactVersion }));
+    const last = artifacts.at(-1);
+    const collections = this.store.db.prepare(`SELECT DISTINCT c.value FROM artifacts a,json_each(a.data,'$.collections') c
+      WHERE ${access} ORDER BY c.value COLLATE NOCASE`).all(...owners).map(row => String(row.value));
+    return { artifacts, collections, ...(last && rows.length > limit ? { before: last.updated + ':' + last.id } : {}) };
   }
-  update(sessionId: string, artifactId: unknown, p: { name?: unknown; tags?: unknown; pinned?: unknown; shared?: unknown }) {
+  update(sessionId: string, artifactId: unknown, p: { name?: unknown; tags?: unknown; pinned?: unknown; shared?: unknown; collections?: unknown }) {
     const artifact = this.artifact(artifactId);
     if (!this.authorized(sessionId, artifact.id)) throw new Error('That artifact is not available in this conversation');
+    if (p.collections !== undefined) {
+      if (!Array.isArray(p.collections) || p.collections.length > 32 || p.collections.some(v => typeof v !== 'string' || !v.trim() || v.length > 80)) throw new Error('Choose up to 32 named collections');
+      artifact.collections = [...new Set(p.collections.map(v => v.trim()))];
+    }
     if (p.name !== undefined) artifact.name = safeName(p.name, artifact.name);
     if (p.tags !== undefined) { if (!Array.isArray(p.tags) || p.tags.length > artifactLimits.tags) throw new Error(`Use up to ${artifactLimits.tags} tags`); artifact.tags = [...new Set(p.tags.map(tag => safeName(tag, '').slice(0, 40)).filter(Boolean))]; }
     if (p.pinned !== undefined) { if (typeof p.pinned !== 'boolean') throw new Error('Invalid pin'); artifact.pinned = p.pinned; }

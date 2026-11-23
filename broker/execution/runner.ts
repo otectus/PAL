@@ -22,9 +22,11 @@ export type Enforcement = { wallClock: string; displayedOutput: string; outputFi
 export type Isolation = { available: boolean; problem?: string; cgroup: boolean; prlimit: boolean; enforced: Enforcement };
 
 let cached: Promise<Isolation> | undefined;
+let probedAt = 0;
 /** Checks once whether the boundary can be established here, and how each limit is enforced. */
 export function isolation(refresh = false): Promise<Isolation> {
-  if (cached && !refresh) return cached;
+  if (cached && !refresh && Date.now() - probedAt < 60_000) return cached;
+  probedAt = Date.now();
   cached = (async () => {
     const base = { cgroup: false, prlimit: existsSync('/usr/bin/prlimit') };
     const unavailable = (problem: string): Isolation => ({ available: false, problem, ...base, enforced: { wallClock: 'n/a', displayedOutput: 'n/a', outputFiles: 'n/a', filesystem: 'not established', network: 'not established', memory: 'n/a', processes: 'n/a' } });
@@ -56,7 +58,7 @@ export type SandboxResult = { exitCode: number | null; signal: string | null; ti
  * else the run wrote disappears with its namespaces. The caller's signal stops it; only this run's
  * process group and namespaces are affected.
  */
-export async function sandboxed(p: { argv: string[]; binds: Bind[]; cwd: string; env?: Record<string, string>; network?: boolean; limits?: Partial<Limits>; signal: AbortSignal; collectOutput?: boolean; onOutput?: (stream: 'stdout' | 'stderr', text: string) => void }): Promise<SandboxResult> {
+export async function sandboxed(p: { argv: string[]; binds: Bind[]; cwd: string; env?: Record<string, string>; network?: boolean; limits?: Partial<Limits>; signal: AbortSignal; collectOutput?: boolean; onControl?: (data: Buffer) => void; onOutput?: (stream: 'stdout' | 'stderr', text: string) => void }): Promise<SandboxResult> {
   const status = await isolation();
   if (!status.available) throw Object.assign(new Error(status.problem || 'Isolation is unavailable'), { code: 'isolation_unavailable' });
   const limits = { ...defaultLimits, ...p.limits };
@@ -73,7 +75,7 @@ export async function sandboxed(p: { argv: string[]; binds: Bind[]; cwd: string;
   const started = Date.now();
   return new Promise<SandboxResult>((resolve, reject) => {
     p.signal.throwIfAborted();
-    const child = spawn(command, commandArgs, { detached: true, stdio: ['ignore', 'pipe', 'pipe', 'pipe'], env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', ...(status.cgroup ? { XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || '', DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || '' } : {}) } });
+    const child = spawn(command, commandArgs, { detached: true, stdio: ['ignore', 'pipe', 'pipe', 'pipe', ...(p.onControl ? ['pipe' as const] : [])], env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', ...(status.cgroup ? { XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || '', DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || '' } : {}) } });
     let stdout = '', stderr = '', truncated = false, timedOut = false, cancelled = false, archive: Buffer[] = [], archiveBytes = 0, archiveOverflow = false;
     const take = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
       const text = chunk.toString('utf8'), used = Buffer.byteLength(stdout) + Buffer.byteLength(stderr);
@@ -85,6 +87,13 @@ export async function sandboxed(p: { argv: string[]; binds: Bind[]; cwd: string;
     };
     child.stdout!.on('data', chunk => take('stdout', chunk)); child.stderr!.on('data', chunk => take('stderr', chunk));
     (child.stdio[3] as any)?.on('data', (chunk: Buffer) => { archiveBytes += chunk.length; if (archiveBytes > limits.outputBytes + 1024 * 1024) archiveOverflow = true; else archive.push(chunk); });
+    if (p.onControl) {
+      let controlBytes = 0;
+      (child.stdio[4] as NodeJS.ReadableStream).on('data', (chunk: Buffer) => {
+        controlBytes += chunk.length;
+        if (controlBytes <= 4096) p.onControl!(chunk);
+      });
+    }
     // Only this run's process group is stopped; bwrap's namespaces take the rest of the run with it.
     const stop = () => { try { process.kill(-child.pid!, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } } };
     const timer = setTimeout(() => { timedOut = true; stop(); }, limits.wallMs);
@@ -111,6 +120,7 @@ export function untar(data: Buffer, limits: Pick<Limits, 'files' | 'outputBytes'
     const name = (field(345, 155) ? field(345, 155) + '/' : '') + field(0, 100), size = parseInt(field(124, 12).trim() || '0', 8), type = String.fromCharCode(header[156] || 48);
     if (!Number.isSafeInteger(size) || size < 0) throw new Error('The run’s output could not be read');
     offset += 512;
+    if (size > data.length - offset) throw new Error('The output archive ended before the full file arrived');
     const clean = name.replace(/^\.\//, '');
     if (type === '0' || type === '\0') {
       if (!clean || clean.startsWith('/') || clean.split('/').some(part => part === '..' || part === '') || /[\x00-\x1f]/.test(clean)) throw new Error('The run produced a file with an unsafe name');
@@ -124,8 +134,11 @@ export function untar(data: Buffer, limits: Pick<Limits, 'files' | 'outputBytes'
 }
 /** The Python runtime Code Lab uses, as installed on this system; recorded with every run. */
 let runtime: Promise<{ python: string; packages: Record<string, string> }> | undefined;
+let runtimeAt = 0;
 export function pythonRuntime() {
-  runtime ||= run('/usr/bin/python3', ['-I', '-c', 'import json,sys,importlib.metadata as m\nout={}\nfor n in ["numpy","matplotlib","pillow","pandas","scipy"]:\n  try: out[n]=m.version(n)\n  except Exception: pass\nprint(json.dumps({"python":sys.version.split()[0],"packages":out}))'], { timeout: 15_000, env: { PATH: '/usr/bin' } })
+  if (runtime && Date.now() - runtimeAt < 60_000) return runtime;
+  runtimeAt = Date.now();
+  runtime = run('/usr/bin/python3', ['-I', '-c', 'import json,sys,importlib.metadata as m\nout={}\nfor n in ["numpy","matplotlib","pillow","pandas","scipy","duckdb","openpyxl","pyarrow"]:\n  try: out[n]=m.version(n)\n  except Exception: pass\nprint(json.dumps({"python":sys.version.split()[0],"packages":out}))'], { timeout: 15_000, env: { PATH: '/usr/bin' } })
     .then(result => JSON.parse(result.stdout), () => ({ python: 'unavailable', packages: {} }));
   return runtime;
 }
