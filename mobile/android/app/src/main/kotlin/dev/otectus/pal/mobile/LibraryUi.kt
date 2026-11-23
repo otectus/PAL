@@ -19,21 +19,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import dev.otectus.pal.mobile.data.ConnectionState
 import dev.otectus.pal.mobile.data.MobileState
 import dev.otectus.pal.mobile.data.OfflineKind
 import dev.otectus.pal.mobile.protocol.Session
-
-@Composable
-internal fun connectionTitle(state: MobileState): String = stringResource(when (val connection = state.connection) {
-    is ConnectionState.Online -> R.string.connection_online
-    is ConnectionState.Offline -> if (connection.kind == OfflineKind.Unreachable) R.string.connection_offline else R.string.connection_disconnected
-    ConnectionState.Connecting -> if (state.cursor != null) R.string.connection_reconnecting else R.string.connection_connecting
-    ConnectionState.Authenticating -> R.string.connection_signing_in
-    is ConnectionState.Blocked -> R.string.connection_action_needed
-    ConnectionState.Unpaired -> R.string.connection_unpaired
-})
 
 @Composable
 internal fun PageTitle(text: String, modifier: Modifier = Modifier) {
@@ -45,21 +34,22 @@ internal fun PageTitle(text: String, modifier: Modifier = Modifier) {
 internal fun LibraryConversation(session: Session, status: String, open: () -> Unit, handoff: (() -> Unit)?) {
     val colors = MaterialTheme.colorScheme
     Surface(onClick = open, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
-        color = colors.surface, border = BorderStroke(1.dp, colors.outlineVariant)) {
-        Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        color = colors.surface) {
+        Row(Modifier.padding(start = PALLayout.gutter, end = PALLayout.small, top = PALLayout.gutter, bottom = PALLayout.gutter),
+            horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
                 val provider = session.provider.replaceFirstChar(Char::uppercase)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(session.title, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                     val project = session.folderName?.takeIf(String::isNotBlank) ?: session.project?.substringAfterLast('/')?.takeIf(String::isNotBlank)
-                    Text(listOfNotNull(provider, project).joinToString(" · "), style = MaterialTheme.typography.labelMedium,
-                        color = colors.onSurfaceVariant, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(project?.let { stringResource(R.string.library_project_provider, it, provider) } ?: provider,
+                        style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                        modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
                     if (session.updated > 0) Text(
                         DateUtils.formatDateTime(LocalContext.current, session.updated, if (DateUtils.isToday(session.updated))
                             DateUtils.FORMAT_SHOW_TIME else DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH),
                         style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
                 }
-                Text(session.title, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 val indicators = listOfNotNull(
                     stringResource(R.string.session_pinned).takeIf { session.pinned },
                     stringResource(R.string.session_unread).takeIf { session.unread },
@@ -73,7 +63,7 @@ internal fun LibraryConversation(session: Session, status: String, open: () -> U
                 }
             }
             if (handoff != null) IconButton(handoff) {
-                Icon(Icons.Default.Share, stringResource(R.string.hand_off_session, session.title), Modifier.size(20.dp), tint = colors.onSurfaceVariant)
+                Icon(Icons.Default.Share, stringResource(R.string.hand_off_session, session.title), Modifier.size(PALLayout.iconMedium), tint = colors.onSurfaceVariant)
             }
         }
     }
@@ -90,30 +80,31 @@ internal enum class SettingsGroup(val title: Int, val hint: Int?, val icon: Imag
 
 @Composable
 internal fun SettingsIndex(state: MobileState, select: (SettingsGroup) -> Unit) {
-    LazyColumn(contentPadding = PaddingValues(PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { PageTitle(stringResource(R.string.nav_settings), Modifier.padding(bottom = 8.dp)) }
-        for (group in SettingsGroup.entries) {
-            if (group == SettingsGroup.Assistant && listOf("settings.get", "memory.list", "memory.retrieve").none(state::supports)) continue
-            item(key = group.name) {
-                val connected = group == SettingsGroup.Connection
-                val colors = MaterialTheme.colorScheme
-                Surface({ select(group) }, shape = MaterialTheme.shapes.medium,
-                    color = if (connected) colors.primaryContainer else colors.surface,
-                    border = if (connected) null else BorderStroke(1.dp, colors.outlineVariant)) {
-                    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        if (connected) Icon(painterResource(R.drawable.ic_desktop), null)
-                        else Icon(group.icon, null, tint = colors.onSurfaceVariant)
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(stringResource(group.title), style = MaterialTheme.typography.titleMedium)
-                            Text(group.hint?.let { stringResource(it) } ?: listOfNotNull(connectionTitle(state), state.desktop?.desktopName).joinToString(" · "),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (connected) colors.onPrimaryContainer else colors.onSurfaceVariant)
-                        }
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp))
+    val colors = MaterialTheme.colorScheme
+    val groups = SettingsGroup.entries.filter { group ->
+        group != SettingsGroup.Assistant || listOf("settings.get", "memory.list", "memory.retrieve").any(state::supports)
+    }
+    LazyColumn(contentPadding = PaddingValues(PALLayout.gutter)) {
+        item { PageTitle(stringResource(R.string.nav_settings), Modifier.padding(bottom = PALLayout.gutter)) }
+        items(groups.size, key = { groups[it].name }) { index ->
+            val group = groups[index]
+            val connection = group == SettingsGroup.Connection
+            Surface(onClick = { select(group) },
+                shape = if (connection) MaterialTheme.shapes.large else androidx.compose.ui.graphics.RectangleShape,
+                color = if (connection) colors.secondaryContainer else colors.background) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = PALLayout.groupGap, vertical = PALLayout.gutter),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.gutter)) {
+                    if (connection) Icon(painterResource(R.drawable.ic_desktop), null)
+                    else Icon(group.icon, null, tint = colors.onSurfaceVariant)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
+                        Text(stringResource(group.title), style = MaterialTheme.typography.titleMedium)
+                        Text(group.hint?.let { stringResource(it) } ?: listOfNotNull(connectionTitle(state), state.desktop?.desktopName).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall, color = if (connection) colors.onSecondaryContainer else colors.onSurfaceVariant)
                     }
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(PALLayout.iconMedium))
                 }
             }
+            if (!connection && index < groups.lastIndex) HorizontalDivider(Modifier.padding(start = PALLayout.headerHeight), color = colors.outlineVariant)
         }
     }
 }

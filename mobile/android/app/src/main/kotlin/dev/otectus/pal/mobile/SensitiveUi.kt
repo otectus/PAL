@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
@@ -26,7 +25,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 
 internal enum class SecureTone { Info, Attention, Danger, Success }
 
@@ -54,18 +52,17 @@ internal fun SecureStatusPanel(
     }
     Surface(
         modifier = modifier.fillMaxWidth().semantics { if (tone == SecureTone.Danger || tone == SecureTone.Success) liveRegion = LiveRegionMode.Polite },
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.medium,
         color = container,
         contentColor = content,
-        border = BorderStroke(1.dp, content.copy(alpha = 0.24f)),
     ) {
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.fillMaxWidth().heightIn(min = PALLayout.headerHeight).padding(PALLayout.gutter),
+            horizontalArrangement = Arrangement.spacedBy(PALLayout.groupGap),
             verticalAlignment = Alignment.Top,
         ) {
-            Icon(symbol, null, Modifier.size(22.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Icon(symbol, null, Modifier.size(PALLayout.icon))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PALLayout.focusStroke)) {
                 Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Text(detail, style = MaterialTheme.typography.bodySmall)
             }

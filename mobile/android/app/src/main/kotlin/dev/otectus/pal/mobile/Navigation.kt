@@ -18,7 +18,6 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import dev.otectus.pal.mobile.data.ConnectionState
 
 internal enum class Destination(val label: Int) {
@@ -27,7 +26,7 @@ internal enum class Destination(val label: Int) {
 
 @Composable
 private fun needsLargeTypePhoneLayout(): Boolean = with(LocalDensity.current) {
-    fontScale >= 1.6f && LocalWindowInfo.current.containerSize.width < 500.dp.roundToPx()
+    fontScale >= 1.6f && LocalWindowInfo.current.containerSize.width < PALLayout.largeTextPhoneWidth.roundToPx()
 }
 
 @Composable
@@ -39,7 +38,7 @@ private fun DestinationIcon(item: Destination, count: Int, description: String?)
         Destination.Work -> Icon(Icons.Default.Build, description)
         Destination.Inbox -> BadgedBox(badge = {
             if (count > 0) Badge(containerColor = MaterialTheme.colorScheme.tertiaryContainer, contentColor = MaterialTheme.colorScheme.onTertiaryContainer) {
-                Text(if (count > 99) "99+" else count.toString(), Modifier.clearAndSetSemantics {})
+                Text(if (count > 99) stringResource(R.string.nav_99) else count.toString(), Modifier.clearAndSetSemantics {})
             }
         }) { Icon(Icons.Default.Notifications, description) }
     }
@@ -56,8 +55,8 @@ internal fun PALNavigation(destination: Destination, count: Int, rail: Boolean, 
         Box(Modifier.fillMaxWidth()) {
             Surface({ expanded = true }, color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier.fillMaxWidth().semantics { onClick(switchLabel, action = null) }) {
-                Row(Modifier.heightIn(min = 56.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.heightIn(min = PALLayout.primaryHeight).padding(horizontal = PALLayout.gutter), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PALLayout.groupGap)) {
                     DestinationIcon(destination, count, null)
                     Text(stringResource(destination.label), Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
                     Icon(Icons.Default.ArrowDropDown, null)
@@ -82,21 +81,21 @@ internal fun PALNavigation(destination: Destination, count: Int, rail: Boolean, 
         Column(Modifier.verticalScroll(rememberScrollState())) {
             Destination.entries.forEach { item ->
                 val name = stringResource(item.label)
-                val modifier = if (item == Destination.Inbox && count > 0) Modifier.semantics { stateDescription = inboxStatus } else Modifier
+                val modifier = if (item == Destination.Inbox && count > 0) Modifier.semantics { stateDescription = inboxStatus; liveRegion = LiveRegionMode.Polite } else Modifier
                 NavigationRailItem(selected = destination == item, onClick = { select(item) }, modifier = modifier,
                     icon = { DestinationIcon(item, count, name.takeUnless { showLabels }) },
                     label = if (showLabels) { { Text(name, maxLines = 2, overflow = TextOverflow.Ellipsis) } } else null)
             }
         }
     }
-    else Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    else Row(Modifier.fillMaxWidth().padding(vertical = PALLayout.tight), verticalAlignment = Alignment.CenterVertically) {
         // NavigationBarItem uses RowScope to share the available width.
         Destination.entries.forEach { item ->
             val name = stringResource(item.label)
             NavigationBarItem(selected = destination == item, onClick = { select(item) },
                 icon = { DestinationIcon(item, count, name.takeUnless { showLabels }) },
                 label = if (showLabels) { { Text(name, maxLines = 2, overflow = TextOverflow.Ellipsis) } } else null,
-                modifier = if (item == Destination.Inbox && count > 0) Modifier.semantics { stateDescription = inboxStatus } else Modifier)
+                modifier = if (item == Destination.Inbox && count > 0) Modifier.semantics { stateDescription = inboxStatus; liveRegion = LiveRegionMode.Polite } else Modifier)
         }
     }
 }
@@ -111,43 +110,46 @@ private fun installedMobileVersion(): String {
 internal fun CompanionHeader(connection: ConnectionState, connectionText: String,
     onConnection: () -> Unit, onRetry: () -> Unit) {
     val online = connection is ConnectionState.Online
-    val retry = connection is ConnectionState.Offline
+    val retry = connectionPresentation(connection, previouslySynced = false).retry
+    val statusColor by androidx.compose.animation.animateColorAsState(
+        if (online) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.tertiaryContainer,
+        animationSpec = PALMotion.feedback, label = "connection")
     val label = stringResource(if (retry) R.string.retry_connection else R.string.connection_details)
     val version = installedMobileVersion()
     if (needsLargeTypePhoneLayout()) {
         Surface(if (retry) onRetry else onConnection, color = MaterialTheme.colorScheme.surface,
             modifier = Modifier.fillMaxWidth().semantics { onClick(label, action = null) }) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Image(painterResource(R.drawable.pal_face_icon), null, Modifier.size(40.dp))
+            Column(Modifier.padding(horizontal = PALLayout.gutter, vertical = PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.groupGap)) {
+                    Image(painterResource(R.drawable.pal_face_icon), null, Modifier.size(PALLayout.portrait))
                     Column(Modifier.weight(1f)) {
                         Text("PAL", style = MaterialTheme.typography.titleMedium)
                         Text(version, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Icon(if (retry) Icons.Default.Refresh else Icons.Default.Info, null)
                 }
-                Text(connectionText, Modifier.padding(start = 52.dp).semantics { liveRegion = LiveRegionMode.Polite },
+                Text(connectionText, Modifier.padding(start = PALLayout.primaryHeight).semantics { liveRegion = LiveRegionMode.Polite },
                     style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         return
     }
     Surface(color = MaterialTheme.colorScheme.surface) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(start = 16.dp, end = 12.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Image(painterResource(R.drawable.pal_face_icon), null, Modifier.size(40.dp))
-            Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = PALLayout.headerHeight).padding(start = PALLayout.gutter, end = PALLayout.groupGap),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+            Image(painterResource(R.drawable.pal_face_icon), null, Modifier.size(PALLayout.portrait))
+            Column(Modifier.weight(1f).padding(vertical = PALLayout.tight)) {
                 Text("PAL", style = MaterialTheme.typography.titleLarge)
                 Text(version, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Surface(onClick = if (retry) onRetry else onConnection, shape = MaterialTheme.shapes.medium,
-                color = if (online) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.tertiaryContainer,
-                modifier = Modifier.widthIn(max = 176.dp).semantics { liveRegion = LiveRegionMode.Polite; onClick(label, action = null) }) {
-                Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                color = statusColor,
+                modifier = Modifier.widthIn(max = PALLayout.statusWidth).heightIn(min = PALLayout.target).semantics { liveRegion = LiveRegionMode.Polite; onClick(label, action = null) }) {
+                Row(Modifier.padding(horizontal = PALLayout.groupGap, vertical = PALLayout.tight), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
                     if (connection == ConnectionState.Connecting || connection == ConnectionState.Authenticating)
-                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                    else Icon(if (online) Icons.Default.Check else Icons.Default.Refresh, null, Modifier.size(16.dp))
+                        CircularProgressIndicator(Modifier.size(PALLayout.iconSmall), strokeWidth = PALLayout.focusStroke)
+                    else Icon(if (online) Icons.Default.Check else Icons.Default.Refresh, null, Modifier.size(PALLayout.iconSmall))
                     Text(connectionText, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }

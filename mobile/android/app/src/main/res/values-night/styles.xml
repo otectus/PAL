@@ -1,5 +1,5 @@
 <resources>
-    <color name="pal_window">#101923</color>
+    <color name="pal_window">#0B121B</color>
     <style name="Theme.PAL" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/pal_window</item>
         <item name="android:windowLightStatusBar">false</item>

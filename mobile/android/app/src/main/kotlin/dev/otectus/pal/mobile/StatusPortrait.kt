@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -16,7 +17,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import dev.otectus.pal.mobile.data.PortraitSheet
 import dev.otectus.pal.mobile.protocol.PortraitState
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,7 +45,7 @@ private fun color(hex: String?, fallback: Color) = runCatching { Color(android.g
  * this state, in its colors. It never animates; the state is also written beside it as text.
  */
 @Composable
-internal fun StatusPortrait(sheet: PortraitSheet, resolved: PortraitState.Resolved, size: Dp = 40.dp) {
+internal fun StatusPortrait(sheet: PortraitSheet, resolved: PortraitState.Resolved, size: Dp = PALLayout.portrait) {
     val bitmap = remember(sheet.sha256) { android.graphics.BitmapFactory.decodeByteArray(sheet.bytes, 0, sheet.bytes.size) }
     val index = sheet.frames[resolved.expression] ?: 0
     val face = remember(sheet.sha256, index) {
@@ -55,10 +55,10 @@ internal fun StatusPortrait(sheet: PortraitSheet, resolved: PortraitState.Resolv
             else android.graphics.Bitmap.createBitmap(it, (index % sheet.columns) * sheet.cell, (index / sheet.columns) * sheet.cell, sheet.cell, sheet.cell).asImageBitmap()
         }
     }
-    val ring = when (resolved.tone) { "attention" -> color(sheet.palette["portraitAttention"], Color(0xFFBB9155)); "warm" -> color(sheet.palette["portraitWarm"], Color(0xFF70B8CB)); else -> color(sheet.palette["portraitAccent"], Color(0xFF367790)) }
+    val ring = when (resolved.tone) { "attention" -> color(sheet.palette["portraitAttention"], MaterialTheme.colorScheme.tertiary); "warm" -> color(sheet.palette["portraitWarm"], MaterialTheme.colorScheme.secondary); else -> color(sheet.palette["portraitAccent"], MaterialTheme.colorScheme.primary) }
     Box(Modifier.size(size).clip(CircleShape)
-        .background(Brush.verticalGradient(listOf(color(sheet.palette["portraitTop"], Color(0xFF23495D)), color(sheet.palette["portraitBottom"], Color(0xFF101C2B)))))
-        .border(2.dp, ring, CircleShape)) {
+        .background(Brush.verticalGradient(listOf(color(sheet.palette["portraitTop"], MaterialTheme.colorScheme.secondaryContainer), color(sheet.palette["portraitBottom"], MaterialTheme.colorScheme.surfaceContainerHigh))))
+        .border(PALLayout.focusStroke, ring, CircleShape)) {
         face?.let { Image(it, contentDescription = null, modifier = Modifier.fillMaxSize()) }
     }
 }
