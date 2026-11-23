@@ -1,6 +1,7 @@
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 package dev.otectus.pal.mobile
 
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -44,7 +45,6 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
 import dev.otectus.pal.mobile.data.PALRepository
@@ -81,6 +81,8 @@ internal class TerminalRetention {
 
 @Composable
 internal fun TerminalScreen(repository: PALRepository, state: MobileState, activity: FragmentActivity, defaultCwd: String?, retained: TerminalRetention) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val scope = rememberCoroutineScope()
     val online = state.connection is ConnectionState.Online
     var profiles by remember { mutableStateOf<JsonObject?>(null) }
@@ -106,7 +108,7 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
     val clipboard = LocalClipboardManager.current
     val focus = remember { FocusRequester() }
     val measurer = rememberTextMeasurer()
-    val style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 15.sp)
+    val style = terminalType
     val cell = remember(style) { measurer.measure("MMMMMMMMMM", style).size.let { (it.width / 10f) to it.height.toFloat() } }
     fun setLease(value: TerminalLease?) {
         lease = value
@@ -130,7 +132,7 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
                     if (lease != null && !terminalLeaseMatches(terminal, lease, state.desktop?.deviceId)) {
                         setLease(null)
                         pending.clear()
-                        actionError = actionError ?: "Typing paused because control changed. Check who controls the terminal before continuing."
+                        actionError = actionError ?: strings.getString(R.string.terminal_typing_paused_because_control_changed_check_who_controls)
                     }
                     error = null
                 }
@@ -163,10 +165,10 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
                         if (ok) { setLastSequence(sequence); break }
                         // The acknowledgement is lost or refused: ask what the desktop accepted, never resend blindly.
                         val status = runCatching { repository.request("terminal.inputStatus", buildJsonObject { put("terminalId", terminalId); put("leaseId", active.leaseId); put("epoch", active.epoch) }) as JsonObject }.getOrNull()
-                        val decision = status?.let { InputRecovery.decide(it, sequence) } ?: InputRecovery.Abandon("The desktop is unreachable. Check the screen when it reconnects; nothing was sent twice.")
+                        val decision = status?.let { InputRecovery.decide(it, sequence) } ?: InputRecovery.Abandon(strings.getString(R.string.terminal_the_desktop_is_unreachable_check_the_screen_when))
                         when (decision) {
                             InputRecovery.Accepted -> { setLastSequence(sequence); break }
-                            InputRecovery.Resend -> if (++attempts > 2) { pending.clear(); notice = "Typing could not be delivered. Check the screen."; return@launch }
+                            InputRecovery.Resend -> if (++attempts > 2) { pending.clear(); notice = strings.getString(R.string.terminal_typing_could_not_be_delivered_check_the_screen); return@launch }
                             is InputRecovery.Abandon -> { pending.clear(); setLease(null); notice = decision.reason; return@launch }
                         }
                     }
@@ -174,7 +176,7 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
             } finally { sending = false }
         }
     }
-    fun send(event: JsonObject) { if (!controlling) { notice = "Take control to type here."; return }; pending += event; flush() }
+    fun send(event: JsonObject) { if (!controlling) { notice = strings.getString(R.string.terminal_take_control_to_type_here); return }; pending += event; flush() }
     fun typed(text: String) {
         for (piece in text.split('\n').withIndex()) {
             if (piece.index > 0) send(TerminalKeys.key("enter"))
@@ -199,7 +201,7 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
         val generation = ++retained.actionGeneration
         actionError = null
         val (rows, cols) = fit()
-        signedReview(activity, repository, "terminal.acquireControl", buildJsonObject { put("terminalId", targetId); put("expectedControllerRevision", current.str("controllerRevision") ?: "0"); put("rows", rows); put("cols", cols) }, "Take control of the desktop terminal",
+        signedReview(activity, repository, "terminal.acquireControl", buildJsonObject { put("terminalId", targetId); put("expectedControllerRevision", current.str("controllerRevision") ?: "0"); put("rows", rows); put("cols", cols) }, strings.getString(R.string.terminal_take_control_of_the_desktop_terminal),
             success = success@{ result ->
                 val apply = retained.actionGeneration == generation && terminalId == targetId
                 if (!apply) return@success
@@ -210,14 +212,14 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
             },
             failure = { message ->
                 val apply = retained.actionGeneration == generation && terminalId == targetId
-                if (apply) actionError = message.trimEnd('.', ' ') + ". Check who controls the terminal before trying again."
+                if (apply) actionError = message.trimEnd('.', ' ') + strings.getString(R.string.terminal_check_who_controls_the_terminal_before_trying_again)
             })
     }
     fun create(shell: String) {
         val generation = ++retained.actionGeneration
         actionError = null
         val (rows, cols) = fit()
-        signedReview(activity, repository, "terminal.create", buildJsonObject { put("shell", shell); defaultCwd?.let { put("cwd", it) }; put("rows", rows); put("cols", cols) }, "Start a terminal on the desktop",
+        signedReview(activity, repository, "terminal.create", buildJsonObject { put("shell", shell); defaultCwd?.let { put("cwd", it) }; put("rows", rows); put("cols", cols) }, strings.getString(R.string.terminal_start_a_terminal_on_the_desktop),
             success = success@{ result ->
                 val apply = retained.actionGeneration == generation
                 if (!apply) return@success
@@ -262,10 +264,10 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
                             if (!stillThisPhone) retained.actionGeneration++
                             setLease(null)
                             pending.clear()
-                            if (stillThisPhone) actionError = actionError ?: "This phone's input lease is out of date. Tap Resume typing to try again."
+                            if (stillThisPhone) actionError = actionError ?: strings.getString(R.string.terminal_this_phones_input_lease_is_out_of_date)
                             else {
                                 actionError = null
-                                notice = "Control moved to ${if (controller?.str("kind") == "local") "the desktop" else "another device"}."
+                                notice = strings.getString(R.string.terminal_control_moved_to, if (controller?.str("kind") == "local") strings.getString(R.string.desktop_the_desktop) else strings.getString(R.string.terminal_another_device))
                             }
                         }
                     }
@@ -282,17 +284,17 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
         if (screen?.rows != rows || screen?.cols != cols) runCatching { repository.request("terminal.resize", buildJsonObject { put("terminalId", terminalId); put("leaseId", active.leaseId); put("rows", rows); put("cols", cols) }) }
     }
 
-    if (!online) return WorkNotice("The desktop is not connected", "Terminals keep running on the desktop. Reconnect to watch or type in them again.")
+    if (!online) return WorkNotice(stringResource(R.string.terminal_the_desktop_is_not_connected), stringResource(R.string.terminal_terminals_keep_running_on_the_desktop_reconnect_to))
     val current = terminal
     if (terminalId.isEmpty() || current == null) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(PALLayout.groupGap), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             item {
-                Text("Run commands on ${profiles?.str("host") ?: "the desktop"} as ${profiles?.str("account") ?: "your desktop account"}. Programs keep running when you leave this screen.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.terminal_run_commands_on_as_programs_keep_running_when, profiles?.str("host") ?: strings.getString(R.string.desktop_the_desktop), profiles?.str("account") ?: strings.getString(R.string.terminal_your_desktop_account)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 profiles?.str("unavailableReason")?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                     profiles?.list("shells").orEmpty().forEach { shell ->
-                        Button({ create(shell.str("id").orEmpty()) }, enabled = profiles?.str("worker") == "available") { Icon(Icons.Default.Add, null); Text("New ${shell.str("label")}") }
+                        Button({ create(shell.str("id").orEmpty()) }, enabled = profiles?.str("worker") == "available") { Icon(Icons.Default.Add, null); Text(stringResource(R.string.terminal_new, shell.str("label").orEmpty())) }
                     }
                 }
             }
@@ -304,46 +306,46 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
         return
     }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton({ val detached = terminalId; retained.actionGeneration++; retained.attachGeneration++; scope.launch { runCatching { repository.mutate("terminal.detach", buildJsonObject { put("terminalId", detached) }) } }; setLease(null); actionError = null; terminalId = ""; terminal = null; screen = null; refreshList() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "All terminals (this one keeps running)") }
+        Row(Modifier.padding(horizontal = PALLayout.tight), verticalAlignment = Alignment.CenterVertically) {
+            IconButton({ val detached = terminalId; retained.actionGeneration++; retained.attachGeneration++; scope.launch { runCatching { repository.mutate("terminal.detach", buildJsonObject { put("terminalId", detached) }) } }; setLease(null); actionError = null; terminalId = ""; terminal = null; screen = null; refreshList() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.terminal_all_terminals_this_one_keeps_running)) }
             Column(Modifier.weight(1f)) {
                 Text(current.str("title").orEmpty(), style = MaterialTheme.typography.titleSmall, maxLines = 1)
-                Text("On ${current.str("host")} · ${current.str("shell")} · desktop account · ${terminalState(current.str("state"))}" + (current.obj("foreground")?.str("name")?.takeIf { it != current.str("shell") }?.let { " · running $it" } ?: ""),
+                Text(stringResource(R.string.terminal_on_desktop_account, current.str("host").orEmpty(), current.str("shell").orEmpty(), terminalState(current.str("state"))) + (current.obj("foreground")?.str("name")?.takeIf { it != current.str("shell") }?.let { strings.getString(R.string.terminal_running, it) } ?: ""),
                     Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
             }
             IconButton({ scope.launch { runCatching { repository.request("terminal.history", buildJsonObject { put("terminalId", terminalId); put("limit", 1000) }) as JsonObject }.onSuccess { value ->
                 history = (value["lines"] as? JsonArray).orEmpty().joinToString("\n") { Screen.plain(TerminalFrames.line(it.jsonArray)) } + "\n" + (screen?.text() ?: "")
-            }.onFailure { error = it.message } } }) { Icon(Icons.Default.List, "History and copy") }
-            if (running) IconButton({ confirmStop = true }) { Icon(Icons.Default.Close, "Stop terminal") }
+            }.onFailure { error = it.message } } }) { Icon(Icons.Default.List, stringResource(R.string.terminal_history_and_copy)) }
+            if (running) IconButton({ confirmStop = true }) { Icon(Icons.Default.Close, stringResource(R.string.terminal_stop_terminal)) }
         }
-        (actionError ?: error ?: notice)?.let { Text(it, Modifier.padding(horizontal = 12.dp), color = if (actionError != null || error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
-        current.str("note")?.let { Text(it, Modifier.padding(horizontal = 12.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-        current.obj("stopReport")?.let { report -> Text("Stopped ${report.int("signalled") ?: 0} processes" + ((report.int("remaining") ?: 0).takeIf { it > 0 }?.let { "; $it did not stop" } ?: "; none remain"), Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.bodySmall) }
+        (actionError ?: error ?: notice)?.let { Text(it, Modifier.padding(horizontal = PALLayout.groupGap), color = if (actionError != null || error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
+        current.str("note")?.let { Text(it, Modifier.padding(horizontal = PALLayout.groupGap), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        current.obj("stopReport")?.let { report -> Text(stringResource(R.string.terminal_stopped_processes, report.int("signalled") ?: 0) + ((report.int("remaining") ?: 0).takeIf { it > 0 }?.let { strings.getString(R.string.terminal_did_not_stop, it) } ?: stringResource(R.string.terminal_none_remain)), Modifier.padding(horizontal = PALLayout.groupGap), style = MaterialTheme.typography.bodySmall) }
         val colors = MaterialTheme.colorScheme
         Box(Modifier.weight(1f).fillMaxWidth().background(colors.surfaceContainerHighest).onSizeChanged { size = it.width to it.height }
             .focusRequester(focus).focusable()
             .onPreviewKeyEvent { event -> if (event.type != KeyEventType.KeyDown || !controlling) return@onPreviewKeyEvent false; hardwareKey(event)?.let { send(it); true } ?: false }
-            .semantics { contentDescription = "Terminal screen: " + (screen?.text()?.takeLast(400) ?: "") }) {
+            .semantics { contentDescription = strings.getString(R.string.terminal_terminal_screen) + (screen?.text()?.takeLast(400) ?: "") }) {
             val rows = screen
-            if (rows != null) Column(Modifier.horizontalScroll(rememberScrollState()).verticalScroll(rememberScrollState()).padding(4.dp)) {
+            if (rows != null) Column(Modifier.horizontalScroll(rememberScrollState()).verticalScroll(rememberScrollState()).padding(PALLayout.tight)) {
                 rows.lines.forEachIndexed { index, line -> Text(row(line, if (index == rows.cursorRow && rows.cursorVisible && running) rows.cursorCol else -1, colors.onSurface, colors.primary), style = style, softWrap = false, maxLines = 1) }
             }
         }
         if (running) {
-            if (!controlling) Row(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (!controlling) Row(Modifier.padding(PALLayout.small), horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalAlignment = Alignment.CenterVertically) {
                 val controller = current.obj("controller")
                 val thisPhone = controller?.str("kind") == "device" && controller.str("deviceId") == state.desktop?.deviceId
-                Text(when { thisPhone -> "Your phone controls this terminal. Resume typing to reconnect the keyboard."; controller?.str("kind") == "local" -> "The desktop is typing in this terminal."; controller?.str("kind") == "device" -> "${controller.str("name") ?: "Another phone"} is typing in this terminal."; else -> "Watching." }, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                Button({ takeControl { runCatching { focus.requestFocus() } } }) { Text(when { thisPhone -> "Resume typing"; controller != null -> "Take control"; else -> "Type here" }) }
+                Text(when { thisPhone -> stringResource(R.string.terminal_your_phone_controls_this_terminal_resume_typing_to); controller?.str("kind") == "local" -> stringResource(R.string.terminal_the_desktop_is_typing_in_this_terminal); controller?.str("kind") == "device" -> stringResource(R.string.terminal_is_typing_in_this_terminal, controller.str("name") ?: strings.getString(R.string.terminal_another_phone)); else -> stringResource(R.string.terminal_watching) }, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                Button({ takeControl { runCatching { focus.requestFocus() } } }) { Text(when { thisPhone -> stringResource(R.string.terminal_resume_typing); controller != null -> stringResource(R.string.terminal_take_control); else -> stringResource(R.string.terminal_type_here) }) }
             } else {
-                Text("Your phone controls this terminal", Modifier.padding(horizontal = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
-                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    FilterChip(ctrl, { ctrl = !ctrl }, { Text("Ctrl") }); FilterChip(alt, { alt = !alt }, { Text("Alt") })
+                Text(stringResource(R.string.terminal_your_phone_controls_this_terminal), Modifier.padding(horizontal = PALLayout.small), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = PALLayout.tight), horizontalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
+                    FilterChip(ctrl, { ctrl = !ctrl }, { Text(stringResource(R.string.terminal_ctrl)) }); FilterChip(alt, { alt = !alt }, { Text(stringResource(R.string.terminal_alt)) })
                     listOf("Esc" to "escape", "Tab" to "tab", "↑" to "up", "↓" to "down", "←" to "left", "→" to "right", "Home" to "home", "End" to "end", "PgUp" to "pageup", "PgDn" to "pagedown").forEach { (label, name) ->
                         AssistChip({ send(TerminalKeys.key(name, (if (ctrl) TerminalKeys.CTRL else 0) or (if (alt) TerminalKeys.ALT else 0))); ctrl = false; alt = false }, { Text(label) })
                     }
-                    AssistChip({ scope.launch { runCatching { repository.mutate("terminal.interrupt", buildJsonObject { put("terminalId", terminalId) }) }.onFailure { error = it.message } } }, { Text("Ctrl+C") })
-                    AssistChip({ clipboard.getText()?.text?.takeIf { it.isNotEmpty() }?.let { send(TerminalKeys.paste(it.take(65536))) } }, { Text("Paste") })
+                    AssistChip({ scope.launch { runCatching { repository.mutate("terminal.interrupt", buildJsonObject { put("terminalId", terminalId) }) }.onFailure { error = it.message } } }, { Text(stringResource(R.string.terminal_ctrl_c)) })
+                    AssistChip({ clipboard.getText()?.text?.takeIf { it.isNotEmpty() }?.let { send(TerminalKeys.paste(it.take(65536))) } }, { Text(stringResource(R.string.terminal_paste)) })
                 }
                 OutlinedTextField(field, { value ->
                     // Send committed prefix changes now, but keep the active IME preedit exclusively on the phone.
@@ -352,7 +354,7 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
                         field = TextFieldValue("")
                         committedField = ""
                     } else field = value
-                }, Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), singleLine = true, placeholder = { Text("Type to the terminal") },
+                }, Modifier.fillMaxWidth().padding(horizontal = PALLayout.small, vertical = PALLayout.tight), singleLine = true, placeholder = { Text(stringResource(R.string.terminal_type_to_the_terminal)) },
                     keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = {
                         // Some IMEs invoke Send while their last word is still preedit; commit it exactly once first.
@@ -366,20 +368,20 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
     }
     history?.let { text ->
         ModalBottomSheet({ history = null }) {
-            Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Column(Modifier.fillMaxWidth().padding(PALLayout.groupGap)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("History", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                    TextButton({ clipboard.setText(AnnotatedString(text)); history = null }) { Text("Copy all") }
+                    Text(stringResource(R.string.terminal_history), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    TextButton({ clipboard.setText(AnnotatedString(text)); history = null }) { Text(stringResource(R.string.terminal_copy_all)) }
                 }
-                Text("Select any part to copy it. Terminal output is not shared with a model unless you paste it yourself.", style = MaterialTheme.typography.bodySmall)
-                SelectionContainer(Modifier.heightIn(max = 480.dp)) { Text(text, Modifier.verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()), style = style, softWrap = false) }
+                Text(stringResource(R.string.terminal_select_any_part_to_copy_it_terminal_output), style = MaterialTheme.typography.bodySmall)
+                SelectionContainer(Modifier.heightIn(max = PALLayout.dialogBodyHeight)) { Text(text, Modifier.verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()), style = style, softWrap = false) }
             }
         }
     }
-    if (confirmStop) AlertDialog({ confirmStop = false }, title = { Text("Stop this terminal?") },
-        text = { Text("Ends the shell and every program it started on the desktop" + (current.obj("foreground")?.str("name")?.takeIf { it != current.str("shell") }?.let { ", including $it" } ?: "") + ". To leave it running, go back instead.") },
-        confirmButton = { Button({ confirmStop = false; val closing = terminalId; scope.launch { runCatching { repository.mutate("terminal.close", buildJsonObject { put("terminalId", closing) }) as JsonObject }.onSuccess { if (terminalId == closing) { terminal = it; setLease(null) } }.onFailure { if (terminalId == closing) error = it.message } } }) { Text("Stop terminal") } },
-        dismissButton = { TextButton({ confirmStop = false }) { Text("Keep running") } })
+    if (confirmStop) AlertDialog({ confirmStop = false }, title = { Text(stringResource(R.string.terminal_stop_this_terminal)) },
+        text = { Text(stringResource(R.string.terminal_ends_the_shell_and_every_program_it_started) + (current.obj("foreground")?.str("name")?.takeIf { it != current.str("shell") }?.let { strings.getString(R.string.terminal_including, it) } ?: "") + stringResource(R.string.terminal_to_leave_it_running_go_back_instead)) },
+        confirmButton = { Button({ confirmStop = false; val closing = terminalId; scope.launch { runCatching { repository.mutate("terminal.close", buildJsonObject { put("terminalId", closing) }) as JsonObject }.onSuccess { if (terminalId == closing) { terminal = it; setLease(null) } }.onFailure { if (terminalId == closing) error = it.message } } }) { Text(stringResource(R.string.terminal_stop_terminal)) } },
+        dismissButton = { TextButton({ confirmStop = false }) { Text(stringResource(R.string.terminal_keep_running)) } })
 }
 
 internal data class TerminalInputEdit(val committed: String, val backspaces: Int, val appended: String)
@@ -410,7 +412,16 @@ internal fun terminalInputEdit(baseline: String, visible: String, compositionSta
 }
 
 
-private fun terminalState(state: String?) = mapOf("starting" to "Starting", "running" to "Running", "stopping" to "Stopping", "exited" to "Ended", "interrupted" to "Interrupted by a desktop restart", "unknown" to "Outcome unknown")[state] ?: state.orEmpty()
+@Composable
+private fun terminalState(state: String?) = when (state) {
+    "starting" -> stringResource(R.string.status_starting)
+    "running" -> stringResource(R.string.status_running)
+    "stopping" -> stringResource(R.string.status_stopping)
+    "exited" -> stringResource(R.string.status_ended)
+    "interrupted" -> stringResource(R.string.status_interrupted_by_a_desktop_restart)
+    "unknown" -> stringResource(R.string.status_outcome_unknown)
+    else -> state.orEmpty()
+}
 
 private val ansi = listOf(0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5, 0x666666, 0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db, 0xffffff)
 /** The program's own colours: content, resolved from the 256-colour and true-colour values the desktop reports. */

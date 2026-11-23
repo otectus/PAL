@@ -1,0 +1,20 @@
+<resources>
+    <string name="viewer_enter">Enter</string>
+    <string name="viewer_screen_on">"Screen on "</string>
+    <string name="viewer_show_still_frames_of_this_computers_screen_people">Show still frames of this computer’s screen. People at the desktop see a notice while it is being viewed.</string>
+    <string name="viewer_stop_viewing">Stop viewing</string>
+    <string name="viewer_the_desktop_did_not_confirm_the_input">The desktop did not confirm the input.</string>
+    <string name="viewer_type">Type</string>
+    <string name="viewer_type_on_the_desktop">Type on the desktop</string>
+    <string name="viewer_view_desktop">View desktop</string>
+    <string name="viewer_view_screen">View screen</string>
+    <string name="viewer_viewing_keyboard_input_available">Viewing · keyboard input available</string>
+    <string name="viewer_viewing_only">Viewing only</string>
+    <string name="viewer_viewing_tap_or_type_on_the_desktop">Viewing · tap or type on the desktop</string>
+    <string name="viewer_viewing_tap_to_point_on_the_desktop">Viewing · tap to point on the desktop</string>
+    <string name="viewer_waiting_for_the_first_frame">Waiting for the first frame…</string>
+    <string name="viewer_could_not_read_the_desktop_frame">Could not read the desktop frame.</string>
+    <string name="viewer_could_not_refresh_the_screen">Could not refresh the screen.</string>
+    <string name="viewer_could_not_send_input">Could not send input.</string>
+    <string name="viewer_view_the_desktops_screen">View the desktop’s screen</string>
+</resources>

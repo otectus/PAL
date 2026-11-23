@@ -1,5 +1,6 @@
 package dev.otectus.pal.mobile
 
+import androidx.compose.ui.res.stringResource
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -26,7 +27,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -78,7 +78,7 @@ internal class VoiceRecorder(private val context: Context) {
 }
 
 /** Android's own speech engine, for reading replies aloud on this phone only. */
-internal class ReplySpeaker(context: Context) {
+internal class ReplySpeaker(private val context: Context) {
     var speaking by mutableStateOf(false)
         private set
     var ready by mutableStateOf(false)
@@ -94,7 +94,7 @@ internal class ReplySpeaker(context: Context) {
     private val engine = TextToSpeech(context.applicationContext) { status -> main.post {
         if (!disposed) {
             ready = status == TextToSpeech.SUCCESS
-            if (!ready) problem = "Phone speech is unavailable. Enable a text-to-speech engine in Android settings and retry."
+            if (!ready) problem = context.getString(R.string.speech_unavailable)
         }
     } }.apply {
         setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -104,7 +104,7 @@ internal class ReplySpeaker(context: Context) {
             override fun onError(utteranceId: String?) { main.post {
                 if (current != null && utteranceId?.startsWith("$current/") == true) {
                     failedMessageId = current
-                    problem = "The phone’s speech engine stopped before it finished the reply."
+                    problem = context.getString(R.string.speech_interrupted)
                     stop()
                 }
             } }
@@ -113,10 +113,10 @@ internal class ReplySpeaker(context: Context) {
     fun speak(message: Message): Boolean {
         if (!ready || problem != null) return false
         if (engine.setLanguage(Locale.getDefault()) < TextToSpeech.LANG_AVAILABLE) {
-            problem = "Install a voice for the phone’s language in Android text-to-speech settings and retry."
+            problem = context.getString(R.string.speech_language)
             return false
         }
-        val plain = message.text.replace(Regex("""```[\s\S]*?```"""), " code omitted ").replace(Regex("[#*_`>|]"), "").trim()
+        val plain = message.text.replace(Regex("""```[\s\S]*?```"""), context.getString(R.string.speech_code_omitted)).replace(Regex("[#*_`>|]"), "").trim()
         if (plain.isBlank()) return false
         val limit = TextToSpeech.getMaxSpeechInputLength() - 1
         current = message.id
@@ -131,7 +131,7 @@ internal class ReplySpeaker(context: Context) {
             if (end == plain.length) lastId = id
             if (engine.speak(plain.substring(offset, end), if (offset == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, id) != TextToSpeech.SUCCESS) {
                 stop()
-                problem = "The phone’s speech engine could not read this reply."
+                problem = context.getString(R.string.speech_failure)
                 return false
             }
             offset = end
@@ -149,6 +149,8 @@ internal class ReplySpeaker(context: Context) {
  */
 @Composable
 internal fun VoiceBar(repository: PALRepository, sessionId: String, messages: List<Message>, busy: Boolean, onText: (String) -> Unit) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var available by remember { mutableStateOf<Boolean?>(null) }
@@ -165,20 +167,20 @@ internal fun VoiceBar(repository: PALRepository, sessionId: String, messages: Li
     LaunchedEffect(Unit) { available = runCatching { (repository.request("owner.voice.status", buildJsonObject {}) as JsonObject).isTrue("available") }.getOrDefault(false) }
     fun transcribe() {
         val bytes = recorder.stop()
-        if (bytes == null || bytes.size < 512) { state = "idle"; error = "Nothing was recorded"; return }
+        if (bytes == null || bytes.size < 512) { state = "idle"; error = strings.getString(R.string.voice_nothing_was_recorded); return }
         state = "transcribing"
         scope.launch {
             runCatching { repository.request("owner.voice.transcribe", buildJsonObject { put("sessionId", sessionId); put("mime", "audio/mp4"); put("audio", Base64.encodeToString(bytes, Base64.NO_WRAP)) }) as JsonObject }
-                .onSuccess { result -> result.str("text")?.takeIf { it.isNotBlank() }?.let(onText) ?: run { error = "No speech was recognized" } }
+                .onSuccess { result -> result.str("text")?.takeIf { it.isNotBlank() }?.let(onText) ?: run { error = strings.getString(R.string.voice_no_speech_was_recognized) } }
                 .onFailure { error = it.message }
             state = "idle"
         }
     }
     fun begin() {
         speaker?.stop(); error = null
-        runCatching { recorder.start { transcribe() } }.onSuccess { state = "recording"; elapsed = 0 }.onFailure { error = "The microphone could not start: ${it.message}" }
+        runCatching { recorder.start { transcribe() } }.onSuccess { state = "recording"; elapsed = 0 }.onFailure { error = strings.getString(R.string.voice_the_microphone_could_not_start, it.message) }
     }
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) begin() else error = "Allow the microphone to talk to PAL" }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) begin() else error = strings.getString(R.string.voice_allow_the_microphone_to_talk_to_pal) }
     LaunchedEffect(state) { while (state == "recording") { delay(1000); elapsed = ((System.currentTimeMillis() - recorder.started) / 1000).toInt() } }
     // A new reply is read aloud once, after it finishes, when Read aloud is on.
     LaunchedEffect(busy, messages.lastOrNull { it.role == "assistant" }?.id, readAloud, speaker?.ready, state) {
@@ -189,40 +191,40 @@ internal fun VoiceBar(repository: PALRepository, sessionId: String, messages: Li
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val activeSpeaker by rememberUpdatedState(speaker)
     DisposableEffect(lifecycle, recorder) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) { if (recorder.recording) { recorder.cancel(); state = "idle"; error = "Recording ended when PAL left the screen" }; activeSpeaker?.stop() } }
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) { if (recorder.recording) { recorder.cancel(); state = "idle"; error = strings.getString(R.string.voice_recording_ended_when_pal_left_the_screen) }; activeSpeaker?.stop() } }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer); recorder.cancel() }
     }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = PALLayout.groupGap)) {
         when (state) {
             "recording" -> {
-                Text("Microphone on", Modifier.semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.error)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.voice_microphone_on), Modifier.semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.error)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                     Text("%d:%02d".format(elapsed / 60, elapsed % 60), Modifier.weight(1f))
-                    FilledTonalButton({ transcribe() }) { Text("Done") }
-                    IconButton({ recorder.cancel(); state = "idle" }) { Icon(Icons.Default.Close, "Discard the recording") }
+                    FilledTonalButton({ transcribe() }) { Text(stringResource(R.string.voice_done)) }
+                    IconButton({ recorder.cancel(); state = "idle" }) { Icon(Icons.Default.Close, stringResource(R.string.voice_discard_the_recording)) }
                 }
             }
-            "transcribing" -> Text("Transcribing on the desktop…", Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            "transcribing" -> Text(stringResource(R.string.voice_transcribing_on_the_desktop), Modifier.semantics { liveRegion = LiveRegionMode.Polite })
             else -> {
                 @OptIn(ExperimentalLayoutApi::class)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (available == true) OutlinedButton({ if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) begin() else permission.launch(Manifest.permission.RECORD_AUDIO) }) { Text("Talk") }
-                    Row(Modifier.heightIn(min = 48.dp).toggleable(readAloud, role = Role.Switch) { readAloud = it }, verticalAlignment = Alignment.CenterVertically) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.groupGap)) {
+                    if (available == true) OutlinedButton({ if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) begin() else permission.launch(Manifest.permission.RECORD_AUDIO) }) { Text(stringResource(R.string.voice_talk)) }
+                    Row(Modifier.heightIn(min = PALLayout.target).toggleable(readAloud, role = Role.Switch) { readAloud = it }, verticalAlignment = Alignment.CenterVertically) {
                         Switch(readAloud, null)
-                        Text("Read replies", Modifier.padding(start = 8.dp), style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.voice_read_replies), Modifier.padding(start = PALLayout.small), style = MaterialTheme.typography.bodyMedium)
                     }
-                    if (speaker?.speaking == true) TextButton({ speaker.stop() }) { Text("Stop speaking") }
+                    if (speaker?.speaking == true) TextButton({ speaker.stop() }) { Text(stringResource(R.string.voice_stop_speaking)) }
                 }
-                if (available == false) Text("Voice notes need a configured desktop transcription engine.", style = MaterialTheme.typography.bodySmall)
+                if (available == false) Text(stringResource(R.string.voice_voice_notes_need_a_configured_desktop_transcription_engine), style = MaterialTheme.typography.bodySmall)
             }
         }
         speaker?.let { voice ->
             if (voice.problem != null) {
                 Text(voice.problem.orEmpty(), Modifier.semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.error)
-                TextButton({ if (spoken == voice.failedMessageId) spoken = null; speechAttempt++ }) { Text("Retry phone speech") }
-            } else if (!voice.ready) Text("Connecting to phone speech…", style = MaterialTheme.typography.bodySmall)
+                TextButton({ if (spoken == voice.failedMessageId) spoken = null; speechAttempt++ }) { Text(stringResource(R.string.voice_retry_phone_speech)) }
+            } else if (!voice.ready) Text(stringResource(R.string.voice_connecting_to_phone_speech), style = MaterialTheme.typography.bodySmall)
         }
     }
-    error?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+    error?.let { Text(it, Modifier.padding(horizontal = PALLayout.gutter), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 }

@@ -10,7 +10,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -46,13 +50,21 @@ private fun color(hex: String?, fallback: Color) = runCatching { Color(android.g
  */
 @Composable
 internal fun StatusPortrait(sheet: PortraitSheet, resolved: PortraitState.Resolved, size: Dp = PALLayout.portrait) {
-    val bitmap = remember(sheet.sha256) { android.graphics.BitmapFactory.decodeByteArray(sheet.bytes, 0, sheet.bytes.size) }
+    val bitmap by key(sheet.sha256) {
+        produceState<android.graphics.Bitmap?>(null) {
+            value = withContext(Dispatchers.Default) {
+                android.graphics.BitmapFactory.decodeByteArray(sheet.bytes, 0, sheet.bytes.size)
+            }
+        }
+    }
     val index = sheet.frames[resolved.expression] ?: 0
-    val face = remember(sheet.sha256, index) {
-        bitmap?.takeIf { it.width >= sheet.columns * sheet.cell }?.let {
-            val rows = it.height / sheet.cell
-            if (index / sheet.columns >= rows) null
-            else android.graphics.Bitmap.createBitmap(it, (index % sheet.columns) * sheet.cell, (index / sheet.columns) * sheet.cell, sheet.cell, sheet.cell).asImageBitmap()
+    val face by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, bitmap, index) {
+        val source = bitmap
+        value = if (source == null || sheet.columns <= 0 || sheet.cell <= 0 || index < 0 ||
+            source.width / sheet.cell < sheet.columns || index / sheet.columns >= source.height / sheet.cell) null
+        else withContext(Dispatchers.Default) {
+            android.graphics.Bitmap.createBitmap(source, (index % sheet.columns) * sheet.cell,
+                (index / sheet.columns) * sheet.cell, sheet.cell, sheet.cell).asImageBitmap()
         }
     }
     val ring = when (resolved.tone) { "attention" -> color(sheet.palette["portraitAttention"], MaterialTheme.colorScheme.tertiary); "warm" -> color(sheet.palette["portraitWarm"], MaterialTheme.colorScheme.secondary); else -> color(sheet.palette["portraitAccent"], MaterialTheme.colorScheme.primary) }

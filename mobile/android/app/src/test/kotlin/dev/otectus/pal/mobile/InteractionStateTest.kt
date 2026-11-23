@@ -31,8 +31,8 @@ class InteractionStateTest {
             Agent("b", "Done", status = "completed"),
         ))
         assertEquals(1, session.activeAgentCount())
-        assertEquals("1 subagent active", sessionDisplayStatus(session))
-        assertEquals("Waiting for input", sessionDisplayStatus(session, 1))
+        assertEquals(SessionLabel(plural = R.plurals.session_agents, count = 1), sessionLabel(session))
+        assertEquals(SessionLabel(plural = R.plurals.session_inputs, count = 1), sessionLabel(session, 1))
     }
 
     @Test fun multiSelectKeepsOptionsAndOneOtherAnswer() {
@@ -45,8 +45,8 @@ class InteractionStateTest {
 
     @Test fun optionalQuestionAllowsEmptyButRequiredQuestionExplainsError() {
         assertNull(questionError(ApprovalQuestion("q", "Optional?", required = false), emptyList()))
-        assertEquals("Choose or enter an answer.", questionError(ApprovalQuestion("q", "Required?"), emptyList()))
-        assertEquals("Select at least one answer.", questionError(ApprovalQuestion("q", "Many?", multiSelect = true), emptyList()))
+        assertEquals(R.string.required_choice, questionError(ApprovalQuestion("q", "Required?"), emptyList()))
+        assertEquals(R.string.required_choices, questionError(ApprovalQuestion("q", "Many?", multiSelect = true), emptyList()))
     }
 
     @Test fun approvalOriginNamesTheConversationItsAgentAndTheDelegatingParent() {
@@ -56,7 +56,7 @@ class InteractionStateTest {
         val approval = dev.otectus.pal.mobile.protocol.Approval(id = "a", sessionId = "child", parentSessionIds = listOf("parent"), kind = "provider",
             title = "Run npm test", choices = listOf("allow", "deny"), revision = "1", digest = "d", canAnswer = true, agentId = "ref-1")
         val state = dev.otectus.pal.mobile.data.MobileState(sessions = listOf(parent, child))
-        assertEquals("Run the checks · agent Scout · delegated from Plan the release", approvalOrigin(state, approval))
-        assertEquals("A conversation not loaded on this phone", approvalOrigin(dev.otectus.pal.mobile.data.MobileState(), approval.copy(agentId = null, parentSessionIds = emptyList())))
+        assertEquals(RequestOrigin("Run the checks", "Scout", "Plan the release"), requestOrigin(state, approval))
+        assertEquals(RequestOrigin(null, null, null), requestOrigin(dev.otectus.pal.mobile.data.MobileState(), approval.copy(agentId = null, parentSessionIds = emptyList())))
     }
 }

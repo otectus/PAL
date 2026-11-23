@@ -23,14 +23,14 @@ import kotlinx.serialization.json.JsonObject
 internal fun authenticate(activity: FragmentActivity, title: String, action: PreparedAction, repository: PALRepository, success: (JsonElement) -> Unit, failure: (String) -> Unit) {
     var settled = false
     val finish: (Result<JsonElement>) -> Unit = { result ->
-        if (!settled) { settled = true; result.onSuccess(success).onFailure { failure(it.message ?: "The action failed") } }
+        if (!settled) { settled = true; result.onSuccess(success).onFailure { failure(it.message ?: activity.getString(R.string.auth_the_action_failed)) } }
     }
     if (!action.requiresUserAuthentication) {
         repository.launchAction(action, { repository.signWithoutAuthentication(action) }, finish)
         return
     }
     val observer = object : DefaultLifecycleObserver {
-        override fun onDestroy(owner: LifecycleOwner) { finish(Result.failure(IllegalStateException("Authentication was interrupted. Review the request and try again."))) }
+        override fun onDestroy(owner: LifecycleOwner) { finish(Result.failure(IllegalStateException(activity.getString(R.string.auth_authentication_was_interrupted_review_the_request_and_try)))) }
     }
     activity.lifecycle.addObserver(observer)
     val prompt = BiometricPrompt(activity, ContextCompat.getMainExecutor(activity), object : BiometricPrompt.AuthenticationCallback() {
@@ -43,7 +43,7 @@ internal fun authenticate(activity: FragmentActivity, title: String, action: Pre
             finish(Result.failure(IllegalStateException(errString.toString())))
         }
     })
-    prompt.authenticate(BiometricPrompt.PromptInfo.Builder().setTitle(title).setSubtitle("Confirm the exact action shown")
+    prompt.authenticate(BiometricPrompt.PromptInfo.Builder().setTitle(title).setSubtitle(activity.getString(R.string.auth_confirm_the_exact_action_shown))
         .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL).build(), BiometricPrompt.CryptoObject(action.signature))
 }
 
@@ -51,7 +51,7 @@ internal fun authenticate(activity: FragmentActivity, title: String, action: Pre
 internal fun signedReview(activity: FragmentActivity, repository: PALRepository, method: String, params: JsonObject, title: String, success: (JsonElement) -> Unit, failure: (String) -> Unit, boundProjectId: String? = null, label: String? = null) {
     activity.lifecycleScope.launch {
         val action = try { repository.prepareAction(method, params, boundProjectId, label) } catch (cancelled: CancellationException) { throw cancelled } catch (error: Exception) {
-            failure(error.message ?: "Unable to prepare this action"); return@launch
+            failure(error.message ?: activity.getString(R.string.auth_unable_to_prepare_this_action)); return@launch
         }
         authenticate(activity, title, action, repository, success, failure)
     }

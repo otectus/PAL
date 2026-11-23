@@ -62,7 +62,7 @@ internal fun SecureStatusPanel(
             verticalAlignment = Alignment.Top,
         ) {
             Icon(symbol, null, Modifier.size(PALLayout.icon))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PALLayout.focusStroke)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
                 Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Text(detail, style = MaterialTheme.typography.bodySmall)
             }

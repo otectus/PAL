@@ -197,11 +197,9 @@ internal suspend fun uploadToDesktop(activity: FragmentActivity, repository: PAL
     }
 }
 
-/** Human sizes for file lists. */
-internal fun byteSize(bytes: Long?): String = when {
-    bytes == null -> ""
-    bytes < 1024 -> "$bytes B"
-    bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
-    bytes < 1024L * 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024))
-    else -> "%.1f GB".format(bytes / (1024.0 * 1024 * 1024))
+/** Use Android's localized file-size units in the file lists. */
+@androidx.compose.runtime.Composable
+internal fun byteSize(bytes: Long?): String {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    return bytes?.let { android.text.format.Formatter.formatShortFileSize(context, it) }.orEmpty()
 }

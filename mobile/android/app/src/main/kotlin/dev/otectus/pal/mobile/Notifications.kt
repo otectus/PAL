@@ -26,11 +26,11 @@ internal object PALNotifications {
         fun channel(id: String, name: String, importance: Int, description: String, badge: Boolean = true) =
             NotificationChannel(id, name, importance).apply { this.description = description; lockscreenVisibility = Notification.VISIBILITY_PRIVATE; setShowBadge(badge) }
         manager.createNotificationChannels(listOf(
-            channel(MONITORING, "PAL connection", NotificationManager.IMPORTANCE_LOW, "Shows when PAL is monitoring your paired desktop", badge = false),
-            channel(REQUESTS, "PAL requests", NotificationManager.IMPORTANCE_HIGH, "Approval and question requests from the paired PAL desktop"),
-            channel(COMPLETIONS, "Replies ready", NotificationManager.IMPORTANCE_DEFAULT, "A desktop conversation finished its reply"),
-            channel(PROBLEMS, "Conversation problems", NotificationManager.IMPORTANCE_DEFAULT, "A desktop conversation stopped or reported an error"),
-            channel(TIMERS, "Desktop timers", NotificationManager.IMPORTANCE_HIGH, "Timers set from this phone on the desktop"),
+            channel(MONITORING, context.getString(R.string.notice_pal_connection), NotificationManager.IMPORTANCE_LOW, context.getString(R.string.notice_shows_when_pal_is_monitoring_your_paired_desktop), badge = false),
+            channel(REQUESTS, context.getString(R.string.notice_pal_requests), NotificationManager.IMPORTANCE_HIGH, context.getString(R.string.notice_approval_and_question_requests_from_the_paired_pal)),
+            channel(COMPLETIONS, context.getString(R.string.notice_replies_ready), NotificationManager.IMPORTANCE_DEFAULT, context.getString(R.string.notice_a_desktop_conversation_finished_its_reply)),
+            channel(PROBLEMS, context.getString(R.string.notice_conversation_problems), NotificationManager.IMPORTANCE_DEFAULT, context.getString(R.string.notice_a_desktop_conversation_stopped_or_reported_an_error)),
+            channel(TIMERS, context.getString(R.string.notice_desktop_timers), NotificationManager.IMPORTANCE_HIGH, context.getString(R.string.notice_timers_set_from_this_phone_on_the_desktop)),
         ))
     }
 
@@ -54,10 +54,10 @@ internal object PALNotifications {
         val stop = PendingIntent.getService(context, 1, Intent(context, MonitoringService::class.java).setAction(MonitoringService.ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(context, MONITORING)
             .setSmallIcon(R.drawable.ic_pal_notification)
-            .setContentTitle("PAL Mobile")
+            .setContentTitle(context.getString(R.string.notice_pal_mobile))
             .setContentText(text)
             .setContentIntent(open(context, 0, Intent.ACTION_MAIN))
-            .addAction(0, "Stop monitoring", stop)
+            .addAction(0, context.getString(R.string.work_stop_monitoring), stop)
             .setOngoing(true)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setSilent(true)
@@ -68,18 +68,18 @@ internal object PALNotifications {
         val review = open(context, approvalId(approval.id), MainActivity.ACTION_REVIEW, MainActivity.EXTRA_APPROVAL_ID to approval.id)
         val builder = NotificationCompat.Builder(context, REQUESTS)
             .setSmallIcon(R.drawable.ic_pal_notification)
-            .setContentTitle(problem ?: "PAL needs your review")
-            .setContentText(if (problem != null) "Open PAL to check: ${approval.title}" else "${approval.kind.replaceFirstChar(Char::uppercase)} · ${approval.title}")
+            .setContentTitle(problem ?: context.getString(R.string.notice_pal_needs_your_review))
+            .setContentText(if (problem != null) context.getString(R.string.notice_open_pal_to_check, approval.title) else "${approval.kind.replaceFirstChar(Char::uppercase)} · ${approval.title}")
             .setContentIntent(review)
             .setAutoCancel(true)
             // Re-posting the same request must not sound or vibrate again.
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setPublicVersion(NotificationCompat.Builder(context, REQUESTS).setSmallIcon(R.drawable.ic_pal_notification).setContentTitle("PAL request").setContentText("Unlock to review").build())
+            .setPublicVersion(NotificationCompat.Builder(context, REQUESTS).setSmallIcon(R.drawable.ic_pal_notification).setContentTitle(context.getString(R.string.notice_pal_request)).setContentText(context.getString(R.string.notice_unlock_to_review)).build())
         if (problem == null && "deny" in approval.choices) {
             val deny = PendingIntent.getBroadcast(context, approvalId(approval.id), Intent(context, DenyReceiver::class.java).setData(Uri.parse("pal://deny/${approval.id}")).putExtra("approvalId", approval.id), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-            builder.addAction(android.R.drawable.ic_delete, "Deny", deny)
+            builder.addAction(android.R.drawable.ic_delete, context.getString(R.string.notice_deny), deny)
         }
         return builder.build()
     }
@@ -87,16 +87,16 @@ internal object PALNotifications {
     /** Builds the alert for a desktop notice, or null for kinds the phone does not announce. */
     fun notice(context: Context, notice: DesktopNotice): Pair<Int, Notification>? {
         val (channel, title, text) = when (notice.kind) {
-            "complete" -> Triple(COMPLETIONS, "Reply ready", notice.title ?: "A conversation finished")
-            "error" -> Triple(PROBLEMS, "A conversation reported a problem", "${notice.title ?: "Conversation"} · open PAL to review Activity")
-            "interrupted" -> Triple(PROBLEMS, "A conversation stopped", notice.title ?: "Conversation")
-            "timer" -> Triple(TIMERS, "Timer", notice.label ?: "Your desktop timer finished")
+            "complete" -> Triple(COMPLETIONS, context.getString(R.string.notice_reply_ready), notice.title ?: context.getString(R.string.notice_a_conversation_finished))
+            "error" -> Triple(PROBLEMS, context.getString(R.string.notice_a_conversation_reported_a_problem), context.getString(R.string.notice_open_pal_to_review_activity, notice.title ?: "Conversation"))
+            "interrupted" -> Triple(PROBLEMS, context.getString(R.string.notice_a_conversation_stopped), notice.title ?: "Conversation")
+            "timer" -> Triple(TIMERS, context.getString(R.string.desktop_timer), notice.label ?: context.getString(R.string.notice_your_desktop_timer_finished))
             else -> return null
         }
         val id = noticeId(notice)
         val tap = if (notice.kind == "timer") open(context, id, MainActivity.ACTION_OPEN_DESKTOP)
             else open(context, id, MainActivity.ACTION_OPEN_SESSION, MainActivity.EXTRA_SESSION_ID to (notice.sessionId ?: ""))
-        val publicTitle = if (notice.kind == "timer") "PAL timer" else "PAL conversation update"
+        val publicTitle = if (notice.kind == "timer") context.getString(R.string.notice_pal_timer) else context.getString(R.string.notice_pal_conversation_update)
         return id to NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_pal_notification)
             .setContentTitle(title)
@@ -104,7 +104,7 @@ internal object PALNotifications {
             .setContentIntent(tap)
             .setAutoCancel(true)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setPublicVersion(NotificationCompat.Builder(context, channel).setSmallIcon(R.drawable.ic_pal_notification).setContentTitle(publicTitle).setContentText("Unlock to view").build())
+            .setPublicVersion(NotificationCompat.Builder(context, channel).setSmallIcon(R.drawable.ic_pal_notification).setContentTitle(publicTitle).setContentText(context.getString(R.string.notice_unlock_to_view)).build())
             .build()
     }
 }

@@ -1,0 +1,17 @@
+<resources>
+    <string name="voice_allow_the_microphone_to_talk_to_pal">Allow the microphone to talk to PAL</string>
+    <string name="voice_connecting_to_phone_speech">Connecting to phone speech…</string>
+    <string name="voice_discard_the_recording">Discard the recording</string>
+    <string name="voice_done">Done</string>
+    <string name="voice_microphone_on">Microphone on</string>
+    <string name="voice_no_speech_was_recognized">No speech was recognized</string>
+    <string name="voice_nothing_was_recorded">Nothing was recorded</string>
+    <string name="voice_read_replies">Read replies</string>
+    <string name="voice_recording_ended_when_pal_left_the_screen">Recording ended when PAL left the screen</string>
+    <string name="voice_retry_phone_speech">Retry phone speech</string>
+    <string name="voice_stop_speaking">Stop speaking</string>
+    <string name="voice_talk">Talk</string>
+    <string name="voice_the_microphone_could_not_start">The microphone could not start: %1$s</string>
+    <string name="voice_transcribing_on_the_desktop">Transcribing on the desktop…</string>
+    <string name="voice_voice_notes_need_a_configured_desktop_transcription_engine">Voice notes need a configured desktop transcription engine.</string>
+</resources>

@@ -1,6 +1,7 @@
 @file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 package dev.otectus.pal.mobile
 
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,7 +25,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import dev.otectus.pal.mobile.data.PALRepository
 import dev.otectus.pal.mobile.data.ConnectionState
@@ -48,55 +48,57 @@ private fun JsonObject.flag(key: String) = (this[key] as? JsonPrimitive)?.boolea
  */
 @Composable
 internal fun DesktopScreen(repository: PALRepository, state: MobileState, activity: FragmentActivity) {
-    val scope = rememberCoroutineScope()
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
+    var refreshRequest by remember { mutableIntStateOf(0) }
     var projectId by rememberSaveable { mutableStateOf(state.projects.firstOrNull()?.id.orEmpty()) }
-    var status by remember { mutableStateOf<JsonObject?>(null) }
-    var apps by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
-    var windows by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
-    var sectionErrors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var status by remember(projectId, state.cacheEpoch) { mutableStateOf<JsonObject?>(null) }
+    var apps by remember(projectId, state.cacheEpoch) { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var windows by remember(projectId, state.cacheEpoch) { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var sectionErrors by remember(projectId, state.cacheEpoch) { mutableStateOf<Map<String, String>>(emptyMap()) }
     var loading by remember { mutableStateOf(false) }
     var pendingAction by remember { mutableStateOf<String?>(null) }
     var feedback by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
-    var volume by remember { mutableStateOf<Float?>(null) }
-    var moving by remember { mutableStateOf<JsonObject?>(null) }
-    var reviewingScript by remember { mutableStateOf<JsonObject?>(null) }
+    var volume by remember(projectId, state.cacheEpoch) { mutableStateOf<Float?>(null) }
+    var moving by remember(projectId, state.cacheEpoch) { mutableStateOf<JsonObject?>(null) }
+    var reviewingScript by remember(projectId, state.cacheEpoch) { mutableStateOf<JsonObject?>(null) }
     var workspace by rememberSaveable { mutableStateOf("") }
     var timerMinutes by rememberSaveable { mutableStateOf("10") }
     var timerLabel by rememberSaveable { mutableStateOf("") }
     var filePath by rememberSaveable { mutableStateOf("") }
-    var workspaceCard by remember { mutableStateOf<JsonObject?>(null) }
+    var workspaceCard by remember(projectId, state.cacheEpoch) { mutableStateOf<JsonObject?>(null) }
     val project = state.projects.firstOrNull { it.id == projectId }
     val actions = status?.get("actions")?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }
     val actionNames = actions.mapNotNull { it.text("name") }.toSet()
     val categories = actions.mapNotNull { it.text("category") }.toSet()
 
-    fun refresh() {
-        if (projectId.isBlank()) return
-        scope.launch {
-            loading = true; error = null
-            val errors = mutableMapOf<String, String>()
-            suspend fun load(section: String, method: String, apply: (JsonElement) -> Unit) {
-                try { apply(repository.read(method, buildJsonObject { put("projectId", projectId) })) }
-                catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { errors[section] = failure.message ?: "Could not load" }
-            }
-            if (state.supports("desktop.status")) load("status", "desktop.status") { status = it.jsonObject; volume = null }
-            if (state.supports("desktop.workspace")) load("workspace", "desktop.workspace") { workspaceCard = it.jsonObject }
-            val loaded = status?.get("actions")?.jsonArray.orEmpty().mapNotNull { (it as? JsonObject)?.text("category") }.toSet()
-            if ("apps" in loaded && state.supports("desktop.apps")) load("apps", "desktop.apps") { apps = it.jsonArray.mapNotNull { row -> row as? JsonObject } } else apps = emptyList()
-            if ("windows" in loaded && state.supports("desktop.windows")) load("windows", "desktop.windows") { windows = it.jsonArray.mapNotNull { row -> row as? JsonObject } } else windows = emptyList()
-            sectionErrors = errors; loading = false
+    fun refresh() { refreshRequest++ }
+    suspend fun loadControls() {
+        if (projectId.isBlank()) { loading = false; return }
+        loading = true; error = null
+        val errors = mutableMapOf<String, String>()
+        suspend fun load(section: String, method: String, apply: (JsonElement) -> Unit) {
+            try { apply(repository.read(method, buildJsonObject { put("projectId", projectId) })) }
+            catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { errors[section] = failure.message ?: strings.getString(R.string.desktop_could_not_load) }
         }
+        if (state.supports("desktop.status")) load("status", "desktop.status") { status = it.jsonObject; volume = null }
+        if (state.supports("desktop.workspace")) load("workspace", "desktop.workspace") { workspaceCard = it.jsonObject }
+        val loaded = status?.get("actions")?.jsonArray.orEmpty().mapNotNull { (it as? JsonObject)?.text("category") }.toSet()
+        if ("apps" in loaded && state.supports("desktop.apps")) load("apps", "desktop.apps") { apps = it.jsonArray.mapNotNull { row -> row as? JsonObject } } else apps = emptyList()
+        if ("windows" in loaded && state.supports("desktop.windows")) load("windows", "desktop.windows") { windows = it.jsonArray.mapNotNull { row -> row as? JsonObject } } else windows = emptyList()
+        sectionErrors = errors
+        loading = false
     }
     fun execute(name: String, args: JsonObject, label: String, definitionDigest: String? = null) {
         if (pendingAction != null) return
         feedback = null; error = null
         pendingAction = label
         val params = buildJsonObject { put("projectId", projectId); put("action", name); put("args", args); definitionDigest?.let { put("definitionDigest", it) } }
-        val cue = project?.path ?: project?.name ?: "approved project"
+        val cue = project?.path ?: project?.name ?: strings.getString(R.string.desktop_approved_project)
         signedReview(activity, repository, "desktop.execute", params, "$label · $cue", {
-            pendingAction = null; feedback = "$label · done"; refresh()
+            pendingAction = null; feedback = strings.getString(R.string.desktop_done, label); refresh()
         }, { pendingAction = null; error = it }, projectId, label)
     }
 
@@ -107,11 +109,14 @@ internal fun DesktopScreen(repository: PALRepository, state: MobileState, activi
     LaunchedEffect(projectId, state.cacheEpoch, state.connection is ConnectionState.Online) {
         status = null; apps = emptyList(); windows = emptyList(); sectionErrors = emptyMap(); feedback = null; error = null
         if (filePath.isBlank() || state.projects.none { filePath.startsWith(it.path.orEmpty()) }) filePath = project?.path.orEmpty()
-        if (state.connection is ConnectionState.Online) refresh()
+    }
+    LaunchedEffect(projectId, state.cacheEpoch, state.connection, refreshRequest) {
+        if (state.connection is ConnectionState.Online) loadControls() else loading = false
     }
     // A timer that fires leaves the list; refresh when the desktop announces it.
     LaunchedEffect(projectId) { repository.notices.collect { if (it.kind == "timer" && it.projectId == projectId) refresh() } }
-    if (!state.supports("desktop.status")) return DesktopEmptyState("Desktop controls are not granted", "On the desktop, grant this phone Desktop control and the categories you want in Settings → PAL Mobile.")
+    if (state.connection !is ConnectionState.Online) return RecoveryPage(state, repository::retry)
+    if (!state.supports("desktop.status")) return EmptyState(Icons.Default.Lock, stringResource(R.string.desktop_desktop_controls_are_not_granted), stringResource(R.string.desktop_on_the_desktop_grant_this_phone_desktop_control))
 
     val filter = query.trim()
     fun matches(vararg values: String?) = filter.isBlank() || values.any { it.orEmpty().contains(filter, true) }
@@ -123,160 +128,151 @@ internal fun DesktopScreen(repository: PALRepository, state: MobileState, activi
     val formatter = remember { DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withZone(ZoneId.systemDefault()) }
     val canAct = pendingAction == null && !loading
 
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (state.owner) item(key = "view-desktop") { ViewDesktopPanel(repository, state, activity) }
-        item { FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
-            PageTitle("Desktop", Modifier.weight(1f))
+    LazyColumn(contentPadding = PaddingValues(PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(PALLayout.groupGap)) {
+        item { FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PALLayout.groupGap), verticalArrangement = Arrangement.spacedBy(PALLayout.small), itemVerticalAlignment = Alignment.CenterVertically) {
+            PageTitle(stringResource(R.string.nav_desktop), Modifier.weight(1f))
             OutlinedButton(::refresh, enabled = !loading && pendingAction == null && state.connection is ConnectionState.Online,
-                modifier = Modifier.heightIn(min = PALLayout.target)) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text(if (loading) "Loading" else "Refresh") }
+                modifier = Modifier.heightIn(min = PALLayout.target)) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(PALLayout.small)); Text(if (loading) stringResource(R.string.desktop_loading) else stringResource(R.string.desktop_refresh)) }
         } }
-        item { FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { state.projects.forEach { option -> FilterChip(projectId == option.id, { projectId = option.id }, { Column { Text(option.name); Text(option.path ?: "Path unavailable", style = MaterialTheme.typography.labelSmall) } }, enabled = canAct) } } }
-        project?.let { selected -> item { Panel("Action scope") { Text(state.desktop?.desktopName ?: "Paired desktop", color = MaterialTheme.colorScheme.primary); SelectionContainer { Text(selected.path ?: "Path unavailable", style = MaterialTheme.typography.bodySmall) } } } }
+        if (state.owner) item(key = "view-desktop") { ViewDesktopPanel(repository, state, activity) }
+        item { FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) { state.projects.forEach { option -> FilterChip(projectId == option.id, { projectId = option.id }, { Column { Text(option.name); Text(option.path ?: stringResource(R.string.desktop_path_unavailable), style = MaterialTheme.typography.labelSmall) } }, enabled = canAct) } } }
+        project?.let { selected -> item { Panel(stringResource(R.string.desktop_action_scope)) { Text(state.desktop?.desktopName ?: stringResource(R.string.desktop_paired_desktop), color = MaterialTheme.colorScheme.primary); SelectionContainer { Text(selected.path ?: stringResource(R.string.desktop_path_unavailable), style = MaterialTheme.typography.bodySmall) } } } }
         // F80: whether the desktop is working in this project now, from fresh observations only.
-        workspaceCard?.let { card -> item { Panel("Desktop workspace") {
+        workspaceCard?.let { card -> item { Panel(stringResource(R.string.desktop_desktop_workspace)) {
             val unknown = card["unknown"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull?.replace('_', ' ') }
             Text(when (card.text("state")) {
-                "in-project" -> "Working in this project now · ${card.text("relativePath") ?: "."}" + if (card.flag("verifiedCheckout")) " · verified checkout" else ""
-                "elsewhere" -> "Working outside this project right now."
-                "unknown" -> "Not known right now" + if (unknown.isNotEmpty()) ": no fresh ${unknown.joinToString(", ")}." else "."
-                else -> card.text("reason") ?: "Workspace awareness is unavailable on the desktop."
+                "in-project" -> stringResource(R.string.desktop_working_in_this_project_now, card.text("relativePath") ?: ".") + if (card.flag("verifiedCheckout")) stringResource(R.string.desktop_verified_checkout) else ""
+                "elsewhere" -> stringResource(R.string.desktop_working_outside_this_project_right_now)
+                "unknown" -> stringResource(R.string.desktop_not_known_right_now) + if (unknown.isNotEmpty()) stringResource(R.string.desktop_no_fresh, unknown.joinToString(", ")) else "."
+                else -> card.text("reason") ?: stringResource(R.string.desktop_workspace_awareness_is_unavailable_on_the_desktop)
             })
         } } }
         // W10: features that need a program the desktop does not have; chat is not affected.
-        status?.get("missing")?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }.takeIf { it.isNotEmpty() }?.let { missing -> item { Panel("Unavailable on the desktop") {
-            missing.forEach { Text("${it.text("feature") ?: ""} needs ${it.text("name") ?: "a program"} installed on the desktop.", style = MaterialTheme.typography.bodySmall) }
+        status?.get("missing")?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }.takeIf { it.isNotEmpty() }?.let { missing -> item { Panel(stringResource(R.string.desktop_unavailable_on_the_desktop)) {
+            missing.forEach { Text(stringResource(R.string.desktop_needs_installed_on_the_desktop, it.text("feature") ?: "", it.text("name") ?: strings.getString(R.string.desktop_a_program)), style = MaterialTheme.typography.bodySmall) }
         } } }
-        item { OutlinedTextField(query, { query = it }, leadingIcon = { Icon(Icons.Default.Search, null) }, placeholder = { Text("Search apps, windows or scripts") }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
+        item { OutlinedTextField(query, { query = it }, leadingIcon = { Icon(Icons.Default.Search, null) }, placeholder = { Text(stringResource(R.string.desktop_search_apps_windows_or_scripts)) }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
         if (loading || pendingAction != null) item {
-            Column(Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }, verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text(pendingAction?.let { "Waiting to complete: $it" } ?: "Refreshing desktop controls…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(pendingAction?.let { strings.getString(R.string.desktop_waiting_to_complete, it) } ?: stringResource(R.string.desktop_refreshing_desktop_controls), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         feedback?.let { item { AncillaryFeedback(it) } }
         error?.let { item { AncillaryFeedback(it, error = true) } }
         sectionErrors["status"]?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
-        if (status != null && categories.isEmpty()) item { Text("No desktop control categories are enabled for this project. Enable them on the desktop in Settings.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        if (status != null && categories.isEmpty()) item { Text(stringResource(R.string.desktop_no_desktop_control_categories_are_enabled_for_this), color = MaterialTheme.colorScheme.onSurfaceVariant) }
 
-        if (audio?.flag("available") == true) item { Panel("Sound") {
+        if (audio?.flag("available") == true) item { Panel(stringResource(R.string.desktop_sound)) {
             val level = volume ?: (audio.text("percent")?.toFloatOrNull() ?: 0f)
-            Text("Volume ${level.toInt()}%${if (audio.flag("muted")) " · Muted" else ""}", color = MaterialTheme.colorScheme.primary)
+            Text(if (audio.flag("muted")) stringResource(R.string.media_muted_volume, level.toInt()) else stringResource(R.string.desktop_volume, level.toInt(), ""), color = MaterialTheme.colorScheme.primary)
             // The volume is sent once, when the finger lifts, as one signed action.
             Slider(level, { volume = it }, valueRange = 0f..100f, steps = 19, enabled = canAct && "audio.volume" in actionNames,
-                onValueChangeFinished = { val percent = (volume ?: level).toInt(); execute("audio.volume", buildJsonObject { put("percent", percent) }, "Set desktop volume to $percent%") })
-            OutlinedButton({ execute("audio.mute", buildJsonObject {}, if (audio.flag("muted")) "Unmute desktop sound" else "Mute desktop sound") }, enabled = canAct && "audio.mute" in actionNames) { Text(if (audio.flag("muted")) "Unmute" else "Mute") }
+                onValueChangeFinished = { val percent = (volume ?: level).toInt(); execute("audio.volume", buildJsonObject { put("percent", percent) }, strings.getString(R.string.desktop_set_desktop_volume_to, percent)) })
+            OutlinedButton({ execute("audio.mute", buildJsonObject {}, if (audio.flag("muted")) strings.getString(R.string.desktop_unmute_desktop_sound) else strings.getString(R.string.desktop_mute_desktop_sound)) }, enabled = canAct && "audio.mute" in actionNames) { Text(if (audio.flag("muted")) stringResource(R.string.desktop_unmute) else stringResource(R.string.desktop_mute)) }
         } }
-        if (media?.flag("available") == true) item { Panel("Playback") {
+        if (media?.flag("available") == true) item { Panel(stringResource(R.string.desktop_playback)) {
             Text(listOfNotNull(media.text("name"), media.text("status")).joinToString(" · "), color = MaterialTheme.colorScheme.primary)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(Triple("Previous", "Previous", "canPrevious"), Triple("PlayPause", if (media.text("status") == "Playing") "Pause" else "Play", "canPlayPause"), Triple("Next", "Next", "canNext"), Triple("Stop", "Stop", "canStop")).forEach { (command, label, capability) ->
-                    OutlinedButton({ execute("media.control", buildJsonObject { put("command", command); media.text("player")?.let { put("player", it) } }, "$label on ${media.text("name") ?: "the desktop player"}") },
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                listOf(Triple("Previous", stringResource(R.string.mobile_previous), "canPrevious"), Triple("PlayPause", if (media.text("status") == "Playing") strings.getString(R.string.work_pause) else strings.getString(R.string.desktop_play), "canPlayPause"), Triple("Next", stringResource(R.string.mobile_next), "canNext"), Triple("Stop", stringResource(R.string.action_stop_media), "canStop")).forEach { (command, label, capability) ->
+                    OutlinedButton({ execute("media.control", buildJsonObject { put("command", command); media.text("player")?.let { put("player", it) } }, strings.getString(R.string.desktop_on, label, media.text("name") ?: "the desktop player")) },
                         enabled = canAct && "media.control" in actionNames && media.flag(capability)) { Text(label) }
                 }
             }
         } }
 
         if (status?.flag("capture") == true && state.supports("captures.start") && project != null) item { CapturePanel(repository, state, activity, project, canAct) }
-        if ("timers" in categories) item { Panel("Timers") {
-            if (timers.isEmpty()) Text("No timers set from this phone in this project.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            timers.forEach { timer -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(timer.text("label") ?: "Timer")
-                Text("Due ${timer.text("due")?.toLongOrNull()?.let { formatter.format(Instant.ofEpochMilli(it)) } ?: "soon"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if ("timers" in categories) item { Panel(stringResource(R.string.desktop_timers)) {
+            if (timers.isEmpty()) Text(stringResource(R.string.desktop_no_timers_set_from_this_phone_in_this), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            timers.forEach { timer -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
+                Text(timer.text("label") ?: stringResource(R.string.desktop_timer))
+                Text(stringResource(R.string.desktop_due, timer.text("due")?.toLongOrNull()?.let { formatter.format(Instant.ofEpochMilli(it)) } ?: stringResource(R.string.timer_soon)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TextButton({
-                    val label = "Cancel timer ${timer.text("label") ?: ""}"
+                    val label = strings.getString(R.string.desktop_cancel_timer_2, timer.text("label") ?: "")
                     pendingAction = label; feedback = null; error = null
                     signedReview(activity, repository, "timers.cancel", buildJsonObject { put("projectId", projectId); put("timerId", timer.text("id").orEmpty()) }, label,
-                        { pendingAction = null; feedback = "Timer cancelled"; refresh() }, { pendingAction = null; error = it }, projectId, timer.text("label"))
-                }, enabled = canAct && state.supports("timers.cancel"), modifier = Modifier.heightIn(min = PALLayout.target)) { Text("Cancel timer") }
+                        { pendingAction = null; feedback = strings.getString(R.string.desktop_timer_cancelled); refresh() }, { pendingAction = null; error = it }, projectId, timer.text("label"))
+                }, enabled = canAct && state.supports("timers.cancel"), modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.desktop_cancel_timer)) }
             } }
-            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(timerMinutes, { timerMinutes = it.filter(Char::isDigit).take(5) }, label = { Text("Minutes") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.widthIn(min = 120.dp, max = 180.dp))
-                OutlinedTextField(timerLabel, { timerLabel = it.take(200) }, label = { Text("Label") }, singleLine = true, modifier = Modifier.widthIn(min = 180.dp).weight(1f))
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                OutlinedTextField(timerMinutes, { timerMinutes = it.filter(Char::isDigit).take(5) }, label = { Text(stringResource(R.string.desktop_minutes)) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.widthIn(min = PALLayout.codeEditorHeight, max = PALLayout.fieldWidth))
+                OutlinedTextField(timerLabel, { timerLabel = it.take(200) }, label = { Text(stringResource(R.string.desktop_label)) }, singleLine = true, modifier = Modifier.widthIn(min = PALLayout.fieldWidth).weight(1f))
             }
             val minutes = timerMinutes.toIntOrNull()
-            Button({ execute("timer.start", buildJsonObject { put("minutes", minutes ?: 0); put("label", timerLabel.ifBlank { "Timer" }) }, "Start a $minutes-minute desktop timer") }, enabled = canAct && "timer.start" in actionNames && minutes != null && minutes in 1..10080) { Text("Start timer") }
+            Button({ execute("timer.start", buildJsonObject { put("minutes", minutes ?: 0); put("label", timerLabel.ifBlank { strings.getString(R.string.desktop_timer) }) }, strings.getString(R.string.desktop_start_a_minute_desktop_timer, minutes)) }, enabled = canAct && "timer.start" in actionNames && minutes != null && minutes in 1..10080) { Text(stringResource(R.string.desktop_start_timer)) }
         } }
 
-        if ("scripts" in categories) item { Panel("Saved scripts") {
-            if (scripts.isEmpty()) Text("No saved scripts are granted to this phone.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            scripts.forEach { script -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(script.text("name") ?: script.text("id") ?: "Script", fontWeight = FontWeight.Medium)
+        if ("scripts" in categories) item { Panel(stringResource(R.string.desktop_saved_scripts)) {
+            if (scripts.isEmpty()) Text(stringResource(R.string.desktop_no_saved_scripts_are_granted_to_this_phone), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            scripts.forEach { script -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
+                Text(script.text("name") ?: script.text("id") ?: stringResource(R.string.desktop_script), fontWeight = FontWeight.Medium)
                 Text(script.text("executable").orEmpty(), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedButton({ reviewingScript = script }, enabled = canAct && "script.run" in actionNames, modifier = Modifier.heightIn(min = PALLayout.target)) { Text("Review & run") }
+                OutlinedButton({ reviewingScript = script }, enabled = canAct && "script.run" in actionNames, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.desktop_review_run)) }
             } }
         } }
 
         if ("windows" in categories) {
-            item { Text("Windows", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
+            item { Text(stringResource(R.string.desktop_windows), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
             sectionErrors["windows"]?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
-            item { FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(workspace, { workspace = it.filter(Char::isDigit).take(2) }, label = { Text("Workspace") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.widthIn(min = 140.dp, max = 200.dp))
+            item { FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.small), itemVerticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(workspace, { workspace = it.filter(Char::isDigit).take(2) }, label = { Text(stringResource(R.string.desktop_workspace)) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.widthIn(min = PALLayout.shortField, max = PALLayout.fieldWidth))
                 val number = workspace.toIntOrNull()
-                OutlinedButton({ execute("workspace.switch", buildJsonObject { put("workspace", number ?: 0) }, "Switch to workspace $number") }, enabled = pendingAction == null && "workspace.switch" in actionNames && number != null && number in 1..99,
-                    modifier = Modifier.heightIn(min = PALLayout.target)) { Text("Switch workspace") }
+                OutlinedButton({ execute("workspace.switch", buildJsonObject { put("workspace", number ?: 0) }, strings.getString(R.string.desktop_switch_to_workspace, number)) }, enabled = pendingAction == null && "workspace.switch" in actionNames && number != null && number in 1..99,
+                    modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.desktop_switch_workspace)) }
             } }
-            if (shownWindows.isEmpty() && sectionErrors["windows"] == null) item { Text("No windows to show.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            items(shownWindows.take(40)) { window -> Panel(window.text("title") ?: "Untitled") {
-                Text("${window.text("app").orEmpty()} · Workspace ${window.text("workspace").orEmpty()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton({ execute("windows.focus", buildJsonObject { put("address", window.text("address").orEmpty()) }, "Focus ${window.text("title") ?: "window"}") }, enabled = canAct && "windows.focus" in actionNames) { Text("Focus") }
-                    OutlinedButton({ moving = window }, enabled = canAct && "windows.move" in actionNames) { Text("Move…") }
+            if (shownWindows.isEmpty() && sectionErrors["windows"] == null) item { Text(stringResource(R.string.desktop_no_windows_to_show), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            items(shownWindows.take(40)) { window -> Panel(window.text("title") ?: stringResource(R.string.desktop_untitled)) {
+                Text(stringResource(R.string.desktop_workspace_2, window.text("app").orEmpty(), window.text("workspace").orEmpty()), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                    OutlinedButton({ execute("windows.focus", buildJsonObject { put("address", window.text("address").orEmpty()) }, strings.getString(R.string.desktop_focus_2, window.text("title") ?: "window")) }, enabled = canAct && "windows.focus" in actionNames) { Text(stringResource(R.string.desktop_focus)) }
+                    OutlinedButton({ moving = window }, enabled = canAct && "windows.move" in actionNames) { Text(stringResource(R.string.desktop_move)) }
                 }
             } }
         }
 
         if ("apps" in categories) {
-            item { Text("Applications", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
+            item { Text(stringResource(R.string.desktop_applications), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
             sectionErrors["apps"]?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
-            if (shownApps.isEmpty() && sectionErrors["apps"] == null) item { Text("No applications to show.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            items(shownApps.take(40)) { app -> Panel(app.text("name") ?: "Application") {
-                OutlinedButton({ execute("apps.launch", buildJsonObject { put("desktopId", app.text("id").orEmpty()) }, "Open ${app.text("name").orEmpty()}") }, enabled = canAct && "apps.launch" in actionNames) { Text("Open on desktop") }
+            if (shownApps.isEmpty() && sectionErrors["apps"] == null) item { Text(stringResource(R.string.desktop_no_applications_to_show), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            items(shownApps.take(40)) { app -> Panel(app.text("name") ?: stringResource(R.string.desktop_application)) {
+                OutlinedButton({ execute("apps.launch", buildJsonObject { put("desktopId", app.text("id").orEmpty()) }, strings.getString(R.string.desktop_open, app.text("name").orEmpty())) }, enabled = canAct && "apps.launch" in actionNames) { Text(stringResource(R.string.desktop_open_on_desktop)) }
             } }
         }
 
-        if ("files" in categories) item { Panel("Open a file or folder") {
-            Text("Opens on the desktop in its default app. Paths must be inside this project.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(filePath, { filePath = it.take(4096) }, label = { Text("Path on the desktop") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        if ("files" in categories) item { Panel(stringResource(R.string.desktop_open_a_file_or_folder)) {
+            Text(stringResource(R.string.desktop_opens_on_the_desktop_in_its_default_app), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(filePath, { filePath = it.take(4096) }, label = { Text(stringResource(R.string.desktop_path_on_the_desktop)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
             val inside = project?.path?.let { root -> filePath == root || filePath.startsWith("$root/") } == true
-            Button({ execute("files.open", buildJsonObject { put("path", filePath.trim()) }, "Open ${filePath.substringAfterLast('/')}") }, enabled = canAct && "files.open" in actionNames && inside) { Text("Open on desktop") }
+            Button({ execute("files.open", buildJsonObject { put("path", filePath.trim()) }, strings.getString(R.string.desktop_open, filePath.substringAfterLast('/'))) }, enabled = canAct && "files.open" in actionNames && inside) { Text(stringResource(R.string.desktop_open_on_desktop)) }
         } }
     }
 
     moving?.let { window ->
         var target by rememberSaveable(window.text("address")) { mutableStateOf("") }
         val number = target.toIntOrNull()
-        AlertDialog(onDismissRequest = { moving = null }, title = { Text("Move window") }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(window.text("title") ?: "Untitled", fontWeight = FontWeight.Medium)
-            Text("Currently on workspace ${window.text("workspace").orEmpty()}. The desktop stays on its current workspace.", style = MaterialTheme.typography.bodySmall)
-            OutlinedTextField(target, { target = it.filter(Char::isDigit).take(2) }, label = { Text("Destination workspace (1–99)") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-        } }, confirmButton = { Button({ moving = null; execute("windows.move", buildJsonObject { put("address", window.text("address").orEmpty()); put("workspace", number ?: 0) }, "Move ${window.text("title") ?: "window"} to workspace $number") },
-            enabled = number != null && number in 1..99, modifier = Modifier.heightIn(min = PALLayout.target)) { Text("Review & move") } },
-            dismissButton = { TextButton({ moving = null }, modifier = Modifier.heightIn(min = PALLayout.target)) { Text("Keep here") } })
+        AlertDialog(onDismissRequest = { moving = null }, title = { Text(stringResource(R.string.desktop_move_window)) }, text = { Column(verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+            Text(window.text("title") ?: stringResource(R.string.desktop_untitled), fontWeight = FontWeight.Medium)
+            Text(stringResource(R.string.desktop_currently_on_workspace_the_desktop_stays_on_its, window.text("workspace").orEmpty()), style = MaterialTheme.typography.bodySmall)
+            OutlinedTextField(target, { target = it.filter(Char::isDigit).take(2) }, label = { Text(stringResource(R.string.desktop_destination_workspace_199)) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+        } }, confirmButton = { Button({ moving = null; execute("windows.move", buildJsonObject { put("address", window.text("address").orEmpty()); put("workspace", number ?: 0) }, strings.getString(R.string.desktop_move_to_workspace, window.text("title") ?: "window", number)) },
+            enabled = number != null && number in 1..99, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.desktop_review_move)) } },
+            dismissButton = { TextButton({ moving = null }, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.desktop_keep_here)) } })
     }
     reviewingScript?.let { script ->
-        AlertDialog(onDismissRequest = { reviewingScript = null }, title = { Text("Run saved script?") }, text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(script.text("name") ?: "Script", fontWeight = FontWeight.SemiBold)
+        AlertDialog(onDismissRequest = { reviewingScript = null }, title = { Text(stringResource(R.string.desktop_run_saved_script)) }, text = { Column(verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+            Text(script.text("name") ?: stringResource(R.string.desktop_script), fontWeight = FontWeight.SemiBold)
             SelectionContainer { Text(listOf(script.text("executable").orEmpty(), *script["args"]?.jsonArray.orEmpty().map { (it as? JsonPrimitive)?.contentOrNull.orEmpty() }.toTypedArray()).joinToString(" "), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
-            Text("Folder · ${script.text("cwd").orEmpty()}", style = MaterialTheme.typography.bodySmall)
-            Text("Time limit · ${(script.text("timeout")?.toLongOrNull() ?: 0) / 1000} s", style = MaterialTheme.typography.bodySmall)
-            Text("Runs exactly this saved definition on ${state.desktop?.desktopName ?: "the desktop"}. If it changed on the desktop, the run is refused.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } }, confirmButton = { Button({ reviewingScript = null; execute("script.run", buildJsonObject { put("id", script.text("id").orEmpty()) }, "Run ${script.text("name") ?: "script"}", script.text("definitionDigest")) },
-            modifier = Modifier.heightIn(min = PALLayout.target)) { Text("Run") } },
-            dismissButton = { TextButton({ reviewingScript = null }, modifier = Modifier.heightIn(min = PALLayout.target)) { Text("Don't run") } })
+            Text(stringResource(R.string.desktop_folder, script.text("cwd").orEmpty()), style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.desktop_time_limit_s, (script.text("timeout")?.toLongOrNull() ?: 0) / 1000), style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.desktop_runs_exactly_this_saved_definition_on_if_it, state.desktop?.desktopName ?: strings.getString(R.string.desktop_the_desktop)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } }, confirmButton = { Button({ reviewingScript = null; execute("script.run", buildJsonObject { put("id", script.text("id").orEmpty()) }, strings.getString(R.string.desktop_run_2, script.text("name") ?: "script"), script.text("definitionDigest")) },
+            modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.desktop_run)) } },
+            dismissButton = { TextButton({ reviewingScript = null }, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.desktop_dont_run)) } })
     }
 }
 
 @Composable private fun Panel(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(title, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() }); content() }
-    }
-}
-
-@Composable private fun DesktopEmptyState(title: String, detail: String) {
-    Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp)); Spacer(Modifier.height(14.dp))
-        Text(title, style = MaterialTheme.typography.titleLarge); Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
+    AncillarySection(title = title, content = content)
 }
 
 /**
@@ -287,6 +283,8 @@ internal fun DesktopScreen(repository: PALRepository, state: MobileState, activi
  */
 @Composable
 private fun CapturePanel(repository: PALRepository, state: MobileState, activity: FragmentActivity, project: Project, enabled: Boolean) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val scope = rememberCoroutineScope()
     val captures by repository.captures.collectAsState()
     val latest = captures.values.firstOrNull { it.text("projectId") == project.id }
@@ -303,31 +301,31 @@ private fun CapturePanel(repository: PALRepository, state: MobileState, activity
             .onSuccess { value -> preview = value; bitmap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { decodeForDisplay(value.bytes, 2048) } }.onFailure { error = it.message }
     }
     fun start(edit: Boolean) { busy = true; error = null
-        signedReview(activity, repository, "captures.start", buildJsonObject { put("projectId", project.id); put("edit", edit) }, if (edit) "Capture and edit on the desktop" else "Capture the desktop display",
+        signedReview(activity, repository, "captures.start", buildJsonObject { put("projectId", project.id); put("edit", edit) }, if (edit) strings.getString(R.string.desktop_capture_and_edit_on_the_desktop) else strings.getString(R.string.desktop_capture_the_desktop_display),
             { result -> repository.captureStarted(result); busy = false }, { error = it; busy = false }, boundProjectId = project.id) }
-    Panel("Screen capture") {
-        Text("Captures the desktop's focused display. Nothing is shared with a conversation until you attach it and send.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button({ start(false) }, enabled = enabled && !busy && captureState !in setOf("capturing", "editing")) { Text("Capture now") }
-            OutlinedButton({ start(true) }, enabled = enabled && !busy && captureState !in setOf("capturing", "editing")) { Text("Capture and edit on the desktop") }
+    Panel(stringResource(R.string.desktop_screen_capture)) {
+        Text(stringResource(R.string.desktop_captures_the_desktops_focused_display_nothing_is_shared), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+            Button({ start(false) }, enabled = enabled && !busy && captureState !in setOf("capturing", "editing")) { Text(stringResource(R.string.desktop_capture_now)) }
+            OutlinedButton({ start(true) }, enabled = enabled && !busy && captureState !in setOf("capturing", "editing")) { Text(stringResource(R.string.desktop_capture_and_edit_on_the_desktop)) }
         }
         latest?.let { capture ->
             Text(when (captureState) {
-                "capturing" -> "Capturing…"; "editing" -> "Waiting for the capture to be saved in Satty on the desktop…"
-                "ready" -> "Ready to review"; "attached" -> "Attached to a conversation draft. Send it from that conversation."
+                "capturing" -> stringResource(R.string.desktop_capturing); "editing" -> stringResource(R.string.desktop_waiting_for_the_capture_to_be_saved_in)
+                "ready" -> stringResource(R.string.desktop_ready_to_review); "attached" -> stringResource(R.string.desktop_attached_to_a_conversation_draft_send_it_from)
                 else -> capture.text("message") ?: (captureState ?: "")
             }, color = if (captureState in setOf("failed", "expired")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
-            bitmap?.let { androidx.compose.foundation.Image(it.asImageBitmap(), "The exact capture that will be attached", Modifier.fillMaxWidth().heightIn(max = 360.dp)) }
+            bitmap?.let { androidx.compose.foundation.Image(it.asImageBitmap(), stringResource(R.string.desktop_the_exact_capture_that_will_be_attached), Modifier.fillMaxWidth().heightIn(max = PALLayout.desktopPreviewHeight)) }
             if (captureState == "ready" && preview != null && state.supports("captures.attach")) {
-                Text("Attach to", fontWeight = FontWeight.Medium)
-                if (targets.isEmpty()) Text("No conversation in this project can send from this phone.", style = MaterialTheme.typography.bodySmall)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { targets.forEach { session -> FilterChip(target == session.id, { target = session.id }, { Text(session.title, maxLines = 1) }) } }
+                Text(stringResource(R.string.desktop_attach_to), fontWeight = FontWeight.Medium)
+                if (targets.isEmpty()) Text(stringResource(R.string.desktop_no_conversation_in_this_project_can_send_from), style = MaterialTheme.typography.bodySmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { targets.forEach { session -> FilterChip(target == session.id, { target = session.id }, { Text(session.title, maxLines = 1) }) } }
                 Button({ val chosen = target ?: return@Button; val reviewed = preview ?: return@Button; busy = true; error = null
-                    signedReview(activity, repository, "captures.attach", buildJsonObject { put("captureId", captureId!!); put("sessionId", chosen); put("imageDigest", reviewed.imageDigest) }, "Attach this capture",
+                    signedReview(activity, repository, "captures.attach", buildJsonObject { put("captureId", captureId!!); put("sessionId", chosen); put("imageDigest", reviewed.imageDigest) }, strings.getString(R.string.desktop_attach_this_capture),
                         { result -> scope.launch { runCatching { repository.adoptCapture(chosen, result.jsonObject, reviewed) }.onFailure { error = it.message }; captureId?.let { runCatching { repository.captureStatus(it) } }; busy = false } }, { error = it; busy = false }, boundProjectId = project.id)
-                }, enabled = enabled && !busy && target != null) { Text("Review & attach") }
+                }, enabled = enabled && !busy && target != null) { Text(stringResource(R.string.desktop_review_attach)) }
             }
-            if (captureId != null && captureState in setOf("capturing", "editing", "ready")) TextButton({ scope.launch { busy = true; runCatching { repository.discardCapture(captureId) }.onFailure { error = it.message }; busy = false } }, enabled = enabled && !busy) { Text(if (captureState == "ready") "Discard" else "Cancel") }
+            if (captureId != null && captureState in setOf("capturing", "editing", "ready")) TextButton({ scope.launch { busy = true; runCatching { repository.discardCapture(captureId) }.onFailure { error = it.message }; busy = false } }, enabled = enabled && !busy) { Text(if (captureState == "ready") stringResource(R.string.desktop_discard) else stringResource(R.string.annotation_cancel)) }
         }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }

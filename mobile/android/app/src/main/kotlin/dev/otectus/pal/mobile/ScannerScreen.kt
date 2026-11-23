@@ -1,5 +1,6 @@
 package dev.otectus.pal.mobile
 
+import androidx.compose.ui.res.stringResource
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -13,7 +14,6 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.ui.res.painterResource
@@ -32,7 +32,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -43,6 +42,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 @Composable
 fun ScannerScreen(onResult: (String) -> Unit, onBack: () -> Unit, onEnterOffer: () -> Unit) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val context = LocalContext.current
     var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
     var cameraError by rememberSaveable { mutableStateOf<String?>(null) }
@@ -56,50 +57,52 @@ fun ScannerScreen(onResult: (String) -> Unit, onBack: () -> Unit, onEnterOffer: 
     }
     val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
     LaunchedEffect(Unit) { if (!granted) request.launch(Manifest.permission.CAMERA) }
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(Modifier.fillMaxSize().background(PALMedia.backdrop)) {
         if (granted && cameraError == null) CameraPreview(onResult) { cameraError = it }
         if (granted && cameraError == null) {
             Box(
-                Modifier.align(Alignment.Center).size(260.dp).border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(20.dp))
-                    .semantics { contentDescription = "QR scanning frame" },
+                Modifier.align(Alignment.Center).size(PALLayout.scanFrame).border(PALLayout.tight, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
+                    .semantics { contentDescription = strings.getString(R.string.scanner_qr_scanning_frame) },
             )
             Surface(
-                color = Color.Black.copy(alpha = .78f),
-                contentColor = Color.White,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+                color = PALMedia.scannerOverlay,
+                contentColor = PALMedia.onBackdrop,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(PALLayout.gutter),
             ) {
-                Column(Modifier.widthIn(max = 480.dp).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Point at the PAL pairing QR", fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
-                    Text("Only signed PAL pairing offers are accepted.", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = .75f), textAlign = TextAlign.Center)
+                Column(Modifier.widthIn(max = PALLayout.noticeWidth).padding(PALLayout.gutter), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
+                    Text(stringResource(R.string.scanner_point_at_the_pal_pairing_qr), fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+                    Text(stringResource(R.string.scanner_only_signed_pal_pairing_offers_are_accepted), style = MaterialTheme.typography.bodySmall, color = PALMedia.onBackdrop.copy(alpha = .75f), textAlign = TextAlign.Center)
                 }
             }
         } else {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
                 contentColor = MaterialTheme.colorScheme.onSurface,
-                shape = RoundedCornerShape(18.dp),
-                modifier = Modifier.align(Alignment.Center).padding(16.dp).widthIn(max = 520.dp),
+                shape = MaterialTheme.shapes.large,
+                modifier = Modifier.align(Alignment.Center).padding(PALLayout.gutter).widthIn(max = PALLayout.formWidth),
             ) {
-                Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                        Icon(painterResource(R.drawable.ic_scan), null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.padding(16.dp).size(32.dp))
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(PALLayout.sectionGap), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(PALLayout.gutter)) {
+                    Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.primaryContainer) {
+                        Icon(painterResource(R.drawable.ic_scan), null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.padding(PALLayout.gutter).size(PALLayout.spacious))
                     }
-                    Text(if (cameraError == null) "Camera access needed" else "Camera unavailable", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
-                    Text(cameraError ?: "Camera access is used only to scan the offline pairing offer. PAL does not save the preview.", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
-                    if (cameraError == null) Button({ request.launch(Manifest.permission.CAMERA) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Allow camera") }
-                    else Button({ cameraError = null }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Try camera again") }
-                    OutlinedButton({ context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Open app settings") }
-                    TextButton(onEnterOffer, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Enter offer instead") }
+                    Text(if (cameraError == null) stringResource(R.string.scanner_camera_access_needed) else stringResource(R.string.scanner_camera_unavailable), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+                    Text(cameraError ?: stringResource(R.string.scanner_camera_access_is_used_only_to_scan_the), color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                    if (cameraError == null) Button({ request.launch(Manifest.permission.CAMERA) }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.scanner_allow_camera)) }
+                    else Button({ cameraError = null }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.scanner_try_camera_again)) }
+                    OutlinedButton({ context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))) }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.scanner_open_app_settings)) }
+                    TextButton(onEnterOffer, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.paste_instead)) }
                 }
             }
         }
-        IconButton(onBack, Modifier.padding(12.dp).align(Alignment.TopStart).size(48.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
+        FilledTonalIconButton(onBack, Modifier.padding(PALLayout.groupGap).align(Alignment.TopStart).size(PALLayout.target), colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = PALMedia.scannerOverlay, contentColor = PALMedia.onBackdrop)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.go_back), tint = PALMedia.onBackdrop) }
     }
 }
 
 @Composable
 private fun CameraPreview(onResult: (String) -> Unit, onError: (String) -> Unit) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val view = remember(context) { PreviewView(context) }
@@ -137,7 +140,7 @@ private fun CameraPreview(onResult: (String) -> Unit, onError: (String) -> Unit)
                 }
                 provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
                 boundProvider = provider
-            }.onFailure { errorCallback(it.message ?: "PAL could not start this camera.") }
+            }.onFailure { errorCallback(it.message ?: strings.getString(R.string.scanner_pal_could_not_start_this_camera)) }
         }, ContextCompat.getMainExecutor(context))
         onDispose {
             disposed = true

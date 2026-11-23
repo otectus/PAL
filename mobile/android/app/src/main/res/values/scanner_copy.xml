@@ -1,0 +1,12 @@
+<resources>
+    <string name="scanner_allow_camera">Allow camera</string>
+    <string name="scanner_camera_access_is_used_only_to_scan_the">Camera access is used only to scan the offline pairing offer. PAL does not save the preview.</string>
+    <string name="scanner_camera_access_needed">Camera access needed</string>
+    <string name="scanner_camera_unavailable">Camera unavailable</string>
+    <string name="scanner_only_signed_pal_pairing_offers_are_accepted">Only signed PAL pairing offers are accepted.</string>
+    <string name="scanner_open_app_settings">Open app settings</string>
+    <string name="scanner_pal_could_not_start_this_camera">PAL could not start this camera.</string>
+    <string name="scanner_point_at_the_pal_pairing_qr">Point at the PAL pairing QR</string>
+    <string name="scanner_try_camera_again">Try camera again</string>
+    <string name="scanner_qr_scanning_frame">QR scanning frame</string>
+</resources>

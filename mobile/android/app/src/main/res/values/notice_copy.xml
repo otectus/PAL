@@ -1,0 +1,27 @@
+<resources>
+    <string name="notice_a_conversation_finished">A conversation finished</string>
+    <string name="notice_a_conversation_reported_a_problem">A conversation reported a problem</string>
+    <string name="notice_a_conversation_stopped">A conversation stopped</string>
+    <string name="notice_a_desktop_conversation_finished_its_reply">A desktop conversation finished its reply</string>
+    <string name="notice_a_desktop_conversation_stopped_or_reported_an_error">A desktop conversation stopped or reported an error</string>
+    <string name="notice_approval_and_question_requests_from_the_paired_pal">Approval and question requests from the paired PAL desktop</string>
+    <string name="notice_conversation_problems">Conversation problems</string>
+    <string name="notice_deny">Deny</string>
+    <string name="notice_desktop_timers">Desktop timers</string>
+    <string name="notice_open_pal_to_check">Open PAL to check: %1$s</string>
+    <string name="notice_open_pal_to_review_activity">%1$s · open PAL to review Activity</string>
+    <string name="notice_pal_connection">PAL connection</string>
+    <string name="notice_pal_conversation_update">PAL conversation update</string>
+    <string name="notice_pal_mobile">PAL Mobile</string>
+    <string name="notice_pal_needs_your_review">PAL needs your review</string>
+    <string name="notice_pal_request">PAL request</string>
+    <string name="notice_pal_requests">PAL requests</string>
+    <string name="notice_pal_timer">PAL timer</string>
+    <string name="notice_replies_ready">Replies ready</string>
+    <string name="notice_reply_ready">Reply ready</string>
+    <string name="notice_shows_when_pal_is_monitoring_your_paired_desktop">Shows when PAL is monitoring your paired desktop</string>
+    <string name="notice_timers_set_from_this_phone_on_the_desktop">Timers set from this phone on the desktop</string>
+    <string name="notice_unlock_to_review">Unlock to review</string>
+    <string name="notice_unlock_to_view">Unlock to view</string>
+    <string name="notice_your_desktop_timer_finished">Your desktop timer finished</string>
+</resources>

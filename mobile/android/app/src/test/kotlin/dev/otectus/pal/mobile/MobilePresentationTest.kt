@@ -22,6 +22,7 @@ class MobilePresentationTest {
                 for (textRole in listOf(onSurface, onSurfaceVariant, primary, tertiary, error))
                     checkContrast(textRole, backgroundRole, 4.5f)
                 checkContrast(outline, backgroundRole, 3f)
+                checkContrast(outlineVariant, backgroundRole, 3f)
             }
             for ((ink, fill) in listOf(onPrimary to primary, onPrimaryContainer to primaryContainer,
                 onSecondary to secondary, onSecondaryContainer to secondaryContainer,

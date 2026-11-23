@@ -23,7 +23,7 @@ internal val Night = darkColorScheme(
     surfaceContainerLowest = Color(0xFF090F16), surfaceContainerLow = Color(0xFF101820),
     surfaceContainer = Color(0xFF18232D), surfaceContainerHigh = Color(0xFF1E2B35),
     surfaceContainerHighest = Color(0xFF293944), surfaceVariant = Color(0xFF24343D),
-    onSurfaceVariant = Color(0xFFAEC1CC), outline = Color(0xFF849CA7), outlineVariant = Color(0xFF354755),
+    onSurfaceVariant = Color(0xFFAEC1CC), outline = Color(0xFF849CA7), outlineVariant = Color(0xFF738B97),
     error = Color(0xFFFFB2B9), onError = Color(0xFF5F1422),
     errorContainer = Color(0xFF4B2730), onErrorContainer = Color(0xFFFFDADF),
     inverseSurface = Color(0xFFE2EBF1), inverseOnSurface = Color(0xFF1B2B37), inversePrimary = Color(0xFF006581),
@@ -43,7 +43,7 @@ internal val Day = lightColorScheme(
     surfaceContainerLowest = Color.White, surfaceContainerLow = Color(0xFFF3F6F6),
     surfaceContainer = Color(0xFFEAF0F0), surfaceContainerHigh = Color(0xFFE2EAEA),
     surfaceContainerHighest = Color(0xFFD7E3E3), surfaceVariant = Color(0xFFDEE8E8),
-    onSurfaceVariant = Color(0xFF455B60), outline = Color(0xFF597277), outlineVariant = Color(0xFFC3D1D1),
+    onSurfaceVariant = Color(0xFF455B60), outline = Color(0xFF597277), outlineVariant = Color(0xFF6C8083),
     error = Color(0xFFAB3043), onError = Color.White,
     errorContainer = Color(0xFFFFDDE0), onErrorContainer = Color(0xFF741729),
     inverseSurface = Color(0xFF263845), inverseOnSurface = Color(0xFFEBF2F7), inversePrimary = Color(0xFF68ECED),
@@ -95,6 +95,9 @@ internal object PALLayout {
     val landscapeWidth = 440.dp
     val railWidth = 600.dp
 }
+
+/** A decorative divider. Interactive outlines use the contrast-tested scheme roles directly. */
+internal val sectionDivider: Color @Composable get() = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .38f)
 
 internal object PALShape {
     val userMessage = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 4.dp)

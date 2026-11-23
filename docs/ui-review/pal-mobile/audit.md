@@ -33,3 +33,9 @@ Source names below refer to `mobile/android/app/src/main/kotlin/dev/otectus/pal/
 ## Design direction
 
 The desktop puts the character beside a bounded reading column, uses a cool accent for selection and keeps tools close to their originating conversation. See `qml/Chat.qml`, `qml/MessageCard.qml` and `docs/ui-review/desktop-design.md`. Carry that calm, precise, companionable character to Android with PAL's own portrait and cool ink, a restrained blue accent, quiet section surfaces and amber for decisions. Give titles, readable prose and exact technical content different typographic jobs. Keep the action that resolves an interruption beside its explanation. Use system text scaling and press feedback throughout.
+
+## Evidence and subsequent polish
+
+The original capture includes the actual paired shell, keyboard and Android permission journeys. The test gallery adds deterministic views of conditions that cannot safely be forced on an owner desktop. In the transcript, the dock border and secondary controls draw attention below a short reply. In Settings, the repeated cards make connection details and local preferences look equally urgent. In the original request card, a full-width disclosure sits between the request and its exact target. Compare the [original transcript](before/18-chat-online.png), [settings index](before/17-settings-online.png) and [request](before/fixture-light-approval.png).
+
+The first redesigned pairing capture exposed a separate layout problem. The keyboard covered Verify on the regular portrait phone. The form now requests visibility for the field and its action together. The first redesigned theme fixtures also exposed a status-bar mismatch between the simulated theme and the emulator’s window. The fixture now sets the bar appearance alongside the content theme.

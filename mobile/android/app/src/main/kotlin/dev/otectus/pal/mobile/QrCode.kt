@@ -1,5 +1,6 @@
 package dev.otectus.pal.mobile
 
+import androidx.compose.ui.res.stringResource
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -13,7 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.unit.dp
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
@@ -31,6 +31,6 @@ fun PairingQrCode(text: String, modifier: Modifier = Modifier) {
             Bitmap.createBitmap(pixels, matrix.width, matrix.height, Bitmap.Config.RGB_565).asImageBitmap()
         }
     }
-    val frame = modifier.background(Color.White).padding(8.dp).size(260.dp)
-    image?.let { Image(it, "Signed pairing response QR code", frame) } ?: Box(frame)
+    val frame = modifier.background(PALMedia.onBackdrop).padding(PALLayout.small).size(PALLayout.scanFrame)
+    image?.let { Image(it, stringResource(R.string.mobile_signed_pairing_response_qr_code), frame) } ?: Box(frame)
 }

@@ -13,6 +13,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricPrompt
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
@@ -23,6 +28,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -36,9 +42,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -142,7 +151,12 @@ private fun PALRoot(repository: PALRepository, activity: FragmentActivity, launc
         if (state.restoreReady && state.desktop != null && state.stagedPairing == null && activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) repository.connectWhileOpen()
     }
     when {
-        !state.restoreReady && state.connection !is ConnectionState.Blocked -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        !state.restoreReady && state.connection !is ConnectionState.Blocked -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(PALLayout.gutter)) {
+                CircularProgressIndicator()
+                Text(stringResource(R.string.restore_loading), style = MaterialTheme.typography.bodyMedium)
+            }
+        }
         state.stagedPairing != null -> PairingScreen(repository, state, activity, state.desktop)
         state.desktop == null && state.connection is ConnectionState.Blocked -> UnreadableCacheScreen(repository, activity, state.connection as ConnectionState.Blocked)
         state.desktop == null -> PairingScreen(repository, state, activity)
@@ -154,40 +168,40 @@ private fun PALRoot(repository: PALRepository, activity: FragmentActivity, launc
 /** A connection that stopped retrying. Only a broken pairing offers re-pairing, and replacement keeps drafts. */
 /** The private cache could not be read: locked (retry after unlock), or damaged or keyless (remove and pair again). */
 @Composable
-private fun UnreadableCacheScreen(repository: PALRepository, activity: FragmentActivity, blocked: ConnectionState.Blocked) {
+internal fun UnreadableCacheScreen(repository: PALRepository, activity: FragmentActivity, blocked: ConnectionState.Blocked) {
     var confirm by rememberSaveable { mutableStateOf(false) }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
-            Modifier.widthIn(max = 600.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
+            Modifier.widthIn(max = PALLayout.formWidth).fillMaxWidth().verticalScroll(rememberScrollState()).padding(PALLayout.gutter),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(PALLayout.gutter),
         ) {
-            Surface(shape = RoundedCornerShape(20.dp), color = if (blocked.repair) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer) {
-                Icon(Icons.Default.Lock, null, tint = if (blocked.repair) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.padding(18.dp).size(36.dp))
+            Surface(shape = MaterialTheme.shapes.large, color = if (blocked.repair) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer) {
+                Icon(Icons.Default.Lock, null, tint = if (blocked.repair) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.padding(PALLayout.inset).size(PALLayout.portraitCompact))
             }
-            Text(if (blocked.repair) "Private data can't be read" else "Unlock private cache", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.semantics { heading() })
+            Text(if (blocked.repair) stringResource(R.string.mobile_private_data_cant_be_read) else stringResource(R.string.mobile_unlock_private_cache), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.semantics { heading() })
             Text(
-                if (blocked.repair) "PAL stopped before opening anything private on this phone." else "Unlock this phone, then ask PAL to open its encrypted cache again.",
+                if (blocked.repair) stringResource(R.string.mobile_pal_stopped_before_opening_anything_private_on_this) else stringResource(R.string.mobile_unlock_this_phone_then_ask_pal_to_open),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
-            SecureStatusPanel(if (blocked.repair) "Encrypted cache unavailable" else "Phone is still locked", blocked.reason, tone = if (blocked.repair) SecureTone.Danger else SecureTone.Attention)
+            SecureStatusPanel(if (blocked.repair) stringResource(R.string.mobile_encrypted_cache_unavailable) else stringResource(R.string.mobile_phone_is_still_locked), blocked.reason, tone = if (blocked.repair) SecureTone.Danger else SecureTone.Attention)
             if (blocked.repair) {
-                Text("Removing the unreadable cache is the only recovery on this phone. The desktop pairing must also be revoked before you reconnect.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Button({ confirm = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Remove and pair again") }
+                Text(stringResource(R.string.mobile_removing_the_unreadable_cache_is_the_only_recovery), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button({ confirm = true }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_remove_and_pair_again)) }
             } else {
-                Button(repository::retry, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Retry") }
+                Button(repository::retry, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_retry)) }
             }
         }
     }
-    if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("Remove unreadable data?") },
-        text = { Text("PAL Mobile cannot read its private data on this phone. Removing it lets you pair again; anything in it, including unsent drafts, is already unreadable. On the desktop, revoke the old pairing for this phone.") },
-        confirmButton = { Button({ confirm = false; activity.lifecycleScope.launch { runCatching { repository.discardUnreadableCache() } } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Remove") } },
-        dismissButton = { TextButton({ confirm = false }) { Text("Cancel") } })
+    if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text(stringResource(R.string.mobile_remove_unreadable_data)) },
+        text = { Text(stringResource(R.string.mobile_pal_mobile_cannot_read_its_private_data_on)) },
+        confirmButton = { Button({ confirm = false; activity.lifecycleScope.launch { runCatching { repository.discardUnreadableCache() } } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_remove)) } },
+        dismissButton = { TextButton({ confirm = false }) { Text(stringResource(R.string.annotation_cancel)) } })
 }
 
 @Composable
-private fun BlockedScreen(repository: PALRepository, state: MobileState, activity: FragmentActivity, blocked: ConnectionState.Blocked) {
+internal fun BlockedScreen(repository: PALRepository, state: MobileState, activity: FragmentActivity, blocked: ConnectionState.Blocked) {
     val scope = rememberCoroutineScope()
     var replacing by rememberSaveable { mutableStateOf(false) }
     var confirmForget by rememberSaveable { mutableStateOf(false) }
@@ -196,35 +210,35 @@ private fun BlockedScreen(repository: PALRepository, state: MobileState, activit
     if (replacing && desktop != null) { PairingScreen(repository, state, activity, desktop) { replacing = false }; return }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
-            Modifier.widthIn(max = 640.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
+            Modifier.widthIn(max = PALLayout.formWidth).fillMaxWidth().verticalScroll(rememberScrollState()).padding(PALLayout.gutter),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(PALLayout.gutter),
         ) {
-            Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.tertiaryContainer) {
-                Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.padding(18.dp).size(36.dp))
+            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.tertiaryContainer) {
+                Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.padding(PALLayout.inset).size(PALLayout.portraitCompact))
             }
-            Text(if (blocked.repair) "Pairing needs attention" else "Can't connect to the desktop", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.semantics { heading() })
-            SecureStatusPanel(if (blocked.repair) "Secure connection needs repair" else "Desktop unavailable", blocked.reason, tone = SecureTone.Attention)
-            Button(repository::retry, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Retry") }
+            Text(if (blocked.repair) stringResource(R.string.mobile_pairing_needs_attention) else stringResource(R.string.mobile_cant_connect_to_the_desktop), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.semantics { heading() })
+            SecureStatusPanel(if (blocked.repair) stringResource(R.string.mobile_secure_connection_needs_repair) else stringResource(R.string.mobile_desktop_unavailable), blocked.reason, tone = SecureTone.Attention)
+            Button(repository::retry, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_retry)) }
             if (blocked.repair) {
                 if (state.pendingCommands.isNotEmpty()) {
-                    OutlinedPanel("Check before repairing") {
-                        Text("These desktop actions were never confirmed. Check them on the PC before replacing the pairing:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedPanel(stringResource(R.string.mobile_check_before_repairing)) {
+                        Text(stringResource(R.string.mobile_these_desktop_actions_were_never_confirmed_check_them), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         state.pendingCommands.forEach { Text("• ${CommandOutcomes.describe(it)}", style = MaterialTheme.typography.bodySmall) }
-                        OutlinedButton({ scope.launch { runCatching { repository.releaseForRepair() }.onFailure { error = it.message } } }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("I've checked them on the PC") }
+                        OutlinedButton({ scope.launch { runCatching { repository.releaseForRepair() }.onFailure { error = it.message } } }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_ive_checked_them_on_the_pc)) }
                     }
                 }
-                Text("Replacing keeps this phone's encrypted conversations, drafts, and local images.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedButton({ replacing = true }, enabled = desktop != null && repository.replacementBlocker() == null, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Replace pairing · keeps drafts") }
-                TextButton({ confirmForget = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Remove phone pairing and pair again") }
-            } else Text("Check the desktop and try again. Your conversations and drafts stay on this phone.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
-            error?.let { SecureStatusPanel("Repair couldn't continue", it, tone = SecureTone.Danger) }
+                Text(stringResource(R.string.mobile_replacing_keeps_this_phones_encrypted_conversations_drafts_and), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedButton({ replacing = true }, enabled = desktop != null && repository.replacementBlocker() == null, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_replace_pairing_keeps_drafts)) }
+                TextButton({ confirmForget = true }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_remove_phone_pairing_and_pair_again)) }
+            } else Text(stringResource(R.string.mobile_check_the_desktop_and_try_again_your_conversations), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+            error?.let { SecureStatusPanel(stringResource(R.string.mobile_repair_couldnt_continue), it, tone = SecureTone.Danger) }
         }
     }
-    if (confirmForget) AlertDialog(onDismissRequest = { confirmForget = false }, title = { Text("Remove this pairing?") },
-        text = { Text("This erases this phone's encrypted conversations, drafts, images and keys for this desktop. Replace pairing keeps them.") },
-        confirmButton = { Button({ confirmForget = false; activity.lifecycleScope.launch { repository.forget() } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Remove") } },
-        dismissButton = { TextButton({ confirmForget = false }) { Text("Cancel") } })
+    if (confirmForget) AlertDialog(onDismissRequest = { confirmForget = false }, title = { Text(stringResource(R.string.mobile_remove_this_pairing)) },
+        text = { Text(stringResource(R.string.mobile_this_erases_this_phones_encrypted_conversations_drafts_images)) },
+        confirmButton = { Button({ confirmForget = false; activity.lifecycleScope.launch { repository.forget() } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_remove)) } },
+        dismissButton = { TextButton({ confirmForget = false }) { Text(stringResource(R.string.annotation_cancel)) } })
 }
 
 @Composable
@@ -235,6 +249,8 @@ private fun PairingScreen(
     replacing: PairedDesktop? = null,
     onCancel: (() -> Unit)? = null,
 ) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val scope = rememberCoroutineScope()
     var raw by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
@@ -249,7 +265,9 @@ private fun PairingScreen(
     var deviceName by rememberSaveable { mutableStateOf(Build.MODEL.take(48).ifBlank { "Android phone" }) }
     val returning by repository.pairingReturn.collectAsStateWithLifecycle()
     BackHandler(enabled = scan) { scan = false }
-    BackHandler(enabled = !scan && onCancel != null) { onCancel?.invoke() }
+    BackHandler(enabled = !scan && (enteringOffer && result == null || onCancel != null)) {
+        if (enteringOffer && result == null) enteringOffer = false else onCancel?.invoke()
+    }
     LaunchedEffect(state.restoreReady, state.desktop?.deviceId, result?.desktop?.deviceId, unstaged?.desktop?.deviceId) {
         // What to keep is read from the repository when pruning runs, not from this frame: a pairing
         // that was just staged is there before this screen's collected state shows it, and clearing
@@ -263,7 +281,7 @@ private fun PairingScreen(
     var afterPermissions by remember { mutableStateOf<(() -> Unit)?>(null) }
     val localNetworkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val next = afterPermissions; afterPermissions = null
-        if (granted) next?.invoke() else error = "Local network permission is required to connect to PAL Desktop."
+        if (granted) next?.invoke() else error = strings.getString(R.string.mobile_local_network_permission_is_required_to_connect_to)
     }
     fun withLocalNetwork(then: () -> Unit) {
         if (Build.VERSION.SDK_INT >= 37 && ContextCompat.checkSelfPermission(activity, "android.permission.ACCESS_LOCAL_NETWORK") != PackageManager.PERMISSION_GRANTED) { afterPermissions = then; localNetworkPermission.launch("android.permission.ACCESS_LOCAL_NETWORK") }
@@ -280,7 +298,7 @@ private fun PairingScreen(
         unstaged = completed
         runCatching { repository.stagePairing(completed) }
             .onSuccess { unstaged = null; if (completed.responseReturn == "network") sendAnswer(completed) }
-            .onFailure { error = "Could not seal the pairing response. Unlock the phone and retry: ${it.message}" }
+            .onFailure { error = strings.getString(R.string.mobile_could_not_seal_the_pairing_response_unlock_the, it.message) }
     } }
     // After a restart with an answer staged, delivery resumes where the permissions already allow it.
     LaunchedEffect(result?.desktop?.deviceId) {
@@ -295,8 +313,8 @@ private fun PairingScreen(
         try {
             when (val reply = repository.checkPairingConfirmed(completed)) {
                 PairingReply.Confirmed -> withPermissions { finishPairing(completed) }
-                PairingReply.Received -> error = "Your PC has this answer. Check that it shows these six words, then confirm there."
-                is PairingReply.Closed -> error = if (reply.reason == "refused") "Your PC hasn't confirmed this pairing yet. Paste the response there, compare the six words and confirm, then try again." else reply.message
+                PairingReply.Received -> error = strings.getString(R.string.mobile_your_pc_has_this_answer_check_that_it)
+                is PairingReply.Closed -> error = if (reply.reason == "refused") strings.getString(R.string.mobile_your_pc_hasnt_confirmed_this_pairing_yet_paste) else reply.message
                 null -> savePrompt = completed
             }
         } finally { checking = false }
@@ -319,15 +337,15 @@ private fun PairingScreen(
             val prompt = BiometricPrompt(activity, ContextCompat.getMainExecutor(activity), object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(auth: BiometricPrompt.AuthenticationResult) {
                     runCatching {
-                        val signature = auth.cryptoObject?.signature ?: error("Authentication signature unavailable")
+                        val signature = auth.cryptoObject?.signature ?: error(strings.getString(R.string.mobile_authentication_signature_unavailable))
                         signature.update(pending.transcript)
                         repository.pairingManager().complete(pending, signature.sign())
                     }.onSuccess { completed -> created = null; stagePairing(completed) }.onFailure { repository.pairingManager().cancel(pending); created = null; error = it.message }
                 }
                 override fun onAuthenticationError(code: Int, message: CharSequence) { repository.pairingManager().cancel(pending); created = null; error = message.toString() }
             })
-            prompt.authenticate(BiometricPrompt.PromptInfo.Builder().setTitle("Create PAL action key")
-                .setSubtitle("This key will protect approvals and sensitive changes")
+            prompt.authenticate(BiometricPrompt.PromptInfo.Builder().setTitle(strings.getString(R.string.mobile_create_pal_action_key))
+                .setSubtitle(strings.getString(R.string.mobile_this_key_will_protect_approvals_and_sensitive_changes))
                 .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
                 .build(), BiometricPrompt.CryptoObject(pending.actionSignature))
         }.onFailure { created?.let(repository.pairingManager()::cancel); created = null; error = it.message }
@@ -340,119 +358,132 @@ private fun PairingScreen(
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(
-            Modifier.widthIn(max = 540.dp).fillMaxWidth().verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            Modifier.widthIn(max = PALLayout.formWidth).fillMaxWidth().verticalScroll(rememberScrollState())
+                .padding(horizontal = PALLayout.inset, vertical = PALLayout.sectionGap),
+            verticalArrangement = Arrangement.spacedBy(PALLayout.gutter),
         ) {
             if (onCancel != null) TextButton(onCancel) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, null)
                 Text(stringResource(R.string.go_back))
             }
             Column(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.extraLarge)
-                .background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(
-                    MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.surfaceContainerHigh)))
-                .padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Image(painterResource(R.drawable.pal_face_icon), "PAL", Modifier.size(72.dp))
-                Text(stringResource(when {
-                    result != null -> R.string.compare_words
-                    replacing != null -> R.string.update_connection
-                    else -> R.string.connect_to_pal
-                }), style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.semantics { heading() })
+                .background(PALBrand.surface)
+                .padding(PALLayout.sectionGap), verticalArrangement = Arrangement.spacedBy(PALLayout.groupGap)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                    Text(stringResource(when {
+                        result != null -> R.string.compare_words
+                        replacing != null -> R.string.update_connection
+                        else -> R.string.connect_to_pal
+                    }), style = MaterialTheme.typography.headlineLarge, color = PALBrand.onSurface,
+                        modifier = Modifier.weight(1f).semantics { heading() })
+                    if (result == null) Image(painterResource(R.drawable.pal_welcome), stringResource(R.string.pal_name),
+                        Modifier.size(PALLayout.brandMark))
+                }
                 Text(stringResource(when {
                     result != null -> R.string.verify_pc_steps
                     replacing != null -> R.string.replace_pc_steps
                     else -> R.string.pair_pc_steps
-                }), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }), style = MaterialTheme.typography.bodyLarge, color = PALBrand.onSurface)
             }
             if (result == null) {
-                replacing?.let { Text("Paired desktop · ${it.desktopName}", style = MaterialTheme.typography.titleSmall) }
-                repository.replacementBlocker()?.let { SecureStatusPanel("Finish before replacing", it, tone = SecureTone.Attention) }
+                replacing?.let { Text(stringResource(R.string.mobile_paired_desktop, it.desktopName), style = MaterialTheme.typography.titleSmall) }
+                repository.replacementBlocker()?.let { SecureStatusPanel(stringResource(R.string.mobile_finish_before_replacing), it, tone = SecureTone.Attention) }
                 val canPair = unstaged == null && (replacing == null || repository.replacementBlocker() == null)
                 OutlinedTextField(deviceName, { deviceName = it.take(48) }, label = { Text(stringResource(R.string.phone_name)) },
                     supportingText = { Text(stringResource(R.string.phone_name_hint)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Button({ scan = true }, enabled = canPair, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                Button({ scan = true }, enabled = canPair, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.primaryHeight)) {
                     Icon(painterResource(R.drawable.ic_scan), null)
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(PALLayout.small))
                     Text(stringResource(R.string.scan_pairing))
                 }
                 if (!enteringOffer) OutlinedButton({ enteringOffer = true }, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.paste_instead))
                 } else {
-                    OutlinedTextField(raw, { raw = it }, label = { Text(stringResource(R.string.pair_offer)) },
-                        minLines = 2, maxLines = 3, modifier = Modifier.fillMaxWidth())
-                    OutlinedButton({ prepare(raw) }, enabled = raw.isNotBlank() && canPair, modifier = Modifier.fillMaxWidth()) {
-                        Text(stringResource(R.string.verify_offer))
+                    val verify = remember { BringIntoViewRequester() }
+                    var editingOffer by remember { mutableStateOf(false) }
+                    val imeHeight = WindowInsets.ime.getBottom(LocalDensity.current)
+                    LaunchedEffect(editingOffer, imeHeight) {
+                        if (editingOffer && imeHeight > 0) verify.bringIntoView()
+                    }
+                    Column(Modifier.fillMaxWidth().bringIntoViewRequester(verify),
+                        verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                        OutlinedTextField(raw, { raw = it }, label = { Text(stringResource(R.string.pair_offer)) },
+                            minLines = 2, maxLines = 3, modifier = Modifier.fillMaxWidth().onFocusChanged { editingOffer = it.isFocused })
+                        OutlinedButton({ prepare(raw) }, enabled = raw.isNotBlank() && canPair, modifier = Modifier.fillMaxWidth()) {
+                            Text(stringResource(R.string.verify_offer))
+                        }
                     }
                 }
             }
-            error?.let { SecureStatusPanel("Pairing couldn't continue", it, tone = SecureTone.Danger) }
+            error?.let { SecureStatusPanel(stringResource(R.string.mobile_pairing_couldnt_continue), it, tone = SecureTone.Danger) }
             unstaged?.let { completed ->
-                Button(onClick = { stagePairing(completed) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Retry secure staging") }
-                TextButton(onClick = { repository.pairingManager().delete(completed.desktop); unstaged = null; error = null }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Cancel unstaged pairing") }
+                Button(onClick = { stagePairing(completed) }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_retry_secure_staging)) }
+                TextButton(onClick = { repository.pairingManager().delete(completed.desktop); unstaged = null; error = null }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_cancel_unstaged_pairing)) }
             }
             result?.let { completed ->
-                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer, border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .45f)), modifier = Modifier.fillMaxWidth()) {
-                    SelectionContainer { Text(completed.sas, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer, textAlign = TextAlign.Center, modifier = Modifier.padding(20.dp).fillMaxWidth()) }
+                Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.primaryContainer, border = BorderStroke(PALLayout.hairline, MaterialTheme.colorScheme.primary.copy(alpha = .45f)), modifier = Modifier.fillMaxWidth()) {
+                    SelectionContainer { Text(completed.sas, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer, textAlign = TextAlign.Center, modifier = Modifier.padding(PALLayout.inset).fillMaxWidth()) }
                 }
                 Text(when (completed.accessRole) {
-                    "owner" -> "Full access: this phone will control PAL as you do at the desktop, including files, terminals and settings, until you revoke it there."
-                    "observer" -> "Observer: this phone will read its projects' conversations and can Stop or Deny."
-                    else -> "Limited access: only the projects and actions chosen on the desktop."
+                    "owner" -> stringResource(R.string.mobile_full_access_this_phone_will_control_pal_as)
+                    "observer" -> stringResource(R.string.mobile_observer_this_phone_will_read_its_projects_conversations)
+                    else -> stringResource(R.string.mobile_limited_access_only_the_projects_and_actions_chosen)
                 }, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                Text(if (completed.desktop.actionAuthentication == ActionAuthentication.TRUSTED_DEVICE) "This trusted-phone pairing signs reviewed actions without a fingerprint or PIN." else "This pairing requires phone authentication for sensitive actions.",
+                Text(if (completed.desktop.actionAuthentication == ActionAuthentication.TRUSTED_DEVICE) stringResource(R.string.mobile_this_trusted_phone_pairing_signs_reviewed_actions_without) else stringResource(R.string.mobile_this_pairing_requires_phone_authentication_for_sensitive_actions),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 // Network return: the answer goes to the PC by itself and the phone finishes when the PC confirms.
                 val ended = returning as? PairingReturnState.Ended
                 if (networkReturn) {
                     val (line, problem) = when (val now = returning) {
-                        PairingReturnState.Idle -> "Ready to send the signed answer to your PC." to false
-                        PairingReturnState.Sending -> "Sending your answer to the PC…" to false
-                        PairingReturnState.Waiting -> "Your PC has the answer. Check that it shows these same six words, then confirm there. This phone finishes by itself." to false
-                        is PairingReturnState.Retrying -> "Can't reach the PC yet (${now.reason}). Retrying while the QR is valid…" to true
-                        PairingReturnState.Confirmed -> "Confirmed. Connecting…" to false
+                        PairingReturnState.Idle -> stringResource(R.string.pairing_return_ready) to false
+                        PairingReturnState.Sending -> stringResource(R.string.pairing_return_sending) to false
+                        PairingReturnState.Waiting -> stringResource(R.string.pairing_return_waiting) to false
+                        is PairingReturnState.Retrying -> stringResource(R.string.pairing_return_retrying, now.reason) to true
+                        PairingReturnState.Confirmed -> stringResource(R.string.pairing_return_confirmed) to false
                         is PairingReturnState.Ended -> now.message to true
-                        is PairingReturnState.Unreachable -> "${now.reason} Send the answer another way below." to true
+                        is PairingReturnState.Unreachable -> stringResource(R.string.pairing_return_unreachable, now.reason) to true
                     }
                     if (returning == PairingReturnState.Sending) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    if (problem) SecureStatusPanel("Check the connection", line, tone = SecureTone.Attention)
+                    if (problem) SecureStatusPanel(stringResource(R.string.mobile_check_the_connection), line, tone = SecureTone.Attention)
                     else Text(line, color = MaterialTheme.colorScheme.onSurface)
-                    if (returning == PairingReturnState.Idle) OutlinedButton({ sendAnswer(completed) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Send the answer to the PC") }
+                    if (returning == PairingReturnState.Idle) OutlinedButton({ sendAnswer(completed) }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_send_the_answer_to_the_pc)) }
                 }
                 val manual = !networkReturn || showManual || returning is PairingReturnState.Unreachable
-                if (networkReturn && !manual && ended == null) TextButton({ showManual = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Send the answer another way") }
+                if (networkReturn && !manual && ended == null) TextButton({ showManual = true }, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_send_the_answer_another_way)) }
                 if (manual && ended == null) {
                     HorizontalDivider()
-                    Text("Get this public signed answer to the PC: copy or share it, then paste it, or save it to a file and choose Load response file…, in PAL Settings → PAL Mobile. Confirm there only if the six words match.")
+                    Text(stringResource(R.string.mobile_get_this_public_signed_answer_to_the_pc))
                     PairingQrCode(completed.responseUri, Modifier.align(Alignment.CenterHorizontally))
                     TextButton({ showResponseText = !showResponseText }) {
                         Text(stringResource(if (showResponseText) R.string.hide_signed_text else R.string.show_signed_text))
                     }
                     if (showResponseText) SelectionContainer { Text(completed.responseUri, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { clipboard.setPrimaryClip(android.content.ClipData.newPlainText("PAL pairing response", completed.responseUri)) }) { Icon(painterResource(R.drawable.ic_copy), null); Spacer(Modifier.width(8.dp)); Text("Copy response") }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.groupGap), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                        Button(onClick = { clipboard.setPrimaryClip(android.content.ClipData.newPlainText(strings.getString(R.string.mobile_pal_pairing_response), completed.responseUri)) }) { Icon(painterResource(R.drawable.ic_copy), null); Spacer(Modifier.width(PALLayout.small)); Text(stringResource(R.string.mobile_copy_response)) }
                         OutlinedButton(onClick = {
-                            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, completed.responseUri).putExtra(Intent.EXTRA_SUBJECT, "PAL pairing response")
-                            runCatching { activity.startActivity(Intent.createChooser(send, "Send the pairing response to your PC")) }.onFailure { error = "No app can share text on this phone. Copy the response instead." }
-                        }) { Icon(Icons.Default.Share, null); Spacer(Modifier.width(8.dp)); Text("Share response") }
+                            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, completed.responseUri).putExtra(Intent.EXTRA_SUBJECT, strings.getString(R.string.mobile_pal_pairing_response))
+                            runCatching { activity.startActivity(Intent.createChooser(send, strings.getString(R.string.mobile_send_the_pairing_response_to_your_pc))) }.onFailure { error = strings.getString(R.string.mobile_no_app_can_share_text_on_this_phone) }
+                        }) { Icon(Icons.Default.Share, null); Spacer(Modifier.width(PALLayout.small)); Text(stringResource(R.string.mobile_share_response)) }
                     }
                     // Checked with the PC before the pairing is saved.
-                    Button(onClick = { desktopConfirmed(completed) }, enabled = !checking, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(if (checking) "Checking with the PC…" else "I confirmed on the PC") }
+                    Button(onClick = { desktopConfirmed(completed) }, enabled = !checking, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.primaryHeight)) { Text(if (checking) stringResource(R.string.mobile_checking_with_the_pc) else stringResource(R.string.mobile_i_confirmed_on_the_pc)) }
                 }
-                TextButton(onClick = { scope.launch { runCatching { repository.cancelStagedPairing() }.onFailure { error = it.message } }; showManual = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (ended != null) "Start over" else "Cancel pairing") }
+                TextButton(onClick = { scope.launch { runCatching { repository.cancelStagedPairing() }.onFailure { error = it.message } }; showManual = false }, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(if (ended != null) stringResource(R.string.mobile_start_over) else stringResource(R.string.mobile_cancel_pairing)) }
             }
         }
         }
     }
-    savePrompt?.let { completed -> AlertDialog(onDismissRequest = { savePrompt = null }, title = { Text("Save this pairing?") },
-        text = { Text("PAL couldn't ask your PC whether it confirmed this pairing. Save it only if the PC showed these same six words and you confirmed there; otherwise this phone keeps a pairing the PC doesn't have.") },
-        confirmButton = { Button({ savePrompt = null; withPermissions { finishPairing(completed) } }) { Text("Save pairing") } },
-        dismissButton = { TextButton({ savePrompt = null }) { Text("Not yet") } }) }
+    savePrompt?.let { completed -> AlertDialog(onDismissRequest = { savePrompt = null }, title = { Text(stringResource(R.string.mobile_save_this_pairing)) },
+        text = { Text(stringResource(R.string.mobile_pal_couldnt_ask_your_pc_whether_it_confirmed)) },
+        confirmButton = { Button({ savePrompt = null; withPermissions { finishPairing(completed) } }) { Text(stringResource(R.string.mobile_save_pairing)) } },
+        dismissButton = { TextButton({ savePrompt = null }) { Text(stringResource(R.string.mobile_not_yet)) } }) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppShell(repository: PALRepository, state: MobileState, activity: FragmentActivity, launch: LaunchRequest?, consumeLaunch: () -> Unit) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val scope = rememberCoroutineScope()
     var destinationName by rememberSaveable { mutableStateOf(Destination.Sessions.name) }
     val destination = Destination.entries.find { it.name == destinationName } ?: Destination.Sessions
@@ -483,11 +514,11 @@ private fun AppShell(repository: PALRepository, state: MobileState, activity: Fr
                 destinationName = Destination.Settings.name
                 settingsGroup = SettingsGroup.Owner
                 ownerInitialSection = "Tool servers"
-                val result = runCatching { repository.mutate("owner.extensions.oauthComplete", buildJsonObject { put("state", launch.state); launch.code?.let { put("code", it) }; launch.error?.let { put("error", it) } }, "Finish signing in") as JsonObject }
+                val result = runCatching { repository.mutate("owner.extensions.oauthComplete", buildJsonObject { put("state", launch.state); launch.code?.let { put("code", it) }; launch.error?.let { put("error", it) } }, strings.getString(R.string.mobile_finish_signing_in)) as JsonObject }
                 result.onSuccess { completed ->
                     oauthTargetId = completed.str("serverId") ?: oauthTargetId
-                    oauthResult = "Signed in to ${completed.str("server") ?: "the tool server"}. Its tokens stay on the desktop."
-                }.onFailure { failure -> oauthResult = "Couldn't finish sign-in · ${failure.message ?: "Start it again."}" }
+                    oauthResult = strings.getString(R.string.mobile_signed_in_to_its_tokens_stay_on_the, completed.str("server") ?: strings.getString(R.string.mobile_the_tool_server))
+                }.onFailure { failure -> oauthResult = strings.getString(R.string.mobile_couldnt_finish_sign_in, failure.message ?: strings.getString(R.string.mobile_start_it_again)) }
             }
         }
         consumeLaunch()
@@ -517,10 +548,10 @@ private fun AppShell(repository: PALRepository, state: MobileState, activity: Fr
     val selected = state.sessions.find { it.id == selectedSession }
     val pages = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val landscape = maxWidth >= 440.dp && maxWidth > maxHeight
-        val rail = selectedSession == null && (maxWidth >= 600.dp || landscape)
-        val useBars = maxHeight >= 280.dp
-        val compactRail = maxHeight < 410.dp
+        val landscape = maxWidth >= PALLayout.landscapeWidth && maxWidth > maxHeight
+        val rail = selectedSession == null && (maxWidth >= PALLayout.railWidth || landscape)
+        val useBars = maxHeight >= PALLayout.minimalChromeHeight
+        val compactRail = maxHeight < PALLayout.compactHeight
         val keyboardOpen = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
         Row(Modifier.fillMaxSize()) {
             if (rail) PALNavigation(destination, state.approvals.size, true, ::selectTab, compactRail = compactRail)
@@ -528,7 +559,7 @@ private fun AppShell(repository: PALRepository, state: MobileState, activity: Fr
                 if (useBars && selectedSession == null) {
                     CompanionHeader(connection, connectionText,
                         onConnection = { selectTab(Destination.Settings); settingsGroup = SettingsGroup.Connection }, onRetry = repository::retry)
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    HorizontalDivider(color = sectionDivider)
                 }
                 Box(Modifier.weight(1f).widthIn(max = PALLayout.readingWidth).fillMaxWidth()) {
                     if (selectedSession != null) key(selectedSession) {
@@ -556,7 +587,7 @@ private fun AppShell(repository: PALRepository, state: MobileState, activity: Fr
                     }
                 }
                 if (selectedSession == null && !rail && (useBars || !keyboardOpen)) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    HorizontalDivider(color = sectionDivider)
                     Surface(color = MaterialTheme.colorScheme.surface) {
                         PALNavigation(destination, state.approvals.size, false, ::selectTab)
                     }
@@ -570,6 +601,8 @@ private fun AppShell(repository: PALRepository, state: MobileState, activity: Fr
 /** Shared images go into a conversation the person picks; failures are shown, never dropped. */
 @Composable
 private fun ShareTargetDialog(repository: PALRepository, state: MobileState, uris: List<Uri>, dismiss: () -> Unit, opened: (String) -> Unit) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val scope = rememberCoroutineScope()
     var query by rememberSaveable { mutableStateOf("") }
     var importing by remember { mutableStateOf(false) }
@@ -584,18 +617,18 @@ private fun ShareTargetDialog(repository: PALRepository, state: MobileState, uri
             for (uri in uris) {
                 try { repository.importImage(session.id, uri); added++ }
                 catch (cancelled: CancellationException) { throw cancelled }
-                catch (failure: Exception) { failures += failure.message ?: "An image could not be added." }
+                catch (failure: Exception) { failures += failure.message ?: strings.getString(R.string.mobile_an_image_could_not_be_added) }
             }
             importing = false
             if (failures.isEmpty()) opened(session.id)
-            else { error = (if (added > 0) "Added $added of ${uris.size} images. " else "") + failures.distinct().joinToString(" "); if (added > 0) partial = session.id }
+            else { error = (if (added > 0) strings.getString(R.string.mobile_added_of_images, added, uris.size) else "") + failures.distinct().joinToString(" "); if (added > 0) partial = session.id }
         }
     }
-    AlertDialog(onDismissRequest = { if (!importing) dismiss() }, title = { Text(if (uris.size == 1) "Add the image to a conversation" else "Add ${uris.size} images to a conversation") }, text = {
-        Column(Modifier.heightIn(max = 480.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("PAL keeps a private copy on this phone. You review it before anything is uploaded.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (state.sessions.size > 6) OutlinedTextField(query, { query = it.take(200) }, placeholder = { Text("Search conversations") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            if (targets.isEmpty()) Text("No conversation can take images right now. Create one, then share again.")
+    AlertDialog(onDismissRequest = { if (!importing) dismiss() }, title = { Text(if (uris.size == 1) stringResource(R.string.mobile_add_the_image_to_a_conversation) else stringResource(R.string.mobile_add_images_to_a_conversation, uris.size)) }, text = {
+        Column(Modifier.heightIn(max = PALLayout.dialogBodyHeight), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+            Text(stringResource(R.string.mobile_pal_keeps_a_private_copy_on_this_phone), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (state.sessions.size > 6) OutlinedTextField(query, { query = it.take(200) }, placeholder = { Text(stringResource(R.string.search_conversations)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            if (targets.isEmpty()) Text(stringResource(R.string.mobile_no_conversation_can_take_images_right_now_create))
             LazyColumn(Modifier.weight(1f, fill = false)) { items(targets, key = { it.id }) { session ->
                 ListItem(headlineContent = { Text(session.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
                     supportingContent = { Text(listOfNotNull(session.provider.replaceFirstChar(Char::uppercase), session.project?.substringAfterLast('/')).joinToString(" · "), maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -604,11 +637,13 @@ private fun ShareTargetDialog(repository: PALRepository, state: MobileState, uri
             if (importing) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
-    }, confirmButton = { partial?.let { id -> Button({ opened(id) }) { Text("Open conversation") } } }, dismissButton = { TextButton(dismiss, enabled = !importing) { Text(if (partial != null) "Close" else "Cancel") } })
+    }, confirmButton = { partial?.let { id -> Button({ opened(id) }) { Text(stringResource(R.string.mobile_open_conversation)) } } }, dismissButton = { TextButton(dismiss, enabled = !importing) { Text(if (partial != null) stringResource(R.string.mobile_close) else stringResource(R.string.annotation_cancel)) } })
 }
 
 @Composable
 private fun SessionsScreen(repository: PALRepository, state: MobileState, select: (String) -> Unit, activity: FragmentActivity) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     var query by rememberSaveable { mutableStateOf("") }
     var showArchived by rememberSaveable { mutableStateOf(false) }
     var creating by rememberSaveable { mutableStateOf(false) }
@@ -624,7 +659,7 @@ private fun SessionsScreen(repository: PALRepository, state: MobileState, select
         val text = query.trim()
         if (text.length < 2 || !state.supports("sessions.list")) return@LaunchedEffect
         delay(350); searching = true
-        try { repository.searchSessions(text) } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { searchError = failure.localizedMessage ?: "Desktop search failed." } finally { searching = false }
+        try { repository.searchSessions(text) } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { searchError = failure.localizedMessage ?: strings.getString(R.string.mobile_desktop_search_failed) } finally { searching = false }
     }
     val transferSource = state.sessions.firstOrNull { it.id == transferSourceId }
     val sessions = remember(state.sessions, query, showArchived) { state.sessions.filter { it.archived == showArchived && (query.isBlank() || listOf(it.title, it.project.orEmpty(), it.provider, it.folderName.orEmpty()).any { value -> value.contains(query.trim(), true) }) }.sortedWith(compareBy<Session> { it.status != "waiting" }.thenByDescending { it.pinned }.thenByDescending { it.updated }) }
@@ -635,8 +670,8 @@ private fun SessionsScreen(repository: PALRepository, state: MobileState, select
     val canImport = state.supports("sessions.history") && state.supports("sessions.import")
     val canHandoff = state.supports("sessions.handoffPreview") && state.supports("sessions.handoffCreate")
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(contentPadding = PaddingValues(start = PALLayout.gutter, end = PALLayout.gutter, top = 18.dp, bottom = 92.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyColumn(contentPadding = PaddingValues(start = PALLayout.gutter, end = PALLayout.gutter, top = PALLayout.inset, bottom = PALLayout.fabClearance),
+            verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     PageTitle(stringResource(R.string.conversations_heading), Modifier.weight(1f))
@@ -654,27 +689,27 @@ private fun SessionsScreen(repository: PALRepository, state: MobileState, select
             item {
                 OutlinedTextField(query, { query = it.take(200) }, leadingIcon = { Icon(Icons.Default.Search, null) },
                     trailingIcon = {
-                        if (searching) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        if (searching) CircularProgressIndicator(Modifier.size(PALLayout.iconMedium), strokeWidth = PALLayout.focusStroke)
                         else if (query.isNotEmpty()) IconButton({ query = "" }) { Icon(Icons.Default.Close, stringResource(R.string.clear_search)) }
                     }, placeholder = { Text(stringResource(R.string.search_conversations), maxLines = 1, overflow = TextOverflow.Ellipsis) }, singleLine = true,
                     shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
             }
             item {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                     FilterChip(!showArchived, { showArchived = false }, { Text(stringResource(R.string.active_chats)) })
                     FilterChip(showArchived, { showArchived = true }, { Text(stringResource(R.string.archived_chats)) })
                 }
             }
             searchError?.let { item {
                 Text(it, color = MaterialTheme.colorScheme.error)
-                if (query.trim().length >= 2) TextButton({ retrySearch++ }) { Text("Retry search") }
+                if (query.trim().length >= 2) TextButton({ retrySearch++ }) { Text(stringResource(R.string.mobile_retry_search)) }
             } }
             if (unloadedMatches > 0 || query.isBlank() && state.sessionsNotLoaded > 0) item {
                 val moreSearchResults = search != null && unloadedMatches > 0
                 val detail = if (search != null && moreSearchResults)
-                    "${search.total} matches on the desktop · $unloadedMatches more${if (search.truncated) " (first 5000 matches)" else ""}"
-                else "${state.sessionsNotLoaded} more conversations on the desktop"
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    strings.getQuantityString(if (search.truncated) R.plurals.library_matches_limited else R.plurals.library_matches, search.total, search.total, unloadedMatches)
+                else strings.getQuantityString(R.plurals.library_more, state.sessionsNotLoaded, state.sessionsNotLoaded)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                     Text(detail, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     TextButton({
                         loadingMore = true
@@ -728,6 +763,8 @@ private fun SessionsScreen(repository: PALRepository, state: MobileState, select
 
 @Composable
 private fun CreateSessionSheet(repository: PALRepository, state: MobileState, activity: FragmentActivity, close: () -> Unit, created: (String) -> Unit) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val scope = rememberCoroutineScope()
     var title by rememberSaveable { mutableStateOf("") }
     // Keep an authorized provider selectable when discovery failed, so Refresh
@@ -782,21 +819,21 @@ private fun CreateSessionSheet(repository: PALRepository, state: MobileState, ac
             try {
                 val params = buildJsonObject { put("provider", provider); put("projectId", project); if (title.isNotBlank()) put("title", title); put("model", model.trim()); if (effort.isNotBlank()) put("effort", effort); put("tools", tools && tooling.available) }
                 val action = repository.prepareAction("sessions.create", params, label = title.ifBlank { null })
-                authenticate(activity, "Create ${state.traits(provider).label} conversation", action, repository, { result ->
+                authenticate(activity, strings.getString(R.string.mobile_create_conversation, state.traits(provider).label), action, repository, { result ->
                     scope.launch { try { created(repository.openCreatedSession(result)) } catch (failure: Exception) { error = failure.message; submitting = false } }
                 }, { error = it; submitting = false })
             } catch (failure: Exception) { error = failure.message; submitting = false }
         }
     }
-    AncillarySheetScaffold(title = "New conversation", busy = submitting, onDismiss = close, action = {
+    AncillarySheetScaffold(title = stringResource(R.string.mobile_new_conversation), busy = submitting, onDismiss = close, action = {
         Button(::submit, enabled = (selectedModel != null || typed && modelError == null) && selectedProject != null &&
             !loading && !submitting && state.supports("sessions.create"), modifier = Modifier.fillMaxWidth()) {
-            Text(if (submitting) "Creating…" else "Create conversation")
+            Text(if (submitting) stringResource(R.string.mobile_creating) else stringResource(R.string.mobile_create_conversation_2))
         }
     }) {
-        OutlinedTextField(title, { title = it.take(100) }, label = { Text("Title (optional)") }, enabled = !submitting, singleLine = true, modifier = Modifier.fillMaxWidth())
-        AncillarySection("Provider") {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { supportedProviders.keys.forEach { id ->
+        OutlinedTextField(title, { title = it.take(100) }, label = { Text(stringResource(R.string.mobile_title_optional)) }, enabled = !submitting, singleLine = true, modifier = Modifier.fillMaxWidth())
+        AncillarySection(stringResource(R.string.mobile_provider)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { supportedProviders.keys.forEach { id ->
                 FilterChip(provider == id, { provider = id }, { Text(state.traits(id).label) }, enabled = !submitting)
             } }
             // What the desktop says about running this provider from a phone (billing, restrictions).
@@ -806,56 +843,57 @@ private fun CreateSessionSheet(repository: PALRepository, state: MobileState, ac
             val unavailable = state.providers.filterKeys { it !in supportedProviders }
             var showUnavailable by rememberSaveable { mutableStateOf(false) }
             if (unavailable.isNotEmpty()) TextButton({ showUnavailable = !showUnavailable }) {
-                Text(if (showUnavailable) "Hide unavailable providers" else "Unavailable providers (${unavailable.size})")
+                Text(if (showUnavailable) stringResource(R.string.mobile_hide_unavailable_providers) else stringResource(R.string.mobile_unavailable_providers, unavailable.size))
             }
             if (showUnavailable) unavailable.forEach { (id, value) ->
                 Text("${state.traits(id).label} · ${value.jsonObject["remoteUnavailableReason"]?.jsonPrimitive?.contentOrNull ?: "Enable access on the desktop"}",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        AncillarySection("Desktop project") {
-            if (state.projects.isEmpty()) Text("Grant this phone a project in desktop Remote settings.", color = MaterialTheme.colorScheme.error)
+        AncillarySection(stringResource(R.string.mobile_desktop_project)) {
+            if (state.projects.isEmpty()) Text(stringResource(R.string.mobile_grant_this_phone_a_project_in_desktop_remote), color = MaterialTheme.colorScheme.error)
             state.projects.forEach { option -> FilterChip(project == option.id, { project = option.id }, { Column {
-                Text(option.name); Text(option.path ?: "Path unavailable", style = MaterialTheme.typography.labelSmall)
+                Text(option.name); Text(option.path ?: stringResource(R.string.desktop_path_unavailable), style = MaterialTheme.typography.labelSmall)
             } }, enabled = !submitting) }
         }
-        AncillarySection("Model") {
-            if (provider == "ollama") Text("Ollama · ${state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: "host unavailable"}",
+        AncillarySection(stringResource(R.string.mobile_model)) {
+            if (provider == "ollama") Text(stringResource(R.string.mobile_ollama, state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: strings.getString(R.string.mobile_host_unavailable)),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                TextButton({ refresh++ }, enabled = provider.isNotBlank() && !loading && !submitting && state.supports("providers.models")) { Text("Refresh models") }
+                TextButton({ refresh++ }, enabled = provider.isNotBlank() && !loading && !submitting && state.supports("providers.models")) { Text(stringResource(R.string.mobile_refresh_models)) }
             }
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             // An endpoint without a model list is not a failure; neither is a failed refresh where an ID can be typed.
-            else if (unlisted) Text("This endpoint doesn't list its models. Enter the model ID below.", style = MaterialTheme.typography.bodySmall)
-            else if (error != null && typed) Text("The model list could not be loaded. You can still enter a model ID below.", style = MaterialTheme.typography.bodySmall)
-            else if (models.isEmpty() && provider.isNotBlank()) Text(if (typed) "No models listed. Enter the model ID below." else "No models loaded. Check the provider on your PC, then refresh.", style = MaterialTheme.typography.bodySmall)
-            models.forEach { option -> Row(Modifier.fillMaxWidth().selectable(selected = model.trim() == option.id, enabled = !submitting, role = Role.RadioButton, onClick = { chooseModel(option) }).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+            else if (unlisted) Text(stringResource(R.string.mobile_this_endpoint_doesnt_list_its_models_enter_the), style = MaterialTheme.typography.bodySmall)
+            else if (error != null && typed) Text(stringResource(R.string.mobile_the_model_list_could_not_be_loaded_you), style = MaterialTheme.typography.bodySmall)
+            else if (models.isEmpty() && provider.isNotBlank()) Text(if (typed) stringResource(R.string.mobile_no_models_listed_enter_the_model_id_below) else stringResource(R.string.mobile_no_models_loaded_check_the_provider_on_your), style = MaterialTheme.typography.bodySmall)
+            models.forEach { option -> Row(Modifier.fillMaxWidth().selectable(selected = model.trim() == option.id, enabled = !submitting, role = Role.RadioButton, onClick = { chooseModel(option) }).heightIn(min = PALLayout.target), verticalAlignment = Alignment.CenterVertically) {
                 RadioButton(model.trim() == option.id, null, enabled = !submitting)
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(PALLayout.groupGap))
                 Column { Text(option.displayName); if (option.description.isNotBlank()) Text(option.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             } }
             if (typed && provider.isNotBlank()) OutlinedTextField(model, { value -> model = value.take(ModelIds.MAX_LENGTH + 64); effort = ""; if (!ToolPolicy.availability(providerTraits, models.firstOrNull { it.id == value.trim() }).available) tools = false },
-                label = { Text("Model ID") }, singleLine = true, enabled = !submitting, isError = modelError != null && model.isNotEmpty(),
-                supportingText = { Text(modelError?.takeIf { model.isNotEmpty() } ?: "Choose one above, or type the ID as the provider names it.") }, modifier = Modifier.fillMaxWidth())
+                label = { Text(stringResource(R.string.mobile_model_id)) }, singleLine = true, enabled = !submitting, isError = modelError != null && model.isNotEmpty(),
+                supportingText = { Text(modelError?.takeIf { model.isNotEmpty() } ?: stringResource(R.string.mobile_choose_one_above_or_type_the_id_as)) }, modifier = Modifier.fillMaxWidth())
             selectedModel?.efforts?.takeIf { it.isNotEmpty() }?.let { efforts ->
-                Text("Effort", fontWeight = FontWeight.Medium)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { efforts.forEach { option -> FilterChip(effort == option.id, { effort = option.id }, { Text(option.displayName) }, enabled = !submitting) } }
+                Text(stringResource(R.string.mobile_effort), fontWeight = FontWeight.Medium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { efforts.forEach { option -> FilterChip(effort == option.id, { effort = option.id }, { Text(option.displayName) }, enabled = !submitting) } }
             }
             // PAL's desktop tools, for providers whose conversation PAL runs: per model for Ollama, per route for APIs.
-            if (tooling.applies) ListItem(headlineContent = { Text("Desktop tools") }, supportingContent = {
-                Text(if (tooling.available) "Use ordinary desktop permission checks" else "Conversation only · ${tooling.reason}")
+            if (tooling.applies) ListItem(headlineContent = { Text(stringResource(R.string.mobile_desktop_tools)) }, supportingContent = {
+                Text(if (tooling.available) stringResource(R.string.mobile_use_ordinary_desktop_permission_checks) else stringResource(R.string.mobile_conversation_only, tooling.reason.orEmpty()))
             }, trailingContent = { Switch(tools, { tools = it }, enabled = !submitting && tooling.available) })
         }
-        error?.let { SecureStatusPanel("Conversation setup", it, tone = SecureTone.Danger) }
+        error?.let { SecureStatusPanel(stringResource(R.string.mobile_conversation_setup), it, tone = SecureTone.Danger) }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatScreen(repository: PALRepository, state: MobileState, session: Session?, activity: FragmentActivity, goBack: () -> Unit, openInbox: () -> Unit, selectSession: (String) -> Unit) {
-    if (session == null) return EmptyState(Icons.Default.Warning, "Session unavailable", "It may no longer be in this device's scope.")
+    if (session == null) return EmptyState(Icons.Default.Warning, stringResource(R.string.conversation_session_unavailable), stringResource(R.string.conversation_session_unavailable_body))
     val context = LocalContext.current
+    val strings = androidx.compose.ui.platform.LocalResources.current
     val scope = rememberCoroutineScope(); val storedDraft = state.draft(session); var draft by rememberSaveable(session.id) { mutableStateOf(storedDraft.text) }; var activityOpen by rememberSaveable(session.id) { mutableStateOf(false) }; var error by rememberSaveable(session.id) { mutableStateOf<String?>(null) }
     var activityLoading by remember(session.id) { mutableStateOf(false) }; var activityError by remember(session.id) { mutableStateOf<String?>(null) }; var activityOlderLoading by remember(session.id) { mutableStateOf(false) }; var activityRefresh by remember(session.id) { mutableIntStateOf(0) }
     var reviewOpen by rememberSaveable(session.id) { mutableStateOf(false) }; var sending by remember(session.id) { mutableStateOf(false) }; var loadingOlder by remember(session.id) { mutableStateOf(false) }
@@ -904,14 +942,14 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
             // A capture left behind by an interrupted import is removed before the next one.
             val directory = File(context.cacheDir, "camera").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
             File.createTempFile("capture-", ".jpg", directory)
-        } } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { error = "The camera couldn't be prepared: ${failure.message}"; return@launch }
+        } } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { error = strings.getString(R.string.conversation_camera_prepare_failed, failure.message); return@launch }
         cameraFile = file.path
         try { camera.launch(FileProvider.getUriForFile(context, "${context.packageName}.camera", file)) }
-        catch (_: ActivityNotFoundException) { cameraFile = null; file.delete(); error = "No camera app is available on this phone." }
-        catch (_: SecurityException) { cameraFile = null; file.delete(); error = "Camera access is off for PAL. Allow it in Android settings, or pick a photo instead." }
+        catch (_: ActivityNotFoundException) { cameraFile = null; file.delete(); error = strings.getString(R.string.conversation_camera_unavailable) }
+        catch (_: SecurityException) { cameraFile = null; file.delete(); error = strings.getString(R.string.conversation_camera_permission_off) }
     } }
     val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) launchCamera() else error = "Camera access wasn't allowed. Photos and files still work."
+        if (granted) launchCamera() else error = strings.getString(R.string.conversation_camera_permission_denied)
     }
     fun takePhoto() {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) launchCamera()
@@ -920,7 +958,7 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
     val uploading = remember(session.id) { mutableStateMapOf<String, Int>() }
     fun uploadFailed(id: String, reason: String?) {
         uploading.remove(id)
-        error = reason ?: "The image could not be uploaded. Try again when your desktop is connected."
+        error = reason ?: strings.getString(R.string.conversation_image_upload_failed)
     }
     fun finishUpload(local: LocalAttachment, initial: JsonObject?) {
         uploading[local.id] = R.string.image_transferring
@@ -930,7 +968,7 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
                 val attachmentId = uploaded.getValue("attachmentId").jsonPrimitive.content
                 uploading[local.id] = R.string.image_finishing
                 val commit = repository.prepareAction("attachments.commit", buildJsonObject { put("attachmentId", attachmentId) }, label = local.displayName)
-                authenticate(activity, "Finish image upload", commit, repository, { ready ->
+                authenticate(activity, strings.getString(R.string.conversation_finish_image_upload), commit, repository, { ready ->
                     repository.attachmentCommitted(local.id, ready.jsonObject)
                     uploading.remove(local.id)
                 }, { uploadFailed(local.id, it) })
@@ -947,7 +985,7 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
                 val begin = repository.prepareAction("attachments.begin", buildJsonObject {
                     put("sessionId", session.id); put("size", local.size); put("mime", local.mime); put("sha256", local.sha256)
                 }, label = local.displayName)
-                authenticate(activity, "Upload ${local.displayName}", begin, repository, { value -> finishUpload(local, value.jsonObject) },
+                authenticate(activity, strings.getString(R.string.conversation_upload_image, local.displayName), begin, repository, { value -> finishUpload(local, value.jsonObject) },
                     { uploadFailed(local.id, it) })
             }.onFailure { uploadFailed(local.id, it.message) }
         }
@@ -988,7 +1026,7 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
         historyError = null
         try { repository.loadMessages(session.id) }
         catch (cancelled: CancellationException) { throw cancelled }
-        catch (failure: Exception) { historyError = failure.message ?: "Conversation history could not be loaded." }
+        catch (failure: Exception) { historyError = failure.message ?: strings.getString(R.string.conversation_history_load_failed) }
         finally { loadingHistory = false }
     }
     // A reply that finishes while this conversation is on screen has been read, as on the desktop.
@@ -1014,25 +1052,26 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
     val messages = remember(state.messages, session.id) { state.messages.filter { it.sessionId == session.id }.sortedBy { it.time } }
     val activityItems = remember(messages) { messages.filterNot(Message::isConversationMessage) }
     val unknownSend = state.pendingCommands.firstOrNull { it.sessionId == session.id && it.method == "sessions.send" && it.status == "unknown" }
+    val stopPending = state.pendingCommands.any { it.sessionId == session.id && it.method == "sessions.stop" }
     var reviewingOutcome by remember(session.id) { mutableStateOf(false) }
     val sendHint = when {
-        session.mode == "linked" -> "Linked terminal session · continue on the PC"
+        session.mode == "linked" -> stringResource(R.string.conversation_linked_hint)
         state.connection !is ConnectionState.Online -> null
-        !session.canSend -> "Sending is unavailable for this session. Check provider access on your PC."
-        !session.draftIncluded -> "Loading desktop draft…"
-        session.draftAttachmentCount == null -> "Restart the updated PAL broker on your PC to sync desktop attachments. Your draft stays on this phone."
-        !draftEditable -> "${session.draftAttachmentCount} attachment(s) are in this desktop draft. Update PAL on your PC to review them here, or send it from the PC."
-        desktopAttachments.isNotEmpty() && !state.supports("attachments.commit") -> "Sending this draft's desktop attachments needs the attachment permission. Remove them here, or send from the PC."
-        storedDraft.conflict -> "Resolve the draft conflict before sending."
-        sending -> "Sending your message…"
-        !attachmentsReady -> "Upload or remove the images before sending."
-        state.pendingCommands.any { it.sessionId == session.id && it.method == "sessions.send" } -> "Checking the previous send with your desktop…"
-        busy && session.canQueue && desktopAttachments.isNotEmpty() -> "Queued messages carry text only. Send this draft with its desktop attachments after this turn, or remove them."
-        session.queuedCount > 0 -> "${session.queuedCount} message(s) queued · will send after this turn"
-        busy && session.canQueue -> "You can send another message; it will run after this turn."
+        !session.canSend -> stringResource(R.string.conversation_sending_unavailable)
+        !session.draftIncluded -> stringResource(R.string.conversation_loading_draft)
+        session.draftAttachmentCount == null -> stringResource(R.string.conversation_restart_for_attachments)
+        !draftEditable -> pluralStringResource(R.plurals.conversation_desktop_draft_locked, session.draftAttachmentCount ?: 0, session.draftAttachmentCount ?: 0)
+        desktopAttachments.isNotEmpty() && !state.supports("attachments.commit") -> stringResource(R.string.conversation_attachment_permission_needed)
+        storedDraft.conflict -> stringResource(R.string.conversation_resolve_draft_conflict)
+        sending -> stringResource(R.string.conversation_sending)
+        !attachmentsReady -> stringResource(R.string.conversation_finish_images)
+        state.pendingCommands.any { it.sessionId == session.id && it.method == "sessions.send" } -> stringResource(R.string.conversation_checking_send)
+        busy && session.canQueue && desktopAttachments.isNotEmpty() -> stringResource(R.string.conversation_queue_no_attachments)
+        session.queuedCount > 0 -> pluralStringResource(R.plurals.conversation_messages_queued, session.queuedCount, session.queuedCount)
+        busy && session.canQueue -> stringResource(R.string.conversation_queue_hint)
         // Busy and not queueable from here: say why, and what can be done instead.
-        busy && session.canSend && session.status != "stopping" -> if (session.provider == "ollama") "This turn was started on the desktop, where its follow-ups queue. Wait for it to finish, or Stop it, then send from here."
-            else "${session.provider.replaceFirstChar(Char::uppercase)} takes one message at a time. Wait for this turn to finish, or Stop it, then send."
+        busy && session.canSend && session.status != "stopping" -> if (session.provider == "ollama") stringResource(R.string.conversation_desktop_turn_hint)
+            else stringResource(R.string.conversation_provider_busy_hint, session.provider.replaceFirstChar(Char::uppercase))
         else -> null
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -1041,15 +1080,15 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
             val portraitShown by UiPreferences.portrait(context).collectAsState()
             val portraitState = PortraitState.resolve(state.connection is ConnectionState.Online, session.status, session.activity, waitingApprovals.size,
                 state.permissions["paused"]?.jsonPrimitive?.booleanOrNull == true)
-            if (room >= 240.dp) Surface(color = MaterialTheme.colorScheme.surface) {
-                Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(end = 4.dp),
+            if (room >= ConversationTokens.headerMinHeight) Surface(color = MaterialTheme.colorScheme.surface) {
+                Row(Modifier.fillMaxWidth().heightIn(min = PALLayout.headerHeight).padding(end = PALLayout.tight),
                     verticalAlignment = Alignment.CenterVertically) {
                     IconButton(goBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.go_back)) }
-                    if (portraitShown && room >= 300.dp) portraitSheet?.let {
-                        StatusPortrait(it, portraitState, size = 36.dp)
-                        Spacer(Modifier.width(10.dp))
+                    if (portraitShown && room >= ConversationTokens.portraitMinHeight) portraitSheet?.let {
+                        StatusPortrait(it, portraitState, size = PALLayout.portraitCompact)
+                        Spacer(Modifier.width(PALLayout.small))
                     }
-                    Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
+                    Column(Modifier.weight(1f).padding(vertical = PALLayout.tight)) {
                         Text(session.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.semantics { heading() })
                         val online = state.connection is ConnectionState.Online
@@ -1066,12 +1105,12 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
                                 { options = false; showConversationSettings = true }, leadingIcon = { Icon(Icons.Default.Settings, null) })
                             if (state.supports("activity.list") || activityItems.isNotEmpty() || session.agents.isNotEmpty())
                                 DropdownMenuItem({ Text(stringResource(R.string.activity_label)) }, { options = false; activityOpen = true },
-                                    leadingIcon = { Icon(Icons.Default.List, null) })
+                                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.List, null) })
                             if (state.supports("messages.bookmarks")) DropdownMenuItem({ Text(stringResource(R.string.pinned_replies)) },
                                 { options = false; pinnedOpen = true }, leadingIcon = { Icon(Icons.Default.Star, null) })
                             DropdownMenuItem({ Text(stringResource(R.string.nav_inbox)) }, { options = false; openInbox() },
                                 leadingIcon = { Icon(Icons.Default.Notifications, null) })
-                            if (canSearchWeb) DropdownMenuItem({ Text("Web search") }, { options = false; webSearch = !webSearch },
+                            if (canSearchWeb) DropdownMenuItem({ Text(stringResource(R.string.conversation_web_search)) }, { options = false; webSearch = !webSearch },
                                 enabled = !sending && (!busy || session.canQueue), trailingIcon = { Checkbox(webSearch, null) })
                         }
                     }
@@ -1080,18 +1119,17 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
             key(session.id) {
                 if (messages.isEmpty() && loadingHistory) Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
-                } else if (messages.isEmpty() && historyError != null) Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
-                    SecureStatusPanel("History unavailable", historyError.orEmpty(), tone = SecureTone.Attention)
-                    TextButton({ loadAttempt++ }, enabled = state.connection is ConnectionState.Online) { Text("Retry loading messages") }
+                } else if (messages.isEmpty() && historyError != null) Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(PALLayout.gutter)) {
+                    SecureStatusPanel(stringResource(R.string.conversation_history_unavailable), historyError.orEmpty(), tone = SecureTone.Attention)
+                    TextButton({ loadAttempt++ }, enabled = state.connection is ConnectionState.Online) { Text(stringResource(R.string.conversation_retry_history)) }
                 } else ConversationTimeline(messages, busy, session.status, Modifier.weight(1f), state.messagesBefore[session.id] != null, loadingOlder, {
                     loadingOlder = true
                     scope.launch { try { repository.loadOlderMessages(session.id) } catch (failure: Exception) { error = failure.message } finally { loadingOlder = false } }
                 }, statusText = when {
-                    waitingApprovals.isNotEmpty() -> if (waitingApprovals.size == 1) "Input needed: ${waitingApprovals.first().title}" else "${waitingApprovals.size} requests need input · Review below"
+                    waitingApprovals.isNotEmpty() -> if (waitingApprovals.size == 1) stringResource(R.string.conversation_input_needed, waitingApprovals.first().title) else pluralStringResource(R.plurals.conversation_requests_needed, waitingApprovals.size, waitingApprovals.size)
                     // Waiting on something this phone cannot answer or see: say where it is.
-                    session.status == "waiting" && !state.supports("approvals.answer") -> "Waiting for a decision on the desktop · this phone cannot answer requests"
-                    activeAgents.size == 1 -> "1 subagent is working…"
-                    activeAgents.size > 1 -> "${activeAgents.size} subagents are working…"
+                    session.status == "waiting" && !state.supports("approvals.answer") -> stringResource(R.string.conversation_waiting_desktop_only)
+                    activeAgents.isNotEmpty() -> pluralStringResource(R.plurals.conversation_agents_working, activeAgents.size, activeAgents.size)
                     // What the turn is doing, in the desktop's words; unknown activities keep the general line.
                     session.status == "starting" || session.status == "working" -> activityLabel(session.activity)
                     else -> null
@@ -1100,91 +1138,73 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
             }
             // Controls under the conversation scroll on their own and never take more than about
             // half the space, so large text and the keyboard leave the message field usable.
-            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 1.dp) {
-            Column(Modifier.heightIn(max = room * 0.42f).verticalScroll(rememberScrollState()).padding(top = 4.dp)) {
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = PALLayout.hairline) {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Column(Modifier.widthIn(max = PALLayout.readingWidth).fillMaxWidth().heightIn(max = room * 0.38f)
+                .verticalScroll(rememberScrollState()).padding(top = PALLayout.tight)) {
                 if (messages.isNotEmpty() && historyError != null) TextButton({ loadAttempt++ }, enabled = state.connection is ConnectionState.Online) {
-                    Text("Couldn’t refresh messages · Retry")
+                    Text(stringResource(R.string.conversation_refresh_failed))
                 }
-                session.error?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 16.dp)) }
+                session.error?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = PALLayout.gutter)) }
                 if (storedDraft.conflict) Surface(
                     color = MaterialTheme.colorScheme.errorContainer,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = PALLayout.groupGap),
+                    shape = MaterialTheme.shapes.medium,
                 ) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text("Draft changed on desktop", fontWeight = FontWeight.SemiBold)
-                        Text("Your phone edit is preserved. Choose which version to keep.")
+                    Column(Modifier.padding(PALLayout.groupGap)) {
+                        Text(stringResource(R.string.conversation_draft_changed), fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(R.string.conversation_draft_preserved))
                         FlowRow {
-                            TextButton({ scope.launch { repository.reloadRemoteDraft(session.id, storedDraft.remoteRevision) } }) { Text("Reload desktop") }
-                            TextButton({ scope.launch { repository.keepLocalDraft(session.id, storedDraft.remoteRevision) } }) { Text("Keep phone edit") }
+                            TextButton({ scope.launch { repository.reloadRemoteDraft(session.id, storedDraft.remoteRevision) } }) { Text(stringResource(R.string.conversation_reload_desktop)) }
+                            TextButton({ scope.launch { repository.keepLocalDraft(session.id, storedDraft.remoteRevision) } }) { Text(stringResource(R.string.conversation_keep_phone_edit)) }
                         }
                     }
                 }
                 if (waitingApprovals.isNotEmpty()) {
                     TextButton({ activityOpen = false; reviewOpen = true }, modifier = Modifier.fillMaxWidth()) { Text("${waitingApprovals.first().title}${if (waitingApprovals.size > 1) " (+${waitingApprovals.size - 1})" else ""} · Review", maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 }
-                session.workbenchNote?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
-                (error ?: state.lastError)?.let { Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                session.workbenchNote?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(horizontal = PALLayout.gutter, vertical = PALLayout.tight)) }
+                (error ?: state.lastError)?.let { Row(Modifier.fillMaxWidth().padding(horizontal = PALLayout.groupGap), verticalAlignment = Alignment.CenterVertically) {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    IconButton({ error = null; scope.launch { repository.dismissError() } }) { Icon(Icons.Default.Close, "Dismiss error") }
+                    IconButton({ error = null; scope.launch { repository.dismissError() } }) { Icon(Icons.Default.Close, stringResource(R.string.conversation_dismiss_error)) }
                 } }
-                if (busy) FlowRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (busy) FlowRow(Modifier.fillMaxWidth().padding(horizontal = PALLayout.groupGap), horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                     TextButton({ activityOpen = true }, enabled = state.supports("activity.list") || activityItems.isNotEmpty() || session.agents.isNotEmpty()) {
-                        Icon(Icons.Default.List, null)
+                        Icon(Icons.AutoMirrored.Filled.List, null)
                         Text(stringResource(R.string.activity_label))
                     }
                     if (state.supports("sessions.stop")) OutlinedButton(onClick = {
                         scope.launch { runCatching { repository.mutate("sessions.stop", buildJsonObject { put("sessionId", session.id) }, session.title) }.onFailure { error = it.message } }
-                    }, enabled = session.status != "stopping") { Text(if (session.status == "stopping") "Stopping…" else "Stop") }
+                    }, enabled = !stopPending && session.status != "stopping") {
+                        Text(stringResource(if (stopPending || session.status == "stopping") R.string.transcript_stopping else R.string.transcript_stop))
+                    }
                 }
-                if (state.connection is ConnectionState.Offline) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(stringResource(R.string.draft_offline), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                    TextButton(repository::retry) { Text("Reconnect") }
-                }
-                if (webSearch) Text("This message becomes a public web search query, up to 500 characters.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(horizontal = 16.dp))
-                if (attachments.isNotEmpty()) LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(attachments, key = { it.id }) { attachment ->
-                    val discarded = attachment.remoteAttachmentId != null && (attachment.remoteExpiresAt ?: Long.MAX_VALUE) <= now
-                    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape = RoundedCornerShape(12.dp)) { Column(Modifier.widthIn(min = 176.dp, max = 280.dp).padding(12.dp)) {
-                        Text(attachment.displayName, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("${attachment.width}×${attachment.height} · ${attachment.size / 1024} KiB${if (attachment.transformed) " · private copy optimized" else ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (!discarded && attachment.committedOffset > 0 && !attachment.readyAt(now) && attachment.size > 0) {
-                            val fraction = (attachment.committedOffset.toFloat() / attachment.size).coerceIn(0f, 1f)
-                            LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
-                            Text("${(fraction * 100).toInt()}% received by desktop", style = MaterialTheme.typography.labelSmall)
-                        }
-                        if (discarded) Text("The desktop discarded the upload. Upload it again.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            val stage = uploading[attachment.id]
-                            when {
-                                stage != null -> Text(stringResource(stage), Modifier.padding(8.dp), style = MaterialTheme.typography.labelMedium)
-                                attachment.reviewedAt == null -> TextButton({ attachmentReviewId = attachment.id }) { Text("Review") }
-                                attachment.readyAt(now) -> Text("Ready", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(12.dp))
-                                else -> TextButton({ upload(attachment) }, enabled = state.supports("attachments.begin") && state.supports("attachments.commit")) { Text(if (attachment.committedOffset > 0 && !discarded && attachment.remoteStatus != "ready") "Resume" else "Upload") }
-                            }
-                            IconButton({ remove(attachment) }, enabled = stage == null) { Icon(Icons.Default.Delete, "Remove image") }
-                        }
-                    } }
+                if (state.connection !is ConnectionState.Online) ConnectionRecovery(state, repository::retry)
+                if (webSearch) Text(stringResource(R.string.conversation_web_search_disclosure), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(horizontal = PALLayout.gutter))
+                if (attachments.isNotEmpty()) LazyRow(contentPadding = PaddingValues(horizontal = PALLayout.groupGap), horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { items(attachments, key = { it.id }) { attachment ->
+                    LocalAttachmentCard(
+                        attachment = attachment, now = now, stage = uploading[attachment.id],
+                        canUpload = state.supports("attachments.begin") && state.supports("attachments.commit"),
+                        onReview = { attachmentReviewId = attachment.id }, onUpload = { upload(attachment) }, onRemove = { remove(attachment) },
+                    )
                 } }
                 if (desktopAttachments.isNotEmpty() && draftEditable) {
-                    Text("From the desktop draft · sent with this message", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                    LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(desktopAttachments, key = { it.id }) { attachment ->
-                        Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape = RoundedCornerShape(12.dp)) { Column(Modifier.widthIn(min = 176.dp, max = 280.dp).padding(12.dp)) {
-                            Text(attachment.name, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${if (attachment.kind == "image") "Image" else "Text file"} · ${attachment.size / 1024} KiB", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                TextButton({ desktopReviewId = attachment.id }) { Text("Review") }
-                                IconButton({ desktopRemoveId = attachment.id }, enabled = !sending && !storedDraft.conflict && state.supports("drafts.put")) { Icon(Icons.Default.Delete, "Remove ${attachment.name} from the draft") }
-                            }
-                        } }
+                    Text(stringResource(R.string.conversation_desktop_draft_label), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = PALLayout.gutter, vertical = PALLayout.tight))
+                    LazyRow(contentPadding = PaddingValues(horizontal = PALLayout.groupGap), horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { items(desktopAttachments, key = { it.id }) { attachment ->
+                        DesktopAttachmentCard(
+                            attachment = attachment, canRemove = !sending && !storedDraft.conflict && state.supports("drafts.put"),
+                            onReview = { desktopReviewId = attachment.id }, onRemove = { desktopRemoveId = attachment.id },
+                        )
                     } }
                 }
-                sendHint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp)) }
+                sendHint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = PALLayout.gutter).semantics { liveRegion = LiveRegionMode.Polite }) }
                 // F11: a linked conversation continues in its terminal on the desktop; this brings that window forward there.
                 if (session.mode == "linked" && state.supports("sessions.focusTerminal")) OutlinedButton({
-                    signedReview(activity, repository, "sessions.focusTerminal", buildJsonObject { put("sessionId", session.id) }, "Open the terminal on the desktop", { error = null }, { error = it }, label = session.title)
-                }, modifier = Modifier.padding(horizontal = 12.dp)) { Text("Open on desktop") }
-                if (unknownSend != null) TextButton({ reviewingOutcome = true }, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Review uncertain send") }
-            }
+                    signedReview(activity, repository, "sessions.focusTerminal", buildJsonObject { put("sessionId", session.id) }, strings.getString(R.string.conversation_focus_terminal_review), { error = null }, { error = it }, label = session.title)
+                }, modifier = Modifier.padding(horizontal = PALLayout.groupGap)) { Text(stringResource(R.string.conversation_open_desktop)) }
+                if (unknownSend != null) TextButton({ reviewingOutcome = true }, modifier = Modifier.padding(horizontal = PALLayout.small)) { Text(stringResource(R.string.conversation_review_uncertain_send)) }
+            } }
             }
             if (state.owner && session.mode == "managed") VoiceBar(repository, session.id, state.messages.filter { it.sessionId == session.id }, busy) { spoken ->
                 val next = (if (draft.isBlank()) "" else draft.trimEnd() + " ") + spoken
@@ -1198,10 +1218,10 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
                 placeholder = stringResource(if (busy && session.canQueue) R.string.queue_message else R.string.compose_message, state.assistantName),
                 canSend = draft.isNotBlank() && canCompose && !storedDraft.conflict,
                 onSend = ::send,
-                modifier = Modifier.heightIn(max = (room * 0.34f).coerceAtLeast(80.dp)),
+                modifier = Modifier.heightIn(max = (room * 0.32f).coerceAtLeast(PALLayout.shortField)),
                 leadingContent = if (canAttach) { {
                     Box {
-                        IconButton({ attachMenu = true }, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.Add, stringResource(R.string.attach_image)) }
+                        IconButton({ attachMenu = true }, modifier = Modifier.size(PALLayout.target)) { Icon(Icons.Default.Add, stringResource(R.string.attach_image)) }
                         DropdownMenu(attachMenu, { attachMenu = false }) {
                             DropdownMenuItem({ Text(stringResource(R.string.photo_library)) }, { attachMenu = false; picker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) })
                             DropdownMenuItem({ Text(stringResource(R.string.screenshot_file)) }, { attachMenu = false; files.launch("image/*") })
@@ -1214,36 +1234,36 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
     }
     if (showConversationSettings) ConversationSettingsSheet(repository, state, session, activity) { showConversationSettings = false }
     if (pinnedOpen) PinnedReplies(repository, state, session.id) { pinnedOpen = false }
-    if (takeoverOpen) AlertDialog(onDismissRequest = { takeoverOpen = false }, title = { Text("Continue on this phone?") },
-        text = { Text((session.workbenchNote ?: "This conversation uses desktop Workbench tools that pause under phone control.") + "\n\nSending from the phone continues it without them. To keep them, continue on the desktop instead.") },
-        confirmButton = { Button({ takeoverOpen = false; acknowledged = session.workbenchFamilies; send() }) { Text("Continue without them") } },
-        dismissButton = { TextButton({ takeoverOpen = false }) { Text("Keep it on the desktop") } })
+    if (takeoverOpen) AlertDialog(onDismissRequest = { takeoverOpen = false }, title = { Text(stringResource(R.string.conversation_continue_phone)) },
+        text = { Text(stringResource(R.string.conversation_workbench_takeover_body, session.workbenchNote ?: stringResource(R.string.conversation_workbench_takeover_default))) },
+        confirmButton = { Button({ takeoverOpen = false; acknowledged = session.workbenchFamilies; send() }) { Text(stringResource(R.string.conversation_continue_without_tools)) } },
+        dismissButton = { TextButton({ takeoverOpen = false }) { Text(stringResource(R.string.conversation_keep_desktop)) } })
     if (activityOpen) ActivityPanel(activityItems, activityLoading, activityError, { activityRefresh++ }, { activityOpen = false },
         agents = session.agents, canOpenAgent = { agent -> state.sessions.any { it.id == agent.id } },
         onOpenAgent = { agent -> activityOpen = false; selectSession(agent.id) },
         hasOlder = state.activityBefore[session.id] != null, loadingOlder = activityOlderLoading,
         onLoadOlder = { activityOlderLoading = true; scope.launch { try { repository.loadOlderActivity(session.id) } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { activityError = failure.message } finally { activityOlderLoading = false } } }) { item -> ActivityRow(repository, state, item) }
-    if (reviewingOutcome && unknownSend != null) AlertDialog(onDismissRequest = { reviewingOutcome = false }, title = { Text("Check the previous send") },
-        text = { Text("The provider may have received your previous message. Review this conversation and the provider on your PC before trying again. Your draft is kept; nothing will be sent automatically.") },
-        confirmButton = { TextButton({ scope.launch { repository.acknowledgeUnknownCommand(unknownSend.commandId); reviewingOutcome = false; error = null } }) { Text("I've reviewed it on the PC") } },
-        dismissButton = { TextButton({ reviewingOutcome = false }) { Text("Keep waiting") } })
+    if (reviewingOutcome && unknownSend != null) AlertDialog(onDismissRequest = { reviewingOutcome = false }, title = { Text(stringResource(R.string.conversation_check_previous_send)) },
+        text = { Text(stringResource(R.string.conversation_uncertain_send_body)) },
+        confirmButton = { TextButton({ scope.launch { repository.acknowledgeUnknownCommand(unknownSend.commandId); reviewingOutcome = false; error = null } }) { Text(stringResource(R.string.conversation_reviewed_pc)) } },
+        dismissButton = { TextButton({ reviewingOutcome = false }) { Text(stringResource(R.string.conversation_keep_waiting)) } })
     if (reviewOpen) ModalBottomSheet({ reviewOpen = false }) {
-        Text("Requests for this conversation", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(20.dp))
-        LazyColumn(Modifier.heightIn(max = 560.dp), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(stringResource(R.string.conversation_requests_title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(PALLayout.inset))
+        LazyColumn(Modifier.heightIn(max = PALLayout.sheetBodyHeight), contentPadding = PaddingValues(PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(PALLayout.groupGap)) {
             items(waitingApprovals, key = { it.id }) { ApprovalCard(repository, state, activity, it) }
-            if (waitingApprovals.isEmpty()) item { Text("All requests have been answered.") }
+            if (waitingApprovals.isEmpty()) item { Text(stringResource(R.string.conversation_requests_answered)) }
         }
     }
     desktopAttachments.firstOrNull { it.id == desktopReviewId }?.let { attachment ->
         DesktopAttachmentDialog(repository, state, session.id, attachment, onRemove = { desktopReviewId = null; desktopRemoveId = attachment.id }, onDismiss = { desktopReviewId = null })
     }
     desktopAttachments.firstOrNull { it.id == desktopRemoveId }?.let { attachment ->
-        AlertDialog(onDismissRequest = { desktopRemoveId = null }, title = { Text("Remove ${attachment.name}?") },
-            text = { Text("It leaves this conversation's draft on the desktop too, and is not sent. The original file on the PC is not changed.") },
+        AlertDialog(onDismissRequest = { desktopRemoveId = null }, title = { Text(stringResource(R.string.conversation_remove_attachment_question, attachment.name)) },
+            text = { Text(stringResource(R.string.conversation_remove_attachment_body)) },
             confirmButton = { TextButton({ desktopRemoveId = null; scope.launch { runCatching { repository.removeDesktopAttachment(session.id, attachment.id) }.onFailure { failure ->
                 error = failure.message; if ((failure as? RemoteRequestException)?.code == "REVISION_CONFLICT") repository.selectSession(session.id) } } },
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Remove") } },
-            dismissButton = { TextButton({ desktopRemoveId = null }) { Text("Keep") } })
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.conversation_remove)) } },
+            dismissButton = { TextButton({ desktopRemoveId = null }) { Text(stringResource(R.string.conversation_keep)) } })
     }
     val reviewingAttachment = attachments.firstOrNull { it.id == attachmentReviewId }
     if (reviewingAttachment != null) AttachmentReviewDialog(repository, reviewingAttachment,
@@ -1263,31 +1283,33 @@ internal fun decodeForDisplay(bytes: ByteArray, maxSide: Int): android.graphics.
 
 @Composable
 private fun AttachmentReviewDialog(repository: PALRepository, attachment: LocalAttachment, onKeep: () -> Unit, onRemove: () -> Unit, onDismiss: () -> Unit) {
+    val decodeFailure = stringResource(R.string.conversation_private_image_decode_failed)
     var bitmap by remember(attachment.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
     var error by remember(attachment.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(attachment.id) {
         try {
             val bytes = repository.attachmentPreview(attachment.id)
-            bitmap = withContext(Dispatchers.Default) { decodeForDisplay(bytes, 2048) } ?: error("The private image copy could not be decoded")
+            bitmap = withContext(Dispatchers.Default) { decodeForDisplay(bytes, 2048) } ?: error(decodeFailure)
         } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { error = failure.message }
     }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Review image") }, text = {
-        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Only this optimized private copy can be uploaded. Nothing leaves your phone until you choose Upload.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            bitmap?.let { Image(it.asImageBitmap(), contentDescription = "Image selected for this message", modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Fit) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(stringResource(R.string.conversation_review_image)) }, text = {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+            Text(stringResource(R.string.conversation_private_image_disclosure), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            bitmap?.let { Image(it.asImageBitmap(), contentDescription = stringResource(R.string.conversation_selected_image), modifier = Modifier.fillMaxWidth().heightIn(max = PALLayout.previewHeight).clip(MaterialTheme.shapes.medium), contentScale = ContentScale.Fit) }
             if (bitmap == null && error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            Text("${attachment.width}×${attachment.height} · ${attachment.size / 1024} KiB", style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.image_dimensions_size, attachment.width, attachment.height, attachment.size / 1024), style = MaterialTheme.typography.bodySmall)
         }
-    }, confirmButton = { Button(onKeep, enabled = bitmap != null, modifier = Modifier.heightIn(min = 48.dp)) { Text("Keep for message") } }, dismissButton = {
-        FlowRow { TextButton(onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Review later") }; TextButton(onRemove,
-            modifier = Modifier.heightIn(min = 48.dp), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Remove") } }
+    }, confirmButton = { Button(onKeep, enabled = bitmap != null, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.conversation_keep_for_message)) } }, dismissButton = {
+        FlowRow { TextButton(onDismiss, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.conversation_review_later)) }; TextButton(onRemove,
+            modifier = Modifier.heightIn(min = PALLayout.target), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.conversation_remove)) } }
     })
 }
 
 /** W10: what a desktop draft attachment contains, as the desktop will send it. */
 @Composable
 private fun DesktopAttachmentDialog(repository: PALRepository, state: MobileState, sessionId: String, attachment: DraftAttachment, onRemove: () -> Unit, onDismiss: () -> Unit) {
+    val decodeFailure = stringResource(R.string.conversation_preview_decode_failed)
     val previewable = attachment.kind != "image" || state.supports("attachments.read")
     var bitmap by remember(attachment.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
     var text by remember(attachment.id) { mutableStateOf<DesktopAttachmentPreview.Text?>(null) }
@@ -1296,51 +1318,53 @@ private fun DesktopAttachmentDialog(repository: PALRepository, state: MobileStat
         if (!previewable) return@LaunchedEffect
         try {
             when (val preview = repository.desktopAttachmentPreview(sessionId, attachment.id)) {
-                is DesktopAttachmentPreview.Image -> bitmap = withContext(Dispatchers.Default) { decodeForDisplay(preview.preview.bytes, 2048) } ?: error("The preview could not be decoded")
+                is DesktopAttachmentPreview.Image -> bitmap = withContext(Dispatchers.Default) { decodeForDisplay(preview.preview.bytes, 2048) } ?: error(decodeFailure)
                 is DesktopAttachmentPreview.Text -> text = preview
             }
         } catch (cancelled: CancellationException) { throw cancelled } catch (_: StaleResultException) {} catch (failure: Exception) { error = failure.message }
     }
     AlertDialog(onDismissRequest = onDismiss, title = { Text(attachment.name, maxLines = 2, overflow = TextOverflow.Ellipsis) }, text = {
-        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Attached on the desktop. Sending this draft from the phone sends this file exactly as shown.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            bitmap?.let { Image(it.asImageBitmap(), contentDescription = "Preview of ${attachment.name}", modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Fit) }
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+            Text(stringResource(R.string.conversation_desktop_attachment_disclosure), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            bitmap?.let { Image(it.asImageBitmap(), contentDescription = stringResource(R.string.conversation_attachment_preview, attachment.name), modifier = Modifier.fillMaxWidth().heightIn(max = PALLayout.previewHeight).clip(MaterialTheme.shapes.medium), contentScale = ContentScale.Fit) }
             text?.let { preview ->
                 SelectionContainer { Text(preview.text, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
-                if (preview.truncated) Text("Only the beginning is shown here. The whole file is sent.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+                if (preview.truncated) Text(stringResource(R.string.conversation_preview_truncated), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
             }
-            if (!previewable) Text("Viewing images from the desktop needs the preview permission for this phone.", style = MaterialTheme.typography.bodySmall)
+            if (!previewable) Text(stringResource(R.string.conversation_preview_permission_needed), style = MaterialTheme.typography.bodySmall)
             else if (bitmap == null && text == null && error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            Text("${if (attachment.kind == "image") "Image" else "Text file"} · ${attachment.size / 1024} KiB", style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(if (attachment.kind == "image") R.string.conversation_image_size else R.string.conversation_text_file_size, attachment.size / 1024), style = MaterialTheme.typography.bodySmall)
         }
-    }, confirmButton = { Button(onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Done") } }, dismissButton = {
-        TextButton(onRemove, enabled = state.supports("drafts.put"), modifier = Modifier.heightIn(min = 48.dp),
-            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Remove from draft") }
+    }, confirmButton = { Button(onDismiss, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.conversation_done)) } }, dismissButton = {
+        TextButton(onRemove, enabled = state.supports("drafts.put"), modifier = Modifier.heightIn(min = PALLayout.target),
+            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.conversation_remove_from_draft)) }
     })
 }
 
-@Composable private fun ActivityRow(repository: PALRepository, state: MobileState, item: Message) {
+@Composable internal fun ActivityRow(repository: PALRepository, state: MobileState, item: Message) {
     val clipboard = LocalContext.current.getSystemService(android.content.ClipboardManager::class.java)
     val scope = rememberCoroutineScope()
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
     var content by remember(item.id, item.revision) { mutableStateOf(item.text) }
     var loading by remember(item.id) { mutableStateOf(false) }
     var error by remember(item.id) { mutableStateOf<String?>(null) }
-    Surface(Modifier.fillMaxWidth().padding(vertical = 6.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) { Column(Modifier.padding(14.dp)) {
+    val clipboardLabel = stringResource(R.string.conversation_pal_activity)
+    val providerActivity = stringResource(R.string.conversation_provider_activity)
+    Surface(Modifier.fillMaxWidth().padding(vertical = PALLayout.small), color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = MaterialTheme.shapes.medium, border = BorderStroke(PALLayout.hairline, MaterialTheme.colorScheme.outlineVariant)) { Column(Modifier.padding(PALLayout.gutter)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(item.text.lineSequence().firstOrNull()?.take(90).orEmpty().ifBlank { "Provider activity" }, fontWeight = FontWeight.SemiBold,
+            Text(item.text.lineSequence().firstOrNull()?.take(90).orEmpty().ifBlank { providerActivity }, fontWeight = FontWeight.SemiBold,
                 maxLines = 2, modifier = Modifier.weight(1f))
-            IconButton({ clipboard.setPrimaryClip(android.content.ClipData.newPlainText("PAL activity", content)) }, Modifier.size(48.dp)) { Icon(painterResource(R.drawable.ic_copy), if (item.contentTruncated && content == item.text) "Copy activity preview" else "Copy activity text") }
+            IconButton({ clipboard.setPrimaryClip(android.content.ClipData.newPlainText(clipboardLabel, content)) }, Modifier.size(PALLayout.target)) { Icon(painterResource(R.drawable.ic_copy), stringResource(if (item.contentTruncated && content == item.text) R.string.conversation_copy_activity_preview else R.string.conversation_copy_activity)) }
         }
         if (expanded) SelectionContainer { Text(content, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.horizontalScroll(rememberScrollState())) }
-        TextButton({ expanded = !expanded }) { Text(if (expanded) "Collapse" else "Show details") }
+        TextButton({ expanded = !expanded }) { Text(stringResource(if (expanded) R.string.conversation_collapse else R.string.conversation_show_details)) }
         if (expanded && item.contentTruncated && content == item.text) OutlinedButton({ scope.launch {
             loading = true
             try { content = repository.fullMessage(item) } catch (failure: Exception) { error = failure.message } finally { loading = false }
-        } }, enabled = !loading && state.supports("sessions.messagePart")) { Text(if (loading) "Loading…" else "Load full output") }
+        } }, enabled = !loading && state.supports("sessions.messagePart")) { Text(stringResource(if (loading) R.string.transcript_loading_full_message else R.string.conversation_load_full_output)) }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     } }
 }
@@ -1350,63 +1374,16 @@ private fun DesktopAttachmentDialog(repository: PALRepository, state: MobileStat
  * reviewed on the desktop. The phone shows what it is and where to see it, never a partial preview.
  */
 @Composable internal fun DesktopResultCard(message: Message) {
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape = RoundedCornerShape(12.dp),
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.medium,
         modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(PALLayout.groupGap), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            Column(Modifier.padding(start = 10.dp)) {
-                Text(message.desktopOnly?.label ?: "A desktop result", fontWeight = FontWeight.SemiBold)
-                Text("View this result on the desktop. Its files, images and review stay there.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.padding(start = PALLayout.groupGap)) {
+                Text(message.desktopOnly?.label ?: stringResource(R.string.result_desktop), fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.result_desktop_detail), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
-}
-
-@Composable private fun MessageBubble(repository: PALRepository, state: MobileState, message: Message) {
-    if (message.isDesktopOnlyResult()) { DesktopResultCard(message); return }
-    val scope = rememberCoroutineScope(); var content by remember(message.id, message.revision) { mutableStateOf(message.text) }; var loading by remember(message.id, message.revision) { mutableStateOf(false) }; var error by remember(message.id, message.revision) { mutableStateOf<String?>(null) }
-    val clipboard = LocalContext.current.getSystemService(android.content.ClipboardManager::class.java)
-    val uriHandler = LocalUriHandler.current
-    // A Delegation update is PAL's text in a user-role row: shown on PAL's side, never as the user's message.
-    val update = message.isDelegationUpdate(); val mine = message.role == "user" && !update
-    // The stored Markdown keeps its memory citations; they are left out of what is shown and copied
-    // unless the desktop shows them, including a marker that is still streaming in.
-    val shown = remember(content, state.showMemoryCitations) { Citations.shown(content, state.showMemoryCitations) }
-    val preview = message.contentTruncated && content == message.text
-    val colors = MaterialTheme.colorScheme
-    val clipboardLabel = stringResource(if (preview) R.string.copy_preview else R.string.copy_message)
-    val bubbleShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = if (mine) 20.dp else 6.dp, bottomEnd = if (mine) 6.dp else 20.dp)
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
-        Surface(color = when { mine -> colors.primaryContainer; update -> colors.secondaryContainer; else -> colors.surface },
-            shape = bubbleShape, border = if (mine) null else BorderStroke(1.dp, colors.outlineVariant),
-            modifier = Modifier.fillMaxWidth(if (mine) 0.87f else 1f)) {
-            Column(Modifier.padding(start = 16.dp, end = 12.dp, bottom = 16.dp, top = 2.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (update) stringResource(R.string.delegation_update) else if (mine) stringResource(R.string.your_message) else state.assistantName,
-                style = MaterialTheme.typography.titleSmall, color = if (mine) colors.onPrimaryContainer else colors.primary,
-                modifier = Modifier.weight(1f))
-            if (message.bookmarked) Icon(Icons.Default.Star, stringResource(R.string.session_pinned), Modifier.size(16.dp), tint = colors.primary)
-            var options by remember { mutableStateOf(false) }
-            Box {
-                IconButton({ options = true }) { Icon(Icons.Default.MoreVert, stringResource(R.string.message_actions), Modifier.size(20.dp)) }
-                DropdownMenu(options, { options = false }) {
-                    DropdownMenuItem({ Text(clipboardLabel) }, {
-                        options = false
-                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("PAL message", shown))
-                    }, leadingIcon = { Icon(painterResource(R.drawable.ic_copy), null) })
-                    if (state.supports("messages.bookmark") && message.isConversationMessage()) DropdownMenuItem(
-                        { Text(stringResource(if (message.bookmarked) R.string.unpin_reply else R.string.pin_reply)) }, {
-                            options = false
-                            scope.launch { runCatching { repository.setBookmark(message, !message.bookmarked) }.onFailure { error = it.message } }
-                        }, leadingIcon = { Icon(Icons.Default.Star, null) })
-                }
-            }
-        }
-        Markdown(shown)
-        MessageSources(message.sources) { url -> runCatching { uriHandler.openUri(url) }.onFailure { error = "No app could open this link." } }
-        if (preview) { Spacer(Modifier.height(8.dp)); Text("Message preview · ${message.contentChars ?: "many"} characters", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary); OutlinedButton({ scope.launch { loading = true; error = null; runCatching { repository.fullMessage(message) }.onSuccess { content = it }.onFailure { error = it.message }; loading = false } }, enabled = !loading && state.supports("sessions.messagePart")) { Text(if (loading) "Loading…" else "Load full message") } }
-        error?.let { Text("$it. Open the full message on the desktop.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-    } } }
 }
 
 /**
@@ -1416,35 +1393,38 @@ private fun DesktopAttachmentDialog(repository: PALRepository, state: MobileStat
  */
 @Composable
 private fun ConnectionDetails(repository: PALRepository, state: MobileState) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val context = LocalContext.current
     val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
     var copied by remember { mutableStateOf(false) }
     val app = remember(context) { installedAppIdentity(context) }
     val online = state.connection as? ConnectionState.Online
     val time = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
-    OutlinedPanel("Connection details") {
+    OutlinedPanel(stringResource(R.string.connection_details)) {
+        (state.connection as? ConnectionState.Offline)?.let { Text(it.reason, style = MaterialTheme.typography.bodySmall) }
         val build = state.desktopBuild
         val desktopBuild = when {
-            build == null -> "Desktop build: unknown"
-            online != null -> "Desktop build: ${ConnectionDiagnostics.buildText(build)}"
-            else -> "Desktop build last seen: ${ConnectionDiagnostics.buildText(build)} · ${time.format(java.util.Date(build.seenAt))}"
+            build == null -> strings.getString(R.string.mobile_desktop_build_unknown)
+            online != null -> strings.getString(R.string.mobile_desktop_build, ConnectionDiagnostics.buildText(build))
+            else -> strings.getString(R.string.mobile_desktop_build_last_seen, ConnectionDiagnostics.buildText(build), time.format(java.util.Date(build.seenAt)))
         }
         val usable = state.providers.count { (_, value) -> (value as? JsonObject)?.get("remoteExecution")?.jsonPrimitive?.booleanOrNull == true }
-        Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(if (online != null) "CONNECTED" else "LAST KNOWN CONNECTION", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = if (online != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary)
-                SelectionContainer { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("PAL Mobile ${app.versionName} (${app.versionCode}) · ${app.channel} channel", style = MaterialTheme.typography.bodySmall)
+        Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(PALLayout.groupGap), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                Text(if (online != null) stringResource(R.string.mobile_connected) else stringResource(R.string.mobile_last_known_connection), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = if (online != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary)
+                SelectionContainer { Column(verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                    Text(stringResource(R.string.mobile_pal_mobile_channel, app.versionName, app.versionCode, app.channel), style = MaterialTheme.typography.bodySmall)
                     Text(desktopBuild, style = MaterialTheme.typography.bodySmall)
-                    Text("Protocol ${ConnectionDiagnostics.protocolText(build)}" + (online?.let { " · ${it.features.size} features · ${it.operations.size} operations" } ?: ""), style = MaterialTheme.typography.bodySmall)
-                    Text("Providers usable from this phone: $usable of ${state.providers.size}", style = MaterialTheme.typography.bodySmall)
-                    Text("Last synchronized: ${repository.lastSynchronizedAt()?.let { time.format(java.util.Date(it)) } ?: "never"}", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.mobile_protocol, ConnectionDiagnostics.protocolText(build)) + (online?.let { strings.getString(R.string.mobile_features_operations, it.features.size, it.operations.size) } ?: ""), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.mobile_providers_usable_from_this_phone_of, usable, state.providers.size), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.mobile_last_synchronized, repository.lastSynchronizedAt()?.let { time.format(java.util.Date(it)) } ?: "never"), style = MaterialTheme.typography.bodySmall)
                 } }
             }
         }
-        Text("This summary excludes keys, tokens, network addresses, device IDs, and conversation content.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        OutlinedButton({ clipboard.setPrimaryClip(android.content.ClipData.newPlainText("PAL connection details", ConnectionDiagnostics.summary(app, state, repository.lastSynchronizedAt()))); copied = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-            Icon(painterResource(R.drawable.ic_copy), null); Spacer(Modifier.width(8.dp)); Text(if (copied) "Copied" else "Copy diagnostic summary")
+        Text(stringResource(R.string.mobile_this_summary_excludes_keys_tokens_network_addresses_device), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton({ clipboard.setPrimaryClip(android.content.ClipData.newPlainText(strings.getString(R.string.mobile_pal_connection_details), ConnectionDiagnostics.summary(app, state, repository.lastSynchronizedAt()))); copied = true }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) {
+            Icon(painterResource(R.drawable.ic_copy), null); Spacer(Modifier.width(PALLayout.small)); Text(if (copied) stringResource(R.string.mobile_copied) else stringResource(R.string.mobile_copy_diagnostic_summary))
         }
     }
 }
@@ -1453,15 +1433,20 @@ private fun ConnectionDetails(repository: PALRepository, state: MobileState) {
 @Composable
 private fun MemoryHealthLine(health: JsonObject) {
     val enabled = health["enabled"]?.jsonPrimitive?.booleanOrNull == true
-    val failing = listOfNotNull("extraction".takeIf { health["extraction"]?.jsonPrimitive?.contentOrNull == "failing" }, "embeddings".takeIf { health["embedding"]?.jsonPrimitive?.contentOrNull == "failing" })
-    val projections = health["projections"]?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }.filter { it["status"]?.jsonPrimitive?.contentOrNull == "degraded" }
-    val text = when {
-        !enabled -> "Memory is off or paused on the desktop. Chat still works."
-        failing.isNotEmpty() || projections.isNotEmpty() || health["degraded"]?.jsonPrimitive?.booleanOrNull == true ->
-            "Memory is degraded" + (if (failing.isNotEmpty()) ": ${failing.joinToString(" and ")} failing" else "") + ". Recall may be incomplete; chat still works. Details are in desktop Health."
-        else -> "Memory is working."
+    val extraction = health["extraction"]?.jsonPrimitive?.contentOrNull == "failing"
+    val embeddings = health["embedding"]?.jsonPrimitive?.contentOrNull == "failing"
+    val degraded = health["degraded"]?.jsonPrimitive?.booleanOrNull == true ||
+        health["projections"]?.jsonArray.orEmpty().any { (it as? JsonObject)?.str("status") == "degraded" }
+    val label = when {
+        !enabled -> R.string.mobile_memory_is_off_or_paused_on_the_desktop
+        extraction && embeddings -> R.string.memory_extraction_embeddings_failed
+        extraction -> R.string.memory_extraction_failed
+        embeddings -> R.string.memory_embeddings_failed
+        degraded -> R.string.memory_degraded
+        else -> R.string.mobile_memory_is_working
     }
-    Text(text, style = MaterialTheme.typography.bodySmall, color = if (enabled && text != "Memory is working.") MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(stringResource(label), style = MaterialTheme.typography.bodySmall,
+        color = if (enabled && (extraction || embeddings || degraded)) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 /** W11: the conversation's pinned replies, the same ones the desktop lists as bookmarks. */
@@ -1472,33 +1457,36 @@ private fun PinnedReplies(repository: PALRepository, state: MobileState, session
     var error by remember(sessionId) { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     LaunchedEffect(sessionId, refresh) {
+        error = null
         try { items = repository.pinnedReplies(sessionId) }
         catch (cancelled: CancellationException) { throw cancelled } catch (_: StaleResultException) {} catch (failure: Exception) { error = failure.message }
     }
     ModalBottomSheet(onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = PALLayout.inset), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Pinned replies", style = MaterialTheme.typography.headlineSmall)
-                Text("Shared with desktop bookmarks", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.pinned_replies), style = MaterialTheme.typography.headlineSmall)
+                Text(stringResource(R.string.mobile_shared_with_desktop_bookmarks), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            IconButton(onDismiss, Modifier.size(48.dp)) { Icon(Icons.Default.Close, "Close pinned replies") }
+            IconButton(onDismiss, Modifier.size(PALLayout.target)) { Icon(Icons.Default.Close, stringResource(R.string.mobile_close_pinned_replies)) }
         }
-        LazyColumn(Modifier.heightIn(max = 560.dp), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyColumn(Modifier.heightIn(max = PALLayout.sheetBodyHeight), contentPadding = PaddingValues(PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             when {
                 error != null -> item { Text(error!!, color = MaterialTheme.colorScheme.error) }
                 items == null -> item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-                items!!.isEmpty() -> item { Text("No pinned replies yet. Pin a reply with its star.") }
+                items!!.isEmpty() -> item { Text(stringResource(R.string.mobile_no_pinned_replies_yet_pin_a_reply_with)) }
                 else -> items(items!!, key = { it.id }) { message -> MessageBubble(repository, state, message.copy(bookmarked = true)) }
             }
-            item { TextButton({ refresh++ }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text("Refresh") } }
+            item { TextButton({ refresh++ }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(PALLayout.small)); Text(stringResource(R.string.desktop_refresh)) } }
         }
     }
 }
 
 @Composable
-private fun InboxScreen(repository: PALRepository, state: MobileState, activity: FragmentActivity, highlighted: String? = null) {
+internal fun InboxScreen(repository: PALRepository, state: MobileState, activity: FragmentActivity, highlighted: String? = null) {
     val gone = highlighted != null && state.approvals.none { it.id == highlighted }
-    if (state.approvals.isEmpty()) return EmptyState(Icons.Default.Check, if (state.connection is ConnectionState.Online) "Inbox clear" else "No saved requests", if (state.connection !is ConnectionState.Online) "Reconnect to check for new requests from the desktop." else if (gone) "The request you opened was already answered or has ended." else "Requests that need your review appear here.")
+    if (state.approvals.isEmpty() && state.connection !is ConnectionState.Online) return RecoveryPage(state, repository::retry)
+    if (state.approvals.isEmpty()) return EmptyState(Icons.Default.Check, stringResource(R.string.mobile_inbox_clear),
+        stringResource(if (gone) R.string.mobile_the_request_you_opened_was_already_answered_or else R.string.mobile_requests_that_need_your_review_appear_here))
     val list = rememberLazyListState()
     // A notification tap scrolls to its request.
     LaunchedEffect(highlighted, state.approvals.map(Approval::id)) {
@@ -1506,14 +1494,14 @@ private fun InboxScreen(repository: PALRepository, state: MobileState, activity:
         if (index >= 0) list.animateScrollToItem(index)
     }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        Column(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.widthIn(max = PALLayout.readingWidth).fillMaxWidth()) {
+            Column(Modifier.padding(horizontal = PALLayout.gutter, vertical = PALLayout.groupGap), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
                 PageTitle(stringResource(R.string.nav_inbox))
-                Text("${state.approvals.size} waiting · Review the origin and exact request before answering.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(pluralStringResource(R.plurals.waiting_requests, state.approvals.size, state.approvals.size), Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            LazyColumn(state = list, modifier = Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            LazyColumn(state = list, modifier = Modifier.weight(1f), contentPadding = PaddingValues(start = PALLayout.gutter, end = PALLayout.gutter, bottom = PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(PALLayout.groupGap)) {
                 items(state.approvals, key = { it.id }) { approval -> ApprovalCard(repository, state, activity, approval, highlighted = approval.id == highlighted) }
-                if (gone) item { Text("The request you opened was already answered or has ended.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                if (gone) item { Text(stringResource(R.string.mobile_the_request_you_opened_was_already_answered_or), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         }
     }
@@ -1521,6 +1509,8 @@ private fun InboxScreen(repository: PALRepository, state: MobileState, activity:
 
 @Composable
 private fun ApprovalCard(repository: PALRepository, state: MobileState, activity: FragmentActivity, approval: Approval, highlighted: Boolean = false) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val scope = rememberCoroutineScope(); var error by remember(approval.id, approval.revision, approval.digest) { mutableStateOf<String?>(null) }; var expanded by remember(approval.id) { mutableStateOf(true) }; var preview by remember(approval.id, approval.revision, approval.digest) { mutableStateOf<ApprovalPreview?>(null) }; var previewLoading by remember(approval.id, approval.revision, approval.digest) { mutableStateOf(false) }
     var validationAttempted by remember(approval.id, approval.revision, approval.digest) { mutableStateOf(false) }
     val drafts by repository.questionDrafts.collectAsStateWithLifecycle()
@@ -1564,115 +1554,152 @@ private fun ApprovalCard(repository: PALRepository, state: MobileState, activity
     val answersComplete = approval.questions.all { questionError(it, answers[it.id].orEmpty()) == null } && fieldIds.all(::validField)
     // Only an answer in flight for this exact request blocks it; an uncertain answer to an
     // earlier request, or to another request in the same conversation, does not.
-    val pending = approval.id in mutations || CommandOutcomes.answering(state.pendingCommands, approval.id, approval.digest)
+    val uncertain = state.pendingCommands.any {
+        it.method == "approvals.answer" && it.approvalId == approval.id && it.approvalDigest == approval.digest && it.status == "unknown"
+    }
+    val pending = uncertain || approval.id in mutations || CommandOutcomes.answering(state.pendingCommands, approval.id, approval.digest)
     var bitmap by remember(approval.id, approval.revision, approval.digest) { mutableStateOf<android.graphics.Bitmap?>(null) }
     val isQuestion = approval.kind == "question" || approval.questions.isNotEmpty()
-    ElevatedCard(Modifier.fillMaxWidth().then(if (highlighted) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CardDefaults.elevatedShape) else Modifier)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.large,
+        border = if (highlighted) BorderStroke(PALLayout.focusStroke, MaterialTheme.colorScheme.primary) else null) { Column(Modifier.padding(PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(PALLayout.groupGap)) {
         Row(verticalAlignment = Alignment.Top) {
-            Surface(shape = RoundedCornerShape(12.dp), color = if (isQuestion) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.tertiaryContainer) {
-                Icon(if (isQuestion) Icons.Default.Info else Icons.Default.Warning, null, tint = if (isQuestion) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.padding(10.dp).size(22.dp))
+            Surface(shape = MaterialTheme.shapes.medium, color = if (isQuestion) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.tertiaryContainer) {
+                Icon(if (isQuestion) Icons.Default.Info else Icons.Default.Warning, null, tint = if (isQuestion) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.padding(PALLayout.small).size(PALLayout.icon))
             }
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(if (isQuestion) "QUESTION" else "PERMISSION · ${approval.kind.uppercase()}", style = MaterialTheme.typography.labelMedium, color = if (isQuestion) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.SemiBold)
-                Text(approval.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
+            Spacer(Modifier.width(PALLayout.groupGap))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
+                Text(if (isQuestion) stringResource(R.string.approval_question) else stringResource(R.string.approval_permission, approval.kind), style = MaterialTheme.typography.labelMedium, color = if (isQuestion) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.SemiBold)
+                Text(approval.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
             // Where the request comes from: the conversation, the agent inside it, and the conversation that delegated it.
                 Text(approvalOrigin(state, approval), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        val project = state.sessions.firstOrNull { it.id == approval.sessionId }?.project
+        if (!project.isNullOrBlank()) {
+            Text(stringResource(R.string.request_project), style = MaterialTheme.typography.labelLarge)
+            SelectionContainer { Text(project, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace) }
+        }
         approval.detail?.let {
-            OutlinedButton({ expanded = !expanded }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(if (expanded) "Hide exact request" else "Review exact request") }
-            if (expanded) Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
-                SelectionContainer { Text(it, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp)) }
+            Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainer,
+                modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.animateContentSize(PALMotion.disclosure)) {
+                    val label = stringResource(if (expanded) R.string.approval_target_hide else R.string.approval_target_show)
+                    Row(Modifier.fillMaxWidth().clickable(onClickLabel = label) { expanded = !expanded }
+                        .heightIn(min = PALLayout.target).padding(horizontal = PALLayout.groupGap),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.approval_target), Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+                        Icon(if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, null)
+                    }
+                    if (expanded) SelectionContainer { Text(it, fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(start = PALLayout.groupGap, end = PALLayout.groupGap, bottom = PALLayout.groupGap)) }
+                }
             }
         }
         approval.url?.let { url ->
-            OutlinedButton({ runCatching { uriHandler.openUri(url) }.onFailure { error = it.message ?: "Could not open the link." } }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                Text("Open link ↗")
+            Text(stringResource(R.string.approval_destination), style = MaterialTheme.typography.labelLarge)
+            SelectionContainer { Text(url, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace) }
+            OutlinedButton({ runCatching { uriHandler.openUri(url) }.onFailure { error = it.message ?: strings.getString(R.string.mobile_could_not_open_the_link) } }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) {
+                Text(stringResource(R.string.mobile_open_link))
             }
-            Text("Complete the requested step in your browser, then confirm below.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.mobile_complete_the_requested_step_in_your_browser_then), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (approval.kind == "image") {
             val image = bitmap
             if (image != null) {
-                Image(image.asImageBitmap(), "Exact capture proposed for sharing", Modifier.fillMaxWidth()
-                    .heightIn(max = 420.dp).clip(MaterialTheme.shapes.medium), contentScale = ContentScale.Fit)
-                Text("Verified capture", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                Image(image.asImageBitmap(), stringResource(R.string.mobile_exact_capture_proposed_for_sharing), Modifier.fillMaxWidth()
+                    .heightIn(max = PALLayout.previewHeight).clip(MaterialTheme.shapes.medium), contentScale = ContentScale.Fit)
+                Text(stringResource(R.string.mobile_verified_capture), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
             } else if (state.supports("approvals.preview") && state.supports("attachments.read")) OutlinedButton({
                 scope.launch {
                     previewLoading = true; error = null
                     try {
                         val fetched = repository.approvalPreview(approval)
                         val decoded = withContext(Dispatchers.Default) { decodeForDisplay(fetched.bytes, 2048) }
-                        if (decoded == null) error = "The capture could not be displayed. Try again or review it on your desktop."
+                        if (decoded == null) error = strings.getString(R.string.mobile_the_capture_could_not_be_displayed_try_again)
                         else { bitmap = decoded; preview = fetched }
                     } catch (cancelled: CancellationException) { throw cancelled }
                     catch (failure: Exception) { error = failure.message }
                     finally { previewLoading = false }
                 }
             }, enabled = !previewLoading, modifier = Modifier.fillMaxWidth()) {
-                Text(if (previewLoading) "Loading preview…" else "Review exact capture")
-            } else SecureStatusPanel("Review on your desktop", "This phone does not have access to the capture preview.", tone = SecureTone.Attention)
+                Text(if (previewLoading) stringResource(R.string.mobile_loading_preview) else stringResource(R.string.mobile_review_exact_capture))
+            } else SecureStatusPanel(stringResource(R.string.mobile_review_on_your_desktop), stringResource(R.string.mobile_this_phone_does_not_have_access_to_the), tone = SecureTone.Attention)
         }
         approval.questions.forEachIndexed { index, question ->
             QuestionField(question, index, approval.questions.size, answers[question.id].orEmpty(),
-                if (validationAttempted) questionError(question, answers[question.id].orEmpty()) else null) {
+                if (validationAttempted) questionError(question, answers[question.id].orEmpty())?.let { stringResource(it) } else null) {
                 repository.setQuestionAnswer(approval.id, question.id, it)
             }
         }
         approval.fields.filterKeys { it !in questionIds }.forEach { (id, value) ->
             ApprovalField(id, (value as? JsonObject)?.get("title")?.jsonPrimitive?.contentOrNull ?: id, value as? JsonObject, answers[id].orEmpty(),
-                if (validationAttempted && !validField(id)) "Enter a valid answer." else null) {
+                if (validationAttempted && !validField(id)) strings.getString(R.string.mobile_enter_a_valid_answer) else null) {
                 repository.setQuestionAnswer(approval.id, id, it)
             }
         }
-        if (unsupported) SecureStatusPanel("Continue on the desktop", "This form contains an unsupported field. You can still deny it here.", tone = SecureTone.Attention)
-        if (!approval.canAnswer && approval.choices.any { it !in setOf("deny","cancel") }) SecureStatusPanel("Desktop review required", "Positive answers are blocked by the current provider policy.", tone = SecureTone.Attention)
-        if (!state.supports("approvals.answer")) SecureStatusPanel("Read-only access", "This device can review this request but cannot answer it.", tone = SecureTone.Attention)
-        if (pending) SecureStatusPanel("Submitting response", "Keep PAL open while the desktop confirms it.", tone = SecureTone.Info)
+        if (unsupported) SecureStatusPanel(stringResource(R.string.mobile_continue_on_the_desktop), stringResource(R.string.mobile_this_form_contains_an_unsupported_field_you_can), tone = SecureTone.Attention)
+        if (!approval.canAnswer && approval.choices.any { it !in setOf("deny","cancel") }) SecureStatusPanel(stringResource(R.string.mobile_desktop_review_required), stringResource(R.string.mobile_positive_answers_are_blocked_by_the_current_provider), tone = SecureTone.Attention)
+        if (state.connection !is ConnectionState.Online) ConnectionRecovery(state, repository::retry)
+        else if (!state.supports("approvals.answer")) SecureStatusPanel(stringResource(R.string.mobile_read_only_access), stringResource(R.string.mobile_this_device_can_review_this_request_but_cannot), tone = SecureTone.Attention)
+        if (pending) SecureStatusPanel(if (uncertain) stringResource(R.string.mobile_answer_unconfirmed) else stringResource(R.string.mobile_submitting_response),
+            stringResource(if (uncertain) R.string.pending_answer_hint else R.string.submitting_answer_hint), tone = SecureTone.Info)
+        else Text(stringResource(R.string.pending_request_hint), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
         // Actions wrap instead of squeezing their labels at large text sizes.
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) { approval.choices.forEach { choice ->
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PALLayout.gutter)) { approval.choices.forEach { choice ->
             val deny = choice == "deny" || choice == "cancel"
+            val label = when (choice) {
+                "deny" -> stringResource(R.string.notice_deny)
+                "cancel" -> stringResource(R.string.annotation_cancel)
+                "allow" -> stringResource(when {
+                    approval.kind == "image" -> R.string.allow_image
+                    approval.url != null -> R.string.mobile_ive_completed_it
+                    else -> R.string.mobile_allow
+                })
+                "answer" -> stringResource(R.string.mobile_send_answers)
+                else -> choice.replaceFirstChar(Char::uppercase)
+            }
             if (deny) OutlinedButton({
                 if (!repository.beginApprovalMutation(approval)) return@OutlinedButton
                 scope.launch { try { repository.mutate("approvals.answer", approvalParams(approval, choice, emptyMap()), approval.title) } catch (failure: Exception) { error = failure.message } finally { repository.endApprovalMutation(approval) } }
-            }, enabled = state.supports("approvals.answer") && !pending, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(choice.replaceFirstChar(Char::uppercase)) }
+            }, enabled = state.supports("approvals.answer") && !pending, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(label) }
             else Button({
                 validationAttempted = true
                 if (!answersComplete || !repository.beginApprovalMutation(approval)) return@Button
                 scope.launch {
                     runCatching { repository.prepareAction("approvals.answer", approvalParams(approval, choice, answers, preview?.imageDigest), label = approval.title) }
                         .onSuccess { action ->
-                            runCatching { authenticate(activity, "${choice.replaceFirstChar(Char::uppercase)} ${approval.title}", action, repository,
+                            runCatching { authenticate(activity, strings.getString(R.string.authenticate_answer, label, approval.title), action, repository,
                                 { repository.endApprovalMutation(approval) },
                                 { error = it; repository.endApprovalMutation(approval) }) }
                                 .onFailure { error = it.message; repository.endApprovalMutation(approval) }
                         }
                         .onFailure { error = it.message; repository.endApprovalMutation(approval) }
                 }
-            }, enabled = approval.canAnswer && !unsupported && state.supports("approvals.answer") && !pending && (approval.kind != "image" || preview != null), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(when { choice == "answer" -> "Send answers"; choice == "allow" && approval.url != null -> "I've completed it"; else -> choice.replaceFirstChar(Char::uppercase) }) }
+            }, enabled = approval.canAnswer && !unsupported && state.supports("approvals.answer") && !pending && (approval.kind != "image" || preview != null), modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(label) }
         } }
-        if (validationAttempted && !answersComplete) Text("Answer each required question before sending.", color = MaterialTheme.colorScheme.error)
-        error?.let { SecureStatusPanel("Request needs attention", it, tone = SecureTone.Danger) }
+        if (validationAttempted && !answersComplete) Text(stringResource(R.string.mobile_answer_each_required_question_before_sending), color = MaterialTheme.colorScheme.error)
+        error?.let { SecureStatusPanel(stringResource(R.string.mobile_request_needs_attention), it, tone = SecureTone.Danger) }
     } }
 }
 
 @Composable
 private fun QuestionField(question: ApprovalQuestion, index: Int, count: Int, answers: List<String>, error: String?, update: (List<String>) -> Unit) {
     val other = questionOtherValue(question, answers)
-    OutlinedPanel("Question ${index + 1} of $count · ${if (question.required) "Required" else "Optional"}") {
+    OutlinedPanel(stringResource(R.string.mobile_question_of, index + 1, count, if (question.required) "Required" else "Optional")) {
         question.header?.let { Text(it, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
         Text(question.question, style = MaterialTheme.typography.bodyLarge, fontWeight = if (question.header == null) FontWeight.Medium else FontWeight.Normal)
         question.options.forEach { option ->
             val selected = option.label in answers
             FilterChip(selected, { update(selectQuestionOption(question, answers, option.label, !selected)) }, {
                 Column { Text(option.label); option.description?.takeIf(String::isNotBlank)?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
-            }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp))
+            }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target))
         }
         if (question.options.isEmpty() || question.allowOther) OutlinedTextField(
             other,
             { update(updateQuestionOther(question, answers, it)) },
-            label = { Text(if (question.options.isEmpty()) "Answer" else "Other answer") },
+            label = { Text(if (question.options.isEmpty()) stringResource(R.string.mobile_answer) else stringResource(R.string.mobile_other_answer)) },
             minLines = if (question.isSecret) 1 else 2,
             maxLines = if (question.isSecret) 1 else 6,
             singleLine = question.isSecret,
@@ -1687,39 +1714,40 @@ private fun QuestionField(question: ApprovalQuestion, index: Int, count: Int, an
 }
 
 @Composable private fun ApprovalField(id: String, label: String, schema: JsonObject?, answers: List<String>, error: String?, update: (List<String>) -> Unit) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val type = schema?.get("type")?.jsonPrimitive?.contentOrNull ?: "string"
     val options = when {
         type == "array" -> (schema?.get("items") as? JsonObject)?.get("enum")?.jsonArray?.map { ApprovalOption(it.jsonPrimitive.content) }.orEmpty()
         schema?.get("enum") is JsonArray -> schema["enum"]!!.jsonArray.map { ApprovalOption(it.jsonPrimitive.content) }
         schema?.get("oneOf") is JsonArray -> schema["oneOf"]!!.jsonArray.mapNotNull { option -> (option as? JsonObject)?.get("const")?.jsonPrimitive?.contentOrNull?.let { ApprovalOption(it, option["title"]?.jsonPrimitive?.contentOrNull) } }
-        type == "boolean" -> listOf(ApprovalOption("true", "Yes"), ApprovalOption("false", "No"))
+        type == "boolean" -> listOf(ApprovalOption("true", strings.getString(R.string.mobile_yes)), ApprovalOption("false", strings.getString(R.string.mobile_no)))
         else -> emptyList()
     }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
         Text(label, fontWeight = FontWeight.Medium)
         if (options.isNotEmpty()) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { options.forEach { option ->
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { options.forEach { option ->
                 val selected = option.label in answers
                 FilterChip(selected, { update(if (type == "array") { if (selected) answers - option.label else (answers + option.label).distinct() } else listOf(option.label)) }, { Text(option.description ?: option.label) })
             } }
             if (type == "array") Text(listOfNotNull(
-                schema?.get("minItems")?.jsonPrimitive?.contentOrNull?.let { "Choose at least $it" },
-                schema?.get("maxItems")?.jsonPrimitive?.contentOrNull?.let { "Choose at most $it" },
+                schema?.get("minItems")?.jsonPrimitive?.contentOrNull?.let { strings.getString(R.string.mobile_choose_at_least, it) },
+                schema?.get("maxItems")?.jsonPrimitive?.contentOrNull?.let { strings.getString(R.string.mobile_choose_at_most, it) },
                 error,
             ).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = if (error == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
             else error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         } else if (type in setOf("string","number","integer")) {
-            OutlinedTextField(answers.firstOrNull().orEmpty(), { update(listOf(it)) }, minLines = if (type == "string") 2 else 1, isError = error != null, keyboardOptions = KeyboardOptions(keyboardType = if (type == "number" || type == "integer") KeyboardType.Decimal else KeyboardType.Text), supportingText = { val bounds = listOfNotNull(schema?.get("minimum")?.jsonPrimitive?.contentOrNull?.let { "min $it" }, schema?.get("maximum")?.jsonPrimitive?.contentOrNull?.let { "max $it" }).joinToString(" · "); Text(listOfNotNull(bounds.takeIf(String::isNotBlank), error).joinToString(" · ")) }, modifier = Modifier.fillMaxWidth())
-        } else Text("Unsupported field type: $type", color = MaterialTheme.colorScheme.error)
+            OutlinedTextField(answers.firstOrNull().orEmpty(), { update(listOf(it)) }, minLines = if (type == "string") 2 else 1, isError = error != null, keyboardOptions = KeyboardOptions(keyboardType = if (type == "number" || type == "integer") KeyboardType.Decimal else KeyboardType.Text), supportingText = { val bounds = listOfNotNull(schema?.get("minimum")?.jsonPrimitive?.contentOrNull?.let { strings.getString(R.string.mobile_min, it) }, schema?.get("maximum")?.jsonPrimitive?.contentOrNull?.let { strings.getString(R.string.mobile_max, it) }).joinToString(" · "); Text(listOfNotNull(bounds.takeIf(String::isNotBlank), error).joinToString(" · ")) }, modifier = Modifier.fillMaxWidth())
+        } else Text(stringResource(R.string.mobile_unsupported_field_type, type), color = MaterialTheme.colorScheme.error)
     }
 }
 
 private fun approvalParams(value: Approval, choice: String, answers: Map<String, List<String>>, imageDigest: String? = null) = buildJsonObject { put("approvalId", value.id); put("revision", value.revision); put("digest", value.digest); put("choice", choice); put("answers", buildJsonObject { answers.mapValues { (_, values) -> values.filter(String::isNotBlank) }.filterValues(List<String>::isNotEmpty).forEach { (id, values) -> put(id, buildJsonObject { put("answers", buildJsonArray { values.forEach(::add) }) }) } }); imageDigest?.let { put("imageDigest", it) } }
 
 @Composable private fun OutlinedPanel(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             Text(title, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium)
             content()
         }
@@ -1728,8 +1756,10 @@ private fun approvalParams(value: Approval, choice: String, answers: Map<String,
 
 @Composable
 private fun MemoryScreen(repository: PALRepository, state: MobileState, activity: FragmentActivity) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val readable = state.supports("memory.list") || state.supports("memory.retrieve")
-    if (!readable) return EmptyState(Icons.Default.Lock, "Memory is not granted", "Enable scoped memory access from Desktop Settings.")
+    if (!readable) return EmptyState(Icons.Default.Lock, stringResource(R.string.mobile_memory_is_not_granted), stringResource(R.string.mobile_enable_scoped_memory_access_from_desktop_settings))
     // Memory belongs to a conversation's project on its memory server, whichever provider it uses; the
     // desktop refuses a conversation whose memory server is not granted to this phone.
     val scope = rememberCoroutineScope(); val sessions = state.sessions.filter { it.mode != "linked" }
@@ -1751,37 +1781,37 @@ private fun MemoryScreen(repository: PALRepository, state: MobileState, activity
     var health by remember { mutableStateOf<JsonObject?>(null) }
     LaunchedEffect(sessionId, state.cacheEpoch) { health = if (sessionId.isNotBlank() && state.supports("memory.health")) runCatching { repository.read("memory.health", buildJsonObject { put("sessionId", sessionId) }).jsonObject }.getOrNull() else null }
     val rows = result?.get("rows")?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }; val total = result?.get("total")?.jsonPrimitive?.intOrNull ?: rows.size
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { PageTitle("Project memory"); Text("Review memory within the selected conversation's approved project and memory server.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    LazyColumn(contentPadding = PaddingValues(PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(PALLayout.groupGap)) {
+        item { PageTitle(stringResource(R.string.mobile_project_memory)); Text(stringResource(R.string.mobile_review_memory_within_the_selected_conversations_approved_project), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         health?.let { value -> item { MemoryHealthLine(value) } }
-        if (sessions.isEmpty()) item { OutlinedPanel("No conversations") { Text("Create or open a conversation in an approved project before opening memory.", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
-        else item { Text("Session", fontWeight = FontWeight.Medium); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { sessions.forEach { session -> val project = state.projects.firstOrNull { it.id == session.projectId }; FilterChip(sessionId == session.id, { sessionId = session.id; offset = 0 }, { Column { Text(session.title); Text(project?.name ?: session.project.orEmpty(), style = MaterialTheme.typography.labelSmall) } }) } }; sessions.firstOrNull { it.id == sessionId }?.let { session -> val project = state.projects.firstOrNull { it.id == session.projectId }; OutlinedPanel(project?.name ?: "Approved project") { SelectionContainer { Text(project?.path ?: session.project ?: "Path unavailable", style = MaterialTheme.typography.bodySmall) }; Text("Ollama · ${session.ollamaHost.ifBlank { state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: "host unavailable" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
-        if (state.supports("memory.list")) item { Text("Browse", style = MaterialTheme.typography.titleMedium); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("saved" to "Saved", "conversation" to "Conversation", "assertions" to "Assertions", "episodes" to "Episodes", "entities" to "Entities").forEach { (id,label) -> FilterChip(kind == id, { kind = id; offset = 0 }, { Text(label) }) } }; Row(verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(filter, { filter = it }, placeholder = { Text("Find text in memory") }, singleLine = true, modifier = Modifier.weight(1f)); Spacer(Modifier.width(8.dp)); OutlinedButton({ offset = 0; list() }, enabled = !loading) { Text("Find") } } }
-        if (state.supports("memory.retrieve")) item { Text("Recall", style = MaterialTheme.typography.titleMedium); Row(verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(query, { query = it.take(1000) }, placeholder = { Text("Ask what PAL remembers") }, singleLine = true, modifier = Modifier.weight(1f)); Spacer(Modifier.width(8.dp)); OutlinedButton(::retrieve, enabled = query.isNotBlank() && !loading) { Text("Recall") } } }
+        if (sessions.isEmpty()) item { OutlinedPanel(stringResource(R.string.mobile_no_conversations)) { Text(stringResource(R.string.mobile_create_or_open_a_conversation_in_an_approved), color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+        else item { Text(stringResource(R.string.mobile_session), fontWeight = FontWeight.Medium); FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { sessions.forEach { session -> val project = state.projects.firstOrNull { it.id == session.projectId }; FilterChip(sessionId == session.id, { sessionId = session.id; offset = 0 }, { Column { Text(session.title); Text(project?.name ?: session.project.orEmpty(), style = MaterialTheme.typography.labelSmall) } }) } }; sessions.firstOrNull { it.id == sessionId }?.let { session -> val project = state.projects.firstOrNull { it.id == session.projectId }; OutlinedPanel(project?.name ?: stringResource(R.string.mobile_approved_project)) { SelectionContainer { Text(project?.path ?: session.project ?: stringResource(R.string.desktop_path_unavailable), style = MaterialTheme.typography.bodySmall) }; Text(stringResource(R.string.mobile_ollama, session.ollamaHost.ifBlank { state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: strings.getString(R.string.mobile_host_unavailable) }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
+        if (state.supports("memory.list")) item { Text(stringResource(R.string.mobile_browse), style = MaterialTheme.typography.titleMedium); FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { listOf("saved" to strings.getString(R.string.mobile_saved), "conversation" to "Conversation", "assertions" to strings.getString(R.string.mobile_assertions), "episodes" to strings.getString(R.string.mobile_episodes), "entities" to strings.getString(R.string.mobile_entities)).forEach { (id,label) -> FilterChip(kind == id, { kind = id; offset = 0 }, { Text(label) }) } }; Row(verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(filter, { filter = it }, placeholder = { Text(stringResource(R.string.mobile_find_text_in_memory)) }, singleLine = true, modifier = Modifier.weight(1f)); Spacer(Modifier.width(PALLayout.small)); OutlinedButton({ offset = 0; list() }, enabled = !loading) { Text(stringResource(R.string.mobile_find)) } } }
+        if (state.supports("memory.retrieve")) item { Text(stringResource(R.string.mobile_recall), style = MaterialTheme.typography.titleMedium); Row(verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(query, { query = it.take(1000) }, placeholder = { Text(stringResource(R.string.mobile_ask_what_pal_remembers)) }, singleLine = true, modifier = Modifier.weight(1f)); Spacer(Modifier.width(PALLayout.small)); OutlinedButton(::retrieve, enabled = query.isNotBlank() && !loading) { Text(stringResource(R.string.mobile_recall)) } } }
         if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
         items(rows, key = { it["id"]?.jsonPrimitive?.contentOrNull ?: it.toString() }) { row ->
             MemoryRow(row, if (state.supports("memory.forgetPreview") || state.supports("memory.timeline")) ({ managedRecord = row; managing = true }) else null)
         }
-        if (!loading && result != null && rows.isEmpty()) item { Text("No matching memory records.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        if (!loading && result != null && rows.isEmpty()) item { Text(stringResource(R.string.mobile_no_matching_memory_records), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         result?.takeIf { "rows" !in it }?.let { value -> item { StructuredObject(value) } }
-        if (result?.containsKey("rows") == true) item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { OutlinedButton({ offset = (offset - 25).coerceAtLeast(0) }, enabled = offset > 0 && !loading) { Text("Previous") }; Text("$total total", color = MaterialTheme.colorScheme.onSurfaceVariant); OutlinedButton({ offset += 25 }, enabled = offset + 25 < total && !loading) { Text("Next") } } }
-        if (state.supports("memory.save") && sessions.isNotEmpty()) item { Button({ adding = true }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(8.dp)); Text("Remember a fact") } }
+        if (result?.containsKey("rows") == true) item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { OutlinedButton({ offset = (offset - 25).coerceAtLeast(0) }, enabled = offset > 0 && !loading) { Text(stringResource(R.string.mobile_previous)) }; Text(stringResource(R.string.mobile_total, total), color = MaterialTheme.colorScheme.onSurfaceVariant); OutlinedButton({ offset += 25 }, enabled = offset + 25 < total && !loading) { Text(stringResource(R.string.mobile_next)) } } }
+        if (state.supports("memory.save") && sessions.isNotEmpty()) item { Button({ adding = true }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(PALLayout.small)); Text(stringResource(R.string.mobile_remember_a_fact)) } }
         // Forgetting is two steps: gone from recall at once, physically removed later. Receipts keep both visible.
-        if (state.erasures.isNotEmpty()) item { OutlinedPanel("Forget receipts") {
+        if (state.erasures.isNotEmpty()) item { OutlinedPanel(stringResource(R.string.mobile_forget_receipts)) {
             state.erasures.forEach { receipt -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(receipt.label, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(when { receipt.purgeComplete -> "Hidden from recall · physically removed"; receipt.checkedAt != null -> "Hidden from recall · physical removal ${receipt.state?.lowercase() ?: "in progress"}"; else -> "Hidden from recall · physical removal not checked yet" },
+                    Text(when { receipt.purgeComplete -> stringResource(R.string.mobile_hidden_from_recall_physically_removed); receipt.checkedAt != null -> stringResource(R.string.mobile_hidden_from_recall_physical_removal, receipt.state?.lowercase() ?: strings.getString(R.string.mobile_in_progress)); else -> stringResource(R.string.mobile_hidden_from_recall_physical_removal_not_checked_yet) },
                         style = MaterialTheme.typography.bodySmall, color = if (receipt.purgeComplete) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (!receipt.purgeComplete && state.supports("memory.erasureStatus")) TextButton({ scope.launch { runCatching { repository.checkErasure(receipt.jobId) }.onFailure { error = it.message } } }) { Text("Check") }
-                else TextButton({ scope.launch { repository.dismissErasure(receipt.jobId) } }) { Text("Dismiss") }
+                if (!receipt.purgeComplete && state.supports("memory.erasureStatus")) TextButton({ scope.launch { runCatching { repository.checkErasure(receipt.jobId) }.onFailure { error = it.message } } }) { Text(stringResource(R.string.mobile_check)) }
+                else TextButton({ scope.launch { repository.dismissErasure(receipt.jobId) } }) { Text(stringResource(R.string.mobile_dismiss)) }
             } }
         } }
-        if (state.supports("memory.forgetPreview") && state.supports("memory.clear") && sessions.isNotEmpty()) item { OutlinedButton({ clearProject = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), modifier = Modifier.fillMaxWidth()) { Text("Clear this project's memory") } }
+        if (state.supports("memory.forgetPreview") && state.supports("memory.clear") && sessions.isNotEmpty()) item { OutlinedButton({ clearProject = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.mobile_clear_this_projects_memory)) } }
     }
-    if (adding) { var text by rememberSaveable { mutableStateOf("") }; var saveError by remember { mutableStateOf<String?>(null) }; AlertDialog(onDismissRequest = { adding = false }, title = { Text("Remember a fact") }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedTextField(text, { text = it.take(MEMORY_FACT_LIMIT) }, minLines = 5, label = { Text("Fact") }, modifier = Modifier.fillMaxWidth()); Text("${text.length} / $MEMORY_FACT_LIMIT characters", color = MaterialTheme.colorScheme.onSurfaceVariant); saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) } } }, confirmButton = { Button({ scope.launch { runCatching { val action = repository.prepareAction("memory.save", buildJsonObject { put("sessionId", sessionId); put("text", text.trim()) }); authenticate(activity, "Save this memory", action, repository, { adding = false; offset = 0; list() }, { saveError = it }) }.onFailure { saveError = it.message } } }, enabled = text.isNotBlank()) { Text("Review & save") } }, dismissButton = { TextButton({ adding = false }) { Text("Cancel") } }) }
+    if (adding) { var text by rememberSaveable { mutableStateOf("") }; var saveError by remember { mutableStateOf<String?>(null) }; AlertDialog(onDismissRequest = { adding = false }, title = { Text(stringResource(R.string.mobile_remember_a_fact)) }, text = { Column(verticalArrangement = Arrangement.spacedBy(PALLayout.small)) { OutlinedTextField(text, { text = it.take(MEMORY_FACT_LIMIT) }, minLines = 5, label = { Text(stringResource(R.string.mobile_fact)) }, modifier = Modifier.fillMaxWidth()); Text(stringResource(R.string.mobile_characters, text.length, MEMORY_FACT_LIMIT), color = MaterialTheme.colorScheme.onSurfaceVariant); saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) } } }, confirmButton = { Button({ scope.launch { runCatching { val action = repository.prepareAction("memory.save", buildJsonObject { put("sessionId", sessionId); put("text", text.trim()) }); authenticate(activity, strings.getString(R.string.mobile_save_this_memory), action, repository, { adding = false; offset = 0; list() }, { saveError = it }) }.onFailure { saveError = it.message } } }, enabled = text.isNotBlank()) { Text(stringResource(R.string.mobile_review_save)) } }, dismissButton = { TextButton({ adding = false }) { Text(stringResource(R.string.annotation_cancel)) } }) }
     if (managing) managedRecord?.let { record -> MemoryRecordSheet(repository, state, activity, sessionId, record, { managing = false; managedRecord = null }, { list() }, kind, rows) }
     if (clearProject) MemoryRecordSheet(repository, state, activity, sessionId, null, { clearProject = false }, { list() })
 }
@@ -1792,6 +1822,8 @@ private fun SettingsScreen(
     ownerInitialSection: String?, ownerInitialSession: String?, oauthTargetId: String?, oauthResult: String?,
     onOAuthStarted: (String) -> Unit, selectGroup: (SettingsGroup?) -> Unit,
 ) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val context = LocalContext.current; val scope = rememberCoroutineScope(); var confirmForget by rememberSaveable { mutableStateOf(false) }; var showMemory by rememberSaveable { mutableStateOf(false) }; var replacePairing by rememberSaveable { mutableStateOf(false) }
     var remoteSettings by remember { mutableStateOf(state.settings) }; var personality by rememberSaveable { mutableStateOf("") }; var defaultModel by rememberSaveable { mutableStateOf("") }; var searchProvider by rememberSaveable { mutableStateOf("auto") }; var settingsDirty by rememberSaveable { mutableStateOf(false) }; var settingsConflict by rememberSaveable { mutableStateOf(false) }; var baselineRevision by rememberSaveable { mutableStateOf("0") }; var loading by remember { mutableStateOf(false) }; var error by remember { mutableStateOf<String?>(null) }; var feedback by remember { mutableStateOf<String?>(null) }
     var alertsOn by remember { mutableStateOf(PALNotifications.requestAlertsEnabled(context)) }
@@ -1806,132 +1838,132 @@ private fun SettingsScreen(
     LaunchedEffect(state.settings, state.connection is ConnectionState.Online, group == SettingsGroup.Assistant) { if (group == SettingsGroup.Assistant && state.supports("settings.get")) { loading = true; runCatching { repository.read("settings.get", buildJsonObject {}).jsonObject }.onSuccess(::receiveSettings).onFailure { error = it.message }; loading = false } else receiveSettings(state.settings) }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         alertsOn = PALNotifications.requestAlertsEnabled(context)
-        if (!granted && Build.VERSION.SDK_INT >= 33 && !activity.shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) feedback = "Android didn't ask again. Turn on notifications for PAL in Notification settings."
+        if (!granted && Build.VERSION.SDK_INT >= 33 && !activity.shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) feedback = strings.getString(R.string.mobile_android_didnt_ask_again_turn_on_notifications_for)
     }
-    val localNetworkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) startMonitoring(context) else error = "Local network permission is required to monitor the desktop." }
+    val localNetworkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) startMonitoring(context) else error = strings.getString(R.string.mobile_local_network_permission_is_required_to_monitor_the) }
     fun requestAlerts() {
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         else openNotificationSettings(context)
     }
+    val settingsPages = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     BackHandler(enabled = showMemory) { showMemory = false }
     if (replacePairing) {
         val desktop = state.desktop
         if (desktop != null) PairingScreen(repository, state, activity, desktop) { replacePairing = false }
         return
     }
-    if (showMemory) { Column(Modifier.fillMaxSize()) { Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) { IconButton({ showMemory = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to settings") }; Text("Settings", style = MaterialTheme.typography.titleMedium) }; MemoryScreen(repository, state, activity) }; return }
+    if (showMemory) { Column(Modifier.fillMaxSize()) { Row(Modifier.padding(horizontal = PALLayout.small), verticalAlignment = Alignment.CenterVertically) { IconButton({ showMemory = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.mobile_back_to_settings)) }; Text(stringResource(R.string.nav_settings), style = MaterialTheme.typography.titleMedium) }; MemoryScreen(repository, state, activity) }; return }
     if (group == null) {
-        SettingsIndex(state) { selectGroup(it) }
+        settingsPages.SaveableStateProvider("index") { SettingsIndex(state, selectGroup) }
         return
     }
-    val groupState = key(group) { rememberLazyListState() }
-    Box(Modifier.fillMaxSize()) {
-      LazyColumn(state = groupState, contentPadding = PaddingValues(PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(PALLayout.groupGap)) {
-        item {
-            TextButton({ selectGroup(null) }) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, null)
-                Text(stringResource(R.string.nav_settings))
+    settingsPages.SaveableStateProvider(group.name) {
+        val groupState = rememberLazyListState()
+        Box(Modifier.fillMaxSize()) {
+          LazyColumn(state = groupState, contentPadding = PaddingValues(PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(PALLayout.groupGap)) {
+            item {
+                TextButton({ selectGroup(null) }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, null)
+                    Text(stringResource(R.string.nav_settings))
+                }
+                PageTitle(stringResource(group.title))
             }
-            PageTitle(stringResource(group.title))
-        }
-        if (loading && group == SettingsGroup.Assistant) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-        if (group != SettingsGroup.Owner) feedback?.let { item { SecureStatusPanel("Updated", it, tone = SecureTone.Success) } }
-        if (group != SettingsGroup.Owner) error?.let { item { SecureStatusPanel("Couldn't finish", it, tone = SecureTone.Danger) } }
-        when (group) {
-            SettingsGroup.Access -> {
-                item { OutlinedPanel(if (paused) "Actions paused" else "${permissions["profile"]?.jsonPrimitive?.contentOrNull ?: "Scoped"} access") { Text(if (paused) "The desktop is currently blocking remote actions." else "This phone can use only the capabilities negotiated at sign-in.", color = if (paused) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant); if (categories.isNotEmpty()) Text("Categories · ${categories.joinToString()}", style = MaterialTheme.typography.bodySmall); if (caps.isNotEmpty()) Text("Capabilities · ${caps.joinToString()}", style = MaterialTheme.typography.bodySmall); if (!paused && state.supports("permissions.pause")) OutlinedButton({ scope.launch { runCatching { repository.mutate("permissions.pause", buildJsonObject {}) }.onSuccess { feedback = "Desktop actions paused" }.onFailure { error = it.message } } }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Pause desktop actions") } } }
-                if (state.supports("permissions.reduce") && state.supports("devices.self")) item {
-                    PermissionReductionPanel(repository, state, { feedback = it }, { error = it })
+            if (loading && group == SettingsGroup.Assistant) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            if (group != SettingsGroup.Owner) feedback?.let { item { SecureStatusPanel(stringResource(R.string.mobile_updated), it, tone = SecureTone.Success) } }
+            if (group != SettingsGroup.Owner) error?.let { item { SecureStatusPanel(stringResource(R.string.mobile_couldnt_finish), it, tone = SecureTone.Danger) } }
+            if (group in setOf(SettingsGroup.Access, SettingsGroup.Assistant) && state.connection !is ConnectionState.Online)
+                item { ConnectionRecovery(state, repository::retry) }
+            when (group) {
+                SettingsGroup.Access -> {
+                    item { OutlinedPanel(if (paused) stringResource(R.string.mobile_actions_paused) else stringResource(R.string.mobile_access, permissions["profile"]?.jsonPrimitive?.contentOrNull ?: stringResource(R.string.scoped_access))) { Text(if (paused) stringResource(R.string.mobile_the_desktop_is_currently_blocking_remote_actions) else stringResource(R.string.mobile_this_phone_can_use_only_the_capabilities_negotiated), color = if (paused) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant); if (categories.isNotEmpty()) Text(stringResource(R.string.mobile_categories, categories.joinToString()), style = MaterialTheme.typography.bodySmall); if (caps.isNotEmpty()) Text(stringResource(R.string.mobile_capabilities, caps.joinToString()), style = MaterialTheme.typography.bodySmall); if (!paused && state.supports("permissions.pause")) OutlinedButton({ scope.launch { runCatching { repository.mutate("permissions.pause", buildJsonObject {}) }.onSuccess { feedback = strings.getString(R.string.mobile_desktop_actions_paused) }.onFailure { error = it.message } } }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target), colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_pause_desktop_actions)) } } }
+                    if (state.supports("permissions.reduce") && state.supports("devices.self")) item {
+                        PermissionReductionPanel(repository, state, { feedback = it }, { error = it })
+                    }
+                }
+                SettingsGroup.Owner -> ownerSettings(repository, state, activity, { feedback = it; error = null }, { error = it; feedback = null },
+                    initialToolServerId = oauthTargetId, toolServerResult = oauthResult, onOAuthStarted = onOAuthStarted,
+                    initialSessionId = ownerInitialSession, initialSection = ownerInitialSection)
+                SettingsGroup.Assistant -> {
+                    if (state.supports("settings.get")) item { OutlinedPanel(stringResource(R.string.mobile_defaults)) { if (settingsConflict) { Text(stringResource(R.string.mobile_desktop_settings_changed_while_you_were_editing_your), color = MaterialTheme.colorScheme.tertiary); FlowRow { TextButton({ applySettings(remoteSettings) }, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_reload_desktop)) }; TextButton({ baselineRevision = remoteSettings["revision"]?.jsonPrimitive?.contentOrNull ?: baselineRevision; settingsConflict = false }, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_keep_mine)) } } }; OutlinedTextField(personality, { personality = it.take(8000); settingsDirty = true }, label = { Text(stringResource(R.string.mobile_personality)) }, minLines = 3, modifier = Modifier.fillMaxWidth(), supportingText = { Text(stringResource(R.string.mobile_applies_to_every_conversation_unless_a_project_or)) }); if (!remoteSettings["ollamaHost"]?.jsonPrimitive?.contentOrNull.isNullOrBlank()) OutlinedTextField(defaultModel, { defaultModel = it.take(512); settingsDirty = true }, label = { Text(stringResource(R.string.mobile_default_ollama_model)) }, singleLine = true, modifier = Modifier.fillMaxWidth()); Text(stringResource(R.string.mobile_web_search_provider), style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) { listOf("auto","duckduckgo","brave","mojeek","searxng").forEach { provider -> FilterChip(searchProvider == provider, { searchProvider = provider; settingsDirty = true }, { Text(provider) }, modifier = Modifier.heightIn(min = PALLayout.target)) } }; if (state.supports("settings.patch")) Button({ scope.launch { runCatching { val action = repository.prepareAction("settings.patch", assistantSettingsPatch(remoteSettings, baselineRevision, personality, defaultModel, searchProvider)); authenticate(activity, strings.getString(R.string.mobile_update_assistant_settings), action, repository, { value -> applySettings(value.jsonObject); feedback = strings.getString(R.string.mobile_settings_updated) }, { error = it }) }.onFailure { error = it.message } } }, enabled = !loading && !settingsConflict && settingsDirty, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_review_save)) } else Text(stringResource(R.string.mobile_this_device_has_read_only_settings_access), color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+                    if (state.supports("memory.list") || state.supports("memory.retrieve")) item { OutlinedPanel(stringResource(R.string.mobile_project_memory)) { Text(stringResource(R.string.mobile_browse_saved_facts_conversation_passages_assertions_episodes_and), color = MaterialTheme.colorScheme.onSurfaceVariant); OutlinedButton({ showMemory = true }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Icon(Icons.Default.Star, null); Spacer(Modifier.width(PALLayout.small)); Text(stringResource(R.string.mobile_open_memory)) } } }
+                }
+                SettingsGroup.Phone -> {
+                    item { OutlinedPanel(stringResource(R.string.conversation_preferences)) {
+                        val portraitShown by UiPreferences.portrait(context).collectAsState()
+                        Row(Modifier.toggleable(portraitShown, role = Role.Switch) { UiPreferences.setPortrait(context, it) },
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) { Text(stringResource(R.string.mobile_show_the_assistants_portrait)); Text(stringResource(R.string.mobile_show_the_desktop_portrait_alongside_the_conversation_status), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            Switch(portraitShown, null)
+                        }
+                        HorizontalDivider()
+                        var keyboardSend by remember { mutableStateOf(UiPreferences.sendFromKeyboard(context)) }
+                        Row(Modifier.fillMaxWidth().heightIn(min = PALLayout.target).toggleable(keyboardSend, role = Role.Switch) {
+                            keyboardSend = it
+                            UiPreferences.setSendFromKeyboard(context, it)
+                        }, verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(stringResource(R.string.keyboard_send))
+                                Text(stringResource(R.string.keyboard_send_detail), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(keyboardSend, null)
+                        }
+                    } }
+                    item { OutlinedPanel(stringResource(R.string.mobile_background_connection)) { ListItem(headlineContent = { Text(stringResource(R.string.mobile_monitor_in_the_background)) }, supportingContent = { Text(stringResource(R.string.mobile_keeps_a_private_notification_and_the_desktop_connection)) }, trailingContent = { Switch(state.monitoring, { enabled -> if (enabled) { if (Build.VERSION.SDK_INT >= 33 && !NotificationManagerCompat.from(context).areNotificationsEnabled()) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS); if (Build.VERSION.SDK_INT >= 37 && ContextCompat.checkSelfPermission(context, "android.permission.ACCESS_LOCAL_NETWORK") != PackageManager.PERMISSION_GRANTED) localNetworkPermission.launch("android.permission.ACCESS_LOCAL_NETWORK") else startMonitoring(context) } else context.stopService(Intent(context, MonitoringService::class.java)) }) }, colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0f))) } }
+                    item { OutlinedPanel(stringResource(R.string.mobile_request_notifications)) { ListItem(headlineContent = { Text(stringResource(R.string.mobile_request_alerts)) }, supportingContent = { Text(when {
+                        !alertsOn -> stringResource(R.string.mobile_off_approval_and_question_requests_arrive_silently_allow)
+                        !state.monitoring -> stringResource(R.string.mobile_on_while_background_monitoring_is_on)
+                        else -> stringResource(R.string.mobile_on_lock_screen_alerts_hide_request_details)
+                    }, color = if (alertsOn) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error) }, trailingContent = { if (!alertsOn) TextButton(::requestAlerts, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_allow)) } }, colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0f)))
+                        HorizontalDivider()
+                        ListItem(headlineContent = { Text(stringResource(R.string.mobile_notification_settings)) }, supportingContent = { Text(stringResource(R.string.mobile_choose_how_requests_replies_problems_and_timers_alert)) }, modifier = Modifier.clickable { openNotificationSettings(context) }.heightIn(min = PALLayout.primaryHeight), colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0f)))
+                    } }
+                }
+                SettingsGroup.Connection -> {
+                    item { OutlinedPanel(stringResource(R.string.mobile_desktop_connection)) {
+                        val online = state.connection as? ConnectionState.Online
+                        if (online != null) Text(stringResource(R.string.mobile_connected_to, online.desktopName), color = MaterialTheme.colorScheme.primary)
+                        else ConnectionRecovery(state, repository::retry)
+                    } }
+                    item { ConnectionDetails(repository, state) }
+                    // Actions whose outcome the desktop never confirmed. Nothing here is sent again.
+                    if (state.pendingCommands.isNotEmpty()) item { OutlinedPanel(stringResource(R.string.mobile_unconfirmed_desktop_actions)) {
+                        Text(stringResource(R.string.mobile_pal_couldnt_confirm_these_with_the_desktop_check), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        state.pendingCommands.forEach { command -> Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(CommandOutcomes.describe(command), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(if (command.status == "unknown") stringResource(R.string.mobile_outcome_unknown_check_it_on_the_pc) else stringResource(R.string.mobile_checking_with_the_desktop), style = MaterialTheme.typography.bodySmall, color = if (command.status == "unknown") MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (command.status == "unknown") TextButton({ scope.launch { runCatching { repository.acknowledgeUnknownCommand(command.commandId) }.onFailure { error = it.message } } }, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_checked)) }
+                        } }
+                    } }
+
+                }
+                SettingsGroup.Pairing -> {
+                    item { MobileMaintenanceSection() }
+                    item { OutlinedPanel(stringResource(R.string.desktop_paired_desktop)) { ListItem(headlineContent = { Text(state.desktop?.desktopName.orEmpty()) }, supportingContent = { Text(stringResource(R.string.mobile_device_pinned_tls_identity, state.desktop?.deviceId.orEmpty().take(8))) }, leadingContent = { Icon(Icons.Default.Home, null) }, colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0f))) } }
+                    item { OutlinedButton({ replacePairing = true }, enabled = repository.replacementBlocker() == null, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_replace_pairing_from_this_desktop)) } }
+                    repository.replacementBlocker()?.let { blocker -> item { Text(blocker, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) } }
+                    item { OutlinedButton({ confirmForget = true }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target), colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_forget_this_desktop)) } }
                 }
             }
-            SettingsGroup.Owner -> ownerSettings(repository, state, activity, { feedback = it; error = null }, { error = it; feedback = null },
-                initialToolServerId = oauthTargetId, toolServerResult = oauthResult, onOAuthStarted = onOAuthStarted,
-                initialSessionId = ownerInitialSession, initialSection = ownerInitialSection)
-            SettingsGroup.Assistant -> {
-                if (state.supports("settings.get")) item { OutlinedPanel("Defaults") { if (settingsConflict) { Text("Desktop settings changed while you were editing. Your values are preserved.", color = MaterialTheme.colorScheme.tertiary); FlowRow { TextButton({ applySettings(remoteSettings) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Reload desktop") }; TextButton({ baselineRevision = remoteSettings["revision"]?.jsonPrimitive?.contentOrNull ?: baselineRevision; settingsConflict = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Keep mine") } } }; OutlinedTextField(personality, { personality = it.take(8000); settingsDirty = true }, label = { Text("Personality") }, minLines = 3, modifier = Modifier.fillMaxWidth(), supportingText = { Text("Applies to every conversation unless a project or conversation style on the desktop replaces it.") }); if (!remoteSettings["ollamaHost"]?.jsonPrimitive?.contentOrNull.isNullOrBlank()) OutlinedTextField(defaultModel, { defaultModel = it.take(512); settingsDirty = true }, label = { Text("Default Ollama model") }, singleLine = true, modifier = Modifier.fillMaxWidth()); Text("Web search provider", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { listOf("auto","duckduckgo","brave","mojeek","searxng").forEach { provider -> FilterChip(searchProvider == provider, { searchProvider = provider; settingsDirty = true }, { Text(provider) }, modifier = Modifier.heightIn(min = 48.dp)) } }; if (state.supports("settings.patch")) Button({ scope.launch { runCatching { val action = repository.prepareAction("settings.patch", assistantSettingsPatch(remoteSettings, baselineRevision, personality, defaultModel, searchProvider)); authenticate(activity, "Update assistant settings", action, repository, { value -> applySettings(value.jsonObject); feedback = "Settings updated" }, { error = it }) }.onFailure { error = it.message } } }, enabled = !loading && !settingsConflict && settingsDirty, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Review & save") } else Text("This device has read-only settings access.", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
-                if (state.supports("memory.list") || state.supports("memory.retrieve")) item { OutlinedPanel("Project memory") { Text("Browse saved facts, conversation passages, assertions, episodes, and entities for an approved conversation.", color = MaterialTheme.colorScheme.onSurfaceVariant); OutlinedButton({ showMemory = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Icon(Icons.Default.Star, null); Spacer(Modifier.width(8.dp)); Text("Open memory") } } }
-            }
-            SettingsGroup.Phone -> {
-                item { OutlinedPanel(stringResource(R.string.conversation_preferences)) {
-                    val portraitShown by UiPreferences.portrait(context).collectAsState()
-                    Row(Modifier.toggleable(portraitShown, role = Role.Switch) { UiPreferences.setPortrait(context, it) },
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) { Text("Show the assistant's portrait"); Text("Show the desktop portrait alongside the conversation status.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                        Switch(portraitShown, null)
-                    }
-                    HorizontalDivider()
-                    var keyboardSend by remember { mutableStateOf(UiPreferences.sendFromKeyboard(context)) }
-                    Row(Modifier.fillMaxWidth().heightIn(min = PALLayout.target).toggleable(keyboardSend, role = Role.Switch) {
-                        keyboardSend = it
-                        UiPreferences.setSendFromKeyboard(context, it)
-                    }, verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(stringResource(R.string.keyboard_send))
-                            Text(stringResource(R.string.keyboard_send_detail), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Switch(keyboardSend, null)
-                    }
-                } }
-                item { OutlinedPanel("Background connection") { ListItem(headlineContent = { Text("Monitor in the background") }, supportingContent = { Text("Keeps a private notification and the desktop connection while PAL is closed, so requests, replies and timers can alert you.") }, trailingContent = { Switch(state.monitoring, { enabled -> if (enabled) { if (Build.VERSION.SDK_INT >= 33 && !NotificationManagerCompat.from(context).areNotificationsEnabled()) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS); if (Build.VERSION.SDK_INT >= 37 && ContextCompat.checkSelfPermission(context, "android.permission.ACCESS_LOCAL_NETWORK") != PackageManager.PERMISSION_GRANTED) localNetworkPermission.launch("android.permission.ACCESS_LOCAL_NETWORK") else startMonitoring(context) } else context.stopService(Intent(context, MonitoringService::class.java)) }) }, colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0f))) } }
-                item { OutlinedPanel("Request notifications") { ListItem(headlineContent = { Text("Request alerts") }, supportingContent = { Text(when {
-                    !alertsOn -> "Off. Approval and question requests arrive silently. Allow notifications so they can reach you."
-                    !state.monitoring -> "On while background monitoring is on."
-                    else -> "On. Lock-screen alerts hide request details."
-                }, color = if (alertsOn) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error) }, trailingContent = { if (!alertsOn) TextButton(::requestAlerts, modifier = Modifier.heightIn(min = 48.dp)) { Text("Allow") } }, colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0f)))
-                    HorizontalDivider()
-                    ListItem(headlineContent = { Text("Notification settings") }, supportingContent = { Text("Choose how requests, replies, problems and timers alert you") }, modifier = Modifier.clickable { openNotificationSettings(context) }.heightIn(min = 56.dp), colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0f)))
-                } }
-            }
-            SettingsGroup.Connection -> {
-                item { OutlinedPanel("Desktop connection") {
-                    when (val connection = state.connection) {
-                        is ConnectionState.Online -> Text("Connected to ${connection.desktopName}", color = MaterialTheme.colorScheme.primary)
-                        is ConnectionState.Offline -> {
-                            Text(connection.reason, style = MaterialTheme.typography.bodySmall)
-                            if (connection.kind == OfflineKind.Unreachable) Text("Check that the PC is awake and reachable over Wi-Fi or your VPN. After a Wi-Fi address change, the PC firewall may still allow the phone's previous address.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (connection.kind == OfflineKind.MonitoringOff) Text("PAL connects whenever it is open. Turn on background monitoring to stay connected while it is closed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            OutlinedButton(repository::retry, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(if (connection.kind == OfflineKind.Unreachable) "Retry connection" else "Connect now") }
-                        }
-                        else -> Text("Connecting to your paired desktop…")
-                    }
-                } }
-                item { ConnectionDetails(repository, state) }
-                // Actions whose outcome the desktop never confirmed. Nothing here is sent again.
-                if (state.pendingCommands.isNotEmpty()) item { OutlinedPanel("Unconfirmed desktop actions") {
-                    Text("PAL couldn't confirm these with the desktop. Check each one on the PC; nothing is sent again automatically.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    state.pendingCommands.forEach { command -> Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(CommandOutcomes.describe(command), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text(if (command.status == "unknown") "Outcome unknown · check it on the PC" else "Checking with the desktop…", style = MaterialTheme.typography.bodySmall, color = if (command.status == "unknown") MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        if (command.status == "unknown") TextButton({ scope.launch { runCatching { repository.acknowledgeUnknownCommand(command.commandId) }.onFailure { error = it.message } } }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Checked") }
-                    } }
-                } }
-
-            }
-            SettingsGroup.Pairing -> {
-                item { MobileMaintenanceSection() }
-                item { OutlinedPanel("Paired desktop") { ListItem(headlineContent = { Text(state.desktop?.desktopName.orEmpty()) }, supportingContent = { Text("Device ${state.desktop?.deviceId?.take(8)} · pinned TLS identity") }, leadingContent = { Icon(Icons.Default.Home, null) }, colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0f))) } }
-                item { OutlinedButton({ replacePairing = true }, enabled = repository.replacementBlocker() == null, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Replace pairing from this desktop") } }
-                repository.replacementBlocker()?.let { blocker -> item { Text(blocker, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) } }
-                item { OutlinedButton({ confirmForget = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Forget this desktop") } }
-            }
+          }
+          if (group == SettingsGroup.Owner) (error ?: feedback)?.let { message ->
+              Snackbar(
+                  modifier = Modifier.align(Alignment.BottomCenter).padding(PALLayout.gutter),
+                  action = { TextButton({ error = null; feedback = null }) { Text(stringResource(R.string.mobile_dismiss)) } },
+                  containerColor = if (error != null) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.inverseSurface,
+                  contentColor = if (error != null) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.inverseOnSurface,
+              ) { Text(message, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+          }
         }
-      }
-      if (group == SettingsGroup.Owner) (error ?: feedback)?.let { message ->
-          Snackbar(
-              modifier = Modifier.align(Alignment.BottomCenter).padding(PALLayout.gutter),
-              action = { TextButton({ error = null; feedback = null }) { Text("Dismiss") } },
-              containerColor = if (error != null) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.inverseSurface,
-              contentColor = if (error != null) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.inverseOnSurface,
-          ) { Text(message, maxLines = 3, overflow = TextOverflow.Ellipsis) }
-      }
     }
-    if (confirmForget) AlertDialog(onDismissRequest = { confirmForget = false }, title = { Text("Forget desktop?") }, text = { Text("This removes the encrypted cache, drafts and both phone keys. Pairing is required again.") }, confirmButton = { Button({ confirmForget = false; activity.lifecycleScope.launch { repository.forget() } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Forget") } }, dismissButton = { TextButton({ confirmForget = false }) { Text("Cancel") } })
+    if (confirmForget) AlertDialog(onDismissRequest = { confirmForget = false }, title = { Text(stringResource(R.string.mobile_forget_desktop)) }, text = { Text(stringResource(R.string.mobile_this_removes_the_encrypted_cache_drafts_and_both)) }, confirmButton = { Button({ confirmForget = false; activity.lifecycleScope.launch { repository.forget() } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_forget)) } }, dismissButton = { TextButton({ confirmForget = false }) { Text(stringResource(R.string.annotation_cancel)) } })
 }
 
 @Composable
 private fun PermissionReductionPanel(repository: PALRepository, state: MobileState, onFeedback: (String) -> Unit, onError: (String?) -> Unit) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val scope = rememberCoroutineScope()
     var device by remember { mutableStateOf<JsonObject?>(null) }
     var selectedCaps by remember { mutableStateOf(setOf<String>()) }
@@ -1965,25 +1997,25 @@ private fun PermissionReductionPanel(repository: PALRepository, state: MobileSta
     val removedProjects = projects.filter { it["id"]?.jsonPrimitive?.contentOrNull !in selectedProjects }
     val changed = removedCaps.isNotEmpty() || removedCategories.isNotEmpty() || removedScripts.isNotEmpty() || removedProjects.isNotEmpty() || removedHosts.isNotEmpty()
     val removedCount = removedCaps.size + removedCategories.size + removedScripts.size + removedProjects.size + removedHosts.size
-    OutlinedPanel("Reduce this phone's access") {
-        Text("Turn off grants this phone should no longer have. Selected grants are kept; adding access still requires the desktop.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    OutlinedPanel(stringResource(R.string.mobile_reduce_this_phones_access)) {
+        Text(stringResource(R.string.mobile_turn_off_grants_this_phone_should_no_longer), color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         fun toggle(value: String, values: Set<String>, update: (Set<String>) -> Unit) = update(if (value in values) values - value else values + value)
-        if (projects.isNotEmpty()) { Text("Projects", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { projects.forEach { project -> val id = project["id"]?.jsonPrimitive?.contentOrNull ?: return@forEach; val name = project["name"]?.jsonPrimitive?.contentOrNull ?: project["path"]?.jsonPrimitive?.contentOrNull ?: id; FilterChip(id in selectedProjects, { toggle(id, selectedProjects) { selectedProjects = it } }, { Text(name) }, enabled = !pending, modifier = Modifier.heightIn(min = 48.dp)) } } }
-        if (categories.isNotEmpty()) { Text("Action categories", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { categories.forEach { value -> FilterChip(value in selectedCategories, { toggle(value, selectedCategories) { selectedCategories = it } }, { Text(value) }, enabled = !pending, modifier = Modifier.heightIn(min = 48.dp)) } } }
-        if (caps.isNotEmpty()) { Text("Capabilities", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { caps.forEach { value -> FilterChip(value in selectedCaps, { toggle(value, selectedCaps) { selectedCaps = it } }, { Text(value) }, enabled = !pending, modifier = Modifier.heightIn(min = 48.dp)) } } }
-        if (scripts.isNotEmpty()) { Text("Scripts", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { scripts.forEach { value -> FilterChip(value in selectedScripts, { toggle(value, selectedScripts) { selectedScripts = it } }, { Text(value) }, enabled = !pending, modifier = Modifier.heightIn(min = 48.dp)) } } }
-        if (hosts.isNotEmpty()) { Text("Ollama hosts", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { hosts.forEach { value -> FilterChip(value in selectedHosts, { toggle(value, selectedHosts) { selectedHosts = it } }, { Text(value) }, enabled = !pending, modifier = Modifier.heightIn(min = 48.dp)) } } }
-        if (changed) SecureStatusPanel("$removedCount ${if (removedCount == 1) "grant" else "grants"} will be removed", "Review the exact list before reconnecting with reduced access.", tone = SecureTone.Attention)
-        if (pending) SecureStatusPanel("Reduction pending", "Waiting for the desktop to confirm the access reduction after reconnect…", tone = SecureTone.Attention)
-        Button({ review = true }, enabled = changed && scopeVersion != null && !pending && !loading, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Review reduced access") }
+        if (projects.isNotEmpty()) { Text(stringResource(R.string.mobile_projects), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) { projects.forEach { project -> val id = project["id"]?.jsonPrimitive?.contentOrNull ?: return@forEach; val name = project["name"]?.jsonPrimitive?.contentOrNull ?: project["path"]?.jsonPrimitive?.contentOrNull ?: id; FilterChip(id in selectedProjects, { toggle(id, selectedProjects) { selectedProjects = it } }, { Text(name) }, enabled = !pending, modifier = Modifier.heightIn(min = PALLayout.target)) } } }
+        if (categories.isNotEmpty()) { Text(stringResource(R.string.mobile_action_categories), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) { categories.forEach { value -> FilterChip(value in selectedCategories, { toggle(value, selectedCategories) { selectedCategories = it } }, { Text(value) }, enabled = !pending, modifier = Modifier.heightIn(min = PALLayout.target)) } } }
+        if (caps.isNotEmpty()) { Text(stringResource(R.string.mobile_capabilities_2), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) { caps.forEach { value -> FilterChip(value in selectedCaps, { toggle(value, selectedCaps) { selectedCaps = it } }, { Text(value) }, enabled = !pending, modifier = Modifier.heightIn(min = PALLayout.target)) } } }
+        if (scripts.isNotEmpty()) { Text(stringResource(R.string.mobile_scripts), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) { scripts.forEach { value -> FilterChip(value in selectedScripts, { toggle(value, selectedScripts) { selectedScripts = it } }, { Text(value) }, enabled = !pending, modifier = Modifier.heightIn(min = PALLayout.target)) } } }
+        if (hosts.isNotEmpty()) { Text(stringResource(R.string.mobile_ollama_hosts), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) { hosts.forEach { value -> FilterChip(value in selectedHosts, { toggle(value, selectedHosts) { selectedHosts = it } }, { Text(value) }, enabled = !pending, modifier = Modifier.heightIn(min = PALLayout.target)) } } }
+        if (changed) SecureStatusPanel(androidx.compose.ui.res.pluralStringResource(R.plurals.access_removed, removedCount, removedCount), stringResource(R.string.mobile_review_the_exact_list_before_reconnecting_with_reduced), tone = SecureTone.Attention)
+        if (pending) SecureStatusPanel(stringResource(R.string.mobile_reduction_pending), stringResource(R.string.mobile_waiting_for_the_desktop_to_confirm_the_access), tone = SecureTone.Attention)
+        Button({ review = true }, enabled = changed && scopeVersion != null && !pending && !loading, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_review_reduced_access)) }
     }
-    if (review && scopeVersion != null) AlertDialog(onDismissRequest = { review = false }, title = { Text("Remove these grants?") }, text = {
-        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("This only removes access. Active remote work is stopped and this phone reconnects with the new scope.")
-            removedProjects.forEach { Text("Project · ${it["name"]?.jsonPrimitive?.contentOrNull ?: it["path"]?.jsonPrimitive?.contentOrNull ?: it["id"]?.jsonPrimitive?.contentOrNull}") }
-            removedCategories.forEach { Text("Category · $it") }; removedCaps.forEach { Text("Capability · $it") }
-            removedScripts.forEach { Text("Script · $it") }; removedHosts.forEach { Text("Ollama host · $it") }
+    if (review && scopeVersion != null) AlertDialog(onDismissRequest = { review = false }, title = { Text(stringResource(R.string.mobile_remove_these_grants)) }, text = {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+            Text(stringResource(R.string.mobile_this_only_removes_access_active_remote_work_is))
+            removedProjects.forEach { Text(stringResource(R.string.mobile_project, it["name"]?.jsonPrimitive?.contentOrNull ?: it["path"]?.jsonPrimitive?.contentOrNull ?: it["id"]?.jsonPrimitive?.contentOrNull.orEmpty())) }
+            removedCategories.forEach { Text(stringResource(R.string.mobile_category, it)) }; removedCaps.forEach { Text(stringResource(R.string.mobile_capability, it)) }
+            removedScripts.forEach { Text(stringResource(R.string.mobile_script, it)) }; removedHosts.forEach { Text(stringResource(R.string.mobile_ollama_host, it)) }
         }
     }, confirmButton = { Button({
         review = false
@@ -1996,15 +2028,15 @@ private fun PermissionReductionPanel(repository: PALRepository, state: MobileSta
             put("ollamaHosts", JsonArray(selectedHosts.sorted().map(::JsonPrimitive)))
         }
         scope.launch { runCatching { repository.mutate("permissions.reduce", params) }
-            .onSuccess { onFeedback("Access reduced. Reconnecting with the new grants…") }
-            .onFailure { failure -> if (failure is CommandPendingException) onFeedback("Access reduction is pending desktop reconciliation…") else onError(failure.message) } }
-    }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Reduce access & reconnect") } }, dismissButton = { TextButton({ review = false }) { Text("Cancel") } })
+            .onSuccess { onFeedback(strings.getString(R.string.mobile_access_reduced_reconnecting_with_the_new_grants)) }
+            .onFailure { failure -> if (failure is CommandPendingException) onFeedback(strings.getString(R.string.mobile_access_reduction_is_pending_desktop_reconciliation)) else onError(failure.message) } }
+    }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_reduce_access_reconnect)) } }, dismissButton = { TextButton({ review = false }) { Text(stringResource(R.string.annotation_cancel)) } })
 }
 
-@Composable private fun MemoryRow(row: JsonObject, manage: (() -> Unit)? = null) { OutlinedPanel(row["text"]?.jsonPrimitive?.contentOrNull ?: row["name"]?.jsonPrimitive?.contentOrNull ?: "Memory record") { val detail = listOfNotNull(row["kind"]?.jsonPrimitive?.contentOrNull, row["status"]?.jsonPrimitive?.contentOrNull, row["state"]?.jsonPrimitive?.contentOrNull, row["updated"]?.jsonPrimitive?.contentOrNull).joinToString(" · "); if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant); val remaining = JsonObject(row.filterKeys { it !in setOf("id","text","name","kind","status","state","updated","revision") }); if (remaining.isNotEmpty()) StructuredObject(remaining); manage?.let { OutlinedButton(it) { Text("Inspect or forget") } } } }
+@Composable private fun MemoryRow(row: JsonObject, manage: (() -> Unit)? = null) { OutlinedPanel(row["text"]?.jsonPrimitive?.contentOrNull ?: row["name"]?.jsonPrimitive?.contentOrNull ?: stringResource(R.string.mobile_memory_record)) { val detail = listOfNotNull(row["kind"]?.jsonPrimitive?.contentOrNull, row["status"]?.jsonPrimitive?.contentOrNull, row["state"]?.jsonPrimitive?.contentOrNull, row["updated"]?.jsonPrimitive?.contentOrNull).joinToString(" · "); if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant); val remaining = JsonObject(row.filterKeys { it !in setOf("id","text","name","kind","status","state","updated","revision") }); if (remaining.isNotEmpty()) StructuredObject(remaining); manage?.let { OutlinedButton(it) { Text(stringResource(R.string.mobile_inspect_or_forget)) } } } }
 
 @Composable internal fun StructuredObject(value: JsonObject) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
         value.forEach { (key, item) ->
             Column {
                 Text(key.replaceFirstChar(Char::uppercase), style = MaterialTheme.typography.labelMedium,
@@ -2015,15 +2047,15 @@ private fun PermissionReductionPanel(repository: PALRepository, state: MobileSta
     }
 }
 
-@Composable private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, detail: String) = EmptyState(androidx.compose.ui.graphics.vector.rememberVectorPainter(icon), title, detail)
+@Composable internal fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, detail: String) = EmptyState(androidx.compose.ui.graphics.vector.rememberVectorPainter(icon), title, detail)
 @Composable private fun EmptyState(icon: androidx.compose.ui.graphics.painter.Painter, title: String, detail: String) {
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         // A library empty state is itself a lazy-list item and has no upper height constraint.
         val scroll = if (constraints.hasBoundedHeight) Modifier.verticalScroll(rememberScrollState()) else Modifier
-        Column(scroll.widthIn(max = 420.dp).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(scroll.widthIn(max = PALLayout.noticeWidth).padding(PALLayout.sectionGap), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.secondaryContainer) {
-                Icon(icon, null, Modifier.padding(14.dp).size(28.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                Icon(icon, null, Modifier.padding(PALLayout.gutter).size(PALLayout.icon), tint = MaterialTheme.colorScheme.onSecondaryContainer)
             }
             Text(title, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
             Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
@@ -2034,9 +2066,23 @@ private fun PermissionReductionPanel(repository: PALRepository, state: MobileSta
 @Composable private fun Markdown(value: String) = PALMarkdown(value)
 
 /** "Conversation · agent Scout · delegated from Parent", from the scoped session list and the request's opaque agent reference. */
-internal fun approvalOrigin(state: MobileState, approval: Approval): String {
+internal data class RequestOrigin(val conversation: String?, val agent: String?, val parent: String?)
+
+internal fun requestOrigin(state: MobileState, approval: Approval): RequestOrigin {
     val session = state.sessions.firstOrNull { it.id == approval.sessionId }
     val agent = approval.agentId?.let { id -> session?.agents?.firstOrNull { it.id == id } }
     val parent = approval.parentSessionIds.firstNotNullOfOrNull { id -> state.sessions.firstOrNull { it.id == id } }
-    return listOfNotNull(session?.title ?: "A conversation not loaded on this phone", agent?.let { "agent ${it.name}" }, parent?.let { "delegated from ${it.title}" }).joinToString(" · ")
+    return RequestOrigin(session?.title, agent?.name, parent?.title)
+}
+
+@Composable
+internal fun approvalOrigin(state: MobileState, approval: Approval): String {
+    val (title, agent, parent) = requestOrigin(state, approval)
+    val session = title ?: stringResource(R.string.missing_conversation)
+    return when {
+        agent != null && parent != null -> stringResource(R.string.origin_agent_parent, session, agent, parent)
+        agent != null -> stringResource(R.string.origin_agent, session, agent)
+        parent != null -> stringResource(R.string.origin_parent, session, parent)
+        else -> session
+    }
 }

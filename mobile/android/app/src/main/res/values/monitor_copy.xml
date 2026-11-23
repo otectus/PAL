@@ -1,0 +1,4 @@
+<resources>
+    <string name="monitor_deny_needs_the_desktop_connection">Deny needs the desktop connection</string>
+    <string name="monitor_deny_not_confirmed_yet">Deny not confirmed yet</string>
+</resources>

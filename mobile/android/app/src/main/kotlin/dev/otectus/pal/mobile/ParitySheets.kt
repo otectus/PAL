@@ -1,6 +1,7 @@
 @file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 package dev.otectus.pal.mobile
 
+import androidx.compose.ui.res.stringResource
 import android.content.Intent
 import android.os.PowerManager
 import android.provider.Settings
@@ -22,7 +23,6 @@ import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -65,23 +65,23 @@ internal fun AncillarySheetScaffold(
     val touchTarget = PALLayout.target
     @Composable fun Header() {
         Row(
-            Modifier.fillMaxWidth().padding(start = padding, end = 8.dp, bottom = 8.dp),
+            Modifier.fillMaxWidth().padding(start = padding, end = PALLayout.small, bottom = PALLayout.small),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.weight(1f).semantics { heading() }, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(Modifier.weight(1f).semantics { heading() }, verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
                 Text(title, style = MaterialTheme.typography.headlineSmall)
                 subtitle?.takeIf(String::isNotBlank)?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            TextButton(onDismiss, enabled = !busy, modifier = Modifier.heightIn(min = touchTarget)) { Text("Close") }
+            TextButton(onDismiss, enabled = !busy, modifier = Modifier.heightIn(min = touchTarget)) { Text(stringResource(R.string.mobile_close)) }
         }
     }
     @Composable fun Footer() {
         if (action != null) {
             HorizontalDivider()
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = padding, vertical = 10.dp),
+                Modifier.fillMaxWidth().padding(horizontal = padding, vertical = PALLayout.small),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
                 content = action,
@@ -94,7 +94,7 @@ internal fun AncillarySheetScaffold(
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         BoxWithConstraints(Modifier.fillMaxWidth().imePadding().fillMaxHeight(0.94f).semantics { paneTitle = title }) {
-            val compact = maxHeight < 420.dp
+            val compact = maxHeight < PALLayout.compactHeight
             val wholePageScroll = rememberScrollState()
             val bodyScroll = rememberScrollState()
             // Keep the fields in the same composition when IME insets change. Replacing the body
@@ -121,10 +121,10 @@ internal fun AncillarySection(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surface,
         shape = MaterialTheme.shapes.medium,
-        tonalElevation = 1.dp,
+        tonalElevation = PALLayout.hairline,
     ) {
-        Column(Modifier.padding(PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Column(Modifier.semantics { heading() }, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(Modifier.padding(PALLayout.gutter), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+            Column(Modifier.semantics { heading() }, verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
@@ -140,12 +140,14 @@ internal fun AncillaryFeedback(message: String, error: Boolean = false) {
         color = if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
         contentColor = if (error) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
         shape = MaterialTheme.shapes.medium,
-    ) { Text(message, Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium) }
+    ) { Text(message, Modifier.padding(PALLayout.groupGap), style = MaterialTheme.typography.bodyMedium) }
 }
 
 /** source=null opens authorized native history; source!=null creates an editable handoff draft. */
 @Composable
 fun SessionTransferSheet(repository: PALRepository, state: MobileState, activity: FragmentActivity, source: Session?, onDismiss: () -> Unit, onCreated: (String) -> Unit) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     var projectId by rememberSaveable(source?.id) { mutableStateOf(source?.projectId ?: state.projects.firstOrNull()?.id.orEmpty()) }
     val providers = state.providers.filter { (_, value) -> (value as? JsonObject)?.get("remoteExecution")?.jsonPrimitive?.booleanOrNull == true }.keys.toList()
     var provider by rememberSaveable(source?.id) { mutableStateOf(providers.firstOrNull().orEmpty()) }
@@ -154,7 +156,7 @@ fun SessionTransferSheet(repository: PALRepository, state: MobileState, activity
     var history by remember { mutableStateOf(emptyList<JsonObject>()) }; var historyId by rememberSaveable(source?.id) { mutableStateOf("") }
     var stopped by rememberSaveable(source?.id) { mutableStateOf(false) }; var busy by remember { mutableStateOf(false) }; var modelLoading by remember { mutableStateOf(false) }; var error by remember { mutableStateOf<String?>(null) }
     // Desktop history can come from Codex or, with a desktop that offers it, Claude Code.
-    val historyProviders = if (state.has("history.claude")) listOf("codex" to "Codex", "claude" to "Claude Code") else listOf("codex" to "Codex")
+    val historyProviders = if (state.has("history.claude")) listOf("codex" to "Codex", "claude" to strings.getString(R.string.sheet_claude_code)) else listOf("codex" to "Codex")
     var historyProvider by rememberSaveable(source?.id) { mutableStateOf("codex") }
     val projectIds = state.projects.map(Project::id); val sessionIds = state.sessions.map(Session::id)
     LaunchedEffect(state.cacheEpoch) { preview = null; draft = ""; history = emptyList(); historyId = ""; stopped = false; error = null }
@@ -186,59 +188,59 @@ fun SessionTransferSheet(repository: PALRepository, state: MobileState, activity
     val modelReady = !destination.modelRequired || models.any { it.id == model.trim() } || destination.customModel && dev.otectus.pal.mobile.data.ModelIds.error(model) == null
     val working = busy || modelLoading
     AncillarySheetScaffold(
-        title = if (source == null) "Desktop history" else "Hand off conversation",
-        subtitle = if (source == null) "Continue a stopped external thread" else "Create an editable draft for another provider",
+        title = if (source == null) stringResource(R.string.sheet_desktop_history) else stringResource(R.string.sheet_hand_off_conversation),
+        subtitle = if (source == null) stringResource(R.string.sheet_continue_a_stopped_external_thread) else stringResource(R.string.sheet_create_an_editable_draft_for_another_provider),
         busy = working,
         onDismiss = onDismiss,
         action = { Button(onClick = {
             busy = true; error = null
             val method = if (source == null) "sessions.import" else "sessions.handoffCreate"
             val params = buildJsonObject { if (source == null) { put("historyId", historyId); put("externalWriterStopped", true) } else { put("sourceSessionId", source.id); put("sourceDigest", preview!!.getValue("sourceDigest")); put("draft", draft); put("projectId", projectId); put("provider", provider); put("model", model.trim()); put("tools", false) } }
-            signedReview(activity, repository, method, params, if (source == null) "Import this desktop thread" else "Create this handoff draft", { value -> busy = false; onCreated(value.jsonObject.getValue("id").jsonPrimitive.content) }, { error = it; busy = false }, projectId)
+            signedReview(activity, repository, method, params, if (source == null) strings.getString(R.string.sheet_import_this_desktop_thread) else strings.getString(R.string.sheet_create_this_handoff_draft), { value -> busy = false; onCreated(value.jsonObject.getValue("id").jsonPrimitive.content) }, { error = it; busy = false }, projectId)
         }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target),
             enabled = !working && projectId.isNotBlank() && if (source == null) stopped && historyId.isNotBlank() else preview != null && draft.isNotBlank() && provider.isNotBlank() && modelReady
-        ) { Text(if (source == null) "Review & import" else "Create draft") } },
+        ) { Text(if (source == null) stringResource(R.string.sheet_review_import) else stringResource(R.string.sheet_create_draft)) } },
     ) {
-        Text(if (source == null) "Import a stopped conversation from an approved project. Its historical transcript remains with the provider; a Claude Code conversation continues in Claude's restricted mode." else "Review the last eight conversation messages. This creates a draft; Send is a separate action.")
+        Text(if (source == null) stringResource(R.string.sheet_import_a_stopped_conversation_from_an_approved_project) else stringResource(R.string.sheet_review_the_last_eight_conversation_messages_this_creates))
         source?.let { original ->
             val project = state.projects.firstOrNull { it.id == original.projectId }
-            AncillarySection("Source", "The conversation being handed off") {
+            AncillarySection(stringResource(R.string.sheet_source), stringResource(R.string.sheet_the_conversation_being_handed_off)) {
                 Text(project?.name ?: original.title, fontWeight = FontWeight.SemiBold)
-                SelectionContainer { Text(project?.path ?: original.project ?: "Path unavailable", style = MaterialTheme.typography.bodySmall) }
-                if (original.provider == "ollama") Text("Ollama · ${original.ollamaHost.ifBlank { state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: "host unavailable" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SelectionContainer { Text(project?.path ?: original.project ?: stringResource(R.string.desktop_path_unavailable), style = MaterialTheme.typography.bodySmall) }
+                if (original.provider == "ollama") Text(stringResource(R.string.mobile_ollama, original.ollamaHost.ifBlank { state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: strings.getString(R.string.mobile_host_unavailable) }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        AncillarySection("Destination project", "The approved project that will own the conversation") {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                state.projects.forEach { project -> FilterChip(projectId == project.id, { projectId = project.id }, { Column { Text(project.name); Text(project.path ?: "Path unavailable", style = MaterialTheme.typography.labelSmall) } }, enabled = !working) }
+        AncillarySection(stringResource(R.string.sheet_destination_project), stringResource(R.string.sheet_the_approved_project_that_will_own_the_conversation)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                state.projects.forEach { project -> FilterChip(projectId == project.id, { projectId = project.id }, { Column { Text(project.name); Text(project.path ?: stringResource(R.string.desktop_path_unavailable), style = MaterialTheme.typography.labelSmall) } }, enabled = !working) }
             }
-            state.projects.firstOrNull { it.id == projectId }?.let { project -> SelectionContainer { Text(project.path ?: "Path unavailable", style = MaterialTheme.typography.bodySmall) } }
+            state.projects.firstOrNull { it.id == projectId }?.let { project -> SelectionContainer { Text(project.path ?: stringResource(R.string.desktop_path_unavailable), style = MaterialTheme.typography.bodySmall) } }
         }
         if (source != null) {
-            AncillarySection("Provider and model", "Where the handoff draft will continue") {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { providers.forEach { value -> FilterChip(provider == value, { provider = value }, { Text(state.traits(value).label) }, enabled = !working) } }
-                if (provider == "ollama") Text("Ollama destination · ${state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: "host unavailable"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!destination.modelRequired) FilterChip(model.isBlank(), { model = "" }, { Text("Provider default model") }, enabled = !working)
-                    models.forEach { option -> FilterChip(model.trim() == option.id, { model = option.id }, { Text(option.displayName + if (option.cloud) " · Cloud" else "") }, enabled = !working) }
+            AncillarySection(stringResource(R.string.sheet_provider_and_model), stringResource(R.string.sheet_where_the_handoff_draft_will_continue)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) { providers.forEach { value -> FilterChip(provider == value, { provider = value }, { Text(state.traits(value).label) }, enabled = !working) } }
+                if (provider == "ollama") Text(stringResource(R.string.sheet_ollama_destination, state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: strings.getString(R.string.mobile_host_unavailable)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                    if (!destination.modelRequired) FilterChip(model.isBlank(), { model = "" }, { Text(stringResource(R.string.sheet_provider_default_model)) }, enabled = !working)
+                    models.forEach { option -> FilterChip(model.trim() == option.id, { model = option.id }, { Text(option.displayName + if (option.cloud) stringResource(R.string.sheet_cloud) else "") }, enabled = !working) }
                 }
-                if (unlisted) Text("This endpoint doesn't list its models. Enter the model ID.", style = MaterialTheme.typography.bodySmall)
-                if (destination.customModel) OutlinedTextField(model, { model = it.take(dev.otectus.pal.mobile.data.ModelIds.MAX_LENGTH + 64) }, label = { Text("Model ID") }, singleLine = true,
+                if (unlisted) Text(stringResource(R.string.sheet_this_endpoint_doesnt_list_its_models_enter_the), style = MaterialTheme.typography.bodySmall)
+                if (destination.customModel) OutlinedTextField(model, { model = it.take(dev.otectus.pal.mobile.data.ModelIds.MAX_LENGTH + 64) }, label = { Text(stringResource(R.string.mobile_model_id)) }, singleLine = true,
                     enabled = !working, isError = model.isNotEmpty() && models.none { it.id == model.trim() } && dev.otectus.pal.mobile.data.ModelIds.error(model) != null, modifier = Modifier.fillMaxWidth())
             }
-            AncillarySection("Draft", "Review and edit before creating it") {
-                if (preview?.get("shortened")?.jsonPrimitive?.booleanOrNull == true) AncillaryFeedback("Some source text is shortened. Check and edit the draft before continuing.")
-                OutlinedTextField(draft, { draft = it.take(100000) }, label = { Text("Handoff draft") }, minLines = 5, maxLines = 12, enabled = !working, modifier = Modifier.fillMaxWidth())
+            AncillarySection(stringResource(R.string.sheet_draft), stringResource(R.string.sheet_review_and_edit_before_creating_it)) {
+                if (preview?.get("shortened")?.jsonPrimitive?.booleanOrNull == true) AncillaryFeedback(stringResource(R.string.sheet_some_source_text_is_shortened_check_and_edit))
+                OutlinedTextField(draft, { draft = it.take(100000) }, label = { Text(stringResource(R.string.sheet_handoff_draft)) }, minLines = 5, maxLines = 12, enabled = !working, modifier = Modifier.fillMaxWidth())
             }
         } else {
-            AncillarySection("External thread", "Choose one stopped thread to continue") {
-                if (historyProviders.size > 1) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { historyProviders.forEach { (id, label) -> FilterChip(historyProvider == id, { historyProvider = id; historyId = "" }, { Text(label) }, enabled = !working) } }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { history.forEach { item -> FilterChip(historyId == item["id"]?.jsonPrimitive?.content, { historyId = item.getValue("id").jsonPrimitive.content }, { Text(item["title"]?.jsonPrimitive?.content ?: "Desktop thread") }, enabled = !working) } }
-                if (!working && history.isEmpty()) Text("No importable ${historyProviders.firstOrNull { it.first == historyProvider }?.second ?: "desktop"} threads in this project.")
+            AncillarySection(stringResource(R.string.sheet_external_thread), stringResource(R.string.sheet_choose_one_stopped_thread_to_continue)) {
+                if (historyProviders.size > 1) FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) { historyProviders.forEach { (id, label) -> FilterChip(historyProvider == id, { historyProvider = id; historyId = "" }, { Text(label) }, enabled = !working) } }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) { history.forEach { item -> FilterChip(historyId == item["id"]?.jsonPrimitive?.content, { historyId = item.getValue("id").jsonPrimitive.content }, { Text(item["title"]?.jsonPrimitive?.content ?: stringResource(R.string.sheet_desktop_thread)) }, enabled = !working) } }
+                if (!working && history.isEmpty()) Text(stringResource(R.string.sheet_no_importable_threads_in_this_project, historyProviders.firstOrNull { it.first == historyProvider }?.second ?: "desktop"))
                 Row(Modifier.fillMaxWidth().heightIn(min = PALLayout.target)
                     .toggleable(stopped, enabled = !working, role = Role.Checkbox) { stopped = it }, verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(stopped, null, enabled = !working)
-                    Text("I stopped the external CLI writer. PAL may now manage this thread.", Modifier.weight(1f))
+                    Text(stringResource(R.string.sheet_i_stopped_the_external_cli_writer_pal_may), Modifier.weight(1f))
                 }
             }
         }
@@ -250,6 +252,8 @@ fun SessionTransferSheet(repository: PALRepository, state: MobileState, activity
 /** record=null previews clearing the selected project. Editing always uses a reviewed revision. */
 @Composable
 fun MemoryRecordSheet(repository: PALRepository, state: MobileState, activity: FragmentActivity, sessionId: String, record: JsonObject?, onDismiss: () -> Unit, onChanged: () -> Unit, kind: String = "saved", rows: List<JsonObject> = emptyList()) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val session = state.sessions.find { it.id == sessionId }; val project = state.projects.find { it.id == session?.projectId }
     val scope = rememberCoroutineScope(); val id = record?.get("id")?.jsonPrimitive?.contentOrNull
     var text by rememberSaveable(id) { mutableStateOf(record?.get("text")?.jsonPrimitive?.contentOrNull.orEmpty()) }
@@ -259,47 +263,47 @@ fun MemoryRecordSheet(repository: PALRepository, state: MobileState, activity: F
     val editable = record?.get("kind")?.jsonPrimitive?.contentOrNull == "saved" || record?.get("type")?.jsonPrimitive?.contentOrNull == "saved"
     val working = busy || graphBusy
     AncillarySheetScaffold(
-        title = if (record == null) "Clear project memory" else "Memory record",
-        subtitle = project?.name ?: "Selected project",
+        title = if (record == null) stringResource(R.string.sheet_clear_project_memory) else stringResource(R.string.mobile_memory_record),
+        subtitle = project?.name ?: stringResource(R.string.sheet_selected_project),
         busy = working,
         onDismiss = onDismiss,
         action = if (editable && id != null && text.isNotBlank() && revision != null && state.supports("memory.save")) ({
             Button({
                 busy = true; error = null
-                signedReview(activity, repository, "memory.save", buildJsonObject { put("sessionId", sessionId); put("id", id); put("text", text); put("expectedRevision", revision) }, "Save this edited fact", { busy = false; onChanged(); onDismiss() }, { error = it; busy = false })
-            }, enabled = !working && preview == null, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text("Review & save") }
+                signedReview(activity, repository, "memory.save", buildJsonObject { put("sessionId", sessionId); put("id", id); put("text", text); put("expectedRevision", revision) }, strings.getString(R.string.sheet_save_this_edited_fact), { busy = false; onChanged(); onDismiss() }, { error = it; busy = false })
+            }, enabled = !working && preview == null, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_review_save)) }
         }) else null,
     ) {
-        AncillarySection("Project", "Memory changes stay within this approved project") {
-            SelectionContainer { Text(project?.path ?: session?.project ?: "Path unavailable", style = MaterialTheme.typography.bodySmall) }
-            Text("Ollama · ${session?.ollamaHost?.ifBlank { state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: "host unavailable" } ?: "host unavailable"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        AncillarySection(stringResource(R.string.sheet_project), stringResource(R.string.sheet_memory_changes_stay_within_this_approved_project)) {
+            SelectionContainer { Text(project?.path ?: session?.project ?: stringResource(R.string.desktop_path_unavailable), style = MaterialTheme.typography.bodySmall) }
+            Text(stringResource(R.string.mobile_ollama, session?.ollamaHost?.ifBlank { state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: strings.getString(R.string.mobile_host_unavailable) } ?: strings.getString(R.string.mobile_host_unavailable)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (record != null) AncillarySection("Record") {
-            if (text.isNotBlank()) OutlinedTextField(text, { if (editable) text = it.take(MEMORY_FACT_LIMIT) }, readOnly = !editable, enabled = !working, minLines = 4, maxLines = 10, label = { Text(if (editable) "Saved fact" else "Memory content") },
-                supportingText = { if (editable) Text("${text.length} / $MEMORY_FACT_LIMIT characters") }, modifier = Modifier.fillMaxWidth())
-            else Text("This graph record can be inspected on the desktop. Forget below removes it and dependent evidence in this project.")
+        if (record != null) AncillarySection(stringResource(R.string.sheet_record)) {
+            if (text.isNotBlank()) OutlinedTextField(text, { if (editable) text = it.take(MEMORY_FACT_LIMIT) }, readOnly = !editable, enabled = !working, minLines = 4, maxLines = 10, label = { Text(if (editable) stringResource(R.string.sheet_saved_fact) else stringResource(R.string.sheet_memory_content)) },
+                supportingText = { if (editable) Text(stringResource(R.string.mobile_characters, text.length, MEMORY_FACT_LIMIT)) }, modifier = Modifier.fillMaxWidth())
+            else Text(stringResource(R.string.sheet_this_graph_record_can_be_inspected_on_the))
             MemoryGraphActions(repository, state, activity, sessionId, kind, record, rows, onChanged) { graphBusy = it }
         }
         AncillarySection(
-            if (record == null) "Clear memory" else "Forget record",
-            "Preview the impact before confirming this destructive change",
+            if (record == null) stringResource(R.string.sheet_clear_memory) else stringResource(R.string.sheet_forget_record),
+            stringResource(R.string.sheet_preview_the_impact_before_confirming_this_destructive_change),
         ) {
             if (preview == null) OutlinedButton(
                 onClick = { scope.launch { busy = true; error = null; runCatching { repository.read("memory.forgetPreview", buildJsonObject { put("sessionId", sessionId); id?.let { put("id", it) } }).jsonObject }.onSuccess { preview = it }.onFailure { error = it.message }; busy = false } },
                 enabled = !working && state.supports("memory.forgetPreview"),
                 modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target),
-            ) { Text("Preview what will be forgotten") }
+            ) { Text(stringResource(R.string.sheet_preview_what_will_be_forgotten)) }
             preview?.let { value ->
-                AncillaryFeedback("${value["count"]?.jsonPrimitive?.content ?: "0"} records will be suppressed, including dependent evidence. Source occurrences may also be removed from saved conversations.")
-                OutlinedTextField(confirmation, { confirmation = it }, label = { Text("Type ${project?.name ?: "FORGET"} to confirm") }, singleLine = true, enabled = !working, modifier = Modifier.fillMaxWidth())
+                AncillaryFeedback(stringResource(R.string.sheet_records_will_be_suppressed_including_dependent_evidence_source, value["count"]?.jsonPrimitive?.content ?: "0"))
+                OutlinedTextField(confirmation, { confirmation = it }, label = { Text(stringResource(R.string.sheet_type_to_confirm, project?.name ?: "FORGET")) }, singleLine = true, enabled = !working, modifier = Modifier.fillMaxWidth())
                 Button(onClick = {
                     busy = true; error = null
                     val method = if (record == null) "memory.clear" else "memory.forget"
                     val params = buildJsonObject { put("sessionId", sessionId); if (record == null) put("confirmProjectId", project!!.id) else put("id", id!!); put("selection", value.getValue("selection")); put("expectedRevision", value.getValue("revision")) }
-                    signedReview(activity, repository, method, params, "Forget reviewed memory", { result -> busy = false; scope.launch { runCatching { repository.recordErasure(result, sessionId, if (record == null) "Cleared ${project?.name ?: "project"} memory" else (text.ifBlank { "A memory record" }).take(80)) } }; onChanged(); onDismiss() }, { error = it; busy = false })
+                    signedReview(activity, repository, method, params, strings.getString(R.string.sheet_forget_reviewed_memory), { result -> busy = false; scope.launch { runCatching { repository.recordErasure(result, sessionId, if (record == null) strings.getString(R.string.sheet_cleared_memory, project?.name ?: "project") else (text.ifBlank { strings.getString(R.string.sheet_a_memory_record) }).take(80)) } }; onChanged(); onDismiss() }, { error = it; busy = false })
                 }, enabled = !working && project != null && confirmation == project.name && state.supports(if (record == null) "memory.clear" else "memory.forget"),
                     modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(if (record == null) "Clear this project" else "Forget this record") }
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(if (record == null) stringResource(R.string.sheet_clear_this_project) else stringResource(R.string.sheet_forget_this_record)) }
             }
         }
         if (working) LinearProgressIndicator(Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite })
@@ -314,6 +318,8 @@ fun MemoryRecordSheet(repository: PALRepository, state: MobileState, activity: F
  */
 @Composable
 internal fun MemoryGraphActions(repository: PALRepository, state: MobileState, activity: FragmentActivity, sessionId: String, kind: String, record: JsonObject, rows: List<JsonObject>, onChanged: () -> Unit, onBusyChange: (Boolean) -> Unit = {}) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val scope = rememberCoroutineScope(); val id = record["id"]?.jsonPrimitive?.contentOrNull ?: return
     val revision = record["revision"]?.jsonPrimitive?.contentOrNull
     var history by remember(id) { mutableStateOf<JsonObject?>(null) }; var busy by remember(id) { mutableStateOf(false) }
@@ -322,36 +328,36 @@ internal fun MemoryGraphActions(repository: PALRepository, state: MobileState, a
     var other by rememberSaveable(id) { mutableStateOf<String?>(null) }; var decision by rememberSaveable(id) { mutableStateOf("not_same") }
     fun setBusy(value: Boolean) { busy = value; onBusyChange(value) }
     fun review(method: String, params: JsonObject, title: String) { setBusy(true); error = null; done = null
-        signedReview(activity, repository, method, params, title, { setBusy(false); done = "Saved on the desktop."; onChanged() }, { error = it; setBusy(false) }) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        signedReview(activity, repository, method, params, title, { setBusy(false); done = strings.getString(R.string.sheet_saved_on_the_desktop); onChanged() }, { error = it; setBusy(false) }) }
+    Column(verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
         if (kind == "assertions" && state.supports("memory.timeline")) {
-            OutlinedButton({ scope.launch { setBusy(true); error = null; runCatching { repository.read("memory.timeline", buildJsonObject { put("sessionId", sessionId); put("id", id) }).jsonObject }.onSuccess { history = it }.onFailure { error = it.message }; setBusy(false) } }, enabled = !busy) { Text("Show history and evidence") }
+            OutlinedButton({ scope.launch { setBusy(true); error = null; runCatching { repository.read("memory.timeline", buildJsonObject { put("sessionId", sessionId); put("id", id) }).jsonObject }.onSuccess { history = it }.onFailure { error = it.message }; setBusy(false) } }, enabled = !busy) { Text(stringResource(R.string.sheet_show_history_and_evidence)) }
             history?.let { StructuredObject(it) }
         }
-        val statementField: @Composable (String) -> Unit = { label -> OutlinedTextField(statement, { statement = it.take(2000) }, label = { Text(label) }, minLines = 2, modifier = Modifier.fillMaxWidth(), supportingText = { Text("Your own words are kept as the evidence for this change.") }) }
+        val statementField: @Composable (String) -> Unit = { label -> OutlinedTextField(statement, { statement = it.take(2000) }, label = { Text(label) }, minLines = 2, modifier = Modifier.fillMaxWidth(), supportingText = { Text(stringResource(R.string.sheet_your_own_words_are_kept_as_the_evidence)) }) }
         if (kind == "assertions" && revision != null && state.supports("memory.correct")) {
-            Text("Correct this", fontWeight = FontWeight.Medium)
-            OutlinedTextField(replacement, { replacement = it.take(200) }, label = { Text("What it should be") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            statementField("Your correction, as you would say it")
-            Button({ review("memory.correct", buildJsonObject { put("sessionId", sessionId); put("id", id); put("expectedRevision", revision); put("statement", statement.trim()); put("change", buildJsonObject { put("objectName", replacement.trim()) }) }, "Correct this memory") },
-                enabled = !busy && replacement.isNotBlank() && statement.isNotBlank()) { Text("Review & correct") }
+            Text(stringResource(R.string.sheet_correct_this), fontWeight = FontWeight.Medium)
+            OutlinedTextField(replacement, { replacement = it.take(200) }, label = { Text(stringResource(R.string.sheet_what_it_should_be)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            statementField(strings.getString(R.string.sheet_your_correction_as_you_would_say_it))
+            Button({ review("memory.correct", buildJsonObject { put("sessionId", sessionId); put("id", id); put("expectedRevision", revision); put("statement", statement.trim()); put("change", buildJsonObject { put("objectName", replacement.trim()) }) }, strings.getString(R.string.sheet_correct_this_memory)) },
+                enabled = !busy && replacement.isNotBlank() && statement.isNotBlank()) { Text(stringResource(R.string.sheet_review_correct)) }
             if (record["status"]?.jsonPrimitive?.contentOrNull in setOf("conflict", "contested", "disputed") && state.supports("memory.resolveConflict"))
-                OutlinedButton({ review("memory.resolveConflict", buildJsonObject { put("sessionId", sessionId); put("id", id); put("expectedRevision", revision); put("statement", statement.trim()) }, "Keep this one in the conflict") }, enabled = !busy && statement.isNotBlank()) { Text("This one is right") }
+                OutlinedButton({ review("memory.resolveConflict", buildJsonObject { put("sessionId", sessionId); put("id", id); put("expectedRevision", revision); put("statement", statement.trim()) }, strings.getString(R.string.sheet_keep_this_one_in_the_conflict)) }, enabled = !busy && statement.isNotBlank()) { Text(stringResource(R.string.sheet_this_one_is_right)) }
         }
         if (kind == "entities" && state.supports("memory.identity")) {
             val type = record["type"]?.jsonPrimitive?.contentOrNull
             val candidates = rows.filter { it["id"]?.jsonPrimitive?.contentOrNull != id && it["type"]?.jsonPrimitive?.contentOrNull == type }
             if (candidates.isNotEmpty()) {
-                Text("Compare with another ${type ?: "entity"} on this page", fontWeight = FontWeight.Medium)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { candidates.forEach { row -> val rowId = row["id"]?.jsonPrimitive?.contentOrNull; FilterChip(other == rowId, { other = rowId }, { Text(row["text"]?.jsonPrimitive?.contentOrNull ?: "Entity") }) } }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("same" to "The same", "not_same" to "Not the same", "possible" to "Possibly the same").forEach { (value, label) -> FilterChip(decision == value, { decision = value }, { Text(label) }) } }
-                statementField("Why, in your words")
-                Button({ review("memory.identity", buildJsonObject { put("sessionId", sessionId); put("leftId", id); put("rightId", other!!); put("decision", decision); put("statement", statement.trim()) }, "Record this identity decision") },
-                    enabled = !busy && other != null && statement.isNotBlank()) { Text("Review & record") }
+                Text(stringResource(R.string.sheet_compare_with_another_on_this_page, type ?: "entity"), fontWeight = FontWeight.Medium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { candidates.forEach { row -> val rowId = row["id"]?.jsonPrimitive?.contentOrNull; FilterChip(other == rowId, { other = rowId }, { Text(row["text"]?.jsonPrimitive?.contentOrNull ?: stringResource(R.string.sheet_entity)) }) } }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { listOf("same" to strings.getString(R.string.sheet_the_same), "not_same" to strings.getString(R.string.sheet_not_the_same), "possible" to strings.getString(R.string.sheet_possibly_the_same)).forEach { (value, label) -> FilterChip(decision == value, { decision = value }, { Text(label) }) } }
+                statementField(strings.getString(R.string.sheet_why_in_your_words))
+                Button({ review("memory.identity", buildJsonObject { put("sessionId", sessionId); put("leftId", id); put("rightId", other!!); put("decision", decision); put("statement", statement.trim()) }, strings.getString(R.string.sheet_record_this_identity_decision)) },
+                    enabled = !busy && other != null && statement.isNotBlank()) { Text(stringResource(R.string.sheet_review_record)) }
             }
         }
         if (kind == "episodes" && state.supports("memory.freezeEpisode"))
-            OutlinedButton({ review("memory.freezeEpisode", buildJsonObject { put("sessionId", sessionId); put("id", id) }, "Freeze this episode") }, enabled = !busy) { Text("Freeze this episode") }
+            OutlinedButton({ review("memory.freezeEpisode", buildJsonObject { put("sessionId", sessionId); put("id", id) }, strings.getString(R.string.sheet_freeze_this_episode)) }, enabled = !busy) { Text(stringResource(R.string.sheet_freeze_this_episode)) }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         done?.let { Text(it, color = MaterialTheme.colorScheme.primary) }; error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
@@ -362,6 +368,8 @@ internal const val MEMORY_FACT_LIMIT = 2000
 
 @Composable
 fun MobileMaintenanceSection() {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+
     val context = LocalContext.current; val scope = rememberCoroutineScope(); val power = context.getSystemService(PowerManager::class.java)
     val development = remember { dev.otectus.pal.mobile.data.ReleaseChannel.forPackage(context.packageName).development }
     var unrestricted by remember { mutableStateOf(power.isIgnoringBatteryOptimizations(context.packageName)) }
@@ -373,25 +381,25 @@ fun MobileMaintenanceSection() {
     }
     suspend fun check() {
         busy = true; release = null
-        runCatching { checkMobileRelease(context) }.onSuccess { release = it; status = if (it == null) "No newer compatible ${if (development) "development snapshot" else "mobile release"} found." else "A newer PAL Mobile ${if (development) "development snapshot" else "release"} is available." }.onFailure { status = "Update check unavailable. Chat is unaffected." }
+        runCatching { checkMobileRelease(context) }.onSuccess { release = it; status = if (it == null) strings.getString(R.string.sheet_no_newer_compatible_found, if (development) "development snapshot" else "mobile release") else strings.getString(R.string.sheet_a_newer_pal_mobile_is_available, if (development) "development snapshot" else "release") }.onFailure { status = strings.getString(R.string.sheet_update_check_unavailable_chat_is_unaffected) }
         busy = false
     }
     LaunchedEffect(Unit) {
         val last = withContext(Dispatchers.IO) { context.getSharedPreferences("public-release-cache", android.content.Context.MODE_PRIVATE).getLong("lastCheck", 0) }
         if (System.currentTimeMillis() - last > TimeUnit.DAYS.toMillis(1)) check()
     }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Battery & updates", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-        Text(if (unrestricted) "Battery optimization exemption is enabled. Delivery still needs an awake, reachable desktop." else "Battery optimization can delay approval notifications while the phone sleeps.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+        Text(stringResource(R.string.sheet_battery_updates), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+        Text(if (unrestricted) stringResource(R.string.sheet_battery_optimization_exemption_is_enabled_delivery_still_needs) else stringResource(R.string.sheet_battery_optimization_can_delay_approval_notifications_while_the), color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton({ context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); unrestricted = power.isIgnoringBatteryOptimizations(context.packageName) },
-            modifier = Modifier.heightIn(min = PALLayout.target)) { Text("Open battery settings") }
-        if (development) Text("This is a development build (${context.packageName}). It updates from development snapshots. A stable release installs as a separate app with its own pairing; keep this build until the stable app is paired.",
+            modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.sheet_open_battery_settings)) }
+        if (development) Text(stringResource(R.string.sheet_this_is_a_development_build_it_updates_from, context.packageName),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        OutlinedButton({ scope.launch { check() } }, enabled = !busy, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(if (busy) "Checking…" else "Check for updates") }
+        OutlinedButton({ scope.launch { check() } }, enabled = !busy, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(if (busy) stringResource(R.string.sheet_checking) else stringResource(R.string.sheet_check_for_updates)) }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite })
         status?.let { AncillaryFeedback(it) }
         release?.let { url -> Button({ context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))) },
-            modifier = Modifier.heightIn(min = PALLayout.target)) { Text("Open GitHub release") } }
+            modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.sheet_open_github_release)) } }
     }
 }
 

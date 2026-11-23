@@ -53,7 +53,7 @@ internal fun LibraryConversation(session: Session, status: String, open: () -> U
                 val indicators = listOfNotNull(
                     stringResource(R.string.session_pinned).takeIf { session.pinned },
                     stringResource(R.string.session_unread).takeIf { session.unread },
-                    status.takeIf { session.status != "idle" || status != "Idle" },
+                    status.takeIf { session.status != "idle" || status != stringResource(R.string.state_idle) },
                 )
                 if (indicators.isNotEmpty()) Text(indicators.joinToString("  ·  "), style = MaterialTheme.typography.labelMedium,
                     color = if (session.status == "waiting") colors.tertiary else colors.primary)
@@ -104,7 +104,7 @@ internal fun SettingsIndex(state: MobileState, select: (SettingsGroup) -> Unit) 
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(PALLayout.iconMedium))
                 }
             }
-            if (!connection && index < groups.lastIndex) HorizontalDivider(Modifier.padding(start = PALLayout.headerHeight), color = colors.outlineVariant)
+            if (!connection && index < groups.lastIndex) HorizontalDivider(Modifier.padding(start = PALLayout.headerHeight), color = sectionDivider)
         }
     }
 }

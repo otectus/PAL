@@ -2,7 +2,7 @@
     <string name="connect_to_pal">Connect to PAL</string>
     <string name="update_connection">Update your pairing</string>
     <string name="compare_words">Compare the six words</string>
-    <string name="pair_pc_steps">On your PC, open Personal Assistant for Linux (PAL) and go to Settings → PAL Mobile and choose Show pairing QR.</string>
+    <string name="pair_pc_steps">On your desktop, open PAL Settings → PAL Mobile and choose Show pairing QR.</string>
     <string name="replace_pc_steps">On your PC, choose Replace pairing for this phone. Your saved conversations, drafts, and images stay on this device.</string>
     <string name="verify_pc_steps">Check that your desktop shows these words in the same order before you confirm.</string>
     <string name="phone_name">This phone</string>
