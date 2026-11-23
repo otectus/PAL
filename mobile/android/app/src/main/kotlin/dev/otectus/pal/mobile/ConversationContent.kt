@@ -79,6 +79,7 @@ internal fun ConversationTimeline(
     var seenTailId by remember(sessionId) { mutableStateOf(tail?.id) }
     var seenRevision by remember(sessionId) { mutableStateOf(tail?.revision) }
     var tailHeight by remember { mutableIntStateOf(0) }
+    var statusHeight by remember { mutableIntStateOf(0) }
     // Only user scrolling changes follow mode; a new streaming row may briefly
     // make canScrollForward true before the automatic scroll catches up.
     LaunchedEffect(list) {
@@ -87,7 +88,7 @@ internal fun ConversationTimeline(
         }
     }
     val viewportHeight by remember(list) { derivedStateOf { list.layoutInfo.viewportSize.height } }
-    LaunchedEffect(tail?.id, tail?.revision, busy, follow, viewportHeight, hasOlder, tailHeight) {
+    LaunchedEffect(tail?.id, tail?.revision, busy, status, statusText, follow, viewportHeight, hasOlder, tailHeight, statusHeight) {
         if (follow) {
             val expectedItems = conversation.size + (if (hasOlder) 1 else 0) + (if (conversation.isEmpty()) 1 else 0) + 1
             snapshotFlow { list.layoutInfo.totalItemsCount }.first { it == expectedItems }
@@ -117,18 +118,29 @@ internal fun ConversationTimeline(
     }
     var completionMessage by remember(sessionId) { mutableIntStateOf(0) }
     var previousBusy by remember(sessionId) { mutableStateOf(busy) }
-    var previousStatus by remember(sessionId) { mutableStateOf(status) }
+    var stoppingObserved by remember(sessionId) { mutableStateOf(busy && status == "stopping") }
     LaunchedEffect(busy, status) {
         val wasBusy = previousBusy
-        val oldStatus = previousStatus
         previousBusy = busy
-        previousStatus = status
+        if (!wasBusy && busy) stoppingObserved = status == "stopping"
+        else if (busy && status == "stopping") stoppingObserved = true
         if (wasBusy && !busy) {
-            completionMessage = if (oldStatus == "stopping") R.string.transcript_stopped else R.string.transcript_complete
+            completionMessage = if (stoppingObserved) R.string.transcript_stopped else R.string.transcript_complete
+            stoppingObserved = false
+        } else if (busy) {
+            // A new turn supersedes any completion that is still being announced.
+            completionMessage = 0
+        }
+    }
+    // Expiry is keyed only to the announcement. An idle status refinement must not
+    // cancel this delay and leave the previous completion visible indefinitely.
+    LaunchedEffect(completionMessage) {
+        if (completionMessage != 0) {
             delay(3_000)
             completionMessage = 0
         }
     }
+    val completionText = if (completionMessage == 0) null else stringResource(completionMessage)
     // Count only rows appended after the last-seen tail. Loading older history prepends rows and
     // must not be announced as a new reply.
     val newMessages = newConversationMessageCount(conversation, seenTailId)
@@ -160,32 +172,41 @@ internal fun ConversationTimeline(
                 }
             }
             item(key = "status", contentType = "status") {
-                // "Your input" only when a request is on screen (the caller passes it as statusText).
-                val displayedStatus = statusText ?: when (status) {
-                    "waiting" -> stringResource(R.string.transcript_waiting)
-                    "starting" -> stringResource(R.string.transcript_starting)
-                    "stopping" -> stringResource(R.string.transcript_stopping)
-                    else -> stringResource(R.string.transcript_working)
-                }
-                if (busy) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Row(Modifier.widthIn(max = PALLayout.readingWidth).fillMaxWidth().padding(vertical = PALLayout.tight).semantics {
-                        liveRegion = LiveRegionMode.Polite
-                        stateDescription = displayedStatus
-                    }, verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
-                        if (status == "waiting") Icon(Icons.Default.Info, null, Modifier.size(PALLayout.iconMedium))
-                        else CircularProgressIndicator(Modifier.size(PALLayout.iconSmall), strokeWidth = PALLayout.focusStroke)
-                        Text(displayedStatus, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+                Box(Modifier.fillMaxWidth().onSizeChanged { statusHeight = it.height }.testTag("conversationStatus")) {
+                    // "Your input" only when a request is on screen (the caller passes it as statusText).
+                    val displayedStatus = statusText ?: when (status) {
+                        "waiting" -> stringResource(R.string.transcript_waiting)
+                        "starting" -> stringResource(R.string.transcript_starting)
+                        "stopping" -> stringResource(R.string.transcript_stopping)
+                        else -> stringResource(R.string.transcript_working)
                     }
+                    if (busy) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Row(Modifier.widthIn(max = PALLayout.readingWidth).fillMaxWidth().padding(vertical = PALLayout.tight).semantics {
+                            liveRegion = LiveRegionMode.Polite
+                            stateDescription = displayedStatus
+                        }, verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                            if (status == "waiting") Icon(Icons.Default.Info, null, Modifier.size(PALLayout.iconMedium))
+                            else CircularProgressIndicator(Modifier.size(PALLayout.iconSmall), strokeWidth = PALLayout.focusStroke)
+                            Text(displayedStatus, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                    else if (completionText != null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                        Icon(Icons.Default.Info, null, Modifier.size(PALLayout.iconSmall), tint = MaterialTheme.colorScheme.primary)
+                        Text(completionText, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    else Spacer(Modifier.height(PALLayout.hairline))
                 }
-                else if (completionMessage != 0) Row(Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
-                    Icon(Icons.Default.Info, null, Modifier.size(PALLayout.iconSmall), tint = MaterialTheme.colorScheme.primary)
-                    Text(stringResource(completionMessage), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
-                }
-                else Spacer(Modifier.height(PALLayout.hairline))
             }
         }
+        // This node remains composed even when the lazy status row is far outside the viewport,
+        // so assistive technology receives the one completion change while reading older turns.
+        if (completionText != null) Spacer(Modifier.size(PALLayout.hairline).align(Alignment.BottomStart)
+            .testTag("conversationCompletionAnnouncement").semantics {
+                liveRegion = LiveRegionMode.Polite
+                contentDescription = completionText
+            })
         if (!follow) FilledTonalButton(onClick = { follow = true }, modifier = Modifier.align(Alignment.BottomCenter).padding(PALLayout.groupGap).testTag("latestMessages").semantics {
             liveRegion = LiveRegionMode.Polite
         },
