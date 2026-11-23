@@ -4,7 +4,7 @@ import QtQuick.Layouts
 // Settings › AI assistance: what assistant sessions may do on the desktop, and when they must ask.
 ColumnLayout {
     id:assistance
-    Layout.fillWidth:true;spacing:14
+    Layout.fillWidth:true;spacing:Theme.space4
     property var settings:App.state.settings||({})
     property var categoryNames:({apps:"Applications",files:"Files and folders",windows:"Windows and workspaces",audio:"Volume and mute",media:"Media playback",capture:"Screen captures",timers:"Timers",scripts:"Saved scripts",providers:"Provider orchestration"})
     function update(value){return App.rpc("settings.update",value)}
@@ -22,7 +22,7 @@ ColumnLayout {
             checked:assistance.settings.bypassComputerPermissions===true
             onClicked:assistance.update({bypassComputerPermissions:checked})
         }
-        CText { text:"These switches stay on until you turn them off. CLI includes project trust, commands, file changes, scripts, delegation and new terminals launched through Cere. Computer includes desktop actions. Questions still require an answer.";color:Theme.muted;font.pixelSize:Theme.secondary }
+        CText { text:"These switches stay on until you turn them off. CLI includes project trust, commands, file changes, scripts, delegation and new terminals launched through PAL. Computer includes desktop actions. Questions still require an answer.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CButton { objectName:"openPermissionCenter";text:"Permission Center and power sessions";Layout.fillWidth:true;onClicked:permissionCenter.open() }
         CText { text:"Power sessions grant project-bound access for a limited time. Power does not approve existing requests or change already-running terminals.";color:Theme.muted;font.pixelSize:Theme.secondary }
     }
@@ -37,7 +37,7 @@ ColumnLayout {
         }
         GridLayout {
             objectName:"assistanceCategories"
-            Layout.fillWidth:true;columns:width>=460?2:1;columnSpacing:12;rowSpacing:4
+            Layout.fillWidth:true;columns:width>=Theme.formBreakpoint?2:1;columnSpacing:Theme.space3;rowSpacing:Theme.space1
             Repeater {
                 model:Object.keys(assistance.categoryNames)
                 CCheckBox {
@@ -50,7 +50,7 @@ ColumnLayout {
                 }
             }
         }
-        CText { text:"Provider orchestration and saved scripts follow the selected profile and grants. A power session can grant temporary access. Native CLI shell access remains outside Cere’s desktop grants.";color:Theme.muted;font.pixelSize:Theme.secondary }
+        CText { text:"Provider orchestration and saved scripts follow the selected profile and grants. A power session can grant temporary access. Native CLI shell access remains outside PAL’s desktop grants.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CCheckBox {
             objectName:"delegationUpdates";text:"Report delegated results automatically"
             Accessible.description:"A finished delegated Codex or Claude task gives its conversation an automatic turn to report the result."
@@ -66,7 +66,7 @@ ColumnLayout {
         description:"Allow enabled desktop categories in this project for one hour. Provider delegation asks first unless CLI bypass is enabled."
         CText { text:App.session.cwd||"Select a session to grant access.";color:Theme.accentText;font.pixelSize:Theme.secondary }
         GridLayout {
-            Layout.fillWidth:true;columns:width>=340?2:1;columnSpacing:8;rowSpacing:8
+            Layout.fillWidth:true;columns:width>=Theme.narrowPane?2:1;columnSpacing:Theme.space2;rowSpacing:Theme.space2
             CButton { objectName:"grantHour";Layout.fillWidth:true;text:"Grant for 1 hour";enabled:!!App.session.cwd;onClicked:assistance.update({grants:(assistance.settings.grants||[]).filter(g=>g.cwd!==App.session.cwd).concat((assistance.settings.categories||[]).filter(c=>c!=="providers").map(c=>({category:c,cwd:App.session.cwd,expires:Date.now()+3600000})))}) }
             CButton { objectName:"revokeGrants";Layout.fillWidth:true;text:"Revoke all";onClicked:assistance.update({grants:[]}) }
         }

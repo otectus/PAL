@@ -1,6 +1,6 @@
 # Local speech
 
-Cere reads the last assistant response after a successful desktop turn, once,
+PAL reads the last assistant response after a successful desktop turn, once,
 across Codex, Claude and Ollama. Pin a conversation to also hear each finished
 conversational message, including commentary and questions, while it runs in the
 background. Tools, activity indicators, agent activity and unfinished streaming
@@ -12,16 +12,16 @@ Pinned replies also appear in a bubble beside the desktop avatar, even when the
 chat window is open. It follows the reply being spoken, or the latest reply when
 silent; hover over it or use Previous
 and Next to read at your own pace. Open conversation returns to that reply's
-conversation. Hide Cere hides the bubble too. Unpinning or archiving clears that
+conversation. Hide PAL hides the bubble too. Unpinning or archiving clears that
 conversation's bubble replies and stops its queued speech. Recent bubble replies
 survive UI reconnects but are not replayed after a broker restart; full messages
 remain in the transcript. The bubble retains up to 100 recent messages within a
 512 KiB preview budget, showing up to 16,000 characters per message.
 
-<p align="center"><img src="../screenshots/desktop-reply-bubble.png" alt="A bubble beside Cere showing the latest reply from a pinned conversation, with Open conversation and Dismiss" width="520"></p>
+<p align="center"><img src="../screenshots/desktop-reply-bubble.png" alt="A bubble beside PAL showing the latest reply from a pinned conversation, with Open conversation and Dismiss" width="520"></p>
 
 **Settings → Voice** controls **Read replies aloud** (enabled by default) and
-`voice` (default `en_US-amy-medium`). These settings persist in Cere's existing
+`voice` (default `en_US-amy-medium`). These settings persist in PAL's existing
 SQLite settings store. Voice adjustments work with Piper and Kokoro:
 
 **Speak replies from** adds independent automatic-speech switches for Codex,
@@ -32,7 +32,7 @@ updates with any selected speech engine. Disabling one stops its current and
 queued speech, without interrupting other providers or hiding avatar bubbles.
 Re-enabling it does not replay old replies. Test voice remains available.
 
-Click the Cere head at the top left of either window layout to toggle **Read
+Click the PAL head at the top left of either window layout to toggle **Read
 replies aloud**. Muting immediately stops current and queued speech; an amber
 crossed-speaker badge marks the muted state. Click again to enable future replies.
 Keyboard Space/Enter and the accessible button action do the same. Your volume,
@@ -40,7 +40,7 @@ voice and provider-specific switches are preserved; Quiet mode still applies.
 
 - **Speaking speed:** 0.5–2×, using the selected engine's synthesis speed.
 - **Pitch:** −6 to +6 semitones, without changing speaking speed.
-- **Cere's volume:** 0–100% of the voice's normal output, independent of system
+- **PAL's volume:** 0–100% of the voice's normal output, independent of system
   volume. 0% also silences Test voice and stops current and queued speech.
 
 ![Settings → Voice with Read replies aloud, per-provider speech switches, the local voice and voice adjustments](../screenshots/settings-voice.png)
@@ -49,7 +49,7 @@ voice and provider-specific switches are preserved; Quiet mode still applies.
 1× speed, neutral pitch and 100% volume without changing the selected voice.
 Changes apply to newly queued speech; a sentence already playing keeps its
 settings. Quiet mode mutes automatic speech and cancels pending
-playback. **Stop speaking** cancels Cere's current and queued speech. Pinned
+playback. **Stop speaking** cancels PAL's current and queued speech. Pinned
 replies queue in arrival order without replacing one another. Up to three pending
 unpinned replies are retained; newer unpinned replies replace the oldest unpinned
 one. Pinning respects the voice, Quiet mode and brief-reading settings. Code fences,
@@ -58,7 +58,7 @@ markdown formatting, link destinations and memory citation markers
 to 8,000 characters. Text remains unchanged in the transcript.
 
 Use **Test voice**, type **`/tts-test`** in a desktop conversation, or run
-`cere tts-test` while the broker is running. The canned line intentionally plays
+`pal tts-test` while the broker is running. The canned line intentionally plays
 even when automatic speech is disabled or quiet mode is enabled. The local broker
 also exposes `tts.test`, `tts.stop`, `tts.voices` and `tts.status`. For development:
 
@@ -70,7 +70,7 @@ node broker/cli.ts tts.status
 The command returns immediately with `queued`; inspect `tts.status` or Settings
 for the actual backend and any playback error. A successful dispatcher submission
 confirms acceptance, not that a physical speaker is audible. Once a dispatcher
-accepts a message Cere never retries it through another backend, avoiding double
+accepts a message PAL never retries it through another backend, avoiding double
 speech. Errors before acceptance use the direct fallback.
 
 Pitch and volume use local SoX processing between synthesis and playback. Install
@@ -102,7 +102,7 @@ python3 tools/prepare-tts.py
 python3 tools/prepare-tts.py --offline
 ```
 
-Installation puts the bundle under `<prefix>/share/cere/tts/`. The fallback is
+Installation puts the bundle under `<prefix>/share/pal/tts/`. The fallback is
 equivalent to the following pipeline, implemented with argument arrays and pipes
 without a shell; the rate is read from the selected voice's JSON:
 
@@ -118,25 +118,25 @@ Install `speech-dispatcher` (Arch includes the Python `speechd` client) or
 
 ```sh
 # Packaged install; for ~/.local installs replace /usr with ~/.local.
-node /usr/share/cere/tools/setup-speech.ts
+node /usr/share/pal/tools/setup-speech.ts
 # Source checkout instead:
 node tools/setup-speech.ts
 ```
 
 Setup copies Amy's pair and attribution to
 `$XDG_DATA_HOME/piper/voices/` (normally `~/.local/share/piper/voices/`), without
-overwriting existing voice files. It writes the Cere-owned module
-`$XDG_CONFIG_HOME/speech-dispatcher/modules/cere-piper.conf` and adds:
+overwriting existing voice files. It writes the PAL-owned module
+`$XDG_CONFIG_HOME/speech-dispatcher/modules/pal-piper.conf` and adds:
 
 ```conf
-AddModule "cere-piper" "sd_generic" "cere-piper.conf"
+AddModule "pal-piper" "sd_generic" "pal-piper.conf"
 ```
 
 Existing modules and defaults are preserved. A new dispatcher configuration uses
-`AudioOutputMethod "pulse"` and `DefaultModule "cere-piper"`. For an existing
+`AudioOutputMethod "pulse"` and `DefaultModule "pal-piper"`. For an existing
 configuration, set that default yourself if you also want other applications to
-use Piper. Cere always explicitly requests its own module and selected voice.
-The module uses `piper --output_raw` through Cere's helper and `aplay` on the
+use Piper. PAL always explicitly requests its own module and selected voice.
+The module uses `piper --output_raw` through PAL's helper and `aplay` on the
 default PipeWire/PulseAudio output. Dispatcher priorities and cancellation work;
 Piper pitch/rate controls are not implemented by this generic module.
 
@@ -145,9 +145,9 @@ on distributions with that unit; otherwise restart the user daemon through its
 normal launcher). This can interrupt other applications' speech. Verify:
 
 ```sh
-spd-say -o cere-piper -L
-cere tts-test
-cere tts.status
+spd-say -o pal-piper -L
+pal tts-test
+pal tts.status
 ```
 
 The backend should report `speech-dispatcher`. If the daemon, Python client or
@@ -159,18 +159,18 @@ The helper uses `speechd.SSIPClient`, bounded connection/playback timeouts and
 
 Drop `NAME.onnx` and `NAME.onnx.json` (or `NAME.json`) into
 `~/.local/share/piper/voices/`, then **Refresh voices** and select `NAME`.
-The JSON must contain `audio.sample_rate`. Cere also searches its config
+The JSON must contain `audio.sample_rate`. PAL also searches its config
 directory's `voices/` folder, a `voices/` folder beside `broker/`, and its bundled
 voices. Config overrides take precedence. Missing or invalid pairs are omitted
 from the selector, and an invalid selected pair reports an error rather than
 silently switching voices. Custom voices use their own sample rate.
 
 Rerun dispatcher setup and restart its daemon after adding voices. Setup registers
-voices from the same directories and with the same precedence as Cere. Each custom model's license
+voices from the same directories and with the same precedence as PAL. Each custom model's license
 remains its owner's responsibility; retain its model card and attribution.
 
-Environment overrides: `CERE_PIPER_BIN`, `CERE_APLAY_BIN`, `CERE_SOX_BIN`, `CERE_TTS_PYTHON`,
-`CERE_VOICES_DIR` (exclusive search directory), and `CERE_TTS_DISABLED=1` (disable
+Environment overrides: `PAL_PIPER_BIN`, `PAL_APLAY_BIN`, `PAL_SOX_BIN`, `PAL_TTS_PYTHON`,
+`PAL_VOICES_DIR` (exclusive search directory), and `PAL_TTS_DISABLED=1` (disable
 all playback, including tests). Normal `npm test` sets the latter; focused speech
 tests use private fake executables and never access a speaker. The setup tool
 accepts `--config-dir DIR --voices-dir DIR` for isolated dispatcher validation.
@@ -190,16 +190,16 @@ No account key is shipped, no cloud provider is activated automatically, and
 automatic speech follows the same master/provider switches and Quiet mode.
 
 The key is stored in the owner-only `credentials/provider-credentials.json`
-under Cere's state directory, outside shared settings, transcripts and reviewed
+under PAL's state directory, outside shared settings, transcripts and reviewed
 backups. `ELEVENLABS_API_KEY` is also supported; a saved key takes precedence.
 Removing a saved key reveals an environment key if one is configured. API calls
 go only to `https://api.elevenlabs.io`, refuse redirects and never log keys,
 spoken text, audio or raw server error bodies. Account catalog refresh sends no
 conversation text. Speech sends the cleaned spoken reply, consumes account
-credits and is subject to ElevenLabs' account/data-retention terms. Cere does
+credits and is subject to ElevenLabs' account/data-retention terms. PAL does
 not claim provider-side zero retention.
 
-Your IndexTTS reference files, including CERE.mp3, are not uploaded or converted
+Your IndexTTS reference files, including PAL.mp3, are not uploaded or converted
 into ElevenLabs voices. Create a clone in your ElevenLabs account if desired,
 then refresh and select its voice ID. Local providers and profiles are retained.
 
@@ -216,7 +216,7 @@ Catalog discovery uses [paginated account voices](https://elevenlabs.io/docs/api
 and [available TTS models](https://elevenlabs.io/docs/api-reference/models/list).
 Transient HTTP responses use the shared bounded retry/backoff helper. Interrupted
 audio streams and ambiguous network failures are not replayed; a retry can cost
-credits, so Cere never silently switches to another cloud provider. Authentication,
+credits, so PAL never silently switches to another cloud provider. Authentication,
 permissions/plan restrictions, quota, rate limiting, invalid selections, network
 and playback failures have concise recovery messages. Check the ElevenLabs
 dashboard for account-specific details if access is rejected. Catalog/key access
@@ -260,17 +260,17 @@ model and runtime filesystems. The model directory is configurable. The default
 layout is:
 
 ```text
-$XDG_DATA_HOME/cere/models/indextts/<version>/
+$XDG_DATA_HOME/pal/models/indextts/<version>/
   installation.json                  # app-readable installed provenance
   hf_cache/                          # pinned local auxiliary models
   qwen0.6bemo4-merge/                 # optional emotion weights
-$XDG_DATA_HOME/cere/runtimes/indextts/<commit>/
+$XDG_DATA_HOME/pal/runtimes/indextts/<commit>/
   source/                            # pinned upstream source and uv.lock
   source/.venv/                      # isolated runtime
   python/                            # uv-managed Python
   cache/                             # removable dependency download cache
   runtime.json                       # source integrity records
-$XDG_DATA_HOME/cere/voices/indextts/<profile-id>/
+$XDG_DATA_HOME/pal/voices/indextts/<profile-id>/
   *.original                         # byte-for-byte originals
   *.wav                              # validated mono references
 ```
@@ -278,9 +278,9 @@ $XDG_DATA_HOME/cere/voices/indextts/<profile-id>/
 `XDG_DATA_HOME` defaults to `~/.local/share`. Profile directories are private
 (0700), recordings 0600. Deleting a profile removes its original and converted
 recordings. Unload/Stop exits the inference process. To remove the runtime,
-switch back to Local voices, exit Cere, and remove the specific IndexTTS runtime
+switch back to Local voices, exit PAL, and remove the specific IndexTTS runtime
 directory above; remove the model directory separately if desired. Do not remove
-Cere's shared data directory. Reinstallation recreates the runtime from the pin.
+PAL's shared data directory. Reinstallation recreates the runtime from the pin.
 
 For command-line installation (equivalent to the UI license acknowledgment):
 
@@ -295,7 +295,7 @@ python3 tools/setup-indextts.py --verify
 
 Use `--model-dir /absolute/path` and `--runtime-dir /absolute/path` to relocate.
 `--uv /absolute/path/to/uv` selects an existing uv. Otherwise setup searches PATH,
-then Cere's private Kokoro uv, then bootstraps a checksum-pinned Linux x86_64 uv.
+then PAL's private Kokoro uv, then bootstraps a checksum-pinned Linux x86_64 uv.
 On other platforms install uv yourself; upstream dependencies may still fail.
 Partial downloads resume and completed files are checksum-verified before reuse.
 **Verify installation** also checks source integrity and Python/Torch versions.
@@ -318,7 +318,7 @@ exposed by this integration.
 
 Add a voice name, language and clean 3–15-second WAV/FLAC/OGG reference. Validation
 rejects corrupt, quiet/silent and clipped recordings. The 15-second maximum matches
-upstream's truncation; the three-second minimum is Cere's policy, not a claimed
+upstream's truncation; the three-second minimum is PAL's policy, not a claimed
 upstream minimum. Speaker audio is converted to mono 22,050 Hz; emotion audio uses
 16,000 Hz. Original bytes are retained privately. Profiles record timestamps and
 the model version against which they were validated; changing models requires an
@@ -343,7 +343,7 @@ for IndexTTS. Pitch and volume still apply through SoX.
 ### Playback, cancellation and privacy
 
 This is **chunk-level pipelining**, not token streaming. Upstream's generator
-yields complete synthesized segments. Cere preserves sentence boundaries,
+yields complete synthesized segments. PAL preserves sentence boundaries,
 including CJK punctuation, and never splits a `<word|pronunciation>` annotation.
 The character target defaults to 160; a loaded low-VRAM model uses at most 40 as
 its target. An indivisible annotation may exceed that target. Upstream's token
@@ -403,15 +403,15 @@ property. Actual QML construction/provider switching is also exercised by the
 both the installed model and explicit environment flag/reference are present:
 
 ```sh
-CERE_INDEXTTS_INTEGRATION=1 CERE_INDEXTTS_DEVICE=cpu \
-  CERE_INDEXTTS_REFERENCE=/absolute/authorized-reference.wav \
+PAL_INDEXTTS_INTEGRATION=1 PAL_INDEXTTS_DEVICE=cpu \
+  PAL_INDEXTTS_REFERENCE=/absolute/authorized-reference.wav \
   node --test tests/indextts-integration.test.ts
-CERE_INDEXTTS_REFERENCE=/absolute/authorized-reference.wav \
+PAL_INDEXTTS_REFERENCE=/absolute/authorized-reference.wav \
   node tools/benchmark-indextts.ts
 ```
 
-The benchmark writes sanitized measurements to `/tmp/cere-indextts-evidence/` by
-default (`CERE_INDEXTTS_EVIDENCE` overrides it). No physical speaker is used by
+The benchmark writes sanitized measurements to `/tmp/pal-indextts-evidence/` by
+default (`PAL_INDEXTTS_EVIDENCE` overrides it). No physical speaker is used by
 these synthesis tests. CPU timings depend strongly on thread settings; record
 `OMP_NUM_THREADS`/`MKL_NUM_THREADS` alongside results.
 
@@ -424,7 +424,7 @@ This also avoids placing the encoder on GPU during initial loading. CPU referenc
 work defaults to four Torch threads; an explicit `OMP_NUM_THREADS` overrides it.
 The installed upstream source and checkpoint files remain unchanged.
 
-With the full 15-second CERE reference and Ollama still resident, the RTX 4050
+With the full 15-second PAL reference and Ollama still resident, the RTX 4050
 loaded in 21.70 s. First audio after loading took 12.84 s when preparing the
 reference, then **4.02 s with the cached reference**. A 66-character sample took
 12.11 s to synthesize 9.17 s of audio on the warm run. Total GPU memory reached

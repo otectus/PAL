@@ -1,6 +1,6 @@
 /**
  * Workspace roots: the folders a conversation may work in. A root is a folder the user chose, or a
- * private Cere-owned conversation workspace. Each has a stable ID independent of its name, the canonical
+ * private PAL-owned conversation workspace. Each has a stable ID independent of its name, the canonical
  * location and device/inode identity recorded when it was chosen, and a revisioned policy: which
  * operations it permits and where its contents may be processed. Only the user adds, changes or removes
  * roots; a model names a root by ID and a relative path and can never add one.
@@ -8,6 +8,7 @@
  * Changing or removing a root bumps its revision. Proposals, approvals and cached authorization made
  * under an older revision are retired, never silently retargeted.
  */
+import { limitedControlled } from '../authority.ts';
 import { randomUUID } from 'node:crypto';
 import { realpath, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
@@ -22,7 +23,7 @@ export type RootPolicy = {
   write: boolean;
   /** Make folders, copy, move and trash, each through a reviewed change set. */
   organize: boolean;
-  /** Include hidden files in listings and search (credential files and Cere's state stay excluded). */
+  /** Include hidden files in listings and search (credential files and PAL's state stay excluded). */
   hidden: boolean;
   /** Run approved commands with this folder as the working directory (Analysis). */
   execute: boolean;
@@ -78,14 +79,14 @@ export class WorkspaceRoots {
   async add(sessionId: string, path: unknown, policy?: unknown, primary?: unknown): Promise<WorkspaceRoot> {
     const session = this.store.session(sessionId);
     if (session.temporary) throw new Error('Temporary conversations stay text-only; save the conversation to use workspace folders');
-    if (session.remote) throw new Error('Workspace folders are chosen on the desktop');
+    if (limitedControlled(session)) throw new Error('A limited phone controls this conversation; its folders are chosen on the desktop or an owner phone');
     if (typeof path !== 'string' || !path.startsWith('/') || path.length > workspaceLimits.pathChars) throw new Error('Choose a folder');
     const canonical = await realpath(path).catch(() => { throw new Error('That folder does not exist'); });
     if (!(await stat(canonical)).isDirectory()) throw new Error('Choose a folder, not a file');
     const forbidden = forbiddenRoot(canonical); if (forbidden) throw new Error(forbidden);
     return this.insert(sessionId, 'folder', canonical, basename(canonical) || canonical, validPolicy(policy), primary === true);
   }
-  /** A private working folder owned by Cere for this conversation; outputs can be exported later. */
+  /** A private working folder owned by PAL for this conversation; outputs can be exported later. */
   async conversationRoot(sessionId: string, policy?: unknown): Promise<WorkspaceRoot> {
     const session = this.store.session(sessionId);
     if (session.temporary) throw new Error('Temporary conversations stay text-only; save the conversation to use a workspace');
@@ -133,7 +134,7 @@ export class WorkspaceRoots {
     this.changed(removed, 'removed');
     return true;
   }
-  /** Forgets every root of a deleted conversation (the folders themselves are untouched, except Cere's own workspace). */
+  /** Forgets every root of a deleted conversation (the folders themselves are untouched, except PAL's own workspace). */
   removeSession(sessionId: string) {
     const conversation = this.store.db.prepare('SELECT data FROM workspace_roots WHERE session_id=?').all(sessionId).map(row => JSON.parse(String(row.data)) as WorkspaceRoot).filter(root => root.kind === 'conversation');
     this.store.db.prepare('DELETE FROM workspace_policies WHERE root_id IN (SELECT id FROM workspace_roots WHERE session_id=?)').run(sessionId);

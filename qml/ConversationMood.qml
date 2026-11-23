@@ -10,7 +10,11 @@ Item {
     readonly property string sessionId: App.moodSession
     readonly property var session: (App.state.sessions || []).filter(function(s) { return s.id === hub.sessionId })[0] || ({})
     readonly property var samples: {
-        var messages=App.messages.filter(function(m) { return m.sessionId === hub.sessionId })
+        if (!App.moodSourceEnabled || !hub.sessionId) return []
+        // The transcript belongs to the selected session. The mood classifier reads only
+        // its configured tail even when a long conversation receives frequent revisions.
+        const limit = App.animations.bodyMoods.messageLimit
+        var messages = App.selectedId === hub.sessionId ? App.messages.slice(-limit) : []
         if (liveMessage && liveMessage.sessionId === sessionId) {
             messages=messages.filter(function(m) { return m.id !== hub.liveMessage.id })
             messages.push(liveMessage)

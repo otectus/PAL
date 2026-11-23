@@ -12,7 +12,7 @@ class MotionCheck : public QObject {
     MotionDirector::Context visible() { MotionDirector::Context c;c.visible=true;c.idleEnergy="calm";return c; }
 private slots:
     void initTestCase() {
-        QFile file(QString(CERE_SOURCE_DIR)+"/assets/motions.json");
+        QFile file(QString(PAL_SOURCE_DIR)+"/assets/motions.json");
         QVERIFY(file.open(QIODevice::ReadOnly));
         catalog=QJsonDocument::fromJson(file.readAll()).object().toVariantMap();
         QVERIFY(!catalog.value("clips").toMap().isEmpty());
@@ -20,7 +20,7 @@ private slots:
     void poseAndTimelineIntegrity() {
         // Raster bounds/alpha belong to avatarpuppet's per-avatar surface tests.
         // The motion catalog contains semantic stances, not retired sprite cells.
-        QFile rigFile(QString(CERE_SOURCE_DIR)+"/assets/"+catalog.value("rig").toString());
+        QFile rigFile(QString(PAL_SOURCE_DIR)+"/assets/"+catalog.value("rig").toString());
         QVERIFY(rigFile.open(QIODevice::ReadOnly));
         const auto poses=QJsonDocument::fromJson(rigFile.readAll()).object().value("poses").toObject();
         const auto frames=catalog.value("frames").toList();

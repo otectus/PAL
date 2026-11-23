@@ -7,7 +7,7 @@ import { Transcription } from '../broker/transcription.ts';
 import { Speech, defaultVoice } from '../broker/tts.ts';
 
 async function fixture(t: test.TestContext, maximumMilliseconds = 60_000) {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-transcription-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-transcription-'));
   const runtime = join(directory, 'runtime'), log = join(directory, 'calls.jsonl'); await mkdir(runtime);
   const executable = async (name: string, source: string) => {
     const path = join(directory, name); await writeFile(path, `#!${process.execPath}\n${source}\n`, { mode: 0o755 }); return path;
@@ -111,7 +111,7 @@ test('non-default speech rate uses Piper length_scale without changing default p
   await writeFile(piper, `#!${process.execPath}\nimport {appendFileSync} from 'node:fs';appendFileSync(${JSON.stringify(f.log)},JSON.stringify({tool:'rate-piper',args:process.argv.slice(2)})+'\\n');process.stdin.resume();process.stdin.on('end',()=>process.stdout.write(Buffer.alloc(128)));`, { mode: 0o755 });
   await writeFile(aplay, `#!${process.execPath}\nprocess.stdin.resume();`, { mode: 0o755 });
   const settings = { voice: defaultVoice, speechEnabled: true, quiet: false, speechRate: 2 };
-  const speech = new Speech(() => settings, () => {}, { ...process.env, CERE_TTS_DISABLED: '0', CERE_VOICES_DIR: voices, CERE_PIPER_BIN: piper, CERE_APLAY_BIN: aplay });
+  const speech = new Speech(() => settings, () => {}, { ...process.env, PAL_TTS_DISABLED: '0', PAL_VOICES_DIR: voices, PAL_PIPER_BIN: piper, PAL_APLAY_BIN: aplay });
   t.after(() => speech.close());
   assert.equal(speech.speak('Faster local speech'), true); await speech.idle();
   const args = (await f.calls()).find(call => call.tool === 'rate-piper').args;

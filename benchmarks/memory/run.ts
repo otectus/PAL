@@ -41,7 +41,7 @@ const gate = (target: string, value: number | null, passed: boolean | null) => (
 export async function runMicrobenchmark(options: { assertionCount?: number; directory?: string; eligibility?: boolean; cases?: Case[]; trace?: boolean } = {}) {
   const assertionCount = options.assertionCount ?? 100_000, eligibility = options.eligibility ?? true;
   const fixture = options.cases ? { cases: options.cases } : JSON.parse(await readFile(new URL('../../tests/fixtures/memory/retrieval-cases.json', import.meta.url), 'utf8'));
-  const outputDirectory = options.directory ?? process.env.CERE_MEMORY_BENCH_DIR ?? '/tmp/cere-memory-benchmark';
+  const outputDirectory = options.directory ?? process.env.PAL_MEMORY_BENCH_DIR ?? '/tmp/pal-memory-benchmark';
   await mkdir(outputDirectory, { recursive: true, mode: 0o700 });
   const databasePath = join(outputDirectory, 'workload.sqlite');
   for (const suffix of ['', '-wal', '-shm']) await rm(`${databasePath}${suffix}`, { force: true });

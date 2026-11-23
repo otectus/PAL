@@ -4,11 +4,11 @@ import QtQuick.Layouts
 // Settings › Application: the compositor shortcut, backups and health, and quitting.
 ColumnLayout {
     id:application
-    Layout.fillWidth:true;spacing:14
+    Layout.fillWidth:true;spacing:Theme.space4
     CSection {
         title:"Shortcut"
-        description:"Find Cere in your application menu or tray, or bind cere toggle to a key."
-        CButton { objectName:"copyShortcut";text:"Copy Hyprland shortcut";help:"Copy a suggested Super+C binding for a Lua configuration";onClicked:App.copy('hl.bind("SUPER + C", hl.dsp.exec_cmd("cere toggle"))') }
+        description:"Find PAL in your application menu or tray, or bind pal toggle to a key."
+        CButton { objectName:"copyShortcut";text:"Copy Hyprland shortcut";help:"Copy a suggested Super+C binding for a Lua configuration";onClicked:App.copy('hl.bind("SUPER + C", hl.dsp.exec_cmd("pal toggle"))') }
     }
     CSection {
         title:"Conversation input"
@@ -25,9 +25,9 @@ ColumnLayout {
     }
     CSection {
         title:"Maintenance"
-        description:"Back up or restore Cere’s state, or check the application’s health."
+        description:"Back up or restore PAL’s state, or check the application’s health."
         GridLayout {
-            Layout.fillWidth:true;columns:width>=520?2:1;columnSpacing:8;rowSpacing:8
+            Layout.fillWidth:true;columns:width>=Theme.toolbarBreakpoint?2:1;columnSpacing:Theme.space2;rowSpacing:Theme.space2
             CButton { objectName:"openBackup";Layout.fillWidth:true;text:"Backup and restore";onClicked:recovery.open() }
             CButton { objectName:"openHealth";Layout.fillWidth:true;text:"Health and recovery";onClicked:health.open() }
         }
@@ -36,7 +36,7 @@ ColumnLayout {
         title:"Quit"
         description:"Closing a panel keeps your sessions running. Quitting can too."
         GridLayout {
-            Layout.fillWidth:true;columns:width>=520?2:1;columnSpacing:8;rowSpacing:8
+            Layout.fillWidth:true;columns:width>=Theme.toolbarBreakpoint?2:1;columnSpacing:Theme.space2;rowSpacing:Theme.space2
             CButton { objectName:"quitKeepSessions";Layout.fillWidth:true;text:"Quit · keep sessions running";onClicked:App.quit(false) }
             CButton { objectName:"stopAndQuit";Layout.fillWidth:true;text:"Stop sessions and quit";danger:true;onClicked:quitConfirm.open() }
         }

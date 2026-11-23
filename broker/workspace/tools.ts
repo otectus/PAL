@@ -43,7 +43,7 @@ export function registerFileTools(workbench: Workbench) {
   const reads = (session: any) => workbench.filesAvailable(session, 'read');
   const releases = (sessionId: string, turnId: string, value: unknown) => {
     const bytes = Buffer.byteLength(JSON.stringify(value));
-    if (!workbench.spendEvidence(sessionId, turnId, bytes)) throw new WorkspaceError('evidence-budget', `This turn already received ${workspaceLimits.turnEvidenceBytes / 1024} KiB of file content, the most Cere releases in one turn. Work with what you have, or tell the user to continue in a new message.`);
+    if (!workbench.spendEvidence(sessionId, turnId, bytes)) throw new WorkspaceError('evidence-budget', `This turn already received ${workspaceLimits.turnEvidenceBytes / 1024} KiB of file content, the most PAL releases in one turn. Work with what you have, or tell the user to continue in a new message.`);
   };
   const policyOf = (root: WorkspaceRoot) => root.policy.destinations;
 
@@ -150,7 +150,7 @@ export function registerFileTools(workbench: Workbench) {
     run: guard(async ({ sessionId, signal, turnId }, args) => {
       const root = await usable(sessionId, args.rootId, signal);
       const info = await statPath(root, args.path, signal);
-      if (info.type !== 'file' || !('version' in info) || !info.version) return failed('not_a_text_file', `${args.path} is not a file Cere can edit as text`, 'never');
+      if (info.type !== 'file' || !('version' in info) || !info.version) return failed('not_a_text_file', `${args.path} is not a file PAL can edit as text`, 'never');
       return workbench.proposeAndDecide(sessionId, turnId, [{ kind: 'patch_text', rootId: root.id, path: args.path, baseVersion: info.version, edits: [{ oldText: args.oldText, newText: args.newText }] }], args.reason, signal);
     }),
   });
@@ -193,7 +193,7 @@ export function registerFileTools(workbench: Workbench) {
       const result = await workbench.extractor.extract(workbench.artifacts, sessionId, version, data, extractOptions({ ...(args.fromPage ? { fromPage: args.fromPage } : {}), ...(args.toPage ? { toPage: args.toPage } : {}), ...(args.delimiter ? { delimiter: args.delimiter } : {}), ...(args.includeHiddenSheets !== undefined ? { includeHidden: args.includeHiddenSheets } : {}) }), signal);
       const shown: any[] = []; let bytes = 0;
       for (const unit of result.extraction.units) { const size = Buffer.byteLength(unit.text); if (bytes + size > 24 * 1024 && shown.length) break; shown.push(unit); bytes += size; }
-      if (!workbench.spendEvidence(sessionId, turnId, bytes)) return failed('evidence-budget', 'This turn already received the most file content Cere releases in one turn', 'never');
+      if (!workbench.spendEvidence(sessionId, turnId, bytes)) return failed('evidence-budget', 'This turn already received the most file content PAL releases in one turn', 'never');
       const extraction = result.extraction;
       const summary = extraction.status === 'empty' ? `No text was found in ${version.name}. That is not the same as the document being empty${extraction.warnings.length ? ': ' + extraction.warnings[0] : ''}.` : `${extraction.units.length} part${extraction.units.length === 1 ? '' : 's'} read from ${version.name}${extraction.status === 'partial' ? ' (partly; see warnings)' : ''}.`;
       return workbench.restricted(completed(summary, { extractionId: result.artifact.artifactId, extractionVersion: result.artifact.versionId, status: extraction.status, warnings: extraction.warnings, stats: extraction.stats, parts: shown, ...(shown.length < extraction.units.length ? { nextPart: shown.length } : {}) },
@@ -211,7 +211,7 @@ export function registerFileTools(workbench: Workbench) {
       const extraction = JSON.parse(data.toString('utf8')), parts = extraction.units.slice(args.fromPart, args.fromPart + (args.count || 20));
       const shown: any[] = []; let bytes = 0;
       for (const unit of parts) { const size = Buffer.byteLength(unit.text); if (bytes + size > 48 * 1024 && shown.length) break; shown.push(unit); bytes += size; }
-      if (!workbench.spendEvidence(sessionId, turnId, bytes)) return failed('evidence-budget', 'This turn already received the most file content Cere releases in one turn', 'never');
+      if (!workbench.spendEvidence(sessionId, turnId, bytes)) return failed('evidence-budget', 'This turn already received the most file content PAL releases in one turn', 'never');
       const next = args.fromPart + shown.length;
       return workbench.restricted(completed(`Parts ${args.fromPart}–${next - 1} of ${extraction.units.length}.`, { parts: shown, ...(next < extraction.units.length ? { nextPart: next } : {}), source: extraction.source.name },
         { citations: shown.slice(0, 20).map((unit: any) => ({ sourceId: extraction.source.artifactId, sourceVersion: extraction.source.versionId, locator: unit.locator })) }), version.policy);

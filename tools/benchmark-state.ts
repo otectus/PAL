@@ -6,7 +6,7 @@ import { performance } from 'node:perf_hooks';
 import { Store } from '../broker/store.ts';
 import { Core } from '../broker/core.ts';
 
-const directory = await mkdtemp(join(tmpdir(), 'cere-state-benchmark-'));
+const directory = await mkdtemp(join(tmpdir(), 'pal-state-benchmark-'));
 const rows: unknown[] = [];
 try {
   for (const count of [100, 1000, 5000]) {

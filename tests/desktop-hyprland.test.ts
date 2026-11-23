@@ -1,7 +1,7 @@
 /**
  * W10: desktop actions against a real compositor: the private Hyprland that
  * tools/test-virtual-desktop.sh starts, never the working desktop. Workspace and window actions run
- * through Cere's own dispatch, their effect is read back from Hyprland, a vanished target is refused,
+ * through PAL's own dispatch, their effect is read back from Hyprland, a vanished target is refused,
  * and the original workspace is restored. Outside the private desktop these checks skip with that
  * reason, so a passing run elsewhere does not claim them.
  */
@@ -13,7 +13,7 @@ import { desktopAction } from '../broker/desktop.ts';
 import { defaultSettings } from '../broker/types.ts';
 
 const run = promisify(execFile);
-const privateDesktop = process.env.CERE_VIRTUAL_DESKTOP === '1' && !!process.env.HYPRLAND_INSTANCE_SIGNATURE;
+const privateDesktop = process.env.PAL_VIRTUAL_DESKTOP === '1' && !!process.env.HYPRLAND_INSTANCE_SIGNATURE;
 const skip = privateDesktop ? false : 'needs the private Hyprland of tools/test-virtual-desktop.sh';
 const hypr = async (...args: string[]) => JSON.parse((await run('hyprctl', ['-j', ...args], { timeout: 5000 })).stdout);
 const settings = { ...defaultSettings, categories: ['windows'] } as any;

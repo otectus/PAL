@@ -7,7 +7,7 @@ import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
 
 async function setup(t:any,fail=false){
-  const directory=await mkdtemp(join(tmpdir(),'cere-workspace-'));
+  const directory=await mkdtemp(join(tmpdir(),'pal-workspace-'));
   const core=new Core(new Store(directory),()=>({async send(){if(fail)throw new Error('Provider unavailable');},async interrupt(){},async close(){}}));
   t.after(async()=>{await core.close();await rm(directory,{recursive:true,force:true});});
   const session=await core.create({provider:'codex',cwd:directory,trusted:true});
@@ -154,7 +154,7 @@ test('manual executable review is invalidated by a changed definition',async t=>
   await assert.rejects(core.rpc('action.run',{name:'script.run',args:{id:'review'},expectedScript:script}),/changed/);
 });
 test('native branching skips large fork-response history and rejects unsupported forks without copying history',async t=>{
-  const {core,session,directory}=await setup(t),executable=join(directory,'fork-cli.mjs'),previous=process.env.CERE_CODEX_BIN;
+  const {core,session,directory}=await setup(t),executable=join(directory,'fork-cli.mjs'),previous=process.env.PAL_CODEX_BIN;
   await writeFile(executable,`#!/usr/bin/env node
 import readline from 'node:readline';
 for await(const line of readline.createInterface({input:process.stdin})){
@@ -163,8 +163,8 @@ for await(const line of readline.createInterface({input:process.stdin})){
   const reply=m.method==='thread/fork'?(m.params.threadId==='original'?{result:{thread:{id:'forked-native',turns}}}:{error:{message:'Fork unsupported'}}):{result:{}};
   process.stdout.write(JSON.stringify({id:m.id,...reply})+'\\n');
 }
-`,{mode:0o700});process.env.CERE_CODEX_BIN=executable;
-  t.after(()=>{if(previous===undefined)delete process.env.CERE_CODEX_BIN;else process.env.CERE_CODEX_BIN=previous;});
+`,{mode:0o700});process.env.PAL_CODEX_BIN=executable;
+  t.after(()=>{if(previous===undefined)delete process.env.PAL_CODEX_BIN;else process.env.PAL_CODEX_BIN=previous;});
   core.updateSession(session.id,{nativeId:'original'});const branch=await core.rpc('session.nativeFork',{id:session.id});
   assert.equal(branch.nativeId,'forked-native');assert.notEqual(branch.id,session.id);assert.equal(branch.draft,'');assert.equal(core.store.messages(branch.id).length,0);
   core.updateSession(session.id,{nativeId:'unsupported'});await assert.rejects(core.rpc('session.nativeFork',{id:session.id}),/Fork unsupported/);

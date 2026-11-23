@@ -20,7 +20,7 @@ async function until(check: () => boolean, timeout = 5000) {
   while (!check()) { if (Date.now()>end) throw new Error('Condition timed out'); await new Promise(r=>setTimeout(r,5)); }
 }
 async function fixture(t: any, handle: (body: any, res: ServerResponse, index: number) => void = (_b,res)=>reply(res,'Hello'), models: any[] = structuredClone(catalog)) {
-  const directory = await mkdtemp(join(tmpdir(),'cere-ollama-')), requests: any[] = [];
+  const directory = await mkdtemp(join(tmpdir(),'pal-ollama-')), requests: any[] = [];
   const server = createServer(async (req,res) => {
     let text=''; for await(const chunk of req) text+=chunk;
     const body=text?JSON.parse(text):{};
@@ -227,12 +227,16 @@ test('tool calls round-trip with context and disabled tools cannot execute',asyn
   const phases:string[]=[],update=f.core.updateSession.bind(f.core);f.core.updateSession=(id,patch)=>{const saved=update(id,patch);if(id===s.id&&saved.activity)phases.push(saved.activity);return saved;};
   await f.core.send({id:s.id,text:'Set a timer'});await finished(f.core,s.id);
   assert.equal(f.core.store.timers().length,1);
+  const trace = () => f.core.store.messages(s.id).filter(message => message.role === 'tool').at(-1)?.toolActivity;
+  assert.equal(trace()?.name,'timer_start'); assert.equal(trace()?.target,'Test');
+  assert.equal(trace()?.status,'completed'); assert.ok(trace()?.description);
   assert.ok(f.requests[0].tools.some((t:any)=>t.function.name==='timer_start'));
   assert.ok(f.requests[1].messages.some((m:any)=>m.role==='tool'&&m.tool_name==='timer_start'&&m.content.includes('Test')));
   const working=phases.indexOf('working');assert.ok(working>=0);assert.equal(phases.slice(working+1).includes('thinking'),true);
   await f.core.updateSettings({paused:true});await f.core.send({id:s.id,text:'Another'});await finished(f.core,s.id);
   assert.equal(f.core.store.timers().length,1);assert.equal(f.requests[2].tools,undefined);
   assert.match(f.requests[3].messages.at(-1).content,/not offered/);
+  assert.equal(trace()?.status,'failed');
 });
 
 test('truncated streams fail without replay while transient HTTP failures recover automatically',async t=>{
@@ -393,12 +397,12 @@ test('a memory change during a reply ends the turn with a message the user can a
   const f=await fixture(t,(_body,res)=>{res.write(JSON.stringify({message:{role:'assistant',content:'Partial'},done:false})+'\n');});
   const s=await session(f),events:any[]=[],epoch=new AbortController();let history:OllamaMessage[]=[];
   const adapter=new OllamaAdapter(s,{token:'fixture',event:event=>events.push(event),native(){},async approve(){return{choice:'deny'};}},{load:()=>structuredClone(history),save:messages=>{history=structuredClone(messages);},tools:()=>[],async call(){},
-    prepare:async()=>'<cere_memory_data>{}</cere_memory_data>',memorySignal:()=>epoch.signal});
+    prepare:async()=>'<pal_memory_data>{}</pal_memory_data>',memorySignal:()=>epoch.signal});
   t.after(()=>adapter.close());
   await adapter.send('Hello');
   await until(()=>f.requests.length===1);
-  epoch.abort(Object.assign(new Error('Memory changed while Cere was replying. Send your message again.'),{code:'MEMORY_INVALIDATED'}));
+  epoch.abort(Object.assign(new Error('Memory changed while PAL was replying. Send your message again.'),{code:'MEMORY_INVALIDATED'}));
   await until(()=>events.some(e=>['error','interrupted','complete'].includes(e.type)));
   const end=events.find(e=>['error','interrupted','complete'].includes(e.type));
-  assert.deepEqual({type:end.type,text:end.text},{type:'error',text:'Memory changed while Cere was replying. Send your message again.'});
+  assert.deepEqual({type:end.type,text:end.text},{type:'error',text:'Memory changed while PAL was replying. Send your message again.'});
 });

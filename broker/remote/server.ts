@@ -1,3 +1,4 @@
+import { deviceRole, lapsed, workingProfile } from '../authority.ts';
 import { createServer } from 'node:https';
 import type { Server } from 'node:https';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -15,7 +16,8 @@ import { Pairing } from './pairing.ts';
 import { Router, safeError } from './router.ts';
 import { digest, verified, parsePairing } from './crypto.ts';
 import { endpointOrigin } from '../compatible-endpoint.ts';
-import { helloSchema, pairResponseSchema, requestSchema, methods, mutations, needsProof, availableOperations, protocolFeatures } from './schemas.ts';
+import { helloSchema, pairResponseSchema, requestSchema, methods, mutations, needsProof, availableOperations, operationAllowed, protocolFeatures } from './schemas.ts';
+import { RemoteStore as Registry } from './store.ts';
 import { buildIdentity, brokerBuildLabel } from '../build-info.ts';
 import { isApiProvider } from '../provider-catalog.ts';
 import { mobileMessage } from './transcript.ts';
@@ -23,7 +25,9 @@ import { mobileMessage } from './transcript.ts';
 type Peer = {socket:WebSocket;device?:Device;hello?:any;challenge?:any;authSessionId?:string;expiresAt:number;subscribed:boolean;selected?:string;
   challenges:Map<string,any>;inFlight:number;timer:NodeJS.Timeout;alive:boolean;pingAt:number;
   /** A phone waiting on its network-return pairing answer: told when the desktop confirms or the offer ends. */
-  pairingId?:string};
+  pairingId?:string;
+  /** What this connection's client declared it understands (client.features), and the role it negotiated. */
+  clientFeatures?:Set<string>;connectionRole?:'owner'};
 
 export class MobileGateway {
   core:Core;registry:RemoteStore;identity:Identity;pairing:Pairing;router:Router;
@@ -31,6 +35,7 @@ export class MobileGateway {
   /** Work this gateway started that can touch Core or the store: frame handlers, media, maintenance, revocation. */
   work=new Set<Promise<unknown>>();
   closing?:Promise<void>;
+  private stagingInitialized=false;
   /** Owned work still running when close stopped waiting; reported by shutdown, never awaited forever. */
   unsettled=0;
   static closeDrainMs=5000;
@@ -42,14 +47,30 @@ export class MobileGateway {
 
   constructor(core:Core) {
     this.core=core;this.registry=new RemoteStore(core.store);this.identity=new Identity(this.registry);this.pairing=new Pairing(this.registry,this.identity);
-    this.router=new Router(core,this.registry,id=>this.track(this.revoke(id)));
+    this.router=new Router(core,this.registry,id=>this.track(this.revoke(id)).then(()=>{}));
     this.router.scopeReduced=id=>{void this.track(this.reduced(id)).catch(()=>{});};
+    this.router.roleChange=params=>this.pairing.setRole(params);
+    this.router.roleReduced=(id,wasOwner)=>{void this.track(this.reduced(id,wasOwner)).catch(()=>{});};
+    // Terminal frames go to owner sessions watching that terminal. A phone more than 1 MiB behind skips screen
+    // deltas (it sees the revision gap and rereads a snapshot) instead of queueing them without bound.
+    this.router.terminals.send=(deviceId,name,data,screen)=>{for(const peer of this.peers)if(peer.subscribed&&peer.device?.id===deviceId&&peer.connectionRole==='owner'&&peer.clientFeatures?.has('terminal.v1')){if(screen&&peer.socket.bufferedAmount>1024*1024)continue;this.event(peer,name,data);}};
+    this.router.terminals.owners=()=>[...new Set([...this.peers].filter(peer=>peer.subscribed&&peer.device&&peer.connectionRole==='owner'&&peer.clientFeatures?.has('terminal.v1')).map(peer=>peer.device!.id))];
+    this.router.ownerOps.admin={
+      devices:()=>this.registry.devices(),
+      setProfile:params=>{const device=this.pairing.setProfile(params);this.router.recheckActions();this.core.changed();return device;},
+      setRole:params=>this.local('remote.setRole',params).then(()=>this.registry.device((params as any).id)!),
+      revoke:id=>this.revoke(id).then(()=>{}),
+    };
     // A capture's progress goes to the phones of the device that started it.
     this.router.captures.changed=(deviceId,dto)=>{for(const peer of this.peers)if(peer.subscribed&&peer.device?.id===deviceId)this.event(peer,'capture.updated',dto);};
     core.remoteAuthority=(execution,session)=> {
       const device=this.registry.live(execution.deviceId);
-      return !!device&&this.registry.config().enabled&&device.scopeVersion===execution.scopeVersion&&device.projects.some(p=>p.id===execution.projectId&&p.path===session.cwd)&&this.router.inScope(device,session)&&(!isApiProvider(session.provider)||this.router.apiAccess(device,session.provider,session).remoteExecution);
+      if(!device||!this.registry.config().enabled||device.scopeVersion!==execution.scopeVersion)return false;
+      // An owner snapshot needs a device that is still an owner; any role change also changed its scope version.
+      if(deviceRole(execution.role)==='owner'&&deviceRole(device.role)!=='owner')return false;
+      return this.router.projectFor(device,session.cwd)?.id===execution.projectId&&this.router.inScope(device,session)&&(!isApiProvider(session.provider)||this.router.apiAccess(device,session.provider,session).remoteExecution);
     };
+    core.remoteProfile=deviceId=>{const device=this.registry.live(deviceId);return device&&deviceRole(device.role)==='owner'?workingProfile(device.profile):undefined;};
     core.on('changed',this.onChanged);core.on('state',this.onState);core.on('message',this.onMessage);core.on('notice',this.onNotice);
     this.heartbeat=setInterval(()=>{void this.track(this.maintain()).catch(()=>{});},20000);this.heartbeat.unref();this.presence();
   }
@@ -83,7 +104,7 @@ export class MobileGateway {
           const session=this.router.session(device,notice.sessionId);
           this.event(peer,'notice',{kind:notice.kind,sessionId:session.id,title:String(session.title||'').slice(0,100)});
         } else if(notice?.kind==='timer'&&typeof notice.remoteProjectId==='string') {
-          const project=device.projects.find(p=>p.id===notice.remoteProjectId);
+          const project=this.router.projects(device).find(p=>p.id===notice.remoteProjectId);
           if(!project||!device.caps.includes('desktop.control')||!device.categories.includes('timers'))continue;
           this.event(peer,'notice',{kind:'timer',projectId:project.id,timerId:String(notice.timerId||''),label:String(notice.text||'Timer').slice(0,200)});
         }
@@ -94,7 +115,7 @@ export class MobileGateway {
     if(!peer.device||this.closed)return;
     try{this.router.current(peer.device);}catch(error){peer.socket.close(4003,(error as any)?.code||'AUTH_REVOKED');return;}
     this.registry.journal(peer.device.id,{name,...(name==='message.upsert'?{messageId:data.id}:{} )});
-    this.send(peer,{v:1,type:'event',eventId:randomUUID(),cursor:this.router.cursor(peer.device),name,resourceRevision:data.revision||'1',data});
+    this.send(peer,{v:1,type:'event',eventId:randomUUID(),cursor:this.router.cursor(peer.device),name,resourceRevision:String(data.revision ?? data.rev ?? '1'),data});
   }
   send(peer:Peer,value:unknown) {
     if(peer.socket.readyState!==WebSocket.OPEN)return;
@@ -129,6 +150,7 @@ export class MobileGateway {
   }
   async refresh() {
     if(this.closed)return;
+    if (!this.stagingInitialized) { await this.router.transfers.resetStaging(); this.stagingInitialized=true; }
     await this.completeReplacements();
     const config=this.registry.config();
     if(!this.shouldListen()) {await this.stopListeners();this.presence();return;}
@@ -159,7 +181,7 @@ export class MobileGateway {
     const peer:Peer={socket,expiresAt:0,subscribed:false,challenges:new Map(),inFlight:0,alive:true,pingAt:Date.now(),timer:setTimeout(()=>socket.close(4001,'UNAUTHENTICATED'),10000)};
     peer.timer.unref();this.peers.add(peer);
     socket.on('error',()=>{});socket.on('pong',()=>{peer.alive=true;});
-    socket.on('close',()=>{clearTimeout(peer.timer);peer.challenges.clear();this.peers.delete(peer);if(!this.closed)this.presence();});
+    socket.on('close',()=>{clearTimeout(peer.timer);peer.challenges.clear();this.peers.delete(peer);if(peer.device)this.router.terminals.disconnected(peer.device.id,[...this.peers].some(other=>other.device?.id===peer.device!.id));if(!this.closed)this.presence();});
     socket.on('message',(data,isBinary)=> {
       if(peer.device&&peer.expiresAt<Date.now()){socket.close(4001,'AUTH_EXPIRED');return;}
       const bytes=Array.isArray(data)?Buffer.concat(data):Buffer.from(data as any);
@@ -167,7 +189,9 @@ export class MobileGateway {
       if(isBinary) {
         if(!peer.device){socket.close(4001,'UNAUTHENTICATED');return;}
         peer.inFlight++;
-        void this.track(this.core.withMutation(()=>this.router.media.chunk(peer.device!,bytes)).then(progress=>this.event(peer,'attachment.progress',progress)).catch(()=>socket.close(4009,'ATTACHMENT_INVALID')).finally(()=>peer.inFlight--));return;
+        // An owner phone's artifact upload (transfers.ts) or, otherwise, an attachment chunk (media.ts).
+        const transfer=peer.connectionRole==='owner'&&peer.clientFeatures?.has('artifacts.transfer.v1')&&this.router.transfers.claims(peer.device,bytes);
+        void this.track(this.core.withMutation<unknown>(()=>transfer?this.router.transfers.chunk(peer.device!,bytes):this.router.media.chunk(peer.device!,bytes)).then(progress=>this.event(peer,transfer?'transfer.progress':'attachment.progress',progress)).catch(()=>socket.close(4009,'ATTACHMENT_INVALID')).finally(()=>peer.inFlight--));return;
       }
       let frame:any;
       try{frame=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{socket.close(4000,'INVALID_ARGUMENT');return;}
@@ -220,13 +244,32 @@ export class MobileGateway {
       peer.device=device;peer.authSessionId=randomUUID();peer.expiresAt=Date.now()+15*60000;clearTimeout(peer.timer);
       device.lastSeen=Date.now();this.registry.saveDevice(device);
       const build=buildIdentity();
-      this.send(peer,{v:1,type:'welcome',desktopId:this.identity.id,brokerBuild:brokerBuildLabel(build),build:{version:build.version,commit:build.commit,dirty:build.dirty},authSessionId:peer.authSessionId,expiresAt:peer.expiresAt,epoch:this.registry.epoch,scopeVersion:device.scopeVersion,protocol:{major:1,minor:1},features:[...protocolFeatures],operations:availableOperations(device.caps),sendAuthentication:'connection-key',actionAuthentication:device.actionAuthentication||'biometric',limits:{maxFrameBytes:1024*1024,maxMessageLength:100000,maxAttachments:4}});
+      this.send(peer,{v:1,type:'welcome',desktopId:this.identity.id,brokerBuild:brokerBuildLabel(build),build:{version:build.version,commit:build.commit,dirty:build.dirty},authSessionId:peer.authSessionId,expiresAt:peer.expiresAt,epoch:this.registry.epoch,scopeVersion:device.scopeVersion,protocol:{major:1,minor:1},features:[...protocolFeatures],operations:availableOperations(device.caps,Registry.effectiveRole(device)),role:deviceRole(device.role),sendAuthentication:'connection-key',actionAuthentication:device.actionAuthentication||'biometric',limits:{maxFrameBytes:1024*1024,maxMessageLength:100000,maxAttachments:4}});
       this.registry.audit({deviceId:device.id,operation:'auth',decision:'connected'});this.presence();return;
     }
     const request=requestSchema.parse(frame),device=this.router.current(peer.device);
+    // The stored record never carries the connection's negotiated role; each request's copy does.
+    device.connectionRole=peer.connectionRole;
     if(peer.expiresAt<Date.now()){peer.socket.close(4001,'AUTH_EXPIRED');return;}
     const schema=methods[request.method];if(!schema)throw remoteError('INVALID_ARGUMENT','Unknown mobile operation.');
     const params:any=schema.parse(request.params),method=request.method,now=Date.now();
+    // One descriptor table decides both welcome's operation list and this check (schemas.ts).
+    const role=Registry.effectiveRole(device);
+    // A retried mutation is answered from the ledger first, so an old command ID keeps its (possibly redacted)
+    // outcome after a grant change and can never run again; only then does the current descriptor decide.
+    const refuse=()=>{throw remoteError('SCOPE_DENIED',deviceRole(device.role)==='owner'&&role!=='owner'?'Update PAL Mobile to use this desktop feature from your phone.':role==='observer'?'This phone observes only: it can read, Stop and Deny.':'This phone is not granted this operation.');};
+    if(!mutations.has(method)&&!operationAllowed(method,device.caps,role,peer.clientFeatures))refuse();
+    if(method==='client.features') {
+      // A connection negotiates once what it understands. An owner phone acts as an owner only when its
+      // client declared owner policy; an older client keeps the limited behaviour it can display.
+      peer.clientFeatures=new Set(params.features);
+      peer.connectionRole=deviceRole(device.role)==='owner'&&peer.clientFeatures.has('owner.policy.v1')?'owner':undefined;
+      device.connectionRole=peer.connectionRole;
+      const negotiated=Registry.effectiveRole(device);
+      this.registry.audit({deviceId:device.id,authSessionId:peer.authSessionId,operation:'client.features',decision:negotiated,scopeVersion:device.scopeVersion});
+      this.send(peer,{v:1,type:'response',id:request.id,result:{role:negotiated,storedRole:deviceRole(device.role),operations:availableOperations(device.caps,negotiated,peer.clientFeatures),features:[...protocolFeatures],access:this.router.permissions(device).access}});
+      return;
+    }
     if(method==='commands.challenge') {
       if(!mutations.has(params.method))throw remoteError('INVALID_ARGUMENT','Only a supported mutation can be authenticated.');
       for(const[id,c]of peer.challenges)if(c.expiresAt<now)peer.challenges.delete(id);
@@ -238,6 +281,7 @@ export class MobileGateway {
       if(!request.commandId)throw remoteError('INVALID_ARGUMENT','A mutation requires a command ID.');
       const prior=this.registry.prior(device.id,request.commandId,method,request.params);
       if(prior){this.send(peer,{v:1,type:'response',id:request.id,...(prior.status==='failed'?{error:prior.error}:{result:prior.result??prior})});return;}
+      if(!operationAllowed(method,device.caps,role,peer.clientFeatures))refuse();
       if(needsProof(method,params)) {
         const proof=request.proof,challenge=proof?peer.challenges.get(proof.challengeId):undefined;
         if(proof)peer.challenges.delete(proof.challengeId);
@@ -273,10 +317,11 @@ export class MobileGateway {
     const ended=this.pairing.end();if(ended.length){this.pairEnded(ended,'expired');this.presence();}
     this.registry.prune();
     await this.router.media.purge();
+    await this.router.transfers.prune();
     const config=this.registry.config();
     if(config.enabled||ended.length||this.pairing.networkWindow()) {
       await this.start();
-      if(config.enabled)for(const device of this.registry.devices())if(!device.revokedAt&&device.expiresAt<=Date.now())await this.revoke(device.id);
+      if(config.enabled)for(const device of this.registry.devices())if(!device.revokedAt&&lapsed(device))await this.revoke(device.id);
       if(!this.shouldListen())await this.stopListeners();
     }
   }
@@ -301,19 +346,37 @@ export class MobileGateway {
     this.registry.configure({...this.registry.config(),enabled:false});
     this.router.abortActions();
     for(const peer of this.peers)this.send(peer,{v:1,type:'event',eventId:randomUUID(),cursor:'',resourceRevision:'1',name:'remote.disabled',data:{}});
+    this.core.remoteView.end();
     await this.stopListeners();await this.stopOwned();this.registry.audit({operation:'remote.disable',decision:'disabled'});this.presence();
   }
-  async reduced(id:string){
+  async reduced(id:string, lostOwner=false){
+    this.router.abortActions(id);
+    this.core.remoteView.end(id);
     for(const peer of this.peers)if(peer.device?.id===id)peer.socket.close(4003,'SCOPE_CHANGED');
-    await this.stopOwned(id);await this.router.media.purge(id);this.presence();
+    await this.stopOwned(id);
+    if(lostOwner){this.releaseOwnerSessions(id);await this.router.terminals.revoked(id);}
+    await this.router.media.purge(id);await this.router.transfers.purge(id);this.presence();
   }
   async revoke(id:string) {
     const device=this.registry.device(id);if(!device)throw new Error('Device not found');
     device.revokedAt=Date.now();device.scopeVersion=String(BigInt(device.scopeVersion)+1n);this.registry.saveDevice(device);
     this.router.abortActions(id);
     for(const peer of this.peers)if(peer.device?.id===id){this.send(peer,{v:1,type:'event',eventId:randomUUID(),cursor:'',resourceRevision:'1',name:'device.revoked',data:{}});peer.socket.close(4003,'AUTH_REVOKED');}
-    await this.stopOwned(id);await this.router.media.purge(id);this.registry.audit({deviceId:id,operation:'device.revoke',decision:'revoked'});
+    await this.stopOwned(id);this.releaseOwnerSessions(id);this.core.remoteView.end(id);await this.router.media.purge(id);await this.router.transfers.purge(id);await this.router.terminals.revoked(id);
+    // Routines this phone authorized stop running unattended until another owner resumes them (PAL Everywhere §17.1).
+    const pausedSchedules=this.core.schedules.deviceRevoked(id);this.core.oauth.deviceRevoked(id);
+    this.registry.audit({deviceId:id,operation:'device.revoke',decision:'revoked',...(pausedSchedules.length?{reason:`paused ${pausedSchedules.length} routine(s)`}:{})});
     if(!this.shouldListen())await this.stopListeners();this.presence();
+    return {revoked:true,pausedSchedules};
+  }
+  /**
+   * An owner phone's conversations carry the desktop owner's authority, so when that phone is revoked or stops
+   * being an owner, its stopped conversations return to the desktop (attributed in remoteOrigin) instead of
+   * waiting for a local "Detach". A limited phone's conversations keep their sticky restricted provenance.
+   */
+  releaseOwnerSessions(deviceId:string) {
+    for(const session of this.core.store.sessions())if(session.remote?.deviceId===deviceId&&deviceRole(session.remote.role)==='owner'&&!busy(session))
+      this.core.updateSession(session.id,{remote:undefined,effectivePolicy:undefined,remoteOrigin:{deviceId,role:'owner',at:Date.now()}});
   }
   // The pairing transaction writes this marker together with old-key revocation.
   // Repeated startup/maintenance completes any interrupted ownership migration before
@@ -324,9 +387,12 @@ export class MobileGateway {
       this.router.abortActions(device.replacesDeviceId);
       for(const peer of this.peers)if(peer.device?.id===device.replacesDeviceId)peer.socket.close(4003,'PAIRING_REPLACED');
       await this.stopOwned(device.replacesDeviceId);
+      this.core.remoteView.end(device.replacesDeviceId);
+      await this.router.terminals.revoked(device.replacesDeviceId);
+      await this.router.transfers.purge(device.replacesDeviceId);
       for(const session of this.core.store.sessions())if(session.remote?.deviceId===device.replacesDeviceId) {
-        const project=device.projects.find(project=>project.path===session.cwd);
-        if(project)this.core.updateSession(session.id,{remote:this.router.execution(device,project)});
+        const project=this.router.projectFor(device,session.cwd);
+        if(project)this.core.updateSession(session.id,{remote:{...this.router.execution(device,project),role:deviceRole(session.remote.role)==='owner'&&deviceRole(device.role)==='owner'?'owner' as const:'limited' as const}});
       }
       const current=this.registry.live(device.id);
       if(current){current.replacementPending=false;this.registry.saveDevice(current);}
@@ -335,7 +401,7 @@ export class MobileGateway {
   async local(method:string,params:any={}) {
     switch(method) {
       case 'remote.status':return {...this.core.remoteStatus as object,config:this.registry.config(),desktopId:this.identity.id,devices:this.registry.devices().map(({connectionKey,actionKey,...d})=>({...d,fingerprint:digest({connectionKey,actionKey})})),
-        // For choosing at pairing instead of typing: this computer's addresses, the projects Cere knows
+        // For choosing at pairing instead of typing: this computer's addresses, the projects PAL knows
         // and the compatible connections a phone can be granted (origins only, never keys).
         addressCandidates:addressCandidates(),knownProjects:this.core.projects.list().sort((a:any,b:any)=>Number(!!b.favorite)-Number(!!a.favorite)||(b.updated||0)-(a.updated||0)).slice(0,24).map((project:any)=>({path:project.cwd,name:project.name})),
         compatibleConnections:this.core.chatConnections.list().filter(connection=>connection.kind==='compatible'&&connection.compatible?.baseUrl).map(connection=>({id:connection.id,name:connection.name,origin:endpointOrigin(connection.compatible!.baseUrl),settingsDefault:!!connection.migrated})),
@@ -353,10 +419,10 @@ export class MobileGateway {
         const path=z.string().min(1).max(4096).parse(params.path),file=await open(path,'r');
         let text='';try{const buffer=Buffer.alloc(16384);const {bytesRead}=await file.read(buffer,0,buffer.length,0);text=buffer.subarray(0,bytesRead).toString('utf8');}finally{await file.close();}
         const response=text.match(/cere-pair:\/\/v1\/[A-Za-z0-9_-]+/)?.[0];
-        if(!response)throw new Error('This file does not contain a Cere pairing response.');
+        if(!response)throw new Error('This file does not contain a PAL pairing response.');
         return {response};
       }
-      case 'remote.reviewPair': {const {response,sas,fingerprint,offer}=this.pairing.review(params.response);return {sas,fingerprint,name:response.name,actionAuthentication:offer.actionAuthentication||'biometric',replacesDeviceId:offer.replacesDeviceId};}
+      case 'remote.reviewPair': {const {response,sas,fingerprint,offer}=this.pairing.review(params.response);return {sas,fingerprint,name:response.name,actionAuthentication:offer.actionAuthentication||'biometric',accessRole:deviceRole(offer.accessRole),replacesDeviceId:offer.replacesDeviceId};}
       case 'remote.confirmPair': {
         let pairingId:string|undefined=typeof params?.pairingId==='string'?params.pairingId:undefined;
         if(!pairingId&&typeof params?.response==='string')try{pairingId=(parsePairing(params.response) as any)?.pairingId;}catch{}
@@ -382,14 +448,27 @@ export class MobileGateway {
         this.pairEnded(this.pairing.end(true),'cancelled');
         this.identity.reset();this.registry.audit({operation:'identity.reset',decision:'reset'});this.presence();return true;
       }
-      case 'remote.revoke':await this.revoke(z.uuid().parse(params.id));return true;
+      case 'remote.revoke':return this.revoke(z.uuid().parse(params.id));
       case 'remote.updateDevice': {
-        const device=this.pairing.updateScopes(params);this.router.abortActions(device.id);
-        for(const peer of this.peers)if(peer.device?.id===device.id)peer.socket.close(4003,'SCOPE_CHANGED');
-        await this.stopOwned(device.id);await this.router.media.purge(device.id);this.presence();return true;
+        const device=this.pairing.updateScopes(params);
+        await this.reduced(device.id);return true;
+      }
+      // Promote a phone to full access, or limit it, keeping its keys, signing mode and local work.
+      case 'remote.setRole': {
+        const before=this.registry.live(z.uuid().parse(params?.id));
+        const device=this.pairing.setRole(params);
+        if (before?.scopeVersion!==device.scopeVersion)
+          await this.reduced(device.id, deviceRole(before?.role)==='owner'&&deviceRole(device.role)!=='owner');
+        return {id:device.id,role:deviceRole(device.role)};
+      }
+      case 'remote.setProfile': {
+        const device=this.pairing.setProfile(params);this.router.recheckActions();this.core.changed();
+        for(const peer of this.peers)if(peer.subscribed&&peer.device?.id===device.id)this.event(peer,'snapshot.changed',{});
+        return {id:device.id,profile:workingProfile(device.profile),profileRevision:device.profileRevision};
       }
       case 'remote.renewDevice': {
         const device=this.registry.live(z.uuid().parse(params.id));if(!device||params.confirmed!==true)throw new Error('Re-pair an expired device or confirm renewal locally.');
+        if(device.lifetime==='until-revoked')return true;
         device.expiresAt=Date.now()+90*86400000;this.registry.saveDevice(device);this.registry.audit({deviceId:device.id,operation:'device.renew',decision:'renewed'});return true;
       }
       case 'remote.purgeMedia': {const id=z.uuid().parse(params.id);if(params.confirmed!==true)throw new Error('Confirm clearing this device’s retained images.');await this.stopOwned(id);await this.router.media.purge(id);return true;}

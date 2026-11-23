@@ -54,17 +54,17 @@ Rectangle {
     onEmotionChanged: if (emotion.key !== lastKey) { lastKey = emotion.key; variant = 0 }
     property string lastKey: ""
 
-    width: Math.min(116 * unit, Math.max(48 * unit, face.implicitWidth + 20 * unit))
-    height: 28 * unit; radius: 11 * unit
+    width: Math.min(Theme.expressionBadgeWidth * unit, Math.max((2 * Theme.minimumTarget) * unit, face.implicitWidth + Theme.gutter * unit))
+    height: Theme.expressionBadgeHeight * unit; radius: Theme.radiusCard * unit
     color: badgeColors.badgeSurface; border.color: accent
     Accessible.role: Accessible.StaticText
     Accessible.name: description
     Text {
         id: face; objectName:"emoticonFace"
-        anchors.fill: parent; anchors.margins: 5 * badge.unit
+        anchors.fill: parent; anchors.margins: Theme.space1 * badge.unit
         text: badge.glyph; textFormat: Text.PlainText
-        color: badge.accent; font.family:"Adwaita Sans"; font.pixelSize:14 * badge.unit
-        fontSizeMode: Text.HorizontalFit; minimumPixelSize: 9 * badge.unit
+        color: badge.accent; font.family:Theme.font; font.pixelSize:Theme.body * badge.unit
+        fontSizeMode: Text.HorizontalFit; minimumPixelSize: Theme.caption * badge.unit
         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
     }
     // Infrequent changes keep the face readable. Static accessibility modes retain
@@ -75,6 +75,6 @@ Rectangle {
     // show the explanation only when the pointer is over the badge itself.
     HoverHandler { id: tooltipHover }
     ToolTip.visible: tooltipHover.hovered
-    ToolTip.delay: 650
+    ToolTip.delay: Theme.tooltipDelay
     ToolTip.text: description
 }

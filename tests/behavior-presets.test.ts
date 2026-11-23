@@ -10,7 +10,7 @@ import { presetLimit } from '../broker/behavior-presets.ts';
 
 const idle = () => ({ async send() {}, async interrupt() {}, async close() {} });
 async function broker(t: any, directory?: string) {
-  const dir = directory || await mkdtemp(join(tmpdir(), 'cere-presets-'));
+  const dir = directory || await mkdtemp(join(tmpdir(), 'pal-presets-'));
   const core = new Core(new Store(dir), idle);
   t.after(async () => { if (!core.closed) await core.close(); if (!directory) await rm(dir, { recursive: true, force: true }); });
   return { core, dir };
@@ -53,7 +53,7 @@ test('Q01 saved styles never change runtime settings and reject stale or invalid
 });
 
 test('Q01 the catalog persists across restarts, is bounded, and refuses a newer schema rather than rewriting it', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-presets-restart-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-presets-restart-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   {
     const { core } = await broker(t, dir);
@@ -66,8 +66,8 @@ test('Q01 the catalog persists across restarts, is bounded, and refuses a newer 
     assert.equal(core.presets.catalog().items.length, presetLimit);
     assert.equal(core.presets.catalog().items[7].text, 'Text 7');
     core.store.set('behaviorPresets', { schema: 9, revision: '9', items: [], traits: {} });
-    await assert.rejects(core.rpc('presets.list', {}), /newer version of Cere/);
-    await assert.rejects(core.rpc('presets.save', { label: 'x', text: 'y', expectedRevision: '9' }), /newer version of Cere/);
+    await assert.rejects(core.rpc('presets.list', {}), /newer version of PAL/);
+    await assert.rejects(core.rpc('presets.save', { label: 'x', text: 'y', expectedRevision: '9' }), /newer version of PAL/);
     assert.deepEqual(core.store.get('behaviorPresets', {}), { schema: 9, revision: '9', items: [], traits: {} }, 'a newer catalog is never rewritten');
     assert.deepEqual(core.snapshot().behaviorPresets, { revision: 'unsupported', count: 0 });
     await core.close();
@@ -82,18 +82,18 @@ test('Q03 the preview renders with the runtime renderer, validates like a save a
   const before = runtime(core), calls: string[] = [];
   const service = core.memory.service.call.bind(core.memory.service);
   core.memory.service.call = (async (method: string, ...rest: any[]) => { calls.push(method); return (service as any)(method, ...rest); }) as any;
-  const cases: [string, string][] = [[defaultPersonality, 'Cere'], [defaultPersonality, 'Étoile ✦'], ['Be concise.\nAvoid jargon.', 'Nova'], ['', 'Cere'], ['Ünïcødé 漢字 🜁 text', '"Quoted"']];
+  const cases: [string, string][] = [[defaultPersonality, 'PAL'], [defaultPersonality, 'Étoile ✦'], ['Be concise.\nAvoid jargon.', 'Nova'], ['', 'PAL'], ['Ünïcødé 漢字 🜁 text', '"Quoted"']];
   for (const [personality, assistantName] of cases) {
     const preview = await core.rpc('personality.preview', { personality, assistantName });
     assert.equal(preview.draft, personalityInstructions(personality, assistantName));
     assert.equal(preview.saved, personalityInstructions(core.settings.personality, core.settings.assistantName));
-    assert.equal(preview.scope, 'cere-personality-block');
+    assert.equal(preview.scope, 'pal-personality-block');
     assert.equal(preview.settingsRevision, core.store.get('settingsRevision', '0'));
     assert.equal(preview.matchesSaved, personality === core.settings.personality && assistantName === core.settings.assistantName);
     assert.match(preview.note, /Provider and project instructions may add other context/);
   }
   // Fields left out keep their saved value; a name is trimmed exactly as a save trims it.
-  assert.equal((await core.rpc('personality.preview', { assistantName: '  Cere  ' })).matchesSaved, true);
+  assert.equal((await core.rpc('personality.preview', { assistantName: '  PAL  ' })).matchesSaved, true);
   // Identical validation failures to settings.update, with nothing changed by either.
   for (const patch of [{ personality: 'x'.repeat(8001) }, { personality: 'bad\u0001' }, { assistantName: 'two\nlines' }, { assistantName: 'x'.repeat(65) }]) {
     let saveError = ''; try { await core.updateSettings(patch); } catch (error: any) { saveError = error.message; }
@@ -106,5 +106,5 @@ test('Q03 the preview renders with the runtime renderer, validates like a save a
   assert.equal(fetches, 0, 'previews never reach a provider or the network');
   assert.equal(core.adapters.size, 0, 'previews never start a provider');
   // The pure function needs no broker at all.
-  assert.equal(personalityPreview({}, { personality: 'Saved', assistantName: 'Cere', revision: '4' }).matchesSaved, true);
+  assert.equal(personalityPreview({}, { personality: 'Saved', assistantName: 'PAL', revision: '4' }).matchesSaved, true);
 });

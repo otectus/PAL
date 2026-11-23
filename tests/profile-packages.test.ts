@@ -10,7 +10,7 @@ import { projectConventions } from '../broker/project-instructions.ts';
 
 const idle = () => ({ async send() {}, async interrupt() {}, async close() {} });
 async function broker(t: any, realProviders = false) {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-packages-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-packages-'));
   const core = new Core(new Store(join(dir, 'state')), realProviders ? undefined : idle);
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   return { core, dir };
@@ -58,8 +58,8 @@ test('A06 a package carries styles and recipes only, previews before importing, 
   // Grants smuggled into a style are refused; unknown fields and newer formats import nothing.
   for (const [mutate, error] of [
     [(value: any) => { value.profiles[0].ceiling = { desktop: true, admin: true }; }, /can only withhold/],
-    [(value: any) => { value.grants = []; }, /fields Cere does not import/],
-    [(value: any) => { value.schema = 2; }, /newer version of Cere/],
+    [(value: any) => { value.grants = []; }, /fields PAL does not import/],
+    [(value: any) => { value.schema = 2; }, /newer version of PAL/],
     [(value: any) => { value.recipes[0].id = 'review-diff'; }, /built-in recipe/],
   ] as [(value: any) => void, RegExp][]) {
     const copy = JSON.parse(exported.text); mutate(copy);
@@ -84,9 +84,9 @@ test('A06 project conventions are opt-in, bounded, read fresh each turn, never t
   await core.rpc('projects.save', { cwd: dir, name: 'P', favorite: false, expectedRevision: '0', defaults: { provider: 'ollama', model: 'm', effort: '', tools: false, trusted: true, temporary: false } });
   const session = await core.create({ provider: 'ollama', model: 'm', cwd: dir });
   const turn = async (text: string) => { await core.rpc('session.send', { id: session.id, text }); for (let index = 0; index < 300 && core.store.session(session.id).status !== 'idle'; index++) await new Promise(resolve => setTimeout(resolve, 10)); return JSON.stringify(requests.at(-1).messages); };
-  assert.doesNotMatch(await turn('First'), /cere_project_conventions/, 'off until the project opts in');
+  assert.doesNotMatch(await turn('First'), /pal_project_conventions/, 'off until the project opts in');
   await core.rpc('projects.setConventions', { cwd: dir, expectedRevision: '1', enabled: true });
-  assert.match(await turn('Second'), /<cere_project_conventions>.*Use tabs/);
+  assert.match(await turn('Second'), /<pal_project_conventions>.*Use tabs/);
   await writeFile(join(dir, 'AGENTS.md'), 'Use spaces now.');
   assert.match(await turn('Third'), /Use spaces now/, 'a changed file shows in the next turn');
   const layer = (await core.rpc('session.context', { id: session.id })).lastPlan.layers.find((item: any) => item.id === 'conventions');
@@ -100,7 +100,7 @@ test('A06 project conventions are opt-in, bounded, read fresh each turn, never t
 });
 
 test('RC-12 convention files are redacted before they are cut to size, and a file without secrets arrives unchanged', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-conventions-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-conventions-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const clean = 'Plain rules: run npm test.\nNo secrets here: “quotes”, ünïcode, a | table | row, and token counts.\n';
   await writeFile(join(dir, 'AGENTS.md'), 'Keep tabs.\nAuthorization: Bearer abc.def.ghi\nexport GH=ghp_abcdefghijklmnopqrstuvwxyz0123\n');
@@ -108,7 +108,7 @@ test('RC-12 convention files are redacted before they are cut to size, and a fil
   const result = await projectConventions(dir);
   assert.equal(result.redactions, 2);
   assert.doesNotMatch(result.text, /abc\.def|ghp_abcdef/);
-  const body = JSON.parse(result.text.slice('<cere_project_conventions>\n'.length, -'\n</cere_project_conventions>'.length));
+  const body = JSON.parse(result.text.slice('<pal_project_conventions>\n'.length, -'\n</pal_project_conventions>'.length));
   assert.ok(body.text.endsWith('## CONVENTIONS.md\n' + clean), 'a file without matches is byte-identical');
   // A secret straddling the size limit is redacted whole rather than cut in half.
   await writeFile(join(dir, 'AGENTS.md'), 'x'.repeat(7990) + ' sk-abcdefghijklmnopqrstuvwxyz0123456789');
@@ -120,7 +120,7 @@ test('package review protects changed targets and rolls back mixed imports on a 
   const { core } = await broker(t);
   const style = await core.rpc('presets.save', { label: 'Original', text: 'Original', expectedRevision: '0' });
   const recipe = { name: 'First recipe', instructions: 'Check', expectedOutput: 'Result', permissions: { description: 'Read only' }, runtime: { maxSeconds: 60, maxTurns: 1 } };
-  const preview = (profiles: any[], recipes: any[] = []) => core.rpc('packages.preview', { text: JSON.stringify({ format: 'cere-package', schema: 1, profiles, recipes }) });
+  const preview = (profiles: any[], recipes: any[] = []) => core.rpc('packages.preview', { text: JSON.stringify({ format: 'pal-package', schema: 1, profiles, recipes }) });
   const incoming = { label: 'Second', text: 'Text' };
   const stale = await preview([style, incoming]);
   await core.rpc('presets.save', { id: style.id, expectedItemRevision: '1', label: 'Original', text: 'Independent edit' });
@@ -146,7 +146,7 @@ test('package review protects changed targets and rolls back mixed imports on a 
 test('abandoned package previews are bounded and expire without importing', async t => {
   const { core } = await broker(t);
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
-  const preview = () => core.rpc('packages.preview', { text: '{"format":"cere-package","schema":1}' });
+  const preview = () => core.rpc('packages.preview', { text: '{"format":"pal-package","schema":1}' });
   const dismissed = await preview();
   await core.rpc('packages.discard', { token: dismissed.token });
   await assert.rejects(core.rpc('packages.import', dismissed), /Preview the package again/);
@@ -180,6 +180,6 @@ test('unknown saved formatting checks are ignored on read and refused on new sty
   core.store.set('behaviorPresets', { schema: 2, revision: '1', items: [replacement] });
   assert.deepEqual(core.presets.catalog().items[0].constraints, ['no-emoji']);
   await assert.rejects(core.rpc('presets.save', { label: 'Other', text: 'Style', expectedRevision: '1', constraints: ['toString'] }), /supported formatting checks/);
-  await assert.rejects(core.rpc('packages.preview', { text: JSON.stringify({ format: 'cere-package', schema: 1, profiles: [replacement] }) }), /supported formatting checks/);
+  await assert.rejects(core.rpc('packages.preview', { text: JSON.stringify({ format: 'pal-package', schema: 1, profiles: [replacement] }) }), /supported formatting checks/);
   assert.equal(core.presets.catalog().items[0].text, 'Style');
 });

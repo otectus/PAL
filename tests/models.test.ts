@@ -20,7 +20,7 @@ test('provider catalogs preserve CLI model names and model-specific efforts',()=
 });
 
 test('newer model refresh wins and failures retain the last usable catalog',async t=>{
-  const directory=await mkdtemp(join(tmpdir(),'cere-models-'));
+  const directory=await mkdtemp(join(tmpdir(),'pal-models-'));
   const pending:{resolve:(models:ModelOption[])=>void;reject:(error:Error)=>void}[]=[];
   const core=new Core(new Store(directory),()=>({async send(){},async interrupt(){},async close(){}}),()=>new Promise((resolve,reject)=>pending.push({resolve,reject})));
   t.after(async()=>{await core.close();await rm(directory,{recursive:true,force:true})});

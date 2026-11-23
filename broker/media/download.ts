@@ -1,5 +1,5 @@
 /**
- * The media downloader: the only way Cere fetches image bytes a backend points to. It is not the web
+ * The media downloader: the only way PAL fetches image bytes a backend points to. It is not the web
  * reader. Its policy: the configured backend origin is reachable as configured (a local or LAN ComfyUI
  * server included); any other URL must be HTTPS to a host that resolves only to public addresses.
  * Redirects are followed by hand, each hop re-validated, and credentials go only to the configured
@@ -39,9 +39,9 @@ export async function downloadImage(value: string, policy: DownloadPolicy, signa
     }
     if (!response.ok) { await response.body?.cancel().catch(() => {}); throw Object.assign(new Error(`The media server answered HTTP ${response.status}`), { code: 'download_failed' }); }
     const declared = Number(response.headers.get('content-length') || 0);
-    if (declared > limit) { await response.body?.cancel().catch(() => {}); throw Object.assign(new Error('The image is larger than Cere accepts'), { code: 'too_large' }); }
+    if (declared > limit) { await response.body?.cancel().catch(() => {}); throw Object.assign(new Error('The image is larger than PAL accepts'), { code: 'too_large' }); }
     const chunks: Buffer[] = []; let size = 0;
-    for await (const chunk of response.body as any as AsyncIterable<Uint8Array>) { size += chunk.length; if (size > limit) throw Object.assign(new Error('The image is larger than Cere accepts'), { code: 'too_large' }); chunks.push(Buffer.from(chunk)); }
+    for await (const chunk of response.body as any as AsyncIterable<Uint8Array>) { size += chunk.length; if (size > limit) throw Object.assign(new Error('The image is larger than PAL accepts'), { code: 'too_large' }); chunks.push(Buffer.from(chunk)); }
     return verifyImage(Buffer.concat(chunks));
   }
   throw Object.assign(new Error('The media server redirected too many times'), { code: 'blocked_url' });
@@ -51,13 +51,13 @@ export async function downloadImage(value: string, policy: DownloadPolicy, signa
  * clear failure, not an artifact. Animated or multi-page images are refused rather than silently cut.
  */
 export async function verifyImage(bytes: Buffer, maxBytes = downloadLimits.bytes) {
-  if (bytes.length > maxBytes) throw Object.assign(new Error('The image is larger than Cere accepts'), { code: 'too_large' });
+  if (bytes.length > maxBytes) throw Object.assign(new Error('The image is larger than PAL accepts'), { code: 'too_large' });
   let metadata;
   try { metadata = await sharp(bytes, { limitInputPixels: downloadLimits.pixels, animated: true }).metadata(); }
-  catch (error: any) { throw Object.assign(new Error(/pixel limit/i.test(error?.message || '') ? 'The image has more pixels than Cere decodes (64 megapixels)' : 'The returned data is not a valid image'), { code: /pixel limit/i.test(error?.message || '') ? 'too_large' : 'malformed' }); }
+  catch (error: any) { throw Object.assign(new Error(/pixel limit/i.test(error?.message || '') ? 'The image has more pixels than PAL decodes (64 megapixels)' : 'The returned data is not a valid image'), { code: /pixel limit/i.test(error?.message || '') ? 'too_large' : 'malformed' }); }
   if (!metadata.width || !metadata.height || !['png', 'jpeg', 'webp'].includes(metadata.format || '')) throw Object.assign(new Error('The returned data is not a PNG, JPEG or WebP image'), { code: 'malformed' });
-  if (metadata.width * metadata.height > downloadLimits.pixels) throw Object.assign(new Error('The image has more pixels than Cere decodes (64 megapixels)'), { code: 'too_large' });
-  if ((metadata.pages || 1) > 1) throw Object.assign(new Error('The backend returned an animated or multi-page image; Cere keeps still images only'), { code: 'animated' });
+  if (metadata.width * metadata.height > downloadLimits.pixels) throw Object.assign(new Error('The image has more pixels than PAL decodes (64 megapixels)'), { code: 'too_large' });
+  if ((metadata.pages || 1) > 1) throw Object.assign(new Error('The backend returned an animated or multi-page image; PAL keeps still images only'), { code: 'animated' });
   // A full decode proves the data is complete; a truncated file fails here, not later in the gallery.
   try { await sharp(bytes, { limitInputPixels: downloadLimits.pixels, failOn: 'error' }).raw().toBuffer(); }
   catch { throw Object.assign(new Error('The returned image is truncated or corrupt'), { code: 'malformed' }); }

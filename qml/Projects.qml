@@ -6,7 +6,7 @@ import "Labels.js" as Labels
 ColumnLayout {
     id:page
     objectName:"projectsPage"
-    spacing:10
+    spacing:Theme.space2
     property var projects:[]
     property int requestId:-1
     property bool refreshPending:false
@@ -17,6 +17,8 @@ ColumnLayout {
     readonly property int catalogRevision:App.state.sessionCatalogRevision||0
     readonly property bool connected:App.connected
     readonly property var filtered:projects.filter(p=>!search.text.trim()||(p.name+" "+p.cwd+" "+p.defaults.provider).toLowerCase().includes(search.text.trim().toLowerCase()))
+    property bool showWorkflowsAction: false
+    signal workflowsRequested()
     signal sessionActivated()
     signal projectRequested(string cwd,bool archived)
     function focusSearch(){search.forceActiveFocus()}
@@ -42,6 +44,7 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth:true
         CText { text:"Projects";Accessible.role:Accessible.Heading;font.pixelSize:Theme.page;font.weight:Font.DemiBold;Layout.fillWidth:true }
+        CButton { objectName:"openWorkflows"; visible:page.showWorkflowsAction; text:qsTr("Workflows"); iconName:"workflow"; quiet:true; onClicked:page.workflowsRequested() }
         CButton { objectName:"addProject";primary:true;text:"Add project";iconName:"plus";enabled:App.connected;onClicked:page.edit({},false) }
     }
     CField {
@@ -50,11 +53,11 @@ ColumnLayout {
         Keys.onDownPressed:{rows.forceActiveFocus();rows.currentIndex=0}
     }
     CText { visible:page.error.length>0;text:page.error;color:Theme.danger;font.pixelSize:Theme.secondary }
-    CText { visible:!App.connected;text:"Reconnecting… Projects will refresh when Cere is connected.";color:Theme.amber;font.pixelSize:Theme.secondary }
+    CText { visible:!App.connected;text:"Reconnecting… Projects will refresh when PAL is connected.";color:Theme.amber;font.pixelSize:Theme.secondary }
     CText { visible:page.loaded&&!page.filtered.length;text:search.text.trim()?"No projects match this search.":"Add a project folder and save its defaults. Your existing session folders also appear here.";color:Theme.muted }
     ListView {
-        id:rows;objectName:"projectRows";Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumHeight:60
-        clip:true;spacing:6;model:page.filtered;reuseItems:true;currentIndex:-1
+        id:rows;objectName:"projectRows";Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumHeight:Theme.rowDetailHeight
+        clip:true;spacing:Theme.space2;model:page.filtered;reuseItems:true;currentIndex:-1
         activeFocusOnTab:true;keyNavigationEnabled:true
         Accessible.role:Accessible.List;Accessible.name:"Projects"
         ScrollBar.vertical:CScrollBar{}
@@ -62,19 +65,19 @@ ColumnLayout {
             id:row
             required property var modelData
             required property int index
-            width:rows.width-(rows.contentHeight>rows.height?12:0);implicitHeight:86;radius:Theme.radiusCard
+            width:rows.width-(rows.contentHeight>rows.height?Theme.minimumTarget:0);implicitHeight:Theme.rowTallHeight;radius:Theme.radiusCard
             color:row.ListView.isCurrentItem?Theme.selected:Theme.surface;border.color:row.ListView.isCurrentItem&&rows.activeFocus?Theme.focus:Theme.subtle
             RowLayout {
-                anchors.fill:parent;anchors.margins:8;spacing:4
+                anchors.fill:parent;anchors.margins:Theme.space2;spacing:Theme.space1
                 CButton {
                     id:projectButton;objectName:"projectOpen_"+row.index;Layout.fillWidth:true;Layout.fillHeight:true
-                    quiet:true;leftPadding:4;rightPadding:4;help:row.modelData.cwd;Accessible.name:"Open "+row.modelData.name+" sessions"
+                    quiet:true;leftPadding:Theme.space1;rightPadding:Theme.space1;help:row.modelData.cwd;Accessible.name:"Open "+row.modelData.name+" sessions"
                     onClicked:{rows.currentIndex=row.index;page.projectRequested(row.modelData.cwd,row.modelData.sessions===0&&row.modelData.total>0)}
                     contentItem:ColumnLayout {
-                        spacing:4
+                        spacing:Theme.space1
                         RowLayout {
-                            Layout.fillWidth:true;spacing:6
-                            CIcon { name:row.modelData.favorite?"star":"projects";color:row.modelData.favorite?Theme.amber:Theme.accentText;Layout.preferredWidth:18;Layout.preferredHeight:18 }
+                            Layout.fillWidth:true;spacing:Theme.space2
+                            CIcon { name:row.modelData.favorite?"star":"projects";color:row.modelData.favorite?Theme.amber:Theme.accentText;Layout.preferredWidth:Theme.iconSize;Layout.preferredHeight:Theme.iconSize }
                             Text { text:row.modelData.name;textFormat:Text.PlainText;Layout.fillWidth:true;elide:Text.ElideRight;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.message;font.weight:Font.DemiBold }
                         }
                         Text { text:row.modelData.cwd;textFormat:Text.PlainText;Layout.fillWidth:true;elide:Text.ElideMiddle;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
@@ -85,13 +88,13 @@ ColumnLayout {
                     }
                 }
                 CButton {
-                    objectName:"projectSettings_"+row.index;implicitWidth:36;implicitHeight:36;quiet:true
+                    objectName:"projectSettings_"+row.index;implicitWidth:Theme.toolbarHeight;implicitHeight:Theme.toolbarHeight;quiet:true
                     help:"Settings for "+row.modelData.name;Accessible.name:help;enabled:App.connected
                     contentItem:CIcon { name:"settings";color:Theme.muted }
                     onClicked:{rows.currentIndex=row.index;page.edit(row.modelData,false)}
                 }
                 CButton {
-                    objectName:"projectNew_"+row.index;implicitWidth:36;implicitHeight:36;primary:true
+                    objectName:"projectNew_"+row.index;implicitWidth:Theme.toolbarHeight;implicitHeight:Theme.toolbarHeight;primary:true
                     help:"New session in "+row.modelData.name;Accessible.name:help;enabled:App.connected
                     contentItem:CIcon { name:"plus";color:Theme.accentText }
                     onClicked:{rows.currentIndex=row.index;page.start(row.modelData)}

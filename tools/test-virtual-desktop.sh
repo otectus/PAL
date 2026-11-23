@@ -2,50 +2,50 @@
 # Run a command on a private, headless Wayland desktop. No host input devices,
 # desktop sockets, session bus, profile, or display controller enter the sandbox.
 # Requires bubblewrap, Hyprland, Cage, and a GPU render node (no DRM card node).
-# CERE_CAGE_BINARY supports a project-local extracted Cage installation.
+# PAL_CAGE_BINARY supports a project-local extracted Cage installation.
 set -euo pipefail
 if [[ ${1-} == --inside || ${1-} == --display-environment ]]; then
-  root=${CERE_SOURCE_ROOT:?Missing isolated source root}
+  root=${PAL_SOURCE_ROOT:?Missing isolated source root}
 else
   root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 fi
 if [[ ${1-} == --display-environment ]]; then
-  [[ ${CERE_VIRTUAL_DESKTOP-} == 1 && ! -e /dev/uinput && ! -e /dev/input ]] || exit 2
-  printf '%s\n' "${DISPLAY-}" > "$CERE_VIRTUAL_EVIDENCE/xdisplay"
-  printf '%s\n' "${XAUTHORITY-}" > "$CERE_VIRTUAL_EVIDENCE/xauthority"
+  [[ ${PAL_VIRTUAL_DESKTOP-} == 1 && ! -e /dev/uinput && ! -e /dev/input ]] || exit 2
+  printf '%s\n' "${DISPLAY-}" > "$PAL_VIRTUAL_EVIDENCE/xdisplay"
+  printf '%s\n' "${XAUTHORITY-}" > "$PAL_VIRTUAL_EVIDENCE/xauthority"
   exit
 fi
 if [[ ${1-} != --inside ]]; then
   [[ $# -gt 0 ]] || { echo "Usage: $0 COMMAND [ARGS...]" >&2; exit 2; }
-  out=${CERE_VIRTUAL_EVIDENCE:-$root/build/virtual-desktop/$(date +%s)-$$}
+  out=${PAL_VIRTUAL_EVIDENCE:-$root/build/virtual-desktop/$(date +%s)-$$}
   mkdir -p "$out/tmp"
   out=$(realpath "$out")
   # A long-running command must not read a partially updated runner on return.
   cp -- "$root/tools/test-virtual-desktop.sh" "$out/runner.sh"
-  render=${CERE_RENDER_NODE:-/dev/dri/renderD128}
-  [[ -c $render && $render == /dev/dri/renderD* ]] || { echo "Choose a GPU render node with CERE_RENDER_NODE" >&2; exit 2; }
-  cage_binary=${CERE_CAGE_BINARY:-/usr/bin/cage}
+  render=${PAL_RENDER_NODE:-/dev/dri/renderD128}
+  [[ -c $render && $render == /dev/dri/renderD* ]] || { echo "Choose a GPU render node with PAL_RENDER_NODE" >&2; exit 2; }
+  cage_binary=${PAL_CAGE_BINARY:-/usr/bin/cage}
   exec bwrap --die-with-parent --new-session --unshare-all --ro-bind / / --proc /proc --dev /dev \
     --dev-bind "$render" "$render" --tmpfs /run --dir /run/user/$(id -u) \
     --tmpfs "$HOME" --bind "$root" "$root" --bind "$out/tmp" /tmp \
     --chdir "$root" -- \
     env -i HOME="$HOME" USER="$(id -un)" LOGNAME="$(id -un)" PATH=/usr/bin:/bin \
     LANG=C.UTF-8 TZ="${TZ:-America/New_York}" XDG_RUNTIME_DIR=/run/user/$(id -u) \
-    CERE_VIRTUAL_DESKTOP=1 CERE_SOURCE_ROOT="$root" CERE_VIRTUAL_EVIDENCE="$out" CERE_CAGE_BINARY="$cage_binary" CERE_RENDER_NODE="$render" \
-    CERE_TTS_DISABLED=1 CERE_HOST_EXEC="$root/build/cere" QTEST_FUNCTION_TIMEOUT=900000 \
+    PAL_VIRTUAL_DESKTOP=1 PAL_SOURCE_ROOT="$root" PAL_VIRTUAL_EVIDENCE="$out" PAL_CAGE_BINARY="$cage_binary" PAL_RENDER_NODE="$render" \
+    PAL_TTS_DISABLED=1 PAL_HOST_EXEC="$root/build/pal" QTEST_FUNCTION_TIMEOUT=900000 \
     dbus-run-session -- bash "$out/runner.sh" --inside "$@"
 fi
 shift
-[[ ${CERE_VIRTUAL_DESKTOP-} == 1 && ! -e /dev/uinput && ! -e /dev/input ]] || exit 2
-out=$CERE_VIRTUAL_EVIDENCE
+[[ ${PAL_VIRTUAL_DESKTOP-} == 1 && ! -e /dev/uinput && ! -e /dev/input ]] || exit 2
+out=$PAL_VIRTUAL_EVIDENCE
 mkdir -p "$HOME/.config" "$HOME/.cache" "$HOME/.local/state" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 export XDG_CONFIG_HOME="$HOME/.config" XDG_CACHE_HOME="$HOME/.cache" XDG_STATE_HOME="$HOME/.local/state"
-export CERE_STATE_DIR="$XDG_STATE_HOME/cere" CERE_RUNTIME_DIR="$XDG_RUNTIME_DIR/cere"
+export PAL_STATE_DIR="$XDG_STATE_HOME/pal" PAL_RUNTIME_DIR="$XDG_RUNTIME_DIR/pal"
 export HYPRLAND_NO_SD_VARS=1 HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_RT=1
 export XDG_CURRENT_DESKTOP=Hyprland XDG_SESSION_TYPE=wayland
-WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE="$CERE_RENDER_NODE" \
-  "$CERE_CAGE_BINARY" -- sh -c 'printf "%s" "$WAYLAND_DISPLAY" > "$CERE_VIRTUAL_EVIDENCE/parent-display"; exec sleep infinity' \
+WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE="$PAL_RENDER_NODE" \
+  "$PAL_CAGE_BINARY" -- sh -c 'printf "%s" "$WAYLAND_DISPLAY" > "$PAL_VIRTUAL_EVIDENCE/parent-display"; exec sleep infinity' \
   > "$out/cage.log" 2>&1 &
 parent_pid=$!
 hypr_pid=
@@ -81,7 +81,7 @@ for ((n=0;n<150;n++)); do
   sleep .1
 done
 [[ -n ${HYPRLAND_INSTANCE_SIGNATURE-} ]] || exit 1
-hyprctl output create headless CERE-TEST > "$out/create-output.txt"
+hyprctl output create headless PAL-TEST > "$out/create-output.txt"
 for ((n=0;n<150;n++)); do
   hyprctl -j monitors > "$out/monitors.json"
   if node -e 'process.exit(JSON.parse(require("fs").readFileSync(process.argv[1])).length ? 0 : 1)' "$out/monitors.json"; then break; fi

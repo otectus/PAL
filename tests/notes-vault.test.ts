@@ -11,8 +11,8 @@ import { confinedPath, lineDiff } from '../broker/file-proposals.ts';
 test('M07 front matter privacy fails closed', () => {
   assert.deepEqual(frontMatter('---\ntitle: Plan\ntags: [work, q4]\naliases:\n  - roadmap\n---\nBody'), { title: 'Plan', tags: ['work', 'q4'], aliases: ['roadmap'] });
   assert.equal(frontMatter('No front matter'), undefined);
-  assert.equal(frontMatter('---\nnested:\n  key: value\n---'), null, 'structures Cere cannot read are unreadable');
-  for (const meta of [{ private: true }, { cere: false }, { cere: 'private' }, { visibility: 'team' }, { privacy: 'confidential' }, null]) assert.equal(privateNote(meta as any), true, JSON.stringify(meta));
+  assert.equal(frontMatter('---\nnested:\n  key: value\n---'), null, 'structures PAL cannot read are unreadable');
+  for (const meta of [{ private: true }, { pal: false }, { cere: false }, { pal: true, cere: false }, { pal: false, cere: true }, { pal: 'private' }, { visibility: 'team' }, { privacy: 'confidential' }, null]) assert.equal(privateNote(meta as any), true, JSON.stringify(meta));
   for (const meta of [{ visibility: 'public' }, { title: 'x' }, undefined]) assert.equal(privateNote(meta as any), false, JSON.stringify(meta));
 });
 
@@ -22,12 +22,12 @@ test('RC-01 privacy fails closed however a note was saved', () => {
     trailingSpaceFence: '--- \nprivate: true\n---\nbody', yes: '---\nprivate: yes\n---\nbody', on: '---\nprivate: on\n---\nbody',
     one: '---\nprivate: 1\n---\nbody', quotedTrue: '---\nprivate: "true"\n---\nbody', upperKey: '---\nPrivate: True\n---\nbody',
     dotsEnd: '---\nprivate: true\n...\nbody', spacedDotsEnd: '---\nprivate: true\n... \nbody', empty: '---\nprivate:\n---\nbody',
-    unknownCere: '---\ncere: maybe\n---\nbody', upperVisibility: '---\nVisibility: Team\n---\nbody',
+    unknownPAL: '---\npal: maybe\n---\nbody', upperVisibility: '---\nVisibility: Team\n---\nbody',
   };
   for (const [name, text] of Object.entries(privateCases)) assert.equal(privateNote(frontMatter(text)), true, name);
   for (const text of ['---\ndate created: 2026-01-01\nprivate: true\n---\nbody', '---\nmeta:\n  owner: me\n---\nbody', '---\r\nprivate: true\r\nbody']) assert.equal(frontMatter(text), null, JSON.stringify(text));
   for (const value of ['false', 'no', 'off', 'No', '"false"']) assert.equal(privateNote(frontMatter(`---\nprivate: ${value}\n---\nbody`)), false, value);
-  for (const value of ['true', 'yes', 'include']) assert.equal(privateNote(frontMatter(`---\ncere: ${value}\n---\nbody`)), false, value);
+  for (const value of ['true', 'yes', 'include']) assert.equal(privateNote(frontMatter(`---\npal: ${value}\n---\nbody`)), false, value);
   const crlf = readNote('﻿---\r\ntitle: Plan\r\ntags: [work]\r\n---\r\n# Plan\r\nBody text');
   assert.deepEqual(crlf, { meta: { title: 'Plan', tags: ['work'] }, body: '\n# Plan\nBody text' }, 'front matter never reaches the body');
   assert.deepEqual(readNote('---\ntags: [a]\n---\n# T\nx'), { meta: { tags: ['a'] }, body: '\n# T\nx' }, 'LF notes read as before');
@@ -36,7 +36,7 @@ test('RC-01 privacy fails closed however a note was saved', () => {
 });
 
 test('RC-01 the vault never searches, reads or edits a private note, whatever its line endings', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'cere-vault-privacy-')), vault = join(root, 'vault');
+  const root = await mkdtemp(join(tmpdir(), 'pal-vault-privacy-')), vault = join(root, 'vault');
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(vault);
   const notes: Record<string, string> = {
@@ -63,7 +63,7 @@ test('RC-01 the vault never searches, reads or edits a private note, whatever it
 });
 
 test('M07 file proposals stay confined and show a readable diff', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'cere-confined-'));
+  const root = await mkdtemp(join(tmpdir(), 'pal-confined-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'notes')); await writeFile(join(root, 'outside.md'), 'x');
   await symlink(join(root, 'outside.md'), join(root, 'notes', 'link.md'));
@@ -74,7 +74,7 @@ test('M07 file proposals stay confined and show a readable diff', async t => {
 });
 
 async function fixture(t: any) {
-  const root = await mkdtemp(join(tmpdir(), 'cere-vault-')), vault = join(root, 'vault');
+  const root = await mkdtemp(join(tmpdir(), 'pal-vault-')), vault = join(root, 'vault');
   await mkdir(join(vault, 'projects'), { recursive: true }); await mkdir(join(vault, '.obsidian'), { recursive: true }); await mkdir(join(vault, 'archive', '.secret'), { recursive: true });
   await writeFile(join(vault, 'projects', 'orchid.md'), '---\ntags: [project]\naliases: [Orchid app]\n---\n# Orchid\n\nThe orchid launch is on Tuesday. See [[Release checklist]].');
   await writeFile(join(vault, 'Release checklist.md'), '# Release checklist\n\n- Tag the build #release\n- Mention [[Orchid app|the app]]');

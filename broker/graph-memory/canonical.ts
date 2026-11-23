@@ -1,3 +1,5 @@
+import { Curation } from "./curation.ts";
+import { createStatement, statementRoots, statementSupport } from "./statements.ts";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID, createHash } from "node:crypto";
 import {
@@ -35,12 +37,22 @@ import { factTimeline } from "./timeline.ts";
 import { validateClaim, normalized, stableJSON, span, occurrenceAt } from "./ontology.ts";
 import { overlaps, remainder, eligibleTime } from "./temporal.ts";
 import { rrf, relationalRank, ftsQuery, lexicalFloor, informativeTerms, hasInformativeTerm } from "./ranking.ts";
-import { compactItem, itemTokens, packetOverheadTokens, itemEvidenceLimit } from "./packet.ts";
+import { compactItem, itemTokens, packetOverheadTokens, itemEvidenceLimit, recallGroup, automaticGroupLimits, automaticDisputedWeight } from "./packet.ts";
+import {
+  planRetention,
+  restatedSupport,
+  retentionDeadlineActive,
+  type RetentionDecision,
+  type RetentionTarget,
+  type RetentionTargetKind,
+} from "./retention.ts";
 
 type Row = Record<string, any>;
 const uuid = () => randomUUID(),
   now = () => Date.now() * 1000,
   digest = (s: string) => createHash("sha256").update(s).digest("hex"),
+  /** A record restated from a less restricted source keeps the stricter restriction. */
+  strictest = (current: string, incoming: string) => (current === "local_only" || incoming === "local_only" ? "local_only" : incoming),
   /** A vector as packed little-endian 32-bit floats, and back. */
   packVector = (vector: number[]) => {
     const floats = Float32Array.from(vector);
@@ -52,6 +64,7 @@ export class Canonical {
   db: DatabaseSync;
   directory: string;
   owner: string;
+  curation = new Curation(this);
   revision = 0;
   effects = new Set<string>();
   batchTransaction = false;
@@ -62,6 +75,7 @@ export class Canonical {
   cancelled?: () => boolean;
   /** Recent forget previews by selector; each stays valid until the next canonical commit. */
   previews = new Map<string, { revision: number; preview: Row }>();
+  retentionPreviews = new Map<string, { revision: number; selection: string; manifest: Row }>();
   /** Where copies taken before a migration go; only the serving store passes one. */
   backups?: string;
   static freeBytes = (directory: string) => { const fs = statfsSync(directory); return fs.bavail * fs.bsize; };
@@ -210,6 +224,7 @@ export class Canonical {
     for (const migration of pending) {
       this.db.exec("BEGIN IMMEDIATE");
       try {
+        migration.repair?.(this.db);
         this.db.exec(migration.sql);
         this.run(
           "INSERT INTO schema_migrations VALUES (?,?,?)",
@@ -286,7 +301,7 @@ export class Canonical {
     } catch (e: any) {
       // A cleanup failure must not replace the reason the backup failed.
       if (partial) try { rmSync(partial, { force: true }); } catch {}
-      fail("MIGRATION_BACKUP_FAILED", `Memory needs a schema update (${from} to ${to}) and was left unchanged: ${e?.message || e}. Make room or fix ${directory}, then restart Cere.`);
+      fail("MIGRATION_BACKUP_FAILED", `Memory needs a schema update (${from} to ${to}) and was left unchanged: ${e?.message || e}. Make room or fix ${directory}, then restart PAL.`);
     }
     this.pruneMigrationBackups(directory);
   }
@@ -711,7 +726,7 @@ export class Canonical {
       id: uuid(),
       observation_id: id,
       model_identity: "unconfigured",
-      prompt_version: "cere-extract-1",
+      prompt_version: "pal-extract-1",
       parser_version: "1",
       schema_version: 1,
       status: role === "assistant" ? "derived" : p.kind === "document" ? "skipped" : "pending",
@@ -814,7 +829,7 @@ export class Canonical {
       "expected_revision",
       "session_id",
       "source_role",
-      "source_event_id",
+      "source_event_id","sensitivity",
     ]);
     this.scope(p.scope_id);
     const text = safeText(p.text, 2000),
@@ -824,7 +839,8 @@ export class Canonical {
       external = String(p.session_id || "manual");
     if (!["user", "assistant"].includes(role))
       fail("INVALID_ARGUMENT", "Unsupported saved-note source role");
-    const saved = { scope_id: p.scope_id, kind: "saved" };
+    if(p.sensitivity!==undefined && !["local_only","cloud_allowed"].includes(p.sensitivity))fail("INVALID_ARGUMENT","Unsupported note sensitivity");
+    const saved = { scope_id: p.scope_id, kind: "saved", sensitivity:p.sensitivity||"cloud_allowed" };
     if (p.id) {
       const old = this.one(
         "SELECT * FROM artifacts WHERE scope_id=? AND (record_id=? OR id=?) AND kind='saved' AND invalidated=0 AND known_to_revision IS NULL",
@@ -842,6 +858,7 @@ export class Canonical {
           "REVISION_CONFLICT",
           "Memory changed; inspect its current revision",
         );
+      if(old.sensitivity==="local_only")saved.sensitivity="local_only";
       // The replacement source, its artifact and the stable note identity commit together.
       return this.tx((r, time) => {
         const observed = this.recordObservation(saved, text, role, external, String(p.source_event_id || uuid()), r, time);
@@ -1042,7 +1059,7 @@ export class Canonical {
   }
   invalidateDerived(input: string) {
     for (const row of this.all(
-      "WITH RECURSIVE children(id) AS (SELECT derived_id FROM lineage WHERE input_id=? UNION SELECT l.derived_id FROM lineage l JOIN children c ON l.input_id=c.id) SELECT a.* FROM artifacts a JOIN children c ON a.id=c.id WHERE a.kind IN ('episode','topic')",
+      "WITH RECURSIVE children(id) AS (SELECT derived_id FROM lineage WHERE input_id=? UNION SELECT l.derived_id FROM lineage l JOIN children c ON l.input_id=c.id) SELECT a.* FROM artifacts a JOIN children c ON a.id=c.id WHERE a.kind IN ('episode','topic','derived_summary')",
       input,
     )) {
       this.run("UPDATE artifacts SET invalidated=1 WHERE id=?", row.id);
@@ -1059,7 +1076,7 @@ export class Canonical {
       "id",
       "operation",
       "extraction_run_id",
-      "model_proposal",
+      "model_proposal","extractor_hints","additional_witnesses",
     ]);
     this.scope(p.scope_id);
     const claim = parse(claimSchema, p.claim),
@@ -1210,6 +1227,9 @@ export class Canonical {
             : null,
       };
       const same = operation==='assert' ? current.find(prior=>!conflicting.includes(prior)&&prior.status===status&&prior.modality===v.modality&&prior.epistemic_type===v.epistemic_type&&prior.valid_mode===v.valid_mode&&prior.valid_from_us===v.valid_from_us&&prior.valid_to_us===v.valid_to_us) : undefined;
+      // Restating a pending candidate attaches to it rather than adding a duplicate (attachSupport),
+      // when no settled version already holds the claim.
+      const restated = same || operation !== "assert" ? undefined : this.restatedCandidate(slot.id, v, time);
       // Repetition adds source lineage without creating a competing fact or a confidence boost.
       let version: string;
       if (same) {
@@ -1217,9 +1237,10 @@ export class Canonical {
         if (same.known_from_revision === this.revision) version = this.amend(same, {}, time, supports);
         else {
           this.closeVersion(same, time);
-          version = this.newVersion(v, supports, time, same.logical_id);
+          version = this.newVersion({ ...v, sensitivity: strictest(same.sensitivity, v.sensitivity) }, supports, time, same.logical_id);
         }
-      } else version = this.newVersion(v, [e], time);
+      } else if (restated) version = this.attachSupport(restated, v, e, claim, time);
+      else version = this.newVersion(v, [e], time);
       targets.push(version);
       for (const old of current)
         if (old.known_to_revision === null && operation !== "assert")
@@ -1255,6 +1276,77 @@ export class Canonical {
         aggregate_revision: r,
       };
     });
+  }
+  /** Evidence that an unreleased hold on this logical record protects. */
+  heldEvidenceIds(kind: RetentionTargetKind, logicalId: string): string[] {
+    return this.all(
+      "SELECT DISTINCT he.evidence_id AS id FROM retention_hold_evidence he JOIN retention_holds h ON h.id=he.hold_id WHERE h.target_kind=? AND h.target_id=? AND h.released_revision IS NULL",
+      kind, logicalId,
+    ).map((row) => row.id as string);
+  }
+  /**
+   * The pending candidate a new mention restates, if any: the same slot, member, polarity, modality,
+   * source authority and valid interval, still allowed storage by the retention planner. The most
+   * recently learned such record answers for any older duplicates.
+   */
+  restatedCandidate(slot: string, v: Row, atUs: number): Row | undefined {
+    for (const prior of this.all("SELECT * FROM assertion_versions WHERE slot_id=? AND known_to_revision IS NULL AND erased=0 AND status='candidate' ORDER BY known_from_revision DESC,version_id", slot))
+      if (prior.object_entity_id === v.object_entity_id && prior.value_json === v.value_json && prior.polarity === v.polarity &&
+        prior.modality === v.modality && prior.epistemic_type === v.epistemic_type && prior.valid_mode === v.valid_mode &&
+        prior.valid_from_us === v.valid_from_us && prior.valid_to_us === v.valid_to_us &&
+        this.retentionDecision(this.retentionTarget(prior.scope_id, prior.version_id, "assertion"), atUs).storageAllowed)
+        return prior;
+    return undefined;
+  }
+  /**
+   * Re-mention: a restated claim's witness becomes independent support of the candidate it restates,
+   * in that record's next version, instead of a second record. Repetition settles nothing. The record
+   * stays a candidate, keeps its claim and every earlier witness and never gains confidence; a new
+   * independent source restarts its candidate deadline, as a fresh duplicate would have had. A
+   * mention the acceptance rule admits on its own (accepted, or disputed by a conflict) promotes the
+   * record instead, which then cites only witnesses that rule admits: a question or a hedge stays with
+   * the superseded candidate version. Retention holds keep exactly the evidence they protect, and the
+   * record keeps a bounded set of recent witnesses besides (retention.ts restatedSupport).
+   */
+  attachSupport(prior: Row, v: Row, e: Row, claim: Claim, time: number): string {
+    const support = this.support(prior.version_id), promoted = v.status !== "candidate";
+    if (!promoted && support.some((old) => old.id === e.id)) return prior.version_id;
+    const independent = !support.some((old) => old.independence_group === e.independence_group);
+    const supports = restatedSupport(
+      [...support.filter((old) => old.id !== e.id && (!promoted || !this.holdReasons(old, claim, true).length)), e],
+      new Set([...this.heldEvidenceIds("assertion", prior.logical_id), e.id]),
+    );
+    const next: Row = promoted
+      ? { ...v }
+      : { ...prior, expires_at_us: prior.expires_at_us === null || !independent ? prior.expires_at_us : Math.max(prior.expires_at_us, v.expires_at_us) };
+    next.extraction_confidence = Math.min(prior.extraction_confidence, v.extraction_confidence);
+    next.sensitivity = strictest(prior.sensitivity, v.sensitivity);
+    if (prior.known_from_revision !== this.revision) {
+      this.closeVersion(prior, time);
+      const version = this.newVersion(next, supports, time, prior.logical_id);
+      this.lineage(version, prior.version_id, "supersedes");
+      return version;
+    }
+    // Inserted earlier in this same revision (an extraction batch): nothing outside the batch has seen
+    // it, so it is revised in place, as amend() does, including the witnesses it no longer cites.
+    for (const old of support)
+      if (!supports.some((kept) => kept.id === old.id)) {
+        this.run("DELETE FROM assertion_evidence WHERE version_id=? AND evidence_id=? AND relation='support'", prior.version_id, old.id);
+        this.run("DELETE FROM lineage WHERE derived_id=? AND input_id=? AND role='support'", prior.version_id, old.id);
+      }
+    for (const item of supports)
+      if (!support.some((old) => old.id === item.id)) {
+        this.insert("assertion_evidence", { version_id: prior.version_id, evidence_id: item.id, relation: "support", independence_group: item.independence_group });
+        this.lineage(prior.version_id, item.id, "support");
+      }
+    this.run(
+      "UPDATE assertion_versions SET status=?,retention_class=?,expires_at_us=?,extraction_run_id=?,extraction_confidence=?,sensitivity=?,time_precision=?,time_zone=?,time_expression=? WHERE version_id=?",
+      next.status, next.retention_class, next.expires_at_us, next.extraction_run_id, next.extraction_confidence, next.sensitivity,
+      next.time_precision, next.time_zone, next.time_expression, prior.version_id,
+    );
+    if (next.sensitivity !== prior.sensitivity) this.run("UPDATE artifacts SET sensitivity=? WHERE record_id=?", next.sensitivity, prior.version_id);
+    this.effect(prior.version_id);
+    return prior.version_id;
   }
   /**
    * Re-versions a current assertion. One inserted earlier in this same revision
@@ -1360,7 +1452,30 @@ export class Canonical {
   }
   /** Moves an active retention pin from one logical assertion to the one that replaced it. */
   followPin(from: string, to: string) {
+    if (from === to) return;
     this.run("UPDATE retention_pins SET target_id=? WHERE target_kind='assertion' AND target_id=? AND released_revision IS NULL AND NOT EXISTS (SELECT 1 FROM retention_pins r WHERE r.target_id=? AND r.released_revision IS NULL)", to, from, to);
+    for (const hold of this.all("SELECT * FROM retention_holds WHERE target_kind='assertion' AND target_id=? AND released_revision IS NULL", from)) {
+      const existing = this.one("SELECT id FROM retention_holds WHERE target_kind='assertion' AND target_id=? AND reason=? AND released_revision IS NULL", to, hold.reason);
+      if (existing.id) {
+        this.run("UPDATE retention_holds SET released_revision=? WHERE id=?", this.revision, hold.id);
+        continue;
+      }
+      this.run("UPDATE retention_holds SET target_id=? WHERE id=?", to, hold.id);
+      this.run("DELETE FROM retention_hold_evidence WHERE hold_id=?", hold.id);
+      const version = this.one("SELECT version_id FROM assertion_versions WHERE logical_id=? AND known_to_revision IS NULL AND erased=0 ORDER BY known_from_revision DESC LIMIT 1", to);
+      for (const item of this.all("SELECT ae.evidence_id,ae.independence_group FROM assertion_evidence ae JOIN evidence e ON e.id=ae.evidence_id WHERE ae.version_id=? AND ae.relation='support' AND e.erased=0", version.version_id))
+        this.insert("retention_hold_evidence", { hold_id: hold.id, evidence_id: item.evidence_id, bundle_id: item.independence_group, required: 1 });
+    }
+  }
+  /** Rebinds logical-record holds after a canonical correction writes its successor. */
+  refreshRetentionEvidence(kind: "assertion" | "statement", logicalId: string, versionId: string) {
+    const support = kind === "assertion"
+      ? this.all("SELECT ae.evidence_id,ae.independence_group FROM assertion_evidence ae JOIN evidence e ON e.id=ae.evidence_id WHERE ae.version_id=? AND ae.relation='support' AND e.erased=0", versionId)
+      : this.all("SELECT se.evidence_id,e.independence_group FROM memory_statement_evidence se JOIN evidence e ON e.id=se.evidence_id WHERE se.version_id=? AND e.erased=0", versionId);
+    for (const hold of this.all("SELECT id FROM retention_holds WHERE target_kind=? AND target_id=? AND released_revision IS NULL", kind, logicalId)) {
+      this.run("DELETE FROM retention_hold_evidence WHERE hold_id=?", hold.id);
+      for (const item of support) this.insert("retention_hold_evidence", { hold_id: hold.id, evidence_id: item.evidence_id, bundle_id: item.independence_group, required: 1 });
+    }
   }
   /**
    * Decides pending extraction candidates under the current acceptance rule (holdReasons), as if
@@ -1536,7 +1651,11 @@ export class Canonical {
     k: number,
     world: number | undefined,
     route: string,
+    retentionAtUs = now(),
   ) {
+    const retentionAllowed = v?.version_id && !v.erased && v.known_to_revision === null
+      ? this.retentionDecision(this.retentionTarget(v.scope_id, v.version_id, "assertion"), retentionAtUs).recallAllowedByRetention
+      : retentionDeadlineActive(v?.expires_at_us ?? null, retentionAtUs);
     return (
       v &&
       !v.erased &&
@@ -1553,30 +1672,42 @@ export class Canonical {
       v.known_from_revision <= k &&
       (v.known_to_revision === null || k < v.known_to_revision) &&
       eligibleTime(v as any, world) &&
-      (!v.expires_at_us || v.expires_at_us > now()) &&
+      retentionAllowed &&
       (route !== "cloud" ||
         (this.policy.allow_cloud_memory && v.sensitivity !== "local_only")) &&
       this.support(v.version_id).length > 0
     );
   }
+  /**
+   * The record behind an artifact, if this query may recall it, with its evidence. Retention is
+   * judged at one instant, `atUs`: a passage is recalled only while the shared planner allows it, so
+   * one past its raw deadline is not offered in the minutes before expiry removes it, and a hold
+   * overlays both that deadline and any deadline of the artifact itself.
+   */
   hydrateArtifact(
     id: string,
     scope: string,
     k: number,
     world: number | undefined,
     route: string,
+    atUs = now(),
   ) {
     const a = this.one(
       "SELECT a.*,p.body AS text,p.erased AS payload_erased FROM artifacts a JOIN payloads p ON p.id=a.payload_id WHERE a.id=? AND a.scope_id=? AND a.invalidated=0",
       id,
       scope,
     );
+    let passageRetention: RetentionDecision | null = null;
+    if (a.id && ["conversation", "saved"].includes(a.kind)) {
+      try { passageRetention = this.retentionDecision(this.retentionTarget(scope, a.record_id, "observation"), atUs); } catch {}
+    }
     if (
       !a.id ||
       a.payload_erased ||
       a.known_from_revision > k ||
       (a.known_to_revision !== null && k >= a.known_to_revision) ||
-      (a.expires_us && a.expires_us <= now()) ||
+      (passageRetention && !passageRetention.recallAllowedByRetention) ||
+      (a.expires_us && a.expires_us <= atUs && !passageRetention?.recallAllowedByRetention) ||
       (route === "cloud" &&
         (!this.policy.allow_cloud_memory || a.sensitivity === "local_only")) ||
       this.one(
@@ -1586,12 +1717,20 @@ export class Canonical {
       ).target_id
     )
       return null;
-    if (a.kind === "assertion") {
+    if(a.kind==='derived_summary' && (this.meta<Row>('curation_profile',{}).mode!=='automatic'||!this.meta<Row>('curation_profile',{}).consolidation))return null;
+    if (a.kind === "statement") {
+      const v=this.one("SELECT * FROM memory_statement_versions WHERE version_id=? AND erased=0",a.record_id);
+      if(!v.version_id || !eligibleTime(v as any,world) || !["accepted","candidate","disputed"].includes(v.status))return null;
+      const allowed=v.known_to_revision===null?this.retentionDecision(this.retentionTarget(scope,v.version_id,"statement"),atUs).recallAllowedByRetention:retentionDeadlineActive(v.expires_at_us,atUs);
+      if(!allowed)return null;
+      a.statement=v; a.evidence=statementSupport(this,v.version_id);
+      if(!a.evidence.length)return null;
+    } else if (a.kind === "assertion") {
       const v = this.one(
         "SELECT * FROM assertion_versions WHERE version_id=?",
         a.record_id,
       );
-      if (!this.eligibleAssertion(v, k, world, route)) return null;
+      if (!this.eligibleAssertion(v, k, world, route, atUs)) return null;
       a.assertion = v;
       a.evidence = this.support(v.version_id);
     } else {
@@ -1600,6 +1739,13 @@ export class Canonical {
         a.id,
         scope,
       );
+      if(a.kind==='derived_summary'){
+        const summary=this.one("SELECT sentence_links FROM memory_synthesis WHERE artifact_id=? AND state='complete'",a.id);
+        if(!summary.sentence_links)return null;
+        const cited=new Set<string>((JSON.parse(summary.sentence_links) as string[][]).flat());
+        a.evidence=a.evidence.filter((e:Row)=>cited.has(e.id));
+        if(a.evidence.length!==cited.size)return null;
+      }
       if (!a.evidence.length) return null;
       if (world !== undefined && a.kind === "conversation") return null;
     }
@@ -1632,13 +1778,22 @@ export class Canonical {
       "recent_session_id",
       "relevance_floor",
       "semantic_floor",
+      "review_order","review_revision","review_pool",
       "max_items",
     ]);
     const scopes = this.effectiveScopes(p.scope_id);
     const lookupScopes = JSON.stringify(scopes);
+    // The intent decides what may enter the packet. "automatic" is the recall a turn makes for its own
+    // message, which the model receives without asking: it keeps only matches above the relevance
+    // floors, leaves out unreviewed candidates, ranks disputed records lower and caps each group's
+    // share of the packet (packet.ts). "search", the default, answers someone who asked: every
+    // eligible match, best first, with uncertain records labeled.
+    const intent = p.intent ?? "search";
+    if (intent !== "automatic" && intent !== "search") fail("INVALID_ARGUMENT", "Recall intent must be automatic or search");
+    const automatic = intent === "automatic";
     // Automatic recall keeps only matches that clear a relevance floor; an explicit search lists
-    // weaker matches too, best first.
-    const floor = p.relevance_floor === true;
+    // weaker matches too, best first. A caller may ask for the floor alone.
+    const floor = p.relevance_floor === true || automatic;
     const text = safeText(p.text || "memory", 1000),
       route = p.model_route || "local",
       k = this.knowledge(p),
@@ -1714,10 +1869,17 @@ export class Canonical {
     const glue = (a: Row) =>
       ["conversation", "episode", "topic"].includes(a.kind) &&
       !hasInformativeTerm(String(a.text).replace(/^Assistant \(unverified\): /, ""));
+    // An unreviewed candidate is never offered unasked; a search still finds it, labeled.
+    const withheld = new Set<string>();
     const add = (id: string) => {
       if (cache.has(id)) return cache.get(id)!;
+      if (withheld.has(id)) return null;
       const a = eligible({ id });
       if (!a || repeated(a) || (floor && glue(a))) return null;
+      if (automatic && (a.assertion || a.statement)?.status === "candidate") {
+        withheld.add(id);
+        return null;
+      }
       cache.set(id, a);
       return a;
     };
@@ -1904,11 +2066,30 @@ export class Canonical {
       });
     }
     const ranks = rrf([exact, lexical, semantic, graphRank,projected]);
+    const review=this.meta<Row>('curation_profile',{});
+    if(review.mode==='automatic'&&review.valuePrior)for(const rank of ranks){
+      const a=cache.get(rank[0]);
+      if(!a)continue;
+      const value=this.one("SELECT assessed_value FROM memory_assessments m JOIN memory_curation_jobs j ON j.id=m.job_id WHERE (m.version_id=? OR EXISTS (SELECT 1 FROM memory_curation_decisions d WHERE d.assessment_id=m.id AND d.after_id=? AND d.undone_revision IS NULL)) AND j.config_revision=? ORDER BY m.created_us DESC LIMIT 1",a.record_id,a.record_id,this.curation.revision()).assessed_value;
+      if(typeof value==='number')rank[1]*=1+.1*value;
+    }
+    // A disputed record is still relevant, but unasked it ranks below settled records of like relevance.
+    let downranked = 0;
+    if (automatic)
+      for (const rank of ranks) {
+        const record = cache.get(rank[0])!;
+        if ((record.assertion || record.statement)?.status !== "disputed") continue;
+        rank[1] *= automaticDisputedWeight;
+        downranked++;
+      }
     if(world===undefined)for(const rank of ranks){const artifact=cache.get(rank[0])!;if(['conversation','episode','topic'].includes(artifact.kind)){const created=this.one('SELECT transaction_us FROM commits WHERE revision=?',artifact.content_revision).transaction_us;rank[1]*=2**(-Math.max(0,now()-created)/(864e8*this.policy.half_life_days));}}
     // Equal scores go to the more recently learned record (a correction outranks what it corrects),
     // then to the ID, so the order never depends on how random IDs happen to sort.
     ranks.sort((a,b)=>b[1]-a[1]||(cache.get(b[0])!.content_revision-cache.get(a[0])!.content_revision)||a[0].localeCompare(b[0]));
-    const ordered = [...new Set([...pinned, ...ranks.map((r) => r[0])])].slice(
+    const eligibleRanks=new Set(ranks.map(r=>r[0]));
+    const reranked=review.mode==='automatic'&&review.rerank&&p.review_revision===this.curation.revision()&&Array.isArray(p.review_order)
+      ?p.review_order.slice(0,40).filter((id:string)=>eligibleRanks.has(id)):[];
+    const ordered = [...new Set([...pinned,...reranked, ...ranks.map((r) => r[0])])].slice(
       0,
       80,
     );
@@ -1925,6 +2106,10 @@ export class Canonical {
     let used = packetOverheadTokens,
       trimmed = 0,
       duplicates = 0;
+    // Items and tokens each group holds in the packet, and automatic items a full group left out.
+    const groupItems: Record<string, number> = {},
+      groupTokens: Record<string, number> = {},
+      groupTrimmed: Record<string, number> = {};
     for (const aid of ordered) {
       const a = cache.get(aid)!;
       const passage = a.assertion ? "" : String(a.text).replace(/^Assistant \(unverified\): /, "").trim();
@@ -1947,7 +2132,18 @@ export class Canonical {
             ? cited[0].witness
             : undefined,
         compact = compactItem(a, learned, quote, terms),
-        needed = itemTokens(compact);
+        retainedExcerpt=(a.assertion||a.statement)&&cited.length&&this.one(
+          "SELECT 1 AS n FROM evidence e JOIN observations o ON o.id=e.observation_id JOIN payloads p ON p.id=o.payload_id WHERE p.erased AND e.id IN (SELECT value FROM json_each(?)) LIMIT 1",JSON.stringify(cited.map(e=>e.id))).n;
+      if(retainedExcerpt)compact.source_context="retained_excerpt";
+      const needed=itemTokens(compact),
+        group = recallGroup(compact),
+        limit = automaticGroupLimits[group];
+      // A group past its share is reported as omitted, like a budget trim, so the model can search.
+      if (automatic && ((groupItems[group] || 0) >= limit.items || (groupTokens[group] || 0) + needed > limit.share * budget)) {
+        groupTrimmed[group] = (groupTrimmed[group] || 0) + 1;
+        trimmed++;
+        continue;
+      }
       if (
         used + needed > budget ||
         evidence.length + witnesses.length > 24 ||
@@ -1957,6 +2153,8 @@ export class Canonical {
         continue;
       }
       used += needed;
+      groupItems[group] = (groupItems[group] || 0) + 1;
+      groupTokens[group] = (groupTokens[group] || 0) + needed;
       items.push(compact);
       if (passage) passages.push(passage);
       for (const e of witnesses) {
@@ -2006,7 +2204,9 @@ export class Canonical {
         id: a.record_id,
         artifact_id: a.id,
         kind: a.kind === "assertion" ? "saved" : a.kind,
+        sensitivity:[a,...a.evidence].some(e=>e.sensitivity==="local_only")?"local_only":"cloud_allowed",
         text: a.text,
+        ...(a.statement?{status:a.statement.status,modality:a.statement.modality,epistemic_type:a.statement.epistemic_type}:{}),
         date: new Date(learned / 1000).toISOString(),
         sessionId: a.session_id,
         score: ranks.find((r) => r[0] === aid)?.[1] || 1,
@@ -2019,6 +2219,12 @@ export class Canonical {
       coverage.push("cloud_memory_denied");
     return {
       snapshot,
+      ...(p.review_pool && review.mode==='automatic' && review.rerank ? {review_pool:ordered.slice(0,32).map(id=>{
+        const item=cache.get(id)!, record=item.assertion||item.statement;
+        return {id,text:Array.from(String(item.text)).slice(0,600).join(''),kind:item.kind,status:record?.status,
+          modality:record?.modality,epistemic_type:record?.epistemic_type,
+          sensitivity:[item,...item.evidence].some(e=>e.sensitivity==='local_only')?'local_only':'cloud_allowed'};
+      })}:{}),
       query_interpretation: {
         text,
         world_at_us: world ?? null,
@@ -2050,6 +2256,14 @@ export class Canonical {
         nodes: nodes.size,
         edges: edges.length,
         candidates: cache.size,
+        // Counts only. `included` is per group (packet.ts recallGroup); the rest apply to automatic recall.
+        recall_policy: {
+          intent,
+          included: groupItems,
+          withheld_candidates: withheld.size,
+          disputed_downranked: downranked,
+          group_trimmed: groupTrimmed,
+        },
       },
       results,
       mode: semantic.length ? "semantic" : "keyword",
@@ -2119,7 +2333,8 @@ export class Canonical {
         ...row,
         text: Canonical.claimText({ polarity, modality, valid_mode, qualifiers, value_json, object_entity_id, predicate: row.predicate }, subject_name, object_name),
       }));
-    } else if (["saved", "conversation"].includes(kind))
+    } else if(kind==="statements") result=page("FROM memory_statement_versions WHERE scope_id=? AND erased=0 AND known_to_revision IS NULL AND text LIKE ? ESCAPE '\\'","version_id AS id,text,category,status,modality,aggregate_revision AS revision","aggregate_revision DESC,version_id",p.scope_id,pattern);
+    else if (["saved", "conversation"].includes(kind))
       result = page(
         "FROM artifacts a JOIN payloads p ON p.id=a.payload_id JOIN commits c ON c.revision=a.content_revision WHERE a.scope_id=? AND a.kind=? AND a.invalidated=0 AND a.known_to_revision IS NULL AND p.erased=0 AND p.body LIKE ? ESCAPE '\\'",
         "a.record_id AS id,a.kind,p.body AS text,a.content_revision AS revision,c.transaction_us/1000 AS updated,c.transaction_us/1000 AS created",
@@ -2131,7 +2346,7 @@ export class Canonical {
     else fail("INVALID_ARGUMENT", "Unsupported memory view");
     return { rows: result.rows, total: result.total, offset };
   }
-  inspect(p: Row) {
+  inspect(p: Row): Row {
     strict(p, ["scope_id", "id", "known_revision", "world_at_us", "model_route"]);
     this.scope(p.scope_id);
     const route=p.model_route||"local";
@@ -2142,6 +2357,25 @@ export class Canonical {
         .target_id
     )
       fail("NOT_FOUND", "Record was erased");
+    let statement=this.one("SELECT * FROM memory_statement_versions WHERE scope_id=? AND (version_id=? OR logical_id=?) AND erased=0 ORDER BY known_from_revision DESC LIMIT 1",p.scope_id,p.id,p.id);
+    if(statement.version_id){
+      const k=this.knowledge(p);
+      const history=this.all("SELECT * FROM memory_statement_versions WHERE logical_id=? AND erased=0 AND known_from_revision<=? ORDER BY known_from_revision DESC LIMIT 100",statement.logical_id,k);
+      if(p.known_revision!==undefined || p.world_at_us!==undefined){
+        const selected=history.find(v=>(v.known_to_revision===null||k<v.known_to_revision)&&eligibleTime(v as any,p.world_at_us));
+        if(!selected)fail("NOT_FOUND","No supported statement at the requested time");
+        statement=selected;
+      }
+      const evidence=statementSupport(this,statement.version_id);
+      if(route==="cloud" && (statement.sensitivity==="local_only"||evidence.some(e=>e.sensitivity==="local_only")))fail("POLICY_DENIED","Local statement");
+      if(p.model_route){
+        const artifact=this.one("SELECT id FROM artifacts WHERE record_id=? AND invalidated=0",statement.version_id);
+        if(!artifact.id||!this.hydrateArtifact(artifact.id,p.scope_id,k,p.world_at_us,route))fail("NOT_FOUND","Statement is unavailable for recall");
+      }
+      if(route==="cloud"&&history.some(v=>v.sensitivity==="local_only"))fail("POLICY_DENIED","Local statement history");
+      return {record:{...statement,kind:"statement",claim:statement.text},evidence,retention:this.retentionForecast({scope_id:p.scope_id,id:statement.version_id}),retention_pin:this.activePin(statement.logical_id),
+        ...(p.model_route?{}:this.curation.audit(statement.version_id)),history,lineage:[]};
+    }
     let record = this.one(
       "SELECT * FROM assertion_versions WHERE (version_id=? OR logical_id=?) AND scope_id=? AND erased=0 ORDER BY known_from_revision DESC LIMIT 1",
       p.id,
@@ -2215,6 +2449,15 @@ export class Canonical {
           "SELECT * FROM evidence WHERE observation_id=? AND erased=0",
           p.id,
         );
+    if(p.model_route){
+      const k=this.knowledge(p);
+      if(record.version_id&&!this.eligibleAssertion(record,k,p.world_at_us,route))fail("NOT_FOUND","Assertion is unavailable for recall");
+      if(record.role&&record.payload_id && !this.retentionDecision(this.retentionTarget(p.scope_id,record.id,"observation"),now()).recallAllowedByRetention)
+        fail("NOT_FOUND","Passage is unavailable for recall");
+      if(record.kind&&record.content_revision&&!this.hydrateArtifact(record.id,p.scope_id,k,p.world_at_us,route))
+        fail("NOT_FOUND","Artifact is unavailable for recall");
+      history=history.filter(v=>v.known_from_revision<=k&&v.evidence?.length&&retentionDeadlineActive(v.expires_at_us,now()));
+    }
     if(route==="cloud") {
       const linked=this.all(
         "SELECT p.sensitivity FROM artifacts a JOIN payloads p ON p.id=a.payload_id WHERE (a.id=? OR a.record_id=?) AND a.invalidated=0 AND p.erased=0",
@@ -2240,14 +2483,572 @@ export class Canonical {
             p.id,
           )
         : [],
+      ...(!p.model_route && record.kind==='derived_summary'?{synthesis:this.one("SELECT generation,config_revision,producer,sentence_links FROM memory_synthesis WHERE artifact_id=?",record.id)}:{}),
       dependent_count: ids.length,
       projections: this.snapshot().projections,
+      ...(record.payload_id&&record.role&&!p.model_route?{retention:this.retentionForecast({scope_id:p.scope_id,id:record.id})}:{}),
+      ...(record.version_id&&!p.model_route?{...this.curation.audit(record.version_id),retention:this.retentionForecast({scope_id:p.scope_id,id:record.version_id})}:{}),
       retention_pin: this.activePin(record.version_id ? record.logical_id : p.id),
     };
   }
+  retentionProfile() {
+    return this.curation.profile();
+  }
+  /** Resolves a public ID to the live canonical record and its exact support. */
+  retentionTarget(scope: string, id: string, expectedKind?: RetentionTargetKind): RetentionTarget {
+    const evidence = (rows: Row[]) => rows.map((row) => ({
+      id: row.id,
+      observationId: row.observation_id,
+      independenceGroup: row.independence_group,
+      bundleId: row.bundle_id || row.independence_group,
+      capturedAtUs: row.evidence_captured_us,
+      baselineExpiresAtUs: row.payload_erased ? 0 : row.expires_us ?? null,
+      erased: !!row.erased,
+    }));
+    if (!expectedKind || expectedKind === "assertion") {
+      let v = this.one("SELECT * FROM assertion_versions WHERE version_id=? AND scope_id=?", id, scope);
+      if (!v.version_id) v = this.one("SELECT * FROM assertion_versions WHERE logical_id=? AND scope_id=? AND known_to_revision IS NULL ORDER BY known_from_revision DESC LIMIT 1", id, scope);
+      else if (v.known_to_revision !== null) v = this.one(
+        `WITH RECURSIVE successors(id) AS (
+           SELECT ? UNION SELECT l.derived_id FROM lineage l JOIN successors s ON l.input_id=s.id WHERE l.role='supersedes'
+         ) SELECT v.* FROM successors s JOIN assertion_versions v ON v.version_id=s.id
+         WHERE v.scope_id=? AND v.known_to_revision IS NULL ORDER BY v.known_from_revision DESC LIMIT 1`, id, scope,
+      );
+      if (v.version_id) return {
+        kind: "assertion", id: v.version_id, lookupId: v.logical_id, scopeId: scope,
+        status: v.status, erased: !!v.erased, capturedAtUs: v.known_from_us,
+        baselineExpiresAtUs: v.expires_at_us ?? null,
+        evidence: evidence(this.all(
+          `SELECT e.*,ae.independence_group AS bundle_id,o.captured_us AS evidence_captured_us,p.expires_us,p.erased AS payload_erased
+           FROM assertion_evidence ae JOIN evidence e ON e.id=ae.evidence_id
+           JOIN observations o ON o.id=e.observation_id LEFT JOIN payloads p ON p.id=o.payload_id
+           WHERE ae.version_id=? AND ae.relation='support'`, v.version_id,
+        )),
+      };
+    }
+    if (!expectedKind || expectedKind === "statement") {
+      let v = this.one("SELECT * FROM memory_statement_versions WHERE version_id=? AND scope_id=?", id, scope);
+      if (!v.version_id) v = this.one("SELECT * FROM memory_statement_versions WHERE logical_id=? AND scope_id=? AND known_to_revision IS NULL ORDER BY known_from_revision DESC LIMIT 1", id, scope);
+      else if (v.known_to_revision !== null) v = this.one(
+        `WITH RECURSIVE successors(id) AS (
+           SELECT ? UNION SELECT l.derived_id FROM lineage l JOIN successors s ON l.input_id=s.id WHERE l.role='supersedes'
+         ) SELECT v.* FROM successors s JOIN memory_statement_versions v ON v.version_id=s.id
+         WHERE v.scope_id=? AND v.known_to_revision IS NULL ORDER BY v.known_from_revision DESC LIMIT 1`, id, scope,
+      );
+      if (v.version_id) return {
+        kind: "statement", id: v.version_id, lookupId: v.logical_id, scopeId: scope,
+        status: v.status, erased: !!v.erased, capturedAtUs: v.known_from_us,
+        baselineExpiresAtUs: v.expires_at_us ?? null,
+        evidence: evidence(this.all(
+          `SELECT e.*,e.independence_group AS bundle_id,o.captured_us AS evidence_captured_us,p.expires_us,p.erased AS payload_erased
+           FROM memory_statement_evidence se JOIN evidence e ON e.id=se.evidence_id
+           JOIN observations o ON o.id=e.observation_id LEFT JOIN payloads p ON p.id=o.payload_id
+           WHERE se.version_id=?`, v.version_id,
+        )),
+      };
+    }
+    if (!expectedKind || expectedKind === "observation") {
+      const o = this.one(
+        "SELECT o.*,p.expires_us,p.erased AS payload_erased FROM observations o LEFT JOIN payloads p ON p.id=o.payload_id WHERE o.id=? AND o.scope_id=?",
+        id, scope,
+      );
+      if (o.id) return {
+        kind: "observation", id: o.id, lookupId: o.id, scopeId: scope,
+        erased: !!o.erased || !!o.payload_erased, capturedAtUs: o.captured_us,
+        baselineExpiresAtUs: o.expires_us ?? null,
+        evidence: evidence(this.all(
+          `SELECT e.*,e.independence_group AS bundle_id,o.captured_us AS evidence_captured_us,p.expires_us,p.erased AS payload_erased
+           FROM evidence e JOIN observations o ON o.id=e.observation_id LEFT JOIN payloads p ON p.id=o.payload_id
+           WHERE e.observation_id=?`, o.id,
+        )),
+      };
+    }
+    fail("NOT_FOUND", "Only a live passage or assertion in this project can be retained (or an evidence-backed statement)");
+  }
+  retentionDecision(target: RetentionTarget, atUs: number): RetentionDecision {
+    return planRetention(this, target, { nowUs: atUs, retainEvidence: this.policy.retain_evidence });
+  }
+  retentionForecast(p: Row) {
+    strict(p, ["scope_id", "id", "now_us", "timezone"]);
+    this.scope(p.scope_id);
+    const atUs = Number.isSafeInteger(p.now_us) ? p.now_us : now();
+    const timezone = String(p.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+    try { new Intl.DateTimeFormat("en", { timeZone: timezone }).format(0); }
+    catch { fail("INVALID_ARGUMENT", "Unknown forecast timezone"); }
+    const target = this.retentionTarget(p.scope_id, p.id), decision = this.retentionDecision(target, atUs);
+    const projections = this.snapshot().projections as Row[];
+    return {
+      target_kind: target.kind,
+      target_id: target.lookupId,
+      version_id: target.id,
+      status: target.status,
+      baseline_expires_at_us: target.baselineExpiresAtUs,
+      ...decision,
+      storage_allowed: decision.storageAllowed,
+      recall_allowed_by_retention: decision.recallAllowedByRetention,
+      effective_expires_at_us: decision.effectiveExpiresAtUs,
+      next_evidence_loss_at_us: decision.nextEvidenceLossAtUs,
+      last_support_loss_at_us: decision.lastSupportLossAtUs,
+      protection_reasons: decision.protectionReasons,
+      required_evidence_ids: decision.requiredEvidenceIds,
+      generated_at_us: atUs,
+      timezone,
+      policy_version: this.epoch("policy"),
+      scope_id: target.scopeId,
+      projection_incomplete: projections.some((projection) => projection.watermark < this.revision),
+    };
+  }
+  /** Adds one evidence-aware hold; safe to call from a canonical batch transaction. */
+  preserveRetention(p: Row) {
+    strict(p, ["scope_id", "target_kind", "target_id", "reason", "expires_at_us", "max_expires_at_us", "policy_revision", "source_decision_id", "evidence_ids", "note"]);
+    this.scope(p.scope_id);
+    if (!["observation", "assertion", "statement"].includes(p.target_kind)) fail("INVALID_ARGUMENT", "Unknown retention target");
+    if (!["manual_pin", "review_grace", "automatic_preservation", "accepted_evidence"].includes(p.reason)) fail("INVALID_ARGUMENT", "Unknown retention reason");
+    if (p.reason === "accepted_evidence") fail("POLICY_DENIED", "Accepted evidence retention is derived from policy");
+    const note = p.note === undefined ? "" : safeText(p.note, 500);
+    return this.tx((revision, transactionUs) => {
+      const target = this.retentionTarget(p.scope_id, p.target_id, p.target_kind), profile = this.retentionProfile();
+      if (target.erased || !target.evidence.some((item) => !item.erased)) fail("SOURCE_CHANGED", "Retention needs live supporting evidence");
+      let expiresAtUs: number | null = p.expires_at_us ?? null;
+      let maximum: number | null = p.max_expires_at_us ?? null;
+      if (p.reason !== "manual_pin") {
+        if (!["assisted", "automatic"].includes(profile.mode)) fail("POLICY_DENIED", "Curation preservation is not enabled");
+        if (!profile.retainCurationEvidence) fail("POLICY_DENIED", "Curation evidence retention is disabled");
+        if (p.reason === "review_grace" && !profile.reviewGrace) fail("POLICY_DENIED", "Review grace is not enabled");
+        const days = p.reason === "review_grace" ? profile.graceDays : profile.preserveDays;
+        expiresAtUs ??= transactionUs + days * 86_400_000_000;
+        maximum ??= p.reason === "automatic_preservation"
+          ? transactionUs + profile.maxUnresolvedDays * 86_400_000_000
+          : expiresAtUs;
+        expiresAtUs = Math.min(expiresAtUs, maximum);
+        if (expiresAtUs <= transactionUs) fail("INVALID_ARGUMENT", "Retention protection must end in the future");
+      } else if (expiresAtUs !== null) fail("INVALID_ARGUMENT", "Manual pins do not have an automatic expiry");
+
+      const existing = this.one(
+        "SELECT * FROM retention_holds WHERE target_kind=? AND target_id=? AND reason=? AND released_revision IS NULL",
+        target.kind, target.lookupId, p.reason,
+      );
+      if (existing.id) {
+        if (p.reason !== "automatic_preservation" || !p.source_decision_id || p.source_decision_id === existing.source_decision_id)
+          return { ...existing, existing: true };
+        const cap = existing.max_expires_at_us ?? maximum;
+        const renewed = Math.min(cap ?? Number.MAX_SAFE_INTEGER, Math.max(existing.expires_at_us || 0, expiresAtUs || 0));
+        this.run("UPDATE retention_holds SET expires_at_us=?,max_expires_at_us=?,policy_revision=?,source_decision_id=? WHERE id=?",
+          renewed, cap, p.policy_revision ?? this.epoch("policy"), p.source_decision_id, existing.id);
+        return { ...existing, expires_at_us: renewed, max_expires_at_us: cap, renewed: true };
+      }
+      if (p.reason === "review_grace" && this.one(
+        "SELECT 1 AS n FROM retention_holds WHERE target_kind=? AND target_id=? AND reason='review_grace' LIMIT 1",
+        target.kind, target.lookupId,
+      ).n) fail("POLICY_DENIED", "Review grace was already used for this unresolved record");
+
+      const groups = new Map<string, typeof target.evidence>();
+      for (const item of target.evidence.filter((item) => !item.erased)) groups.set(item.bundleId, [...(groups.get(item.bundleId) || []), item]);
+      const requested = new Set(Array.isArray(p.evidence_ids) ? p.evidence_ids : []);
+      const live = target.evidence.filter((item) => !item.erased);
+      if ([...requested].some((id) => !live.some((item) => item.id === id))) fail("INVALID_ARGUMENT", "Retention evidence is not live support for this target");
+      const explicitBundle = requested.size ? `required:${digest([...requested].sort().join("\0"))}` : null;
+      let chosen = requested.size ? live.filter((item) => requested.has(item.id))
+        : p.reason === "manual_pin" ? live
+        : [...groups.values()].sort((left, right) => {
+            const deadline = (group: typeof left) => Math.min(...group.map((item) => item.baselineExpiresAtUs ?? Number.MAX_SAFE_INTEGER));
+            return deadline(right) - deadline(left);
+          })[0];
+      if (!chosen?.length) fail("INVALID_ARGUMENT", "Retention must include one complete support bundle");
+
+      if (p.reason !== "manual_pin") {
+        const current = this.one(
+          `SELECT COUNT(DISTINCT h.target_kind||':'||h.target_id) AS records
+           FROM retention_holds h
+           WHERE h.scope_id=? AND h.reason IN ('review_grace','automatic_preservation') AND h.released_revision IS NULL
+             AND (h.expires_at_us IS NULL OR h.expires_at_us>?)`, p.scope_id, transactionUs,
+        );
+        const protectedBytes = this.one(
+          `SELECT COALESCE(SUM(length(CAST(e.witness AS BLOB))),0) AS n FROM evidence e WHERE e.id IN (
+             SELECT DISTINCT he.evidence_id FROM retention_hold_evidence he JOIN retention_holds h ON h.id=he.hold_id
+             WHERE h.scope_id=? AND h.reason IN ('review_grace','automatic_preservation') AND h.released_revision IS NULL
+               AND (h.expires_at_us IS NULL OR h.expires_at_us>?))`, p.scope_id, transactionUs,
+        ).n;
+        const existingEvidence = new Set(this.all(
+          `SELECT DISTINCT he.evidence_id AS id FROM retention_hold_evidence he JOIN retention_holds h ON h.id=he.hold_id
+           WHERE h.scope_id=? AND h.reason IN ('review_grace','automatic_preservation') AND h.released_revision IS NULL
+             AND (h.expires_at_us IS NULL OR h.expires_at_us>?)`, p.scope_id, transactionUs,
+        ).map((row) => row.id));
+        const additionalBytes = chosen.filter((item) => !existingEvidence.has(item.id)).reduce((sum, item) => sum + Buffer.byteLength(this.one("SELECT witness FROM evidence WHERE id=?", item.id).witness || ""), 0);
+        if (current.records >= profile.maxProtectedRecords || protectedBytes + additionalBytes > profile.maxProtectedBytes)
+          fail("LIMIT_EXCEEDED", `Automatic retention capacity is exhausted (${current.records} records, ${protectedBytes} bytes protected)`);
+      }
+      const id = uuid();
+      this.insert("retention_holds", {
+        id, scope_id: p.scope_id, target_kind: target.kind, target_id: target.lookupId, reason: p.reason,
+        created_revision: revision, created_us: transactionUs, expires_at_us: expiresAtUs,
+        max_expires_at_us: maximum, policy_revision: p.policy_revision ?? this.epoch("policy"),
+        source_decision_id: p.source_decision_id || null, note, released_revision: null,
+      });
+      for (const item of chosen) this.insert("retention_hold_evidence", { hold_id: id, evidence_id: item.id, bundle_id: explicitBundle || item.bundleId, required: 1 });
+      if (p.reason === "manual_pin" && target.kind !== "statement") this.insert("retention_pins", { id, scope_id: p.scope_id, target_kind: target.kind,
+        target_id: target.lookupId, note, created_revision: revision, created_us: transactionUs, released_revision: null });
+      this.effect(target.id);
+      return { id, target_kind: target.kind, target_id: target.lookupId, reason: p.reason, expires_at_us: expiresAtUs, max_expires_at_us: maximum, created_revision: revision, created_us: transactionUs };
+    });
+  }
+  releaseRetention(p: Row) {
+    strict(p, ["scope_id", "hold_id", "expected_revision"]);
+    this.scope(p.scope_id);
+    return this.tx((revision) => {
+      const hold = this.one("SELECT * FROM retention_holds WHERE id=? AND scope_id=? AND released_revision IS NULL", p.hold_id, p.scope_id);
+      if (!hold.id) fail("NOT_FOUND", "This retention protection is no longer active");
+      if (p.expected_revision !== undefined && p.expected_revision !== hold.created_revision) fail("REVISION_CONFLICT", "Retention protection changed");
+      this.run("UPDATE retention_holds SET released_revision=? WHERE id=?", revision, hold.id);
+      this.run("UPDATE retention_pins SET released_revision=? WHERE id=? AND released_revision IS NULL", revision, hold.id);
+      return { id: hold.id, released_revision: revision, target_kind: hold.target_kind, target_id: hold.target_id };
+    });
+  }
+  /** Erasure wins over every hold; surviving independent support is rebound explicitly. */
+  removeRetentionForTargets(targetIds: string[]) {
+    const encoded = JSON.stringify(targetIds);
+    const remove = (id: string) => {
+      this.run("DELETE FROM retention_hold_evidence WHERE hold_id=?", id);
+      this.run("DELETE FROM retention_holds WHERE id=?", id);
+      this.run("DELETE FROM retention_pins WHERE id=?", id);
+    };
+    for (const hold of this.all("SELECT * FROM retention_holds WHERE released_revision IS NULL AND target_kind='observation' AND target_id IN (SELECT value FROM json_each(?))", encoded)) remove(hold.id);
+    for (const hold of this.all("SELECT * FROM retention_holds WHERE released_revision IS NULL AND target_kind IN ('assertion','statement')")) {
+      const version = hold.target_kind === "assertion"
+        ? this.one("SELECT version_id FROM assertion_versions WHERE logical_id=? AND known_to_revision IS NULL AND erased=0 ORDER BY known_from_revision DESC LIMIT 1", hold.target_id)
+        : this.one("SELECT version_id FROM memory_statement_versions WHERE logical_id=? AND known_to_revision IS NULL AND erased=0 ORDER BY known_from_revision DESC LIMIT 1", hold.target_id);
+      if (!version.version_id) { remove(hold.id); continue; }
+      const touched = this.one("SELECT 1 AS n FROM retention_hold_evidence WHERE hold_id=? AND evidence_id IN (SELECT value FROM json_each(?)) LIMIT 1", hold.id, encoded).n;
+      if (!touched) continue;
+      // Every required member in one bundle is atomic. Erasure drops the whole
+      // touched bundle; another independently retained bundle may keep the hold.
+      this.run(`DELETE FROM retention_hold_evidence WHERE hold_id=? AND bundle_id IN (
+        SELECT bundle_id FROM retention_hold_evidence WHERE hold_id=? AND evidence_id IN (SELECT value FROM json_each(?)))`, hold.id, hold.id, encoded);
+      if (!this.one("SELECT 1 AS n FROM retention_hold_evidence WHERE hold_id=? LIMIT 1", hold.id).n) remove(hold.id);
+    }
+  }
+  retentionPreview(p: Row) {
+    strict(p, ["scope_id", "target_ids", "limit", "cursor", "reason", "now_us", "timezone"]);
+    this.scope(p.scope_id);
+    const profile = this.retentionProfile(), atUs = Number.isSafeInteger(p.now_us) ? p.now_us : now();
+    const timezone = String(p.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+    try { new Intl.DateTimeFormat("en", { timeZone: timezone }).format(0); }
+    catch { fail("INVALID_ARGUMENT", "Unknown forecast timezone"); }
+    const reason = p.reason || "review_grace";
+    if (!["review_grace", "automatic_preservation"].includes(reason)) fail("INVALID_ARGUMENT", "Bulk retention supports grace or automatic preservation");
+    const limit = Math.max(1, Math.min(200, Number.isSafeInteger(p.limit) ? p.limit : 50));
+    const offset = p.cursor ? Number.parseInt(String(p.cursor), 10) : 0;
+    if (!Number.isSafeInteger(offset) || offset < 0) fail("INVALID_ARGUMENT", "Invalid retention cursor");
+    const horizon = atUs + profile.atRiskHours * 3_600_000_000;
+    const queueSql = `WITH candidate_assertions AS (
+         SELECT * FROM assertion_versions WHERE scope_id=? AND erased=0 AND known_to_revision IS NULL
+           AND status IN ('candidate','disputed') AND expires_at_us IS NOT NULL
+       ), candidate_statements AS (
+         SELECT * FROM memory_statement_versions WHERE scope_id=? AND erased=0 AND known_to_revision IS NULL
+           AND status IN ('candidate','disputed') AND expires_at_us IS NOT NULL
+       ), dependencies(kind,version_id,bundle_id,loss) AS (
+         SELECT 'assertion',ae.version_id,ae.independence_group,CASE WHEN p.erased THEN 0 ELSE p.expires_us END
+         FROM candidate_assertions v JOIN assertion_evidence ae ON ae.version_id=v.version_id
+         JOIN evidence e ON e.id=ae.evidence_id JOIN observations o ON o.id=e.observation_id LEFT JOIN payloads p ON p.id=o.payload_id
+         WHERE ae.relation='support' AND e.erased=0
+         UNION ALL
+         SELECT 'statement',se.version_id,e.independence_group,CASE WHEN p.erased THEN 0 ELSE p.expires_us END
+         FROM candidate_statements v JOIN memory_statement_evidence se ON se.version_id=v.version_id
+         JOIN evidence e ON e.id=se.evidence_id JOIN observations o ON o.id=e.observation_id LEFT JOIN payloads p ON p.id=o.payload_id
+         WHERE e.erased=0
+       ), bundles AS (
+         SELECT kind,version_id,bundle_id,MIN(loss) AS bundle_loss FROM dependencies GROUP BY kind,version_id,bundle_id
+       ), support AS (
+         SELECT kind,version_id,MIN(bundle_loss) AS first_loss,
+           CASE WHEN MAX(bundle_loss IS NULL) THEN NULL ELSE MAX(bundle_loss) END AS last_loss
+         FROM bundles GROUP BY kind,version_id
+       ), targets(kind,id,logical_id,deadline,first_loss,last_loss) AS (
+         SELECT 'assertion',v.version_id,v.logical_id,v.expires_at_us,s.first_loss,s.last_loss FROM candidate_assertions v LEFT JOIN support s ON s.kind='assertion' AND s.version_id=v.version_id
+         UNION ALL
+         SELECT 'statement',v.version_id,v.logical_id,v.expires_at_us,s.first_loss,s.last_loss FROM candidate_statements v LEFT JOIN support s ON s.kind='statement' AND s.version_id=v.version_id
+       ), ordered AS (
+         SELECT *,CASE WHEN deadline IS NULL THEN last_loss WHEN last_loss IS NULL THEN deadline WHEN deadline<last_loss THEN deadline ELSE last_loss END AS effective
+         FROM targets WHERE NOT EXISTS (SELECT 1 FROM retention_holds h WHERE h.target_kind=targets.kind AND h.target_id=targets.logical_id
+           AND h.released_revision IS NULL AND (h.expires_at_us IS NULL OR h.expires_at_us>?))
+       ) `;
+    const queueArgs = [p.scope_id, p.scope_id, atUs];
+    const scopeCounts = this.one(`${queueSql} SELECT COUNT(*) AS unresolved,
+      COALESCE(SUM(effective IS NOT NULL AND effective<=?),0) AS at_risk,
+      COALESCE(SUM(first_loss IS NOT NULL AND (last_loss IS NULL OR first_loss<last_loss)),0) AS partial_evidence_loss,
+      MIN(CASE WHEN first_loss IS NOT NULL AND (last_loss IS NULL OR first_loss<last_loss) THEN first_loss END) AS next_partial_evidence_loss_at_us
+      FROM ordered`, ...queueArgs, horizon);
+    let candidates: Row[];
+    if (Array.isArray(p.target_ids)) {
+      if (p.target_ids.length > 200 || p.target_ids.some((id: unknown) => typeof id !== "string")) fail("LIMIT_EXCEEDED", "A retention preview is limited to 200 targets");
+      candidates = p.target_ids.map((id: string) => ({ id }));
+    } else candidates = this.all(`${queueSql} SELECT id FROM ordered ORDER BY effective IS NULL,effective,id LIMIT ? OFFSET ?`, ...queueArgs, limit + 1, offset);
+    const items = candidates.slice(0, limit).map((candidate) => {
+      const target = this.retentionTarget(p.scope_id, candidate.id), decision = this.retentionDecision(target, atUs);
+      const active = this.one("SELECT id FROM retention_holds WHERE target_kind=? AND target_id=? AND reason=? AND released_revision IS NULL AND (expires_at_us IS NULL OR expires_at_us>?)", target.kind, target.lookupId, reason, atUs);
+      const bytes = target.evidence.filter((item) => !item.erased).reduce((sum, item) => sum + Number(this.one("SELECT length(CAST(witness AS BLOB)) AS n FROM evidence WHERE id=?", item.id).n || 0), 0);
+      const eligible = decision.storageAllowed && target.evidence.some((item) => !item.erased) && !active.id;
+      const blockedReason = !decision.storageAllowed ? "ALREADY_EXPIRED" : !profile.retainCurationEvidence ? "EVIDENCE_RETENTION_DISABLED" : active.id ? "ALREADY_PROTECTED" : null;
+      return {
+        target_kind: target.kind, target_id: target.lookupId, version_id: target.id, status: target.status,
+        baseline_expires_at_us: target.baselineExpiresAtUs,
+        effective_expires_at_us: decision.effectiveExpiresAtUs,
+        next_evidence_loss_at_us: decision.nextEvidenceLossAtUs,
+        last_support_loss_at_us: decision.lastSupportLossAtUs,
+        protection_reasons: decision.protectionReasons,
+        required_evidence_ids: target.evidence.filter((item) => !item.erased).map((item) => item.id),
+        estimated_retained_bytes: bytes,
+        at_risk: decision.effectiveExpiresAtUs !== null && decision.effectiveExpiresAtUs <= horizon,
+        eligible: eligible && !blockedReason,
+        blocked_reason: blockedReason,
+      };
+    }).sort((left, right) => (left.effective_expires_at_us ?? Number.MAX_SAFE_INTEGER) - (right.effective_expires_at_us ?? Number.MAX_SAFE_INTEGER) || left.target_id.localeCompare(right.target_id));
+    const configRevision = this.curation.revision();
+    const selection = digest(stableJSON({ manifest: [p.scope_id, reason, this.revision, this.epoch("policy"), configRevision, profile, items.map((item) => [item.target_kind, item.target_id, item.version_id, item.required_evidence_ids])] }));
+    const protectedTotal = this.one(
+      `SELECT COUNT(*) AS n FROM retention_holds h WHERE h.scope_id=? AND h.reason=? AND h.released_revision IS NULL
+       AND (h.expires_at_us IS NULL OR h.expires_at_us>?) AND
+       ((h.target_kind='assertion' AND EXISTS(SELECT 1 FROM assertion_versions v WHERE v.logical_id=h.target_id AND v.known_to_revision IS NULL AND v.erased=0)) OR
+        (h.target_kind='statement' AND EXISTS(SELECT 1 FROM memory_statement_versions v WHERE v.logical_id=h.target_id AND v.known_to_revision IS NULL AND v.erased=0)))`,
+      p.scope_id, reason, atUs,
+    ).n;
+    const counts = {
+      eligible: items.filter((item) => item.eligible).length,
+      blocked: items.filter((item) => item.blocked_reason && item.blocked_reason !== "ALREADY_PROTECTED").length,
+      at_risk: scopeCounts.at_risk,
+      page_at_risk: items.filter((item) => item.at_risk).length,
+      already_protected: protectedTotal,
+    };
+    const projections = this.snapshot().projections as Row[];
+    const manifest = { generated_at_us: atUs, timezone, revision: this.revision, policy_epoch: this.epoch("policy"), config_revision: configRevision, scope_id: p.scope_id, selection, profile, reason, counts,
+      count_semantics: { eligible: "selected_page", blocked: "selected_page", page_at_risk: "selected_page", at_risk: "whole_scope_unprotected", already_protected: "whole_scope" },
+      scope_counts: { unresolved: scopeCounts.unresolved, at_risk: scopeCounts.at_risk, already_protected: protectedTotal,
+        partial_evidence_loss: scopeCounts.partial_evidence_loss, next_partial_evidence_loss_at_us: scopeCounts.next_partial_evidence_loss_at_us ?? null },
+      projection_incomplete: projections.some((projection) => projection.watermark < this.revision || projection.status !== "ready"),
+      projections, items,
+      next_cursor: !Array.isArray(p.target_ids) && candidates.length > limit ? String(offset + limit) : null };
+    this.retentionPreviews.set(selection, { revision: this.revision, selection, manifest });
+    while (this.retentionPreviews.size > 8) this.retentionPreviews.delete(this.retentionPreviews.keys().next().value!);
+    return manifest;
+  }
+  async retentionProtect(p: Row) {
+    strict(p, ["scope_id", "selection", "expected_revision", "reason", "output", "items"]);
+    this.scope(p.scope_id);
+    const preview = this.retentionPreviews.get(String(p.selection));
+    if (!preview || preview.revision !== this.revision || p.expected_revision !== this.revision) fail("REVISION_CONFLICT", "Retention preview is stale");
+    const manifest = preview.manifest;
+    if (manifest.scope_id !== p.scope_id || manifest.policy_epoch !== this.epoch("policy") || manifest.config_revision !== this.curation.revision() || stableJSON(manifest.profile) !== stableJSON(this.retentionProfile()))
+      fail("REVISION_CONFLICT", "Retention profile changed after the preview");
+    if (p.reason !== manifest.reason) fail("SELECTION_MISMATCH", "Retention reason differs from the preview");
+    const selected = new Set(Array.isArray(p.items) ? p.items : manifest.items.filter((item: Row) => item.eligible).map((item: Row) => item.target_id));
+    const items = manifest.items.filter((item: Row) => selected.has(item.target_id));
+    if (!items.length || items.some((item: Row) => !item.eligible)) fail("SELECTION_MISMATCH", "Retention selection includes an ineligible target");
+    if (existsSync(resolve(safeText(p.output, 4096)) + ".erasure-registry.jsonl")) fail("INVALID_ARGUMENT", "Retention backup registry output already exists");
+    const backup = await this.backup({ output: p.output });
+    const registry = this.preserveBackupRegistry(backup.output);
+    if (this.revision !== preview.revision) fail("REVISION_CONFLICT", "Memory changed while the retention backup was created");
+    const results = this.tx(() => {
+      this.batchTransaction = true;
+      try {
+        return items.map((item: Row) => this.preserveRetention({
+          scope_id: p.scope_id, target_kind: item.target_kind, target_id: item.version_id,
+          reason: manifest.reason,
+        }));
+      } finally { this.batchTransaction = false; }
+    });
+    this.retentionPreviews.delete(String(p.selection));
+    return { backup: backup.output, erasure_registry: registry, protected: results.filter((result: Row) => !result.existing).length,
+      already_protected: results.filter((result: Row) => result.existing).length, blocked: 0,
+      hold_ids: results.map((result: Row) => result.id), revision: this.revision };
+  }
+  preserveBackupRegistry(output: string) {
+    const destination = output + ".erasure-registry.jsonl", source = join(this.directory, "erasure-registry.jsonl");
+    const fd = openSync(destination, "wx", 0o600);
+    try { if (existsSync(source)) writeSync(fd, readFileSync(source)); fsyncSync(fd); }
+    finally { closeSync(fd); }
+    return destination;
+  }
+  retentionPolicyPreview(p: Row) {
+    strict(p, ["scope_id", "raw_turn_days", "candidate_days", "apply_to_existing", "limit", "cursor"]);
+    this.scope(p.scope_id);
+    const next = parse(policySchema, { ...this.policy,
+      ...(p.raw_turn_days === undefined ? {} : { raw_turn_days: p.raw_turn_days }),
+      ...(p.candidate_days === undefined ? {} : { candidate_days: p.candidate_days }),
+    });
+    const applyExisting = p.apply_to_existing === true, atUs = now();
+    const limit = Math.max(1, Math.min(200, Number.isSafeInteger(p.limit) ? p.limit : 50));
+    const offset = p.cursor ? Number.parseInt(String(p.cursor), 10) : 0;
+    if (!Number.isSafeInteger(offset) || offset < 0) fail("INVALID_ARGUMENT", "Invalid retention policy cursor");
+    const changeSql = `SELECT * FROM (SELECT 'observation' AS kind,o.id AS id,o.revision AS target_revision,p.expires_us AS previous_expires_at_us,
+          o.captured_us+? AS next_expires_at_us
+       FROM observations o JOIN payloads p ON p.id=o.payload_id
+       WHERE o.scope_id=? AND o.erased=0 AND p.erased=0 AND p.expires_us IS NOT NULL
+       UNION ALL
+       SELECT 'assertion',version_id,aggregate_revision,expires_at_us,known_from_us+?
+       FROM assertion_versions WHERE scope_id=? AND erased=0 AND known_to_revision IS NULL AND status='candidate' AND expires_at_us IS NOT NULL
+       UNION ALL
+       SELECT 'statement',version_id,aggregate_revision,expires_at_us,known_from_us+?
+       FROM memory_statement_versions WHERE scope_id=? AND erased=0 AND known_to_revision IS NULL AND status='candidate' AND expires_at_us IS NOT NULL
+       ) WHERE previous_expires_at_us IS NOT next_expires_at_us OR (?=1 AND kind IN ('assertion','statement'))`;
+    const args = [next.raw_turn_days * 86_400_000_000, p.scope_id,
+      next.candidate_days * 86_400_000_000, p.scope_id, next.candidate_days * 86_400_000_000, p.scope_id,
+      next.raw_turn_days !== this.policy.raw_turn_days ? 1 : 0];
+    const totals = applyExisting ? this.one(
+      `SELECT COUNT(*) AS changed,
+        COALESCE(SUM(previous_expires_at_us IS NOT next_expires_at_us),0) AS baseline_changed,
+        COALESCE(SUM(next_expires_at_us>previous_expires_at_us),0) AS additional_retention,
+        COALESCE(SUM(next_expires_at_us<=? AND previous_expires_at_us>?),0) AS newly_eligible_deletion
+       FROM (${changeSql})`, atUs, atUs, ...args,
+    ) : { changed: 0, baseline_changed: 0, additional_retention: 0, newly_eligible_deletion: 0 };
+    const changes = applyExisting ? this.all(`${changeSql} ORDER BY kind,id LIMIT ? OFFSET ?`, ...args, limit, offset) : [];
+    const sample = changes.map((change) => {
+      const target = this.retentionTarget(p.scope_id, change.id), before = this.retentionDecision(target, atUs);
+      const hypothetical: RetentionTarget = { ...target,
+        baselineExpiresAtUs: change.next_expires_at_us,
+        evidence: target.evidence.map((item) => ({ ...item, baselineExpiresAtUs: item.baselineExpiresAtUs === null || item.baselineExpiresAtUs === 0
+          ? item.baselineExpiresAtUs : item.capturedAtUs + next.raw_turn_days * 86_400_000_000 })),
+      };
+      const after = this.retentionDecision(hypothetical, atUs), protectedByHold = before.protectionReasons.length > 0;
+      return { ...change,
+        previous_effective_expires_at_us: before.effectiveExpiresAtUs,
+        next_effective_expires_at_us: after.effectiveExpiresAtUs,
+        next_evidence_loss_at_us: after.nextEvidenceLossAtUs,
+        last_support_loss_at_us: after.lastSupportLossAtUs,
+        baseline_deadline_changed: change.previous_expires_at_us !== change.next_expires_at_us,
+        effective_deadline_changed: before.effectiveExpiresAtUs !== after.effectiveExpiresAtUs,
+        additional_retention: before.effectiveExpiresAtUs !== null && (after.effectiveExpiresAtUs === null || after.effectiveExpiresAtUs > before.effectiveExpiresAtUs),
+        newly_eligible_deletion: before.recallAllowedByRetention && !after.recallAllowedByRetention,
+        protected_by_hold: protectedByHold,
+      };
+    });
+    const selection = digest(stableJSON({ manifest: [p.scope_id, this.revision, this.epoch("policy"), this.policy, next, applyExisting,
+      totals] }));
+    const manifest = { selection, revision: this.revision, policy_epoch: this.epoch("policy"), scope_id: p.scope_id,
+      applies_to: applyExisting ? "existing_and_future" : "future_only", previous_policy: this.policy, next_policy: next,
+      counts: totals, items: sample, truncated: offset + sample.length < totals.changed,
+      next_cursor: offset + sample.length < totals.changed ? String(offset + sample.length) : null };
+    this.retentionPreviews.set(selection, { revision: this.revision, selection, manifest });
+    return manifest;
+  }
+  applyRetentionPolicyBatch(changeId: string, revision: number) {
+    const change = this.one("SELECT * FROM retention_policy_changes WHERE id=? AND undone_revision IS NULL", changeId);
+    if (!change.id) fail("NOT_FOUND", "Retention policy change is unavailable");
+    if(change.completed_revision!==null)return {change_id:change.id,batch_changed:0,changed:change.changed_records,complete:true,revision};
+    const next = JSON.parse(change.next_policy);
+    if(stableJSON(next)!==stableJSON(this.policy)||this.one("SELECT 1 AS n FROM retention_deadline_changes WHERE change_id=? AND undone_revision IS NOT NULL LIMIT 1",change.id).n)
+      fail("REVISION_CONFLICT","Retention policy changed before the next batch");
+    const rows = change.apply_existing ? this.all(
+      `SELECT * FROM (
+         SELECT 'observation' AS kind,o.id,o.revision AS target_revision,p.expires_us AS previous_expires_at_us,o.captured_us+? AS next_expires_at_us
+         FROM observations o JOIN payloads p ON p.id=o.payload_id WHERE o.scope_id=? AND o.erased=0 AND p.erased=0 AND p.expires_us IS NOT NULL
+         UNION ALL SELECT 'assertion',version_id,aggregate_revision,expires_at_us,known_from_us+? FROM assertion_versions
+           WHERE scope_id=? AND erased=0 AND known_to_revision IS NULL AND status='candidate' AND expires_at_us IS NOT NULL
+         UNION ALL SELECT 'statement',version_id,aggregate_revision,expires_at_us,known_from_us+? FROM memory_statement_versions
+           WHERE scope_id=? AND erased=0 AND known_to_revision IS NULL AND status='candidate' AND expires_at_us IS NOT NULL
+       ) pending WHERE pending.previous_expires_at_us IS NOT pending.next_expires_at_us
+         AND NOT EXISTS (SELECT 1 FROM retention_deadline_changes d WHERE d.change_id=? AND d.target_kind=pending.kind AND d.target_id=pending.id)
+       ORDER BY kind,id LIMIT 200`, next.raw_turn_days * 86_400_000_000, change.scope_id,
+       next.candidate_days * 86_400_000_000, change.scope_id, next.candidate_days * 86_400_000_000, change.scope_id, change.id,
+    ) : [];
+    for (const row of rows) {
+      this.insert("retention_deadline_changes", { change_id: change.id, target_kind: row.kind, target_id: row.id,
+        previous_expires_at_us: row.previous_expires_at_us, next_expires_at_us: row.next_expires_at_us,
+        target_revision: row.target_revision, undone_revision: null });
+      if (row.kind === "observation") this.run("UPDATE payloads SET expires_us=? WHERE id=(SELECT payload_id FROM observations WHERE id=?)", row.next_expires_at_us, row.id);
+      else if (row.kind === "assertion") this.run("UPDATE assertion_versions SET expires_at_us=? WHERE version_id=?", row.next_expires_at_us, row.id);
+      else this.run("UPDATE memory_statement_versions SET expires_at_us=? WHERE version_id=?", row.next_expires_at_us, row.id);
+      this.effect(row.id);
+    }
+    const remaining = change.apply_existing && rows.length === 200 ? this.one(
+      `SELECT 1 AS n FROM (
+         SELECT o.id,'observation' AS kind,p.expires_us AS previous_expires_at_us,o.captured_us+? AS next_expires_at_us
+           FROM observations o JOIN payloads p ON p.id=o.payload_id WHERE o.scope_id=? AND o.erased=0 AND p.erased=0 AND p.expires_us IS NOT NULL
+         UNION ALL SELECT version_id,'assertion',expires_at_us,known_from_us+? FROM assertion_versions
+           WHERE scope_id=? AND erased=0 AND known_to_revision IS NULL AND status='candidate' AND expires_at_us IS NOT NULL
+         UNION ALL SELECT version_id,'statement',expires_at_us,known_from_us+? FROM memory_statement_versions
+           WHERE scope_id=? AND erased=0 AND known_to_revision IS NULL AND status='candidate' AND expires_at_us IS NOT NULL
+       ) q WHERE q.previous_expires_at_us IS NOT q.next_expires_at_us
+         AND NOT EXISTS (SELECT 1 FROM retention_deadline_changes d WHERE d.change_id=? AND d.target_kind=q.kind AND d.target_id=q.id) LIMIT 1`,
+      next.raw_turn_days * 86_400_000_000, change.scope_id,
+      next.candidate_days * 86_400_000_000, change.scope_id,
+      next.candidate_days * 86_400_000_000, change.scope_id, change.id,
+    ).n : 0;
+    const total = this.one("SELECT COUNT(*) AS n FROM retention_deadline_changes WHERE change_id=?", change.id).n;
+    if (!remaining) this.run("UPDATE retention_policy_changes SET completed_revision=?,changed_records=? WHERE id=?", revision, total, change.id);
+    else this.run("UPDATE retention_policy_changes SET changed_records=? WHERE id=?", total, change.id);
+    return { change_id: change.id, batch_changed: rows.length, changed: total, complete: !remaining, revision };
+  }
+  async retentionPolicyApply(p: Row) {
+    strict(p, ["scope_id", "selection", "expected_revision", "output", "change_id"]);
+    this.scope(p.scope_id);
+    if (p.change_id) {
+      if (!this.one("SELECT id FROM retention_policy_changes WHERE id=? AND scope_id=? AND undone_revision IS NULL", p.change_id, p.scope_id).id)
+        fail("NOT_FOUND", "Retention policy change is unavailable in this scope");
+      return this.tx((revision) => this.applyRetentionPolicyBatch(p.change_id, revision));
+    }
+    const preview = this.retentionPreviews.get(String(p.selection));
+    if (!preview || preview.revision !== this.revision || p.expected_revision !== this.revision) fail("REVISION_CONFLICT", "Retention policy preview is stale");
+    const manifest = preview.manifest;
+    if (manifest.scope_id !== p.scope_id || !manifest.next_policy || manifest.policy_epoch !== this.epoch("policy") || stableJSON(manifest.previous_policy) !== stableJSON(this.policy))
+      fail("REVISION_CONFLICT", "Retention policy changed after the preview");
+    let backup: Row | null = null;
+    let registry: string | null = null;
+    if (manifest.applies_to === "existing_and_future") {
+      const requested = resolve(safeText(p.output, 4096));
+      if (existsSync(requested + ".erasure-registry.jsonl")) fail("INVALID_ARGUMENT", "Retention backup registry output already exists");
+      backup = await this.backup({ output: p.output }); registry = this.preserveBackupRegistry(backup.output);
+    }
+    if (this.revision !== preview.revision) fail("REVISION_CONFLICT", "Memory changed while the policy backup was created");
+    const result = this.tx((revision) => {
+      const id = uuid();
+      this.insert("retention_policy_changes", { id, scope_id: p.scope_id, previous_policy: stableJSON(this.policy), next_policy: stableJSON(manifest.next_policy),
+        apply_existing: manifest.applies_to === "existing_and_future" ? 1 : 0, selection: p.selection, created_revision: revision,
+        completed_revision: null, undone_revision: null, changed_records: 0 });
+      this.policy = manifest.next_policy;
+      this.setMeta("policy", this.policy); this.setMeta("policy_epoch", this.epoch("policy") + 1);
+      this.reconcileExtraction();
+      this.events.push({ type: "invalidate", cause: "policy", policy_epoch: this.epoch("policy"), erasure_epoch: this.epoch("erasure"), revision });
+      return this.applyRetentionPolicyBatch(id, revision);
+    });
+    this.retentionPreviews.delete(String(p.selection));
+    return { ...result, backup: backup?.output || null, erasure_registry: registry, policy: this.policy, policy_epoch: this.epoch("policy") };
+  }
+  retentionPolicyUndo(p: Row) {
+    strict(p, ["scope_id", "change_id", "expected_revision"]);
+    this.scope(p.scope_id);
+    if (p.expected_revision !== undefined && p.expected_revision !== this.revision) fail("REVISION_CONFLICT", "Memory changed before policy undo");
+    return this.tx((revision) => {
+      const change = this.one("SELECT * FROM retention_policy_changes WHERE id=? AND scope_id=? AND undone_revision IS NULL", p.change_id, p.scope_id);
+      if (!change.id) fail("NOT_FOUND", "Retention policy change is unavailable");
+      const previous = JSON.parse(change.previous_policy), next = JSON.parse(change.next_policy);
+      if (stableJSON(this.policy) === stableJSON(next)) {
+        this.policy = previous; this.setMeta("policy", previous); this.setMeta("policy_epoch", this.epoch("policy") + 1); this.reconcileExtraction();
+        this.events.push({ type: "invalidate", cause: "policy", policy_epoch: this.epoch("policy"), erasure_epoch: this.epoch("erasure"), revision });
+      } else if (!this.one("SELECT 1 AS n FROM retention_deadline_changes WHERE change_id=? AND undone_revision IS NOT NULL LIMIT 1", change.id).n)
+        fail("REVISION_CONFLICT", "A later policy change must be resolved before undo");
+      let restored = 0, conflicts = 0;
+      const rows = this.all("SELECT * FROM retention_deadline_changes WHERE change_id=? AND undone_revision IS NULL ORDER BY target_kind,target_id LIMIT 200", change.id);
+      for (const row of rows) {
+        const current = row.target_kind === "observation"
+          ? this.one("SELECT p.expires_us AS deadline FROM observations o JOIN payloads p ON p.id=o.payload_id WHERE o.id=?", row.target_id).deadline
+          : row.target_kind === "assertion"
+            ? this.one("SELECT expires_at_us AS deadline FROM assertion_versions WHERE version_id=?", row.target_id).deadline
+            : this.one("SELECT expires_at_us AS deadline FROM memory_statement_versions WHERE version_id=?", row.target_id).deadline;
+        if (current === row.next_expires_at_us) {
+          if (row.target_kind === "observation") this.run("UPDATE payloads SET expires_us=? WHERE id=(SELECT payload_id FROM observations WHERE id=?)", row.previous_expires_at_us, row.target_id);
+          else if (row.target_kind === "assertion") this.run("UPDATE assertion_versions SET expires_at_us=? WHERE version_id=?", row.previous_expires_at_us, row.target_id);
+          else this.run("UPDATE memory_statement_versions SET expires_at_us=? WHERE version_id=?", row.previous_expires_at_us, row.target_id);
+          restored++; this.effect(row.target_id);
+        } else conflicts++;
+        this.run("UPDATE retention_deadline_changes SET undone_revision=? WHERE change_id=? AND target_kind=? AND target_id=?", revision, change.id, row.target_kind, row.target_id);
+      }
+      const remaining = this.one("SELECT 1 AS n FROM retention_deadline_changes WHERE change_id=? AND undone_revision IS NULL LIMIT 1", change.id).n;
+      if (!remaining) this.run("UPDATE retention_policy_changes SET undone_revision=? WHERE id=?", revision, change.id);
+      return { change_id: change.id, restored, conflicts, complete: !remaining, revision, policy: this.policy, policy_epoch: this.epoch("policy") };
+    });
+  }
   /** The active retention pin on a passage or a logical assertion, if any. */
   activePin(target: string) {
-    const pin = this.one("SELECT id,target_kind,target_id,note,created_revision,created_us FROM retention_pins WHERE target_id=? AND released_revision IS NULL", target);
+    const pin = this.one("SELECT id,target_kind,target_id,note,created_revision,created_us FROM retention_holds WHERE target_id=? AND reason='manual_pin' AND released_revision IS NULL AND (expires_at_us IS NULL OR expires_at_us>?)", target, now());
     return pin.id ? pin : null;
   }
   /**
@@ -2258,47 +3059,27 @@ export class Canonical {
   pin(p: Row) {
     strict(p, ["scope_id", "id", "note"]);
     this.scope(p.scope_id);
-    const note = p.note === undefined ? "" : safeText(p.note, 500);
-    return this.tx((r, time) => {
-      let kind: "observation" | "assertion", target: string, evidence: number;
-      const version = this.one("SELECT * FROM assertion_versions WHERE (version_id=? OR logical_id=?) AND scope_id=? AND erased=0 ORDER BY known_from_revision DESC LIMIT 1", p.id, p.id, p.scope_id);
-      if (version.version_id) {
-        kind = "assertion"; target = version.logical_id;
-        evidence = this.one("SELECT COUNT(*) AS n FROM assertion_evidence ae JOIN evidence e ON e.id=ae.evidence_id WHERE ae.version_id=? AND ae.relation='support' AND e.erased=0", version.version_id).n;
-      } else {
-        const observation = this.one("SELECT o.id FROM observations o JOIN payloads q ON q.id=o.payload_id WHERE o.id=? AND o.scope_id=? AND o.erased=0 AND q.erased=0", p.id, p.scope_id);
-        if (!observation.id) fail("NOT_FOUND", "Only a live passage or assertion in this project can be pinned");
-        kind = "observation"; target = observation.id; evidence = 1;
-      }
-      if (!evidence) fail("INVALID_ARGUMENT", "A pin needs live supporting evidence");
-      const existing = this.activePin(target);
-      if (existing) return { ...existing, existing: true };
-      const id = uuid();
-      this.insert("retention_pins", { id, scope_id: p.scope_id, target_kind: kind, target_id: target, note, created_revision: r, created_us: time, released_revision: null });
-      return { id, target_kind: kind, target_id: target, note, created_revision: r, created_us: time };
-    });
+    const target = this.retentionTarget(p.scope_id, p.id);
+    return this.preserveRetention({ scope_id: p.scope_id, target_kind: target.kind, target_id: target.lookupId, reason: "manual_pin", note: p.note });
   }
   unpin(p: Row) {
     strict(p, ["scope_id", "pin_id"]);
-    this.scope(p.scope_id);
-    return this.tx((r) => {
-      const pin = this.one("SELECT id FROM retention_pins WHERE id=? AND scope_id=? AND released_revision IS NULL", p.pin_id, p.scope_id);
-      if (!pin.id) fail("NOT_FOUND", "This pin is no longer active");
-      this.run("UPDATE retention_pins SET released_revision=? WHERE id=?", r, pin.id);
-      return { id: pin.id, released_revision: r };
-    });
+    return this.releaseRetention({ scope_id: p.scope_id, hold_id: p.pin_id });
   }
   /** Active pins in this project, newest first, with a short excerpt of what each one keeps. */
   pins(p: Row) {
     strict(p, ["scope_id", "offset"]);
     this.scope(p.scope_id);
     const offset = Number.isSafeInteger(p.offset) && p.offset > 0 ? p.offset : 0;
-    const rows = this.all("SELECT id,target_kind,target_id,note,created_revision,created_us FROM retention_pins WHERE scope_id=? AND released_revision IS NULL ORDER BY created_revision DESC,id LIMIT 50 OFFSET ?", p.scope_id, offset);
+    const atUs = now();
+    const rows = this.all("SELECT id,target_kind,target_id,note,created_revision,created_us FROM retention_holds WHERE scope_id=? AND reason='manual_pin' AND released_revision IS NULL AND (expires_at_us IS NULL OR expires_at_us>?) ORDER BY created_revision DESC,id LIMIT 50 OFFSET ?", p.scope_id, atUs, offset);
     return {
-      total: this.one("SELECT COUNT(*) AS n FROM retention_pins WHERE scope_id=? AND released_revision IS NULL", p.scope_id).n,
+      total: this.one("SELECT COUNT(*) AS n FROM retention_holds WHERE scope_id=? AND reason='manual_pin' AND released_revision IS NULL AND (expires_at_us IS NULL OR expires_at_us>?)", p.scope_id, atUs).n,
       rows: rows.map(pin => {
         const text = pin.target_kind === "assertion"
           ? this.assertionText(this.one("SELECT * FROM assertion_versions WHERE logical_id=? AND erased=0 ORDER BY known_from_revision DESC LIMIT 1", pin.target_id))
+          : pin.target_kind === "statement"
+            ? this.one("SELECT text FROM memory_statement_versions WHERE logical_id=? AND erased=0 ORDER BY known_from_revision DESC LIMIT 1", pin.target_id).text || ""
           : this.one("SELECT q.body FROM observations o JOIN payloads q ON q.id=o.payload_id WHERE o.id=? AND q.erased=0", pin.target_id).body || "";
         return { ...pin, text: String(text).slice(0, 300) };
       }),
@@ -2417,6 +3198,8 @@ export class Canonical {
       };
     }
     const id = String(p.id);
+    const statements=statementRoots(this,scope,id);
+    if(statements.length)return {selector:{kind:"statement",id},roots:[...new Set([...statements,id])]};
     const note = this.one(
       "SELECT record_id FROM artifacts WHERE scope_id=? AND kind='saved' AND (record_id=? OR id=?) LIMIT 1",
       scope,
@@ -2666,6 +3449,8 @@ export class Canonical {
         (target) => !this.one("SELECT target_id FROM tombstones WHERE target_id=?", target).target_id,
       );
       for (const target of fresh) {
+        this.curation.eraseInput(target);
+        this.run("UPDATE memory_statement_versions SET text='',erased=1,status='erased' WHERE version_id=?",target);
         this.run(
           "INSERT OR IGNORE INTO tombstones VALUES (?,?,?,?)",
           target,
@@ -2745,6 +3530,7 @@ export class Canonical {
         this.run('UPDATE fact_slots SET predicate=?,qualifiers=?,aggregate_revision=? WHERE id=?',version.predicate,version.qualifiers,r,version.slot_id);
         this.newVersion(version,evidence,time,version.logical_id);
       }
+      this.removeRetentionForTargets(intent.targets);
       // A pin goes with its target, note included: erased passages, and assertions with no live version left.
       this.run("DELETE FROM retention_pins WHERE target_kind='observation' AND target_id IN (SELECT value FROM json_each(?))", JSON.stringify(intent.targets));
       this.run("DELETE FROM retention_pins WHERE target_kind='assertion' AND target_id IN (SELECT logical_id FROM assertion_versions WHERE version_id IN (SELECT value FROM json_each(?))) AND NOT EXISTS (SELECT 1 FROM assertion_versions v WHERE v.logical_id=retention_pins.target_id AND v.erased=0)", JSON.stringify(intent.targets));
@@ -2816,6 +3602,7 @@ export class Canonical {
   selectorRoots(intent: Row): string[] {
     const selector = intent.selector;
     if (!selector?.id || !this.one("SELECT id FROM scopes WHERE id=?", intent.scope_id).id) return [];
+    if (selector.kind === "statement") return statementRoots(this,intent.scope_id,selector.id);
     if (selector.kind === "note") return this.noteSources(intent.scope_id, selector.id);
     if (selector.kind === "document_source") return this.documentSourceRoots(intent.scope_id, selector.id);
     if (selector.kind === "logical_assertion") {
@@ -3253,7 +4040,7 @@ export class Canonical {
     this.run(
       "UPDATE extraction_runs SET model_identity=?,prompt_version=?,parser_version=?,status='validated' WHERE id=?",
       JSON.stringify(p.identity),
-      p.prompt_version || "cere-extract-1",
+      p.prompt_version || "pal-extract-1",
       p.parser_version || "1",
       p.id,
     );
@@ -3263,7 +4050,28 @@ export class Canonical {
     const run=this.one('SELECT x.*,o.scope_id,o.erased FROM extraction_runs x JOIN observations o ON o.id=x.observation_id WHERE x.id=?',p.id);
     if(!run.id||run.erased||!['running','validated'].includes(run.status)||run.policy_epoch!==this.epoch('policy')||run.erasure_epoch!==this.epoch('erasure'))fail('SOURCE_CHANGED','Extraction source changed');
     if(!Array.isArray(p.proposals)||p.proposals.length>32)fail('INVALID_ARGUMENT','Extraction batch exceeds quota');
-    return this.tx(()=>{this.batchTransaction=true;try{const results=p.proposals.map((proposal:Row)=>this.remember({...proposal,scope_id:run.scope_id,extraction_run_id:run.id}));this.run("UPDATE extraction_runs SET status='complete' WHERE id=?",run.id);return results;}finally{this.batchTransaction=false;}});
+    return this.tx(()=>{this.batchTransaction=true;try{const results=p.proposals.map((proposal:Row)=>{
+      if(proposal.witness?.observation_id!==run.observation_id)fail("SOURCE_CHANGED","Extraction witness differs from source");
+      if(proposal.statement)return createStatement(this,run.scope_id,proposal,this.one("SELECT transaction_us FROM commits WHERE revision=?",this.revision).transaction_us);
+      const {extractor_hints,additional_witnesses,...params}=proposal;
+      const extra=(additional_witnesses||[]).map((w:Row)=>{
+        if(w.observation_id!==run.observation_id)fail("SOURCE_CHANGED","Extraction support differs from source");
+        return this.evidence(run.scope_id,parse(witnessSchema,w));
+      });
+      const result=this.remember({...params,scope_id:run.scope_id,extraction_run_id:run.id,model_proposal:true});
+      if(extra.length){
+        const v=this.one("SELECT * FROM assertion_versions WHERE version_id=?",result.id);
+        this.amend(v,{},this.one("SELECT transaction_us FROM commits WHERE revision=?",this.revision).transaction_us,extra);
+      }
+      if(extractor_hints && [extractor_hints.importance,extractor_hints.durability].every(n=>Number.isFinite(n)&&n>=0&&n<=1))
+        this.run("INSERT OR REPLACE INTO memory_extractor_hints VALUES (?,?,?,?)",result.id,run.id,extractor_hints.importance,extractor_hints.durability);
+      return result;
+    });
+      if(p.identity)this.extractionResult({id:run.id,identity:p.identity,prompt_version:p.prompt_version,parser_version:p.parser_version});
+      const coverage=p.coverage;
+      if(coverage&&(coverage.start!==run.covered_codepoints||!Number.isSafeInteger(coverage.end)||coverage.end<=coverage.start||coverage.end>coverage.total))fail("SOURCE_CHANGED","Extraction coverage changed");
+      this.run("UPDATE extraction_runs SET status=?,covered_codepoints=? WHERE id=?",coverage&&coverage.end<coverage.total?'pending':'complete',coverage?.end??run.covered_codepoints,run.id);
+      return results;}finally{this.batchTransaction=false;}});
   }
   retry(p:Row){
     if(p.scope_id)this.scope(p.scope_id);
@@ -3543,7 +4351,7 @@ export class Canonical {
   /**
    * Semantic recall over every stored vector of one embedding space in the authorized scopes, best
    * first, with no projection needed. Also returns this query's own similarity floor: the score
-   * that 95% of the memories searched fall below. On Cere's conversations that kept 78% of the
+   * that 95% of the memories searched fall below. On PAL's conversations that kept 78% of the
    * answers to past questions while admitting about 5% of the store, where any fixed threshold
    * traded worse; a model's scores differ too much between queries for one number to fit.
    */
@@ -3676,36 +4484,181 @@ export class Canonical {
       process: process.memoryUsage(),
     };
   }
-  expire() {
-    // Only live raw payloads qualify: a retained witness keeps its observation live after
-    // its payload is erased, and must not be selected again. Deterministic expiry order
-    // lets a bounded batch drain without starving later sources.
-    const expired = this.all(
-      "SELECT o.scope_id,o.id FROM observations o JOIN payloads p ON p.id=o.payload_id WHERE o.erased=0 AND p.erased=0 AND p.expires_us IS NOT NULL AND p.expires_us<? AND NOT EXISTS (SELECT 1 FROM retention_pins r WHERE r.target_id=o.id AND r.released_revision IS NULL) ORDER BY p.expires_us,o.id LIMIT 50",
-      now(),
+  retainedEvidenceIds(observationId: string, atUs: number) {
+    const ids = new Set<string>();
+    for (const row of this.all(
+      `SELECT DISTINCT he.evidence_id AS id FROM retention_hold_evidence he
+       JOIN retention_holds h ON h.id=he.hold_id JOIN evidence e ON e.id=he.evidence_id
+       WHERE e.observation_id=? AND e.erased=0 AND h.released_revision IS NULL
+         AND (h.expires_at_us IS NULL OR h.expires_at_us>?)`, observationId, atUs,
+    )) ids.add(row.id);
+    if (this.policy.retain_evidence) {
+      for (const row of this.all(
+        `SELECT DISTINCT e.id FROM evidence e JOIN assertion_evidence ae ON ae.evidence_id=e.id
+         JOIN assertion_versions a ON a.version_id=ae.version_id
+         WHERE e.observation_id=? AND e.erased=0 AND a.erased=0 AND a.status='accepted'`, observationId,
+      )) ids.add(row.id);
+      for (const row of this.all(
+        `SELECT DISTINCT e.id FROM evidence e JOIN memory_statement_evidence se ON se.evidence_id=e.id
+         JOIN memory_statement_versions s ON s.version_id=se.version_id
+         WHERE e.observation_id=? AND e.erased=0 AND s.erased=0 AND s.status='accepted'`, observationId,
+      )) ids.add(row.id);
+    }
+    return [...ids];
+  }
+  /** Scrubs excerpts whose last authorizing hold ended after the raw turn was removed. */
+  expireDetachedEvidence(atUs: number, limit = 50) {
+    const rows = this.all(
+      `SELECT o.scope_id,o.id FROM observations o JOIN payloads p ON p.id=o.payload_id
+       WHERE o.erased=0 AND p.erased=1 AND EXISTS (
+         SELECT 1 FROM evidence e WHERE e.observation_id=o.id AND e.erased=0 AND
+           NOT EXISTS (SELECT 1 FROM retention_hold_evidence he JOIN retention_holds h ON h.id=he.hold_id
+             WHERE he.evidence_id=e.id AND h.released_revision IS NULL AND (h.expires_at_us IS NULL OR h.expires_at_us>?)) AND
+           NOT (?=1 AND (EXISTS(SELECT 1 FROM assertion_evidence ae JOIN assertion_versions a ON a.version_id=ae.version_id
+             WHERE ae.evidence_id=e.id AND a.erased=0 AND a.status='accepted') OR
+             EXISTS(SELECT 1 FROM memory_statement_evidence se JOIN memory_statement_versions s ON s.version_id=se.version_id
+             WHERE se.evidence_id=e.id AND s.erased=0 AND s.status='accepted')))
+       ) ORDER BY p.expires_us,o.id LIMIT ?`, atUs, this.policy.retain_evidence ? 1 : 0, limit,
     );
-    let count = 0;
-    for (const row of expired) {
+    let expired = 0;
+    for (const row of rows) {
       this.checkpoint();
-      const retained=this.policy.retain_evidence?this.all("SELECT DISTINCT e.id FROM evidence e JOIN assertion_evidence ae ON ae.evidence_id=e.id JOIN assertion_versions a ON a.version_id=ae.version_id WHERE e.observation_id=? AND e.erased=0 AND a.erased=0 AND a.status='accepted'",row.id).map(e=>e.id):[];
-      if(retained.length){
-        // The exact supporting quotations have their own evidence retention.
-        // Expire every full-turn copy, including its FTS/vector document, in a journaled deletion.
-        const roots=[this.one('SELECT payload_id FROM observations WHERE id=?',row.id).payload_id,
-          ...this.all("SELECT id FROM artifacts WHERE record_id=? AND kind='conversation'",row.id).map(a=>a.id),
-          ...this.all('SELECT id FROM evidence WHERE observation_id=? AND erased=0',row.id).filter(e=>!retained.includes(e.id)).map(e=>e.id)];
-        const intent={id:uuid(),scope_id:row.scope_id,epoch:this.epoch('erasure')+1,selector:{kind:'raw_expiration',id:row.id},targets:this.descendants(roots)};
-        this.appendRegistry(intent);this.suppress(intent,'expiration');count++;continue;
+      const retained = new Set(this.retainedEvidenceIds(row.id, atUs));
+      const live = this.all("SELECT id FROM evidence WHERE observation_id=? AND erased=0", row.id).map((item) => item.id);
+      const stale = live.filter((id) => !retained.has(id));
+      if (!stale.length) continue;
+      if (!retained.size) {
+        this.forget({ scope_id: row.scope_id, id: row.id }, "expiration");
+      } else {
+        const intent = { id: uuid(), scope_id: row.scope_id, epoch: this.epoch("erasure") + 1,
+          selector: { kind: "retained_evidence_expiration", id: row.id }, targets: this.descendants(stale) };
+        this.appendRegistry(intent); this.suppress(intent, "expiration");
       }
-      this.forget({ scope_id: row.scope_id, id: row.id }, "expiration");
-      count++;
+      expired++;
     }
-    for(const candidate of this.all("SELECT version_id,scope_id FROM assertion_versions v WHERE erased=0 AND expires_at_us IS NOT NULL AND expires_at_us<? AND NOT EXISTS (SELECT 1 FROM retention_pins r WHERE r.target_id=v.logical_id AND r.released_revision IS NULL) ORDER BY expires_at_us,version_id LIMIT 50",now())){
-      this.checkpoint();
-      const intent={id:uuid(),scope_id:candidate.scope_id,epoch:this.epoch('erasure')+1,selector:{kind:'candidate_expiration',id:candidate.version_id},targets:this.descendants([candidate.version_id])};
-      this.appendRegistry(intent);this.suppress(intent,'expiration');count++;
+    return expired;
+  }
+  /** Installs non-renewing grace before destructive maintenance, without model work. */
+  installAtRiskGrace(atUs: number) {
+    const profile = this.retentionProfile();
+    if (!profile.reviewGrace || !["assisted", "automatic"].includes(profile.mode)) return { protected: 0, blocked: 0 };
+    const cutoff = atUs + profile.atRiskHours * 3_600_000_000;
+    const candidates = this.all(
+      `SELECT kind,id,scope_id,MIN(deadline) AS deadline FROM (
+         SELECT 'assertion' AS kind,v.version_id AS id,v.scope_id,v.expires_at_us AS deadline
+         FROM assertion_versions v WHERE v.erased=0 AND v.known_to_revision IS NULL AND v.status IN ('candidate','disputed')
+         UNION ALL SELECT 'assertion',v.version_id,v.scope_id,p.expires_us
+         FROM assertion_versions v JOIN assertion_evidence ae ON ae.version_id=v.version_id AND ae.relation='support'
+         JOIN evidence e ON e.id=ae.evidence_id AND e.erased=0 JOIN observations o ON o.id=e.observation_id JOIN payloads p ON p.id=o.payload_id AND p.erased=0
+         WHERE v.erased=0 AND v.known_to_revision IS NULL AND v.status IN ('candidate','disputed')
+         UNION ALL SELECT 'statement',v.version_id,v.scope_id,v.expires_at_us
+         FROM memory_statement_versions v WHERE v.erased=0 AND v.known_to_revision IS NULL AND v.status IN ('candidate','disputed')
+         UNION ALL SELECT 'statement',v.version_id,v.scope_id,p.expires_us
+         FROM memory_statement_versions v JOIN memory_statement_evidence se ON se.version_id=v.version_id
+         JOIN evidence e ON e.id=se.evidence_id AND e.erased=0 JOIN observations o ON o.id=e.observation_id JOIN payloads p ON p.id=o.payload_id AND p.erased=0
+         WHERE v.erased=0 AND v.known_to_revision IS NULL AND v.status IN ('candidate','disputed')
+       ) GROUP BY kind,id,scope_id HAVING deadline>? AND deadline<=? ORDER BY deadline,id LIMIT 200`, atUs, cutoff,
+    );
+    if (!candidates.length) return { protected: 0, blocked: 0 };
+    let protectedCount = 0, blocked = 0;
+    this.tx(() => {
+      this.batchTransaction = true;
+      try {
+        for (const candidate of candidates) {
+          try {
+            const result: Row = this.preserveRetention({ scope_id: candidate.scope_id, target_kind: candidate.kind, target_id: candidate.id, reason: "review_grace" });
+            if (!result.existing) protectedCount++;
+          } catch (error: any) {
+            if (["LIMIT_EXCEEDED", "POLICY_DENIED", "SOURCE_CHANGED"].includes(error?.code)) blocked++;
+            else throw error;
+          }
+        }
+      } finally { this.batchTransaction = false; }
+    });
+    return { protected: protectedCount, blocked };
+  }
+  /**
+   * Whether the shared retention planner (retention.ts) ends storage of this live record at `atUs`.
+   * Expiry asks it instead of repeating its rules. A record already gone, or one the ID no longer
+   * resolves to (a later version answers for it), is not this sweep's to remove.
+   */
+  storageEnded(scope: string, id: string, kind: RetentionTargetKind, atUs: number) {
+    let target: RetentionTarget;
+    try { target = this.retentionTarget(scope, id, kind); }
+    catch (error: any) { if (error?.code === "NOT_FOUND") return false; throw error; }
+    return !target.erased && target.id === id && !this.retentionDecision(target, atUs).storageAllowed;
+  }
+  /**
+   * Walks one expiry query in deadline order and acts on at most `limit` rows that `due` accepts. A
+   * row it declines is stepped over by key, so a record kept past its own deadline cannot hold up the
+   * records behind it; a sweep reads at most four times `limit` rows. The query names its order
+   * columns `deadline` and `id`.
+   */
+  sweep(query: string, args: unknown[], limit: number, due: (row: Row) => boolean, act: (row: Row) => void) {
+    let deadline = Number.MIN_SAFE_INTEGER, id = "", scanned = 0, acted = 0;
+    while (acted < limit && scanned < limit * 4) {
+      const rows = this.all(`SELECT * FROM (${query}) WHERE deadline>? OR (deadline=? AND id>?) ORDER BY deadline,id LIMIT ?`, ...args, deadline, deadline, id, limit);
+      for (const row of rows) {
+        if (acted >= limit || scanned >= limit * 4) break;
+        this.checkpoint();
+        scanned++;
+        deadline = row.deadline;
+        id = row.id;
+        if (!due(row)) continue;
+        act(row);
+        acted++;
+      }
+      if (rows.length < limit) break;
     }
-    return { expired: count };
+    return acted;
+  }
+  /**
+   * Removes what retention no longer allows. The planner decides for each passage, assertion and
+   * statement; each query only narrows the scan to records past their own deadline that no active hold
+   * names, which the planner would keep anyway, so a protected backlog is never read again each tick.
+   * A superseded version is history rather than a retained record: it goes at its own deadline.
+   */
+  expire() {
+    const atUs = now(), grace = this.installAtRiskGrace(atUs);
+    let count = this.expireDetachedEvidence(atUs);
+    // Only live raw payloads qualify: a retained witness keeps its observation live after its payload
+    // is erased, and must not be selected again.
+    count += this.sweep(
+      `SELECT o.scope_id,o.id,p.expires_us AS deadline FROM observations o JOIN payloads p ON p.id=o.payload_id
+       WHERE o.erased=0 AND p.erased=0 AND p.expires_us IS NOT NULL AND p.expires_us<=?
+         AND NOT EXISTS (SELECT 1 FROM retention_holds h WHERE h.target_kind='observation' AND h.target_id=o.id
+           AND h.released_revision IS NULL AND (h.expires_at_us IS NULL OR h.expires_at_us>?))`,
+      [atUs, atUs], 50,
+      (row) => this.storageEnded(row.scope_id, row.id, "observation", atUs),
+      (row) => {
+        const retained=this.retainedEvidenceIds(row.id,atUs);
+        if(retained.length){
+          // The exact supporting quotations have their own evidence retention.
+          // Expire every full-turn copy, including its FTS/vector document, in a journaled deletion.
+          const roots=[this.one('SELECT payload_id FROM observations WHERE id=?',row.id).payload_id,
+            ...this.all("SELECT id FROM artifacts WHERE record_id=? AND kind='conversation'",row.id).map(a=>a.id),
+            ...this.all('SELECT id FROM evidence WHERE observation_id=? AND erased=0',row.id).filter(e=>!retained.includes(e.id)).map(e=>e.id)];
+          const intent={id:uuid(),scope_id:row.scope_id,epoch:this.epoch('erasure')+1,selector:{kind:'raw_expiration',id:row.id},targets:this.descendants(roots)};
+          this.appendRegistry(intent);this.suppress(intent,'expiration');
+          return;
+        }
+        this.forget({ scope_id: row.scope_id, id: row.id }, "expiration");
+      },
+    );
+    for (const [kind, table, selector] of [["assertion", "assertion_versions", "candidate_expiration"], ["statement", "memory_statement_versions", "statement_expiration"]] as const)
+      count += this.sweep(
+        `SELECT version_id AS id,scope_id,known_to_revision,expires_at_us AS deadline FROM ${table} v
+         WHERE erased=0 AND expires_at_us IS NOT NULL AND expires_at_us<=? AND
+           (known_to_revision IS NOT NULL OR NOT EXISTS (SELECT 1 FROM retention_holds h WHERE h.target_kind='${kind}' AND h.target_id=v.logical_id
+             AND h.released_revision IS NULL AND (h.expires_at_us IS NULL OR h.expires_at_us>?)))`,
+        [atUs, atUs], 100,
+        (row) => row.known_to_revision !== null || this.storageEnded(row.scope_id, row.id, kind, atUs),
+        (row) => {
+          const intent={id:uuid(),scope_id:row.scope_id,epoch:this.epoch('erasure')+1,selector:{kind:selector,id:row.id},targets:this.descendants([row.id])};
+          this.appendRegistry(intent);this.suppress(intent,'expiration');
+        },
+      );
+    return { expired: count, grace };
   }
   /**
    * Removes what erasure leaves behind once nothing can need it: erased assertion versions, invalidated
@@ -3941,6 +4894,7 @@ export class Canonical {
       if(payload.size>8*1024*1024||payload.largest>256*1024)fail('LIMIT_EXCEEDED','This memory graph exceeds the mobile payload quota; use desktop maintenance.');
       return this.call(method.slice('mobile_'.length),p);
     }
+    if(method.startsWith("curation_"))return this.curation.call(method,p);
     switch (method) {
       case "scope":
         return this.registerScope(p);
@@ -3966,6 +4920,27 @@ export class Canonical {
         return this.unpin(p);
       case "pins":
         return this.pins(p);
+      case "retention_forecast":
+        return this.retentionForecast(p);
+      case "retention_preview":
+        return this.retentionPreview(p);
+      case "retention_protect":
+        return this.retentionProtect(p);
+      case "retention_release":
+        return this.releaseRetention(p);
+      case "retention_policy_preview":
+        return this.retentionPolicyPreview(p);
+      case "retention_policy_apply":
+        return this.retentionPolicyApply(p);
+      case "retention_policy_status": {
+        this.scope(p.scope_id);
+        const change=this.one(`SELECT id AS change_id,changed_records AS changed,completed_revision IS NOT NULL AS complete,
+          EXISTS(SELECT 1 FROM retention_deadline_changes d WHERE d.change_id=c.id AND d.undone_revision IS NOT NULL) AS undoing
+          FROM retention_policy_changes c WHERE scope_id=? AND undone_revision IS NULL ORDER BY created_revision DESC LIMIT 1`,p.scope_id);
+        return {change:change.change_id?change:null};
+      }
+      case "retention_policy_undo":
+        return this.retentionPolicyUndo(p);
       case "timeline":
         return this.timeline(p);
       case "neighborhood":

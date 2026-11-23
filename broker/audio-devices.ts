@@ -4,7 +4,7 @@
  * PipeWire node, "alsa:<PCM>" for an ALSA device; an empty choice is the system default. A chosen
  * device that is missing fails visibly before any recorder or player starts: PipeWire would otherwise
  * quietly fall back to the default device. Speech Dispatcher cannot be pointed at a device, so speech
- * uses Cere's own player while a speaker is chosen.
+ * uses PAL's own player while a speaker is chosen.
  */
 import { execFile } from 'node:child_process';
 
@@ -14,7 +14,7 @@ export type AudioRunner = (command: string, args: string[]) => Promise<string>;
 const execRun: AudioRunner = (command, args) => new Promise((resolve, reject) =>
   execFile(command, args, { timeout: 5000, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => error ? reject(error) : resolve(String(stdout))));
 
-/** A device ID Cere accepts: no characters that could reach a shell or break an ALSA argument. */
+/** A device ID PAL accepts: no characters that could reach a shell or break an ALSA argument. */
 export const deviceId = (value: unknown): string => {
   if (value === '' || value === undefined) return '';
   if (typeof value !== 'string' || !/^(pw:[A-Za-z0-9_.:@+-]{1,200}|alsa:[A-Za-z0-9_.:=,@+-]{1,200})$/.test(value)) throw new Error('Choose an audio device from the list');

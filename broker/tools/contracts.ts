@@ -5,11 +5,13 @@
  * model choose a root, a destination, an approval or an artifact path: artifact references are
  * broker-issued IDs that are resolved, and authorized, on every use.
  */
+import { ownerControlled } from '../authority.ts';
 import type { Session } from '../types.ts';
 
 /** New tool families of the Workbench expansion. The older families (desktop, delegation, web, memory, notes, extensions) keep their own rules. */
-export type WorkbenchFamily = 'files' | 'images' | 'analysis';
-export const workbenchFamilies: WorkbenchFamily[] = ['files', 'images', 'analysis'];
+/** `host`: commands run as the desktop account, not isolated (PAL Everywhere §7.5); opt-in per conversation like the others. */
+export type WorkbenchFamily = 'files' | 'images' | 'analysis' | 'host';
+export const workbenchFamilies: WorkbenchFamily[] = ['files', 'images', 'analysis', 'host'];
 export type SessionCapabilities = Partial<Record<WorkbenchFamily, boolean>>;
 
 /** A reference to one immutable artifact version, as handed to the renderer and the model. */
@@ -33,7 +35,7 @@ export type ToolResultV1 = {
   error?: { code: string; message: string; retry: 'never' | 'explicit' | 'safe-read' };
 };
 /** Marks a tool result with its source's processing restrictions; never serialized, read by the managed loop. */
-export const sourcePolicy = Symbol.for('cere.sourcePolicy');
+export const sourcePolicy = Symbol.for('pal.sourcePolicy');
 export function isToolResult(value: unknown): value is ToolResultV1 {
   return !!value && typeof value === 'object' && (value as any).schema === 1 && typeof (value as any).status === 'string' && typeof (value as any).summary === 'string';
 }
@@ -42,7 +44,7 @@ export const failed = (code: string, message: string, retry: 'never' | 'explicit
 export const declined = (summary: string, data?: Record<string, unknown>): ToolResultV1 => ({ schema: 1, status: 'declined', summary, ...(data ? { data } : {}) });
 
 /**
- * One capability fact with its evidence. `declared` is a user's or configuration's statement Cere did
+ * One capability fact with its evidence. `declared` is a user's or configuration's statement PAL did
  * not verify; `unknown` is never treated as supported.
  */
 export type CapabilityState = 'supported' | 'unsupported' | 'declared' | 'unknown';
@@ -78,10 +80,14 @@ export function strictest(...policies: DestinationPolicy[]): DestinationPolicy {
 export const routeLabels: Record<ProcessingRoute, string> = { local: 'this computer', remote: 'your own server', cloud: 'a cloud service', unknown: 'an unverified destination' };
 
 /** The Workbench families this session has selected. Absent means off: an upgrade never adds a family. */
-export function sessionCapabilities(session: Pick<Session, 'capabilities' | 'temporary' | 'remote' | 'provider'>): Record<WorkbenchFamily, boolean> {
+export function sessionCapabilities(session: Pick<Session, 'capabilities' | 'temporary' | 'remote' | 'provider'>): Record<Exclude<WorkbenchFamily, 'host'>, boolean> & { host?: true } {
   const managed = session.provider === 'ollama' || ['openai', 'anthropic', 'google', 'compatible'].includes(session.provider);
-  const allowed = managed && !session.temporary && !session.remote;
-  return { files: allowed && session.capabilities?.files === true, images: allowed && session.capabilities?.images === true, analysis: allowed && session.capabilities?.analysis === true };
+  // Desktop-equivalent controllers (the desktop, an owner phone) keep the selection; a limited phone pauses it.
+  const allowed = managed && !session.temporary && ownerControlled(session);
+  // `host` appears only when on, so a conversation that never opted in keeps the capability shape (and schedule
+  // envelope) it had before host commands existed.
+  return { files: allowed && session.capabilities?.files === true, images: allowed && session.capabilities?.images === true, analysis: allowed && session.capabilities?.analysis === true,
+    ...(allowed && session.capabilities?.host === true ? { host: true } : {}) };
 }
 /** Validates a capability selection from a client; unknown keys and non-booleans are refused. */
 export function validCapabilities(value: unknown): SessionCapabilities {

@@ -30,7 +30,7 @@ export function registerAnalysisTools(workbench: Workbench) {
   };
   registry.register({
     name: 'codelab_run', family: 'analysis', core: true, effects: { execute: true },
-    description: 'Run Python 3 in Cere’s isolated Code Lab: no network, no access to the user’s files except the artifact versions you pass as inputs (read-only at /work/input/<name>). Write results to /work/output; they become artifacts. numpy, matplotlib and Pillow are available. The user reviews the code first unless they allowed Code Lab runs for a while.',
+    description: 'Run Python 3 in PAL’s isolated Code Lab: no network, no access to the user’s files except the artifact versions you pass as inputs (read-only at /work/input/<name>). Write results to /work/output; they become artifacts. numpy, matplotlib and Pillow are available. The user reviews the code first unless they allowed Code Lab runs for a while.',
     input: z.strictObject({ code: z.string().min(1).max(64 * 1024), inputs: z.array(z.strictObject({ artifactId: id, versionId: id })).max(8).optional(), purpose: z.string().min(1).max(300) }),
     available: analysis,
     run: guard(async ({ sessionId, signal, turnId }, args) => {
@@ -64,6 +64,27 @@ export function registerAnalysisTools(workbench: Workbench) {
       return runResult(await lab().command(sessionId, root, { argv: args.argv, cwd, network: args.network, timeoutSeconds: args.timeoutSeconds, origin: 'model', turnId, signal }));
     }),
   });
+  // Host commands (PAL Everywhere §7.5): the desktop account, not the sandbox. Offered only when the conversation
+  // turned on Host commands; each run is a CLI permission request, so the working profile, power sessions and the
+  // automatic-approval switch decide exactly as they do for Codex or Claude commands.
+  registry.register({
+    name: 'host_run', family: 'host', core: true, effects: { execute: true, write: true },
+    description: 'Run a shell command (Bash by default) on the user’s computer as their desktop account, in a workspace folder of this conversation. Not isolated: it can read and change anything that account can, use the network and installed tools. Use it for builds, tests, git and system commands the user asked for. Output is bounded (256 KiB per stream); give a time limit for long work. The user may review each command before it runs.',
+    input: z.strictObject({ command: z.string().min(1).max(64 * 1024), shell: z.enum(['bash', 'sh', 'fish', 'zsh']).optional(), rootId: id.optional(), cwd: z.string().max(4096).optional(), timeoutSeconds: z.int().min(5).max(1800).optional(), purpose: z.string().min(1).max(300) }),
+    available: session => workbench.families(session).has('host') ? (workbench.roots.list(session.id).length ? '' : 'Choose a workspace folder for this conversation first') : 'Host commands are not turned on for this conversation',
+    run: guard(async ({ sessionId, signal, turnId }, args) => {
+      const root = args.rootId ? workbench.roots.get(sessionId, args.rootId) : workbench.roots.primary(sessionId) || workbench.roots.list(sessionId)[0];
+      if (!root) return failed('no_root', 'No workspace folder is chosen', 'never');
+      if (!routeAllowed((await workbench.route(sessionId, signal)).route, root.policy.destinations)) return failed('destination', `${root.name}’s contents may not be sent to this conversation’s model, so its command output cannot be either`, 'never');
+      const cwd = args.cwd ? normalizePath(args.cwd, root.path) : '', shell = args.shell || 'bash';
+      const answer = await workbench.core.approval(sessionId, { kind: 'cli', title: `Run on this computer: ${args.command.replace(/\s+/g, ' ').slice(0, 80)}?`,
+        detail: [`Purpose: ${args.purpose}`, `Shell: ${shell} (your desktop account, not isolated)`, `Folder: ${root.path}${cwd ? '/' + cwd : ''}`, `Time limit: ${args.timeoutSeconds || 300} s`, '', args.command.slice(0, 8000) + (args.command.length > 8000 ? '\n…' : '')].join('\n'),
+        choices: ['allow', 'deny'], fields: { reviewComplete: args.command.length <= 8000, root: root.id } });
+      if (answer.choice !== 'allow') return declined(answer.cancelled ? 'Stopped before the command ran.' : 'The user declined this command. Do not run it again without a new request.');
+      if (answer.automatic && !workbench.core.automaticallyApprove(sessionId, { kind: 'cli', choices: ['allow'] })) return declined('Automatic approval ended before the command ran.');
+      return runResult(await lab().hostCommand(sessionId, root, { program: { kind: 'shell', shell, command: args.command }, cwd, timeoutSeconds: args.timeoutSeconds, origin: 'model', turnId, signal }));
+    }),
+  });
   const gitTool = (name: string, description: string, input: z.ZodObject<any>, argv: (args: any) => string[]) => registry.register({
     name, family: 'files', effects: { read: true }, description, input,
     available: session => workbench.filesAvailable(session, 'read'),
@@ -72,7 +93,7 @@ export function registerAnalysisTools(workbench: Workbench) {
       if (!root) return failed('no_root', 'No workspace folder is chosen', 'never');
       if (!routeAllowed((await workbench.route(sessionId, signal)).route, root.policy.destinations)) return failed('destination', `${root.name}’s contents may not be sent to this conversation’s model`, 'never');
       const value = await lab().git(root, argv(args), signal);
-      if (!workbench.spendEvidence(sessionId, turnId, Buffer.byteLength(value.output))) return failed('evidence-budget', 'This turn already received the most file content Cere releases in one turn', 'never');
+      if (!workbench.spendEvidence(sessionId, turnId, Buffer.byteLength(value.output))) return failed('evidence-budget', 'This turn already received the most file content PAL releases in one turn', 'never');
       return workbench.restricted(completed(`${name.replace('_', ' ')} for ${root.name}${value.truncated ? ' (output cut at 64 KiB)' : ''}.`, { rootId: root.id, output: value.output, ...(value.truncated ? { truncated: true } : {}) }), root.policy.destinations);
     }),
   });

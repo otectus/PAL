@@ -10,9 +10,12 @@ CDialog {
     property var preview:({})
     property int request:-1
     property string operation:""
+    property bool failed: false
+    readonly property bool online: App.connected
+    onOnlineChanged: if (online && opened && request < 0) call("health.inspect")
     property string feedback:""
-    readonly property bool compactForm:width<440
-    function call(method,params){if(request>=0)return;operation=method;request=App.rpc(method,params||{});feedback=""}
+    readonly property bool compactForm:width<Theme.formBreakpoint
+    function call(method,params){if(!online||request>=0)return;failed=false;operation=method;request=App.rpc(method,params||{});feedback=""}
     onOpened:call("health.inspect")
 
     CText { text:health.accessibleTitle;font.pixelSize:Theme.title;font.weight:Font.DemiBold;Accessible.role:Accessible.Heading }
@@ -21,8 +24,14 @@ CDialog {
         font.pixelSize:Theme.secondary;color:Theme.muted;wrapMode:Text.Wrap
     }
     CText {
+        visible: !health.online || (health.request >= 0 && health.operation === "health.inspect")
+        text: health.online ? qsTr("Checking providers and local services…") : qsTr("Reconnecting. Checks will resume when the broker responds.")
+        color: health.online ? Theme.muted : Theme.amber
+        Accessible.role: Accessible.StaticText
+    }
+    CText {
         objectName:"healthPreviousShutdown";visible:health.report.previousShutdown?.confirmed===false;color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true
-        text:"The last time Cere stopped, it could not confirm that everything it was running had finished: "+(health.report.previousShutdown?.problems||[]).join(" ")
+        text:"The last time PAL stopped, it could not confirm that everything it was running had finished: "+(health.report.previousShutdown?.problems||[]).join(" ")
     }
     CText {
         objectName:"healthMissingDependencies";visible:(health.report.dependencies||[]).some(d=>!d.available);color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true
@@ -45,7 +54,7 @@ CDialog {
                         id:providerCard;x:Theme.space2;y:Theme.space2;width:parent.width-Theme.space4;spacing:Theme.space1
                         CText { Layout.fillWidth:true;text:providerTile.modelData.id+" · "+(providerTile.modelData.problem||providerTile.modelData.modelsStatus);color:providerTile.modelData.problem?Theme.amber:Theme.text;font.weight:Font.DemiBold;wrapMode:Text.Wrap }
                         CText { Layout.fillWidth:true;text:"Account: "+providerTile.modelData.authentication;font.pixelSize:Theme.caption;color:Theme.muted;wrapMode:Text.Wrap }
-                        CButton { Layout.fillWidth:true;text:"Refresh "+providerTile.modelData.id;enabled:health.request<0;onClicked:health.call("provider.models",{provider:providerTile.modelData.id}) }
+                        CButton { Layout.fillWidth:true;text:"Refresh "+providerTile.modelData.id;enabled:health.online&&health.request<0;onClicked:health.call("provider.models",{provider:providerTile.modelData.id}) }
                     }
                 }
             }
@@ -62,13 +71,13 @@ CDialog {
             readonly property var newest:(health.report.memory?.backups||[])[0]||({})
             text:"Pre-migration backup from "+new Date((newest.created_us||0)/1000).toLocaleDateString()+(newest.from?" (memory schema "+newest.from+" to "+newest.to+")":"")+". It is deleted after 14 days, or when memory is cleared."
         }
-        CButton { objectName:"checkMemoryConnection";Layout.fillWidth:true;text:"Check memory connection";enabled:health.request<0;onClicked:health.call("memory.check") }
-        Rectangle { Layout.fillWidth:true;implicitHeight:1;color:Theme.line }
+        CButton { objectName:"checkMemoryConnection";Layout.fillWidth:true;text:"Check memory connection";enabled:health.online&&health.request<0;onClicked:health.call("memory.check") }
+        Rectangle { Layout.fillWidth:true;implicitHeight:Theme.hairline;color:Theme.line }
         CText { text:"Speech · "+(health.report.speech?.state||"unknown");font.weight:Font.DemiBold }
         GridLayout {
             Layout.fillWidth:true;columns:health.compactForm?1:2;columnSpacing:Theme.space2;rowSpacing:Theme.space2
-            CButton { Layout.fillWidth:true;text:"Test voice";enabled:health.request<0;onClicked:health.call("tts.test") }
-            CButton { Layout.fillWidth:true;text:"Stop voice";enabled:health.request<0;onClicked:health.call("tts.stop") }
+            CButton { Layout.fillWidth:true;text:"Test voice";enabled:health.online&&health.request<0;onClicked:health.call("tts.test") }
+            CButton { Layout.fillWidth:true;text:"Stop voice";enabled:health.online&&health.request<0;onClicked:health.call("tts.stop") }
         }
     }
 
@@ -94,8 +103,8 @@ CDialog {
         }
         GridLayout {
             visible:responsivenessSection.spans.enabled===true;Layout.fillWidth:true;columns:health.compactForm?1:2;columnSpacing:Theme.space2;rowSpacing:Theme.space2
-            CButton { Layout.fillWidth:true;text:"Refresh measurements";enabled:health.request<0;onClicked:health.call("health.inspect") }
-            CButton { Layout.fillWidth:true;text:"Clear measurements";enabled:health.request<0;onClicked:health.call("diagnostics.clearSpans") }
+            CButton { Layout.fillWidth:true;text:"Refresh measurements";enabled:health.online&&health.request<0;onClicked:health.call("health.inspect") }
+            CButton { Layout.fillWidth:true;text:"Clear measurements";enabled:health.online&&health.request<0;onClicked:health.call("diagnostics.clearSpans") }
         }
     }
     Timer { id:spansTimer;interval:1500;onTriggered:health.call("health.inspect") }
@@ -103,19 +112,19 @@ CDialog {
     CSection {
         title:"Diagnostics export"
         description:"Preview the redacted report first. Saving exports only that reviewed version."
-        CButton { objectName:"previewDiagnostics";text:"Preview redacted diagnostics";Layout.fillWidth:true;enabled:health.request<0;onClicked:health.call("diagnostics.preview") }
-        CTextArea { objectName:"diagnosticsPreview";visible:!!health.preview.text;text:health.preview.text||"";readOnly:true;selectByMouse:true;wrapMode:TextEdit.Wrap;color:Theme.text;Layout.fillWidth:true;Layout.preferredHeight:200 }
-        CButton { objectName:"saveDiagnostics";visible:!!health.preview.id;text:"Save this reviewed export";primary:true;prominent:true;Layout.fillWidth:true;enabled:health.request<0;onClicked:health.call("diagnostics.export",{id:health.preview.id,digest:health.preview.digest}) }
+        CButton { objectName:"previewDiagnostics";text:"Preview redacted diagnostics";Layout.fillWidth:true;enabled:health.online&&health.request<0;onClicked:health.call("diagnostics.preview") }
+        CTextArea { objectName:"diagnosticsPreview";visible:!!health.preview.text;text:health.preview.text||"";readOnly:true;selectByMouse:true;wrapMode:TextEdit.Wrap;color:Theme.text;Layout.fillWidth:true;Layout.preferredHeight:Theme.editorTall }
+        CButton { objectName:"saveDiagnostics";visible:!!health.preview.id;text:"Save this reviewed export";primary:true;prominent:true;Layout.fillWidth:true;enabled:health.online&&health.request<0;onClicked:health.call("diagnostics.export",{id:health.preview.id,digest:health.preview.digest}) }
     }
 
-    CText { visible:!!health.feedback;text:health.feedback;color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
+    CText { visible:!!health.feedback;text:health.feedback;color:health.failed?Theme.danger:Theme.success;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Accessible.role:Accessible.AlertMessage }
     footerContent:Component { CButton { Layout.fillWidth:true;text:"Close";onClicked:health.close() } }
     Connections {
         target:App
         function onResult(id,value){
             if(id!==health.request)return
             health.request=-1
-            if(value?.error){health.feedback=String(value.error.message||value.error);return}
+            if(value?.error){health.failed=true;health.feedback=String(value.error.message||value.error);return}
             if(health.operation==="health.inspect")health.report=value
             else if(health.operation==="diagnostics.preview")health.preview=value
             else if(health.operation==="diagnostics.export"){health.feedback="Saved to "+value.path;health.preview={}}

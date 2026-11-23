@@ -86,7 +86,7 @@ test('EV-01 results never overwrite the preserved runs, and the command refuses 
   assert.throws(() => resultsFile('::'), /Name the extraction model/);
   const run = (env: Record<string, string>, args: string[]) => spawnSync(process.execPath, ['benchmarks/memory/evaluate-extraction.ts', ...args], { env: { PATH: process.env.PATH!, HOME: process.env.HOME!, ...env }, encoding: 'utf8' });
   const unflagged = run({}, ['--model', 'glm-5.3-flash:cloud', '--approve', 'glm-5.3-flash:cloud']);
-  assert.notEqual(unflagged.status, 0); assert.match(unflagged.stderr, /Set CERE_ALLOW_CLOUD_EVAL=1/);
-  const unapproved = run({ CERE_ALLOW_CLOUD_EVAL: '1' }, ['--model', 'glm-5.3-flash:cloud']);
+  assert.notEqual(unflagged.status, 0); assert.match(unflagged.stderr, /Set PAL_ALLOW_CLOUD_EVAL=1/);
+  const unapproved = run({ PAL_ALLOW_CLOUD_EVAL: '1' }, ['--model', 'glm-5.3-flash:cloud']);
   assert.notEqual(unapproved.status, 0); assert.match(unapproved.stderr, /--approve glm-5\.3-flash:cloud/);
 });

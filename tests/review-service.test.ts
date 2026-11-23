@@ -32,7 +32,7 @@ function chat(res: ServerResponse, content: string, calls?: any[]) {
 
 /** A loopback Ollama with switchable model metadata; records every chat and embed body. */
 async function ollama(t: any) {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-review-service-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-review-service-'));
   const f = {
     directory, host: '', chats: [] as any[], embeds: [] as any[],
     models: [
@@ -216,7 +216,7 @@ test('F-030 vector purge needs only Qdrant, never the embedding model', async t 
   });
   await new Promise<void>(resolve => qdrant.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise<void>(r => { qdrant.closeAllConnections(); qdrant.close(() => r()); }));
-  const env = { CERE_QDRANT_URL: 'http://127.0.0.1:' + (qdrant.address() as any).port, CERE_QDRANT_API_KEY: 'secret' };
+  const env = { PAL_QDRANT_URL: 'http://127.0.0.1:' + (qdrant.address() as any).port, PAL_QDRANT_API_KEY: 'secret' };
   for (const [key, value] of Object.entries(env)) { const old = process.env[key]; process.env[key] = value; t.after(() => { if (old === undefined) delete process.env[key]; else process.env[key] = old; }); }
   const service = (vectors = new Map()) => Object.assign(Object.create(MemoryService.prototype) as MemoryService, {
     vectors, controller: new AbortController(), configuration: { host: 'http://127.0.0.1:9' },
@@ -226,7 +226,7 @@ test('F-030 vector purge needs only Qdrant, never the embedding model', async t 
   await service().project('vector');
   assert.deepEqual(deleted, ['forgotten']);
   assert.deepEqual(finished.at(-1), { id: 'job' });
-  process.env.CERE_QDRANT_URL = 'http://127.0.0.1:9';
+  process.env.PAL_QDRANT_URL = 'http://127.0.0.1:9';
   await service().project('vector');
   assert.equal(finished.at(-1).error, 'BACKEND_UNAVAILABLE', 'an unreachable Qdrant leaves the purge pending');
 });
@@ -246,7 +246,7 @@ test('F-032 a cold Qdrant collection cannot outlive the retrieval deadline', asy
 });
 
 test('F-031 Hyprland snapshots refresh workspace and class for a surviving window', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-hypr-')); t.after(() => rm(directory, { recursive: true, force: true }));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-hypr-')); t.after(() => rm(directory, { recursive: true, force: true }));
   const state = join(directory, 'state.json'), hyprctl = join(directory, 'hyprctl');
   await writeFile(hyprctl, `#!${process.execPath}\nconst s=JSON.parse(require('fs').readFileSync(${JSON.stringify(state)}));console.log(JSON.stringify(process.argv.includes('clients')?s.clients:{address:'0xabc'}));\n`, { mode: 0o755 });
   const set = (workspace: number, cls: string, address = '0xabc') => writeFile(state, JSON.stringify({ clients: [{ address, class: cls, title: 'secret', workspace: { id: workspace } }] }));
@@ -278,11 +278,11 @@ test('F-033 titles are captured only with capture enabled and an allowlisted cla
 });
 
 test('F-014 revocation removes live metadata, fences late callbacks and honors canonical enablement', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-collectors-')), approved = join(directory, 'approved');
+  const directory = await mkdtemp(join(tmpdir(), 'pal-collectors-')), approved = join(directory, 'approved');
   await mkdir(approved);
-  const runtime = process.env.CERE_RUNTIME_DIR; process.env.CERE_RUNTIME_DIR = join(directory, 'runtime');
+  const runtime = process.env.PAL_RUNTIME_DIR; process.env.PAL_RUNTIME_DIR = join(directory, 'runtime');
   const service = new MemoryService(directory);
-  t.after(async () => { if (runtime === undefined) delete process.env.CERE_RUNTIME_DIR; else process.env.CERE_RUNTIME_DIR = runtime; await service.close(); await rm(directory, { recursive: true, force: true }); });
+  t.after(async () => { if (runtime === undefined) delete process.env.PAL_RUNTIME_DIR; else process.env.PAL_RUNTIME_DIR = runtime; await service.close(); await rm(directory, { recursive: true, force: true }); });
   await service.canonical.call('policy_update', { policy: { filesystem_enabled: true, approved_roots: [approved] } });
   await service.configure({ enabled: true, paused: false, host: 'http://127.0.0.1:9', embedding_model: 'nomic-embed-text', extraction_model: '', allow_cloud_extraction: false, allow_cloud_memory: false });
   const real = await realpath(approved), factory = new LiveObservationFactory('filesystem');
@@ -301,7 +301,7 @@ test('F-014 revocation removes live metadata, fences late callbacks and honors c
 });
 
 test('F-015 nested and linked-worktree CWDs resolve their real checkout', async t => {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'cere-git-'))); t.after(() => rm(directory, { recursive: true, force: true }));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'pal-git-'))); t.after(() => rm(directory, { recursive: true, force: true }));
   const repo = join(directory, 'repo'), nested = join(repo, 'a', 'b'), linked = join(directory, 'linked');
   await mkdir(nested, { recursive: true });
   await run('git', ['init', '--quiet', repo]);
@@ -325,7 +325,7 @@ test('F-015 nested and linked-worktree CWDs resolve their real checkout', async 
 });
 
 test('F-035 a dead worker rejects current and future calls promptly and still closes', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-worker-')); t.after(() => rm(directory, { recursive: true, force: true }));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-worker-')); t.after(() => rm(directory, { recursive: true, force: true }));
   const memory = new GraphMemory(directory);
   await memory.ready;
   const pending = memory.call('health');

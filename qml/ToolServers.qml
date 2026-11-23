@@ -5,7 +5,7 @@ import QtQuick.Layouts
 // desktop, every call asks first unless the user allowed that tool, and a server's own hints grant nothing.
 ColumnLayout {
     id:servers
-    Layout.fillWidth:true;spacing:10
+    Layout.fillWidth:true;spacing:Theme.space2
     // Rows are rebuilt only when their content changes, not on every state snapshot, so a click or a
     // half-typed secret is never lost to an unrelated update.
     readonly property string configsKey:JSON.stringify(App.state.settings?.extensions||[])
@@ -13,7 +13,7 @@ ColumnLayout {
     property var configs:JSON.parse(configsKey)
     property var statuses:JSON.parse(statusesKey)
     onConfigsKeyChanged:configs=JSON.parse(configsKey)
-    onStatusesKeyChanged:statuses=JSON.parse(statusesKey)
+    onStatusesKeyChanged:{statuses=JSON.parse(statusesKey);loadWrites()}
     property int request:-1
     property string error:""
     property string feedback:""
@@ -22,7 +22,10 @@ ColumnLayout {
     function save(list,done){error="";feedback=done||"";request=App.rpc("settings.update",{extensions:list})}
     function replace(id,patch){save(configs.map(item=>item.id===id?Object.assign({},item,patch):item))}
     function lines(text){return String(text||"").split("\n").map(item=>item.trim()).filter(item=>item.length>0)}
-    CText { text:"Programs or HTTP addresses that offer tools, resources and prompts over the Model Context Protocol. Cere starts a program, or connects to an address, when a conversation with desktop tools turned on needs it, and gives it only the secrets you set here. Codex and Claude Code keep their own MCP settings.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    property var unknownWrites:[]
+    function loadWrites(){serverRpc.call("extensions.writes",{},value=>{if(!value.error)unknownWrites=(value||[]).filter(row=>row.state==="unknown")})}
+    Component.onCompleted:loadWrites()
+    CText { text:"Programs or HTTP addresses that offer tools, resources and prompts over the Model Context Protocol. PAL starts a program, or connects to an address, when a conversation with desktop tools turned on needs it, and gives it only the secrets you set here. Codex and Claude Code keep their own MCP settings.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     Repeater {
         model:servers.configs
         Rectangle {
@@ -30,9 +33,9 @@ ColumnLayout {
             required property var modelData
             required property int index
             readonly property var live:servers.status(modelData.id)
-            Layout.fillWidth:true;implicitHeight:cardColumn.implicitHeight+24;radius:Theme.radiusControl;color:Theme.raised;border.color:Theme.border
+            Layout.fillWidth:true;implicitHeight:cardColumn.implicitHeight+Theme.space5;radius:Theme.radiusControl;color:Theme.raised;border.color:Theme.border
             ColumnLayout {
-                id:cardColumn;anchors.fill:parent;anchors.margins:12;spacing:8
+                id:cardColumn;anchors.fill:parent;anchors.margins:Theme.space3;spacing:Theme.space2
                 RowLayout {
                     Layout.fillWidth:true
                     CText { objectName:"toolServerName_"+card.index;Layout.fillWidth:true;text:card.modelData.name;font.weight:Font.DemiBold;elide:Text.ElideRight }
@@ -53,7 +56,7 @@ ColumnLayout {
                     RowLayout {
                         required property var modelData
                         Layout.fillWidth:true
-                        CText { text:modelData.name+(modelData.set?" · set":" · not set");Layout.preferredWidth:180;font.pixelSize:Theme.secondary;color:modelData.set?Theme.text:Theme.amber }
+                        CText { text:modelData.name+(modelData.set?" · set":" · not set");Layout.preferredWidth:Theme.fieldWidth;font.pixelSize:Theme.secondary;color:modelData.set?Theme.text:Theme.amber }
                         CField { id:secretValue;Layout.fillWidth:true;echoMode:TextInput.Password;placeholderText:modelData.set?"Leave empty to keep":"Value";Accessible.description:"Secret value for "+modelData.name }
                         CButton { text:"Save";enabled:secretValue.text.length>0;onClicked:{servers.error="";App.rpc("extensions.secret",{id:card.modelData.id,name:modelData.name,value:secretValue.text});secretValue.clear()} }
                     }
@@ -64,7 +67,7 @@ ColumnLayout {
                     ColumnLayout {
                         required property var modelData
                         required property int index
-                        Layout.fillWidth:true;spacing:2
+                        Layout.fillWidth:true;spacing:Theme.space1
                         CCheckBox {
                             objectName:"toolServerAllow_"+card.index+"_"+modelData.name;enabled:modelData.usable&&servers.request<0
                             text:modelData.title+(modelData.usable?"":" · unusable: "+modelData.problem)
@@ -73,21 +76,25 @@ ColumnLayout {
                         }
                         // RC-13: a hidden tool is neither offered to models nor callable.
                         CCheckBox {
-                            objectName:"toolServerHide_"+card.index+"_"+modelData.name;enabled:servers.request<0;Layout.leftMargin:28
+                            objectName:"toolServerHide_"+card.index+"_"+modelData.name;enabled:servers.request<0;Layout.leftMargin:Theme.labelIndent
                             text:"Hide from models";checked:(card.modelData.hidden||[]).indexOf(modelData.name)>=0
                             onToggled:servers.replace(card.modelData.id,{hidden:checked?(card.modelData.hidden||[]).concat([modelData.name]):(card.modelData.hidden||[]).filter(name=>name!==modelData.name)})
                         }
                         CText {
-                            visible:!!modelData.description||modelData.readOnlyHint||modelData.destructiveHint;Layout.fillWidth:true;Layout.leftMargin:28;wrapMode:Text.Wrap;color:Theme.muted;font.pixelSize:Theme.caption
-                            text:modelData.description+(modelData.readOnlyHint?" The server says this tool only reads; Cere has not verified that.":"")+(modelData.destructiveHint?" The server says this tool can change or delete things.":"")
+                            visible:!!modelData.description||modelData.readOnlyHint||modelData.destructiveHint;Layout.fillWidth:true;Layout.leftMargin:Theme.labelIndent;wrapMode:Text.Wrap;color:Theme.muted;font.pixelSize:Theme.caption
+                            text:modelData.description+(modelData.readOnlyHint?" The server says this tool only reads; PAL has not verified that.":"")+(modelData.destructiveHint?" The server says this tool can change or delete things.":"")
                         }
                     }
                 }
                 Flow {
-                    Layout.fillWidth:true;spacing:8
+                    Layout.fillWidth:true;spacing:Theme.space2
                     CButton { objectName:"toolServerStart_"+card.index;text:card.live.state==="ready"?"Restart":"Start and list tools";enabled:card.modelData.enabled&&servers.request<0;onClicked:{servers.error="";servers.feedback="";servers.request=App.rpc("extensions.restart",{id:card.modelData.id})} }
                     CButton { objectName:"toolServerResources_"+card.index;visible:card.live.state==="ready"&&!!card.live.offers?.resources;text:"Resources…";onClicked:resourcesDialog.openFor(card.modelData) }
                     CButton { objectName:"toolServerPrompts_"+card.index;visible:card.live.state==="ready"&&!!card.live.offers?.prompts;text:"Prompts…";onClicked:promptsDialog.openFor(card.modelData) }
+                    // PAL Everywhere §14.1: OAuth sign-in for servers at an address; the browser returns to PAL on this computer.
+                    CButton { objectName:"toolServerSignIn_"+card.index;visible:card.modelData.transport==="http"&&!card.live.oauth?.signedIn;text:"Sign in…";enabled:card.modelData.enabled
+                        onClicked:{servers.error="";servers.feedback="";serverRpc.call("extensions.oauthStart",{id:card.modelData.id},value=>{if(value.error){servers.error=value.error;return}servers.feedback="Finish signing in to "+value.server+" in your browser. It returns to PAL on this computer.";Qt.openUrlExternally(value.authorizationUrl)})} }
+                    CButton { visible:card.modelData.transport==="http"&&!!card.live.oauth?.signedIn;text:"Sign out";quiet:true;onClicked:serverRpc.call("extensions.oauthSignOut",{id:card.modelData.id},value=>{if(value.error)servers.error=value.error;else servers.feedback="Signed out. Its tokens were removed from this computer."}) }
                     CButton { text:"Edit…";enabled:servers.request<0;onClicked:editor.openFor(card.modelData) }
                     CButton { text:"Remove";danger:true;enabled:servers.request<0;onClicked:servers.save(servers.configs.filter(item=>item.id!==card.modelData.id),"Removed the tool server and its secrets.") }
                 }
@@ -95,6 +102,31 @@ ColumnLayout {
         }
     }
     CButton { objectName:"addToolServer";text:"Add a tool server…";enabled:App.connected&&servers.configs.length<8;onClicked:editor.openFor(null) }
+    CButton { objectName:"importToolServers";text:"Import from another app…";enabled:App.connected&&servers.configs.length<8;onClicked:importDialog.openFresh() }
+    // §14.3: requests whose response was lost. PAL sends an identical one again only after someone checks the service.
+    ColumnLayout {
+        Layout.fillWidth:true;spacing:Theme.space1
+        visible:servers.unknownWrites.length>0
+        CText { text:"Changes to check";font.weight:Font.DemiBold }
+        CText { text:"These requests reached a service but their answer was lost, so PAL does not know whether they took effect. Check the service, then say what happened; until then PAL will not send the same request again.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        Repeater {
+            model:servers.unknownWrites
+            ColumnLayout {
+                required property var modelData
+                Layout.fillWidth:true;spacing:Theme.space1
+                CText { text:modelData.conversationTitle+" · "+modelData.server;Layout.fillWidth:true;font.weight:Font.DemiBold;wrapMode:Text.Wrap }
+                CText { text:"Intended change · "+(modelData.intent||modelData.tool);Layout.fillWidth:true;wrapMode:Text.Wrap }
+                CText { text:"Sent "+new Date(modelData.at).toISOString()+" · PAL request "+modelData.id+(modelData.result?" · service reference "+modelData.result:"");Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.muted;font.pixelSize:Theme.caption }
+                Flow { Layout.fillWidth:true;spacing:Theme.space2
+                    CButton { text:"It took effect · allow retry";quiet:true;help:"Confirms the service changed and permits a future matching request";onClicked:serverRpc.call("extensions.resolveWrite",{id:modelData.id,outcome:"done"},()=>servers.loadWrites()) }
+                    CButton { text:"It did not · allow retry";quiet:true;help:"Confirms the service did not change and permits a future matching request";onClicked:serverRpc.call("extensions.resolveWrite",{id:modelData.id,outcome:"not-done"},()=>servers.loadWrites()) }
+                    CButton { text:"Leave unresolved";quiet:true;help:"Keep blocking an identical request until you can check the service";onClicked:servers.feedback="Left "+modelData.server+" request "+modelData.id+" unresolved; PAL will keep blocking an identical request." }
+                    CButton { text:"Copy reference";quiet:true;onClicked:App.copy("PAL request "+modelData.id+" · "+modelData.server+" · "+new Date(modelData.at).toISOString()) }
+                }
+                Rectangle { Layout.fillWidth:true;implicitHeight:Theme.hairline;color:Theme.line }
+            }
+        }
+    }
     CText { objectName:"toolServersError";visible:!!servers.error;text:servers.error;color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CText { visible:!!servers.feedback;text:servers.feedback;color:Theme.accentText;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CDialog {
@@ -103,8 +135,8 @@ ColumnLayout {
         property bool http:transportBox.currentIndex===1
         function openFor(server){existing=server;transportBox.currentIndex=server?.transport==="http"?1:0;url.text=server?.url||"";networkBox.currentIndex=server?.network==="local"?1:0;bearer.checked=(server?.secrets||[]).indexOf("BEARER_TOKEN")>=0;name.text=server?.name||"";command.text=server?.command||"";args.text=(server?.args||[]).join("\n");cwd.text=server?.cwd||"";projects.text=(server?.projects||[]).join("\n");secrets.text=(server?.secrets||[]).join("\n");timeout.text=String(server?.timeoutSeconds||60);enabledBox.checked=server?server.enabled:false;open()}
         CText { text:editor.existing?"Edit tool server":"Add a tool server";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
-        CComboBox { id:transportBox;objectName:"toolServerFormTransport";Layout.fillWidth:true;model:["A program on this computer (stdio)","An HTTP address (Streamable HTTP)"];Accessible.name:"How Cere reaches the tool server" }
-        CText { text:editor.http?"Cere connects to the address only when needed. Its BEARER_TOKEN secret, if you add one, is sent to that address only, never to another site or across a redirect. Servers that need an OAuth sign-in are not supported yet.":"Cere runs the program directly, without a shell, in the working folder. It receives PATH, HOME, LANG and the secrets you name, nothing else from your environment.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        CComboBox { id:transportBox;objectName:"toolServerFormTransport";Layout.fillWidth:true;model:["A program on this computer (stdio)","An HTTP address (Streamable HTTP)"];Accessible.name:"How PAL reaches the tool server" }
+        CText { text:editor.http?"PAL connects to the address only when needed. Its BEARER_TOKEN secret, if you add one, is sent to that address only, never to another site or across a redirect. A server that needs an OAuth sign-in shows Sign in once it is saved; its tokens stay on this computer and are used only at this address.":"PAL runs the program directly, without a shell, in the working folder. It receives PATH, HOME, LANG and the secrets you name, nothing else from your environment.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
         CField { id:name;objectName:"toolServerFormName";Layout.fillWidth:true;placeholderText:"Name, such as GitHub";maximumLength:40;Accessible.name:"Tool server name" }
         CField { id:url;objectName:"toolServerFormUrl";visible:editor.http;Layout.fillWidth:true;placeholderText:"Address, such as https://example.com/mcp";Accessible.name:"Tool server address" }
         CComboBox { id:networkBox;objectName:"toolServerFormNetwork";visible:editor.http;Layout.fillWidth:true;model:["On the internet (HTTPS, public addresses only)","On this computer or my own network"];Accessible.name:"Where the server is" }
@@ -114,18 +146,18 @@ ColumnLayout {
             CField { id:command;objectName:"toolServerFormCommand";Layout.fillWidth:true;placeholderText:"Program, such as /usr/bin/node";Accessible.name:"Tool server program" }
             CButton { text:"Browse";onClicked:{const path=App.chooseFile();if(path)command.text=path} }
         }
-        CTextArea { id:args;objectName:"toolServerFormArgs";visible:!editor.http;Layout.fillWidth:true;Layout.preferredHeight:70;wrapMode:TextEdit.NoWrap;textFormat:TextEdit.PlainText;placeholderText:"Arguments, one per line";Accessible.name:"Tool server arguments" }
+        CTextArea { id:args;objectName:"toolServerFormArgs";visible:!editor.http;Layout.fillWidth:true;Layout.preferredHeight:Theme.editorShort;wrapMode:TextEdit.NoWrap;textFormat:TextEdit.PlainText;placeholderText:"Arguments, one per line";Accessible.name:"Tool server arguments" }
         RowLayout {
             Layout.fillWidth:true;visible:!editor.http
             CField { id:cwd;objectName:"toolServerFormCwd";Layout.fillWidth:true;placeholderText:"Working folder";Accessible.name:"Tool server working folder" }
             CButton { text:"Browse";onClicked:{const path=App.chooseFolder();if(path)cwd.text=path} }
         }
-        CTextArea { id:projects;objectName:"toolServerFormProjects";Layout.fillWidth:true;Layout.preferredHeight:56;wrapMode:TextEdit.NoWrap;textFormat:TextEdit.PlainText;placeholderText:"Only in these project folders, one per line (empty: every project)";Accessible.name:"Tool server project folders" }
-        CTextArea { id:secrets;objectName:"toolServerFormSecrets";visible:!editor.http;Layout.fillWidth:true;Layout.preferredHeight:56;wrapMode:TextEdit.NoWrap;textFormat:TextEdit.PlainText;placeholderText:"Secret variable names, one per line, such as GITHUB_TOKEN";Accessible.name:"Tool server secret variable names" }
+        CTextArea { id:projects;objectName:"toolServerFormProjects";Layout.fillWidth:true;Layout.preferredHeight:Theme.rowDetailHeight;wrapMode:TextEdit.NoWrap;textFormat:TextEdit.PlainText;placeholderText:"Only in these project folders, one per line (empty: every project)";Accessible.name:"Tool server project folders" }
+        CTextArea { id:secrets;objectName:"toolServerFormSecrets";visible:!editor.http;Layout.fillWidth:true;Layout.preferredHeight:Theme.rowDetailHeight;wrapMode:TextEdit.NoWrap;textFormat:TextEdit.PlainText;placeholderText:"Secret variable names, one per line, such as GITHUB_TOKEN";Accessible.name:"Tool server secret variable names" }
         RowLayout {
             Layout.fillWidth:true
             CText { text:"Call time limit (seconds)";font.pixelSize:Theme.secondary }
-            CField { id:timeout;objectName:"toolServerFormTimeout";Layout.preferredWidth:90;Accessible.name:"Call time limit in seconds" }
+            CField { id:timeout;objectName:"toolServerFormTimeout";Layout.preferredWidth:Theme.fieldShort;Accessible.name:"Call time limit in seconds" }
             Item { Layout.fillWidth:true }
             CCheckBox { id:enabledBox;objectName:"toolServerFormEnabled";text:"On" }
         }
@@ -145,6 +177,39 @@ ColumnLayout {
         }
     }
     RpcClient { id:serverRpc }
+    // §14.1: another app's configuration becomes definitions to review; nothing starts, and servers arrive turned off.
+    CDialog {
+        id:importDialog;objectName:"toolServerImport"
+        property var preview:null
+        property var chosen:[]
+        property string message:""
+        function openFresh(){preview=null;chosen=[];message="";importText.text="";open()}
+        CText { text:"Import tool servers";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
+        CText { text:"Paste a configuration from Claude Desktop, Cursor, Claude Code (.mcp.json), VS Code or Zed. PAL shows what it found; secret values go to this computer's private secrets file, never into settings. Imported servers stay off until you review and turn them on.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        CTextArea { id:importText;visible:!importDialog.preview;Layout.fillWidth:true;Layout.preferredHeight:Theme.editorMedium;placeholderText:"{ \"mcpServers\": { … } }";Accessible.name:"Configuration to import" }
+        Repeater {
+            model:importDialog.preview?.servers||[]
+            ColumnLayout {
+                required property var modelData
+                Layout.fillWidth:true;spacing:Theme.space1
+                CCheckBox { text:modelData.name+(modelData.problem?" · cannot be added":"");enabled:!modelData.problem;checked:importDialog.chosen.indexOf(modelData.name)>=0
+                    onToggled:importDialog.chosen=checked?importDialog.chosen.concat([modelData.name]):importDialog.chosen.filter(n=>n!==modelData.name) }
+                CText { text:modelData.problem||(modelData.url?modelData.url+" ("+(modelData.network==="local"?"this computer or network":"internet")+")":[modelData.command].concat(modelData.args||[]).join(" ")+" · in "+modelData.cwd);color:modelData.problem?Theme.amber:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
+                CText { visible:(modelData.secrets||[]).length>0;text:"Secrets: "+(modelData.secrets||[]).map(item=>item.name+(item.value==="missing"?" (set after importing)":"")).join(", ");font.pixelSize:Theme.caption;Layout.fillWidth:true;wrapMode:Text.Wrap }
+                Repeater { model:modelData.warnings||[];CText { required property var modelData;text:"· "+modelData;color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true } }
+            }
+        }
+        CText { visible:!!importDialog.message;text:importDialog.message;color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        RowLayout {
+            Layout.fillWidth:true
+            CButton { text:"Cancel";onClicked:importDialog.close() }
+            Item { Layout.fillWidth:true }
+            CButton { visible:!importDialog.preview;text:"Review";primary:true;enabled:importText.text.trim().length>1
+                onClicked:serverRpc.call("extensions.importPreview",{text:importText.text},value=>{if(value.error){importDialog.message=value.error;return}importDialog.message="";importDialog.preview=value;importDialog.chosen=(value.servers||[]).filter(item=>!item.problem).map(item=>item.name)}) }
+            CButton { visible:!!importDialog.preview;text:"Add the chosen servers (turned off)";primary:true;enabled:importDialog.chosen.length>0
+                onClicked:serverRpc.call("extensions.importApply",{token:importDialog.preview.token,names:importDialog.chosen},value=>{if(value.error){importDialog.message=value.error;return}servers.feedback="Added "+value.added.length+" tool server"+(value.added.length===1?"":"s")+", turned off. Review each one and turn it on.";importDialog.close()}) }
+        }
+    }
     // Resources are browsed and read only when the person asks; nothing here reaches a model by itself.
     CDialog {
         id:resourcesDialog;objectName:"toolServerResourcesDialog"
@@ -156,16 +221,16 @@ ColumnLayout {
         CText { text:"Resources from "+(resourcesDialog.server?.name||"");font.pixelSize:Theme.title;font.weight:Font.DemiBold }
         CText { visible:!!resourcesDialog.message;text:resourcesDialog.message;color:Theme.muted;font.pixelSize:Theme.secondary;Layout.fillWidth:true }
         ListView {
-            id:resourceList;Layout.fillWidth:true;Layout.preferredHeight:Math.min(contentHeight,220);clip:true;model:resourcesDialog.items;spacing:2
+            id:resourceList;Layout.fillWidth:true;Layout.preferredHeight:Math.min(contentHeight,Theme.editorTall);clip:true;model:resourcesDialog.items;spacing:Theme.space1
             delegate:CButton {
                 required property var modelData;required property int index
-                objectName:"toolServerResource_"+index;width:resourceList.width;quiet:true;alignLeft:true;implicitHeight:36
+                objectName:"toolServerResource_"+index;width:resourceList.width;quiet:true;alignLeft:true;implicitHeight:Theme.toolbarHeight
                 text:(modelData.title||modelData.name)+(modelData.mimeType?" · "+modelData.mimeType:"");help:modelData.uri+(modelData.description?"\n"+modelData.description:"")
                 onClicked:serverRpc.call("extensions.resource",{id:resourcesDialog.server.id,uri:modelData.uri},value=>{resourcesDialog.reading=value.error?{error:value.error}:Object.assign({uri:modelData.uri},value)})
             }
         }
         CTextArea {
-            objectName:"toolServerResourceText";visible:!!resourcesDialog.reading;readOnly:true;Layout.fillWidth:true;Layout.preferredHeight:160;wrapMode:TextEdit.Wrap;textFormat:TextEdit.PlainText
+            objectName:"toolServerResourceText";visible:!!resourcesDialog.reading;readOnly:true;Layout.fillWidth:true;Layout.preferredHeight:Theme.editorMedium;wrapMode:TextEdit.Wrap;textFormat:TextEdit.PlainText
             text:!resourcesDialog.reading?"":resourcesDialog.reading.error||(resourcesDialog.reading.contents||[]).map(c=>c.text!==undefined?c.text+(c.truncated?"\n[shortened]":""):"["+(c.mimeType||"binary")+", "+(c.binaryBytes||0)+" bytes]").join("\n\n")
         }
         RowLayout {
@@ -196,7 +261,7 @@ ColumnLayout {
             CField { required property var modelData;Layout.fillWidth:true;placeholderText:modelData.name+(modelData.required?" (required)":"")+(modelData.description?" · "+modelData.description:"");Accessible.name:modelData.name
                 onTextChanged:{const next=Object.assign({},promptsDialog.values);next[modelData.name]=text;promptsDialog.values=next} }
         }
-        CTextArea { objectName:"toolServerPromptText";visible:!!promptsDialog.result;readOnly:true;Layout.fillWidth:true;Layout.preferredHeight:120;wrapMode:TextEdit.Wrap;textFormat:TextEdit.PlainText;text:promptsDialog.result }
+        CTextArea { objectName:"toolServerPromptText";visible:!!promptsDialog.result;readOnly:true;Layout.fillWidth:true;Layout.preferredHeight:Theme.editorMedium;wrapMode:TextEdit.Wrap;textFormat:TextEdit.PlainText;text:promptsDialog.result }
         RowLayout {
             Layout.fillWidth:true
             CButton { objectName:"toolServerPromptGet";visible:promptsDialog.chosen>=0;text:"Fill in";enabled:(promptsDialog.items[promptsDialog.chosen]?.arguments||[]).every(a=>!a.required||!!(promptsDialog.values[a.name]||"").trim())

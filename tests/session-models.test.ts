@@ -11,7 +11,7 @@ import { antigravityModels } from '../broker/antigravity.ts';
 
 const catalog:ModelOption[]=['original','next'].map((id,index)=>({id,displayName:id,description:'',efforts:[{id:index?'low':'high',displayName:index?'Low':'High'}],defaultEffort:index?'low':'high',isDefault:!index}));
 async function fixture(t:any){
-  const directory=await mkdtemp(join(tmpdir(),'cere-switch-')),opened:Session[]=[],hooks:Hooks[]=[];
+  const directory=await mkdtemp(join(tmpdir(),'pal-switch-')),opened:Session[]=[],hooks:Hooks[]=[];
   let closes=0;
   const core=new Core(new Store(directory),(s,h)=>{
     opened.push(structuredClone(s));hooks.push(h);

@@ -90,6 +90,42 @@ createInterface({input:process.stdin}).on('line',line=>{
           if (stat.nlink) { unwatchFile(marker); finish(); }
         });
       } else finish();
+    }else if(prompt==='activity-log'){
+      const item = (phase, value, threadId='fixture-thread') => event('item/'+phase, {threadId,item:value});
+      const agents = [
+        ['notes_validation','Check that saved notes reopen across conversations.'],
+        ['release_review','Review the release checklist and identify missing evidence.'],
+        ['ui_review','Check the Workbench at compact widths.'],
+        ['build_checks','Verify the desktop build and report any failures.']
+      ];
+      for(let i=0;i<334;i++)item('completed',{id:'read-'+i,type:'dynamicToolCall',tool:'files_read',
+        arguments:{path:'qml/view-'+i+'.qml'},contentItems:[{type:'inputText',text:'Read the requested lines.'}],success:true});
+      for(const [name,task] of agents){
+        event('thread/started',{thread:{id:name,parentThreadId:'fixture-thread',agentNickname:name,source:{subAgent:{thread_spawn:{}}},status:{type:'active'}}});
+        item('completed',{id:'spawn-'+name,type:'collabAgentToolCall',tool:'spawnAgent',senderThreadId:'fixture-thread',
+          receiverThreadIds:[name],prompt:task,agentsStates:{[name]:{status:'running'}}});
+      }
+      item('completed',{id:'inspect',type:'commandExecution',command:'cat notebook.ts',commandActions:[{type:'read'}],
+        aggregatedOutput:'Private child output',exitCode:0},'notes_validation');
+      event('thread/status/changed',{threadId:'release_review',status:{type:'active',activeFlags:['waitingOnUserInput']}});
+      event('turn/completed',{threadId:'ui_review',turn:{status:'completed'}});
+      event('turn/completed',{threadId:'build_checks',turn:{status:'failed',error:{message:'The configured build directory is missing.'}}});
+      item('completed',{id:'memory',type:'mcpToolCall',tool:'memory_search',arguments:{query:'Note retention decisions'},
+        result:{content:[{type:'text',text:'Found two decisions.'}]}});
+      item('completed',{id:'search',type:'commandExecution',command:'rg -n notebook qml/',commandActions:[{type:'search'}],aggregatedOutput:'qml/NotesPane.qml',exitCode:0});
+      item('started',{id:'check-notes',type:'commandExecution',command:'ctest --test-dir build -R notebook'});
+      item('completed',{id:'check-notes',type:'commandExecution',exitCode:2,durationMs:1240,
+        aggregatedOutput:'Notebook check failed\n'+('Expected a saved note.\n'.repeat(450))+'end-of-notebook-output'});
+      event('warning',{threadId:'fixture-thread',message:'One optional tool server is unavailable.'});
+      item('started',{id:'verify',type:'commandExecution',command:'cmake --build build --target pal'});
+      const marker='finish-activity-log';
+      watchFile(marker,{interval:50},stat=>{
+        if(!stat.nlink)return;
+        unwatchFile(marker);
+        item('completed',{id:'verify',type:'commandExecution',exitCode:0,durationMs:850,aggregatedOutput:'Desktop build verified.'});
+        for(const name of ['notes_validation','release_review'])event('turn/completed',{threadId:name,turn:{status:'completed'}});
+        complete();
+      });
     }else if(prompt==='activity'){
       for(let i=0;i<3;i++){
         event('item/started',{item:{id:`tool-${turn}-${i}`,type:'commandExecution',command:'Test activity '+i}});

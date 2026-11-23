@@ -10,6 +10,7 @@ import type { Device, Project } from './store.ts';
 import { remoteError } from '../execution.ts';
 import { apiProviders } from '../provider-catalog.ts';
 import { endpointOrigin } from '../compatible-endpoint.ts';
+import { deviceRole, observerCaps, type DeviceRole } from '../authority.ts';
 /**
  * W08: hosted API use from a phone is its own grant (it may be billed), per provider; the compatible
  * endpoint is bound to the origin configured when the owner granted it.
@@ -32,11 +33,20 @@ function apiGrant(registry:RemoteStore,granted:string[],requested:string[],conne
  * A phone's signed answer to a network-return offer, kept until the desktop confirms or the offer
  * ends. It carries only public keys and proofs. Two different answers to one offer void it.
  */
-export type ReceivedResponse = {pairingId:string;response:string;digest:string;sas:string;name:string;deviceId:string;actionAuthentication:'biometric'|'trusted-device';replacesDeviceId?:string;receivedAt:number;expiresAt:number;contested?:boolean};
+export type ReceivedResponse = {pairingId:string;response:string;digest:string;sas:string;name:string;deviceId:string;actionAuthentication:'biometric'|'trusted-device';accessRole:DeviceRole;replacesDeviceId?:string;receivedAt:number;expiresAt:number;contested?:boolean};
 
 export const caps = ['chat.read','chat.write','approvals.answer','providers.execute','providers.api','approvals.provider','desktop.control','settings.write','memory.read','memory.write','web','capture.preview','attachments.write'] as const;
 export const categories = ['apps','files','windows','audio','media','capture','timers','scripts','providers'] as const;
 const b64=z.string().regex(/^[A-Za-z0-9_-]+$/), uuid=z.uuid();
+/**
+ * The stored grants of an owner phone: every capability and category, every hosted API provider. Its scope is
+ * global (Router.projects) and its lifetime lasts until revoked. The desktop chooses this once, locally.
+ */
+function ownerGrant() {
+  return {role:'owner' as const,caps:[...caps],categories:[...categories],scriptIds:[] as string[],apiProviders:[...apiProviders] as string[],lifetime:'until-revoked' as const,profile:'desktop' as const,profileRevision:'1'};
+}
+/** An observer reads and can Stop or Deny: only the read capabilities, no categories or scripts. */
+function observerGrant(requested:string[]) { return {role:'observer' as const,caps:requested.filter(cap=>(observerCaps as readonly string[]).includes(cap)),categories:[] as string[],scriptIds:[] as string[],apiProviders:[] as string[]}; }
 const responseSchema=z.strictObject({type:z.literal('response'),v:z.literal(1),desktopId:uuid,pairingId:uuid,offerDigest:b64,nonce:b64.length(43),deviceId:uuid,name:z.string().min(1).max(48),keyVersion:z.literal(1),connectionKey:b64,actionKey:b64,deviceNonce:b64.length(43),connectionProof:b64,actionProof:b64});
 const words: string[]=JSON.parse(readFileSync(new URL('../../protocol/mobile/v1/sas-words.json',import.meta.url),'utf8'));
 export class Pairing {
@@ -47,15 +57,55 @@ export class Pairing {
   updateScopes(params:unknown):Device {
     const p=z.strictObject({id:uuid,projectPaths:z.array(z.string()).min(1).max(32),caps:z.array(z.enum(caps)),categories:z.array(z.enum(categories)),scriptIds:z.array(z.string()).max(100).default([]),apiProviders:z.array(z.enum(apiProviders as [string,...string[]])).max(4).default([]),compatibleConnectionId:uuid.optional()}).parse(params);
     const device=this.registry.live(p.id);if(!device)throw new Error('Re-pair an expired or revoked device.');
+    if(deviceRole(device.role)==='owner')throw new Error('This phone has full access. Change it to limited access first to choose its projects and grants.');
     const projects:Project[]=[...new Set(p.projectPaths.map(path=>realpathSync(path)))].map(path=>{if(!statSync(path).isDirectory())throw new Error('Choose a project directory');return device.projects.find(pr=>pr.path===path)||{id:randomUUID(),name:basename(path)||path,path};});
     const {compatibleEndpoint:_previousEndpoint,...rest}=device;
-    const next={...rest,projects,caps:p.caps,categories:p.categories,scriptIds:p.scriptIds,ollamaHosts:[this.registry.store.settings().ollama.host],...apiGrant(this.registry,p.caps,p.apiProviders,p.compatibleConnectionId),scopeVersion:String(BigInt(device.scopeVersion)+1n)};
+    const scoped=deviceRole(device.role)==='observer'?observerGrant(p.caps):{caps:p.caps,categories:p.categories,scriptIds:p.scriptIds,...apiGrant(this.registry,p.caps,p.apiProviders,p.compatibleConnectionId)};
+    const next={...rest,projects,...scoped,ollamaHosts:[this.registry.store.settings().ollama.host],scopeVersion:String(BigInt(device.scopeVersion)+1n)};
     this.registry.saveDevice(next);this.registry.audit({deviceId:device.id,operation:'device.scopes',decision:'updated',scopeVersion:next.scopeVersion,argsDigest:digest({projects:projects.map(p=>p.id),caps:p.caps,categories:p.categories,scriptIds:p.scriptIds,apiProviders:next.apiProviders})});return next;
+  }
+  /**
+   * The owner changes a paired phone's role on the desktop, keeping its keys, signing mode, drafts and cache.
+   * Promotion grants the owner ceiling until revoked. Demotion to limited or observer names the projects and
+   * grants the phone keeps, with the 90-day expiry limited phones have. Either way the scope version changes,
+   * so the phone reconnects and every earlier authorization is re-evaluated.
+   */
+  setRole(params:unknown):Device {
+    const p=z.strictObject({id:uuid,role:z.enum(['owner','limited','observer']),confirmed:z.literal(true),projectPaths:z.array(z.string()).max(32).optional(),caps:z.array(z.enum(caps)).optional(),categories:z.array(z.enum(categories)).optional()}).parse(params);
+    const device=this.registry.live(p.id);if(!device)throw new Error('Re-pair an expired or revoked device.');
+    const from=deviceRole(device.role);
+    if(from===p.role)return device;
+    const {lifetime:_lifetime,expiresAt:_expiry,profile:_profile,profileRevision:_revision,...base}=device;
+    let next:Device;
+    if(p.role==='owner') next={...base,...ownerGrant(),scopeVersion:String(BigInt(device.scopeVersion)+1n)};
+    else {
+      const paths=p.projectPaths??device.projects.map(project=>project.path);
+      if(!paths.length)throw new Error('Choose at least one project this phone keeps.');
+      const projects:Project[]=[...new Set(paths.map(path=>realpathSync(path)))].map(path=>{if(!statSync(path).isDirectory())throw new Error('Choose a project directory');return device.projects.find(project=>project.path===path)||{id:randomUUID(),name:basename(path)||path,path};});
+      const requested=p.caps??(from==='owner'?['chat.read','chat.write','approvals.answer']:device.caps);
+      const grants=p.role==='observer'?observerGrant(requested):{role:'limited' as const,caps:requested,categories:p.categories??(from==='owner'?[]:device.categories),scriptIds:from==='owner'?[]:device.scriptIds,apiProviders:requested.includes('providers.api')&&from!=='owner'?device.apiProviders||[]:[]};
+      const {compatibleEndpoint:_endpoint,...rest}=base;
+      next={...rest,...(from!=='owner'&&device.compatibleEndpoint?{compatibleEndpoint:device.compatibleEndpoint}:{}),projects,...grants,expiresAt:from==='owner'?Date.now()+90*86400000:device.expiresAt??Date.now()+90*86400000,scopeVersion:String(BigInt(device.scopeVersion)+1n)};
+    }
+    this.registry.saveDevice(next);
+    this.registry.audit({deviceId:device.id,operation:'device.role',decision:p.role,scopeVersion:next.scopeVersion,argsDigest:digest({from,to:p.role})});
+    return next;
+  }
+  /** An owner phone's working profile; changing it never disconnects the phone (its own revision, not the scope's). */
+  setProfile(params:unknown):Device {
+    const p=z.strictObject({id:uuid,profile:z.enum(['desktop','review','automatic']),expectedProfileRevision:z.string().max(20).optional()}).parse(params);
+    const device=this.registry.live(p.id);if(!device)throw new Error('Re-pair an expired or revoked device.');
+    if(deviceRole(device.role)!=='owner')throw remoteError('SCOPE_DENIED','Working profiles apply to phones with full access.');
+    if(p.expectedProfileRevision!==undefined&&p.expectedProfileRevision!==(device.profileRevision||'0'))throw remoteError('REVISION_CONFLICT','The working profile changed on another device. Review it again.');
+    const next={...device,profile:p.profile,profileRevision:String(BigInt(device.profileRevision||'0')+1n)};
+    this.registry.saveDevice(next);
+    this.registry.audit({deviceId:device.id,operation:'device.profile',decision:p.profile});
+    return next;
   }
   async prepare(params:unknown) {
     // networkReturn: for the offer's five minutes the gateway listens on its addresses and accepts the
     // phone's signed answer (and nothing else before confirmation), instead of it being copied over.
-    const p=z.strictObject({addresses:z.array(z.string()),name:z.string().min(1).max(48).default('Cere'),port:z.number().int().min(1024).max(65535).default(8443),actionAuthentication:z.enum(['biometric','trusted-device']).default('biometric'),replacesDeviceId:uuid.optional(),networkReturn:z.boolean().default(false)}).parse(params);
+    const p=z.strictObject({addresses:z.array(z.string()),name:z.string().min(1).max(48).default('PAL'),port:z.number().int().min(1024).max(65535).default(8443),actionAuthentication:z.enum(['biometric','trusted-device']).default('biometric'),replacesDeviceId:uuid.optional(),networkReturn:z.boolean().default(false),accessRole:z.enum(['owner','limited','observer']).default('limited')}).parse(params);
     if(p.replacesDeviceId&&!this.registry.live(p.replacesDeviceId))throw new Error('Choose a live paired device to replace.');
     if(Buffer.byteLength(p.name)>48)throw new Error('Desktop name must fit in 48 UTF-8 bytes');
     const config={...this.registry.config(),addresses:addresses(p.addresses),port:p.port,name:p.name};
@@ -63,7 +113,9 @@ export class Pairing {
     await this.identity.ensure(config);
     this.registry.configure(config);
     const material=this.identity.material();
-    const bare={type:'offer',v:1,desktopId:this.identity.id,name:p.name,certificate:material.certificate,spki:material.spki,identityKey:material.identityKey,endpoints:endpoints(config),pairingId:randomUUID(),nonce:randomBytes(32).toString('base64url'),expiresAt:Date.now()+300000,actionAuthentication:p.actionAuthentication,...(p.replacesDeviceId?{replacesDeviceId:p.replacesDeviceId}:{}),...(p.networkReturn?{responseReturn:'network'}:{})};
+    const bare={type:'offer',v:1,desktopId:this.identity.id,name:p.name,certificate:material.certificate,spki:material.spki,identityKey:material.identityKey,endpoints:endpoints(config),pairingId:randomUUID(),nonce:randomBytes(32).toString('base64url'),expiresAt:Date.now()+300000,actionAuthentication:p.actionAuthentication,...(p.replacesDeviceId?{replacesDeviceId:p.replacesDeviceId}:{}),...(p.networkReturn?{responseReturn:'network'}:{}),
+      // Signed with the offer, so the phone shows the access it is being given before it answers (older phones ignore it).
+      ...(p.accessRole!=='limited'?{accessRole:p.accessRole}:{})};
     const offer={...bare,signature:signed(material.identity,{domain:'cere.mobile.pair.offer.v1',offer:bare})};
     const uri=pairingUri(offer);
     if(Buffer.byteLength(uri)>2000)throw new Error('Pairing offer is too large. Select fewer addresses or a shorter desktop name.');
@@ -73,7 +125,7 @@ export class Pairing {
       this.registry.store.db.prepare('DELETE FROM remote_pair_offers WHERE id=?').run(String(row.id));this.received.delete(String(row.id));
     }
     this.registry.audit({operation:'pair.prepare',decision:'prepared'});
-    return {uri,pairingId:offer.pairingId,expiresAt:offer.expiresAt,networkReturn:p.networkReturn,qr:await QRCode.toDataURL(uri,{errorCorrectionLevel:'M',width:480,margin:2})};
+    return {uri,pairingId:offer.pairingId,expiresAt:offer.expiresAt,networkReturn:p.networkReturn,accessRole:p.accessRole,qr:await QRCode.toDataURL(uri,{errorCorrectionLevel:'M',width:480,margin:2})};
   }
   /** The live network-return offer, while the gateway should accept answers for it. */
   networkWindow():{pairingId:string;expiresAt:number}|undefined {
@@ -97,7 +149,7 @@ export class Pairing {
       this.registry.audit({operation:'pair.received',decision:'contested'});
       throw remoteError('UNAUTHENTICATED','Another phone answered this pairing offer. Prepare a new offer on the desktop.');
     }
-    const entry:ReceivedResponse=existing||{pairingId:id,response:uri,digest:responseDigest,sas:review.sas,name:review.response.name,deviceId:review.response.deviceId,actionAuthentication:review.offer.actionAuthentication||'biometric',...(review.offer.replacesDeviceId?{replacesDeviceId:review.offer.replacesDeviceId}:{}),receivedAt:Date.now(),expiresAt:review.offer.expiresAt};
+    const entry:ReceivedResponse=existing||{pairingId:id,response:uri,digest:responseDigest,sas:review.sas,name:review.response.name,deviceId:review.response.deviceId,actionAuthentication:review.offer.actionAuthentication||'biometric',accessRole:deviceRole(review.offer.accessRole),...(review.offer.replacesDeviceId?{replacesDeviceId:review.offer.replacesDeviceId}:{}),receivedAt:Date.now(),expiresAt:review.offer.expiresAt};
     if(!existing){this.received.set(id,entry);this.registry.audit({operation:'pair.received',decision:'received'});}
     return entry;
   }
@@ -116,7 +168,7 @@ export class Pairing {
       return contested?{pairingId:contested.pairingId,expiresAt:contested.expiresAt,networkReturn:true,contested:true}:undefined;
     }
     const entry=this.received.get(window.pairingId);
-    return {pairingId:window.pairingId,expiresAt:window.expiresAt,networkReturn:true,...(entry?{received:{name:entry.name,sas:entry.sas,actionAuthentication:entry.actionAuthentication,...(entry.replacesDeviceId?{replacesDeviceId:entry.replacesDeviceId}:{}),receivedAt:entry.receivedAt,contested:entry.contested===true}}:{})};
+    return {pairingId:window.pairingId,expiresAt:window.expiresAt,networkReturn:true,...(entry?{received:{name:entry.name,sas:entry.sas,actionAuthentication:entry.actionAuthentication,accessRole:entry.accessRole,...(entry.replacesDeviceId?{replacesDeviceId:entry.replacesDeviceId}:{}),receivedAt:entry.receivedAt,contested:entry.contested===true}}:{})};
   }
   /** Ends the live offer (cancelled locally, expired or replaced); returns the pairing IDs ended. */
   end(all=false):string[] {
@@ -142,7 +194,7 @@ export class Pairing {
   }
   confirm(params:unknown):Device {
     // response: the pasted answer; pairingId: the answer the phone sent over the network for that offer.
-    const p=z.strictObject({response:z.string().optional(),pairingId:uuid.optional(),sas:z.string(),confirmed:z.literal(true),projectPaths:z.array(z.string()).min(1).max(32),caps:z.array(z.enum(caps)).default(['chat.read','chat.write','approvals.answer']),categories:z.array(z.enum(categories)).default([]),scriptIds:z.array(z.string()).max(100).default([]),apiProviders:z.array(z.enum(apiProviders as [string,...string[]])).max(4).default([]),compatibleConnectionId:uuid.optional()}).refine(p=>(p.response===undefined)!==(p.pairingId===undefined),'Confirm either a pasted response or a received one').parse(params);
+    const p=z.strictObject({response:z.string().optional(),pairingId:uuid.optional(),sas:z.string(),confirmed:z.literal(true),projectPaths:z.array(z.string()).max(32).default([]),caps:z.array(z.enum(caps)).default(['chat.read','chat.write','approvals.answer']),categories:z.array(z.enum(categories)).default([]),scriptIds:z.array(z.string()).max(100).default([]),apiProviders:z.array(z.enum(apiProviders as [string,...string[]])).max(4).default([]),compatibleConnectionId:uuid.optional()}).refine(p=>(p.response===undefined)!==(p.pairingId===undefined),'Confirm either a pasted response or a received one').parse(params);
     const uri=p.response??this.received.get(p.pairingId!)?.response;
     if(!uri)throw remoteError('AUTH_EXPIRED','The phone’s answer has not arrived, or the offer ended. Prepare a new offer.');
     const review=this.review(uri);
@@ -152,8 +204,12 @@ export class Pairing {
     if(JSON.stringify(review.offer.endpoints)!==JSON.stringify(endpoints(this.registry.config()))||review.offer.certificate!==this.identity.material().certificate)throw new Error('Gateway identity changed. Prepare a fresh pairing offer.');
     if(this.registry.devices().filter(d=>this.registry.live(d.id)).length>=5&&!previous)throw new Error('At most five devices may be paired.');
     if(this.registry.device(review.response.deviceId))throw new Error('This device identity already exists; generate fresh phone keys.');
+    // The role is the one the desktop signed into the offer: the phone showed it before answering.
+    const role=deviceRole(review.offer.accessRole);
+    if(role!=='owner'&&!p.projectPaths.length)throw new Error('Choose at least one project this phone may use.');
     const projects:Project[]=[...new Set(p.projectPaths.map(path=>realpathSync(path)))].map(path=>{if(!statSync(path).isDirectory())throw new Error('Choose a project directory');return previous?.projects.find(project=>project.path===path)||{id:randomUUID(),name:basename(path)||path,path};});
-    const device:Device={id:review.response.deviceId,name:review.response.name,connectionKey:review.response.connectionKey,actionKey:review.response.actionKey,keyVersion:1,scopeVersion:'1',actionAuthentication:review.offer.actionAuthentication||'biometric',...(previous?{replacesDeviceId:previous.id,replacementPending:true}:{}),createdAt:Date.now(),expiresAt:Date.now()+90*86400000,projects,caps:p.caps,categories:p.categories,scriptIds:p.scriptIds,ollamaHosts:[this.registry.store.settings().ollama.host],...apiGrant(this.registry,p.caps,p.apiProviders,p.compatibleConnectionId)};
+    const grants=role==='owner'?ownerGrant():role==='observer'?observerGrant(p.caps):{role:'limited' as const,caps:p.caps,categories:p.categories,scriptIds:p.scriptIds,...apiGrant(this.registry,p.caps,p.apiProviders,p.compatibleConnectionId)};
+    const device:Device={id:review.response.deviceId,name:review.response.name,connectionKey:review.response.connectionKey,actionKey:review.response.actionKey,keyVersion:1,scopeVersion:'1',actionAuthentication:review.offer.actionAuthentication||'biometric',...(previous?{replacesDeviceId:previous.id,replacementPending:true}:{}),createdAt:Date.now(),...(role==='owner'?{}:{expiresAt:Date.now()+90*86400000}),projects,ollamaHosts:[this.registry.store.settings().ollama.host],...grants};
     const db=this.registry.store.db;
     db.exec('BEGIN IMMEDIATE');
     try {

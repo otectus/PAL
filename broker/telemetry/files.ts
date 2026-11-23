@@ -14,7 +14,11 @@ export class Files {
   async start(){
     this.status='watching';this.handle=this.native.start(events=>{for(const event of events){if(this.queue.length>=256){this.queue.shift();this.drops++;this.degraded('FILE_QUEUE_OVERFLOW');}this.queue.push({...event,at:this.state.now(),ts:new Date().toISOString(),generation:this.generation});}void this.drain();});
     for(const root of this.state.config.roots){
-      try{const file=join(root,'.gitignore');const stat=await lstat(file);if(stat.isFile()&&!stat.isSymbolicLink()&&stat.size<=32768){const patterns=(await readFile(file,'utf8')).split(/\r?\n/).filter(s=>s&&!s.startsWith('#')&&!s.startsWith('!')).map(s=>s.replace(/^\//,'').replace(/\/$/,''));this.gitIgnores.set(root,patterns.slice(0,256));}}catch{}
+      const patterns:string[]=[];
+      // Both brand-specific files are cumulative. A legacy .cereignore can only keep excluding data;
+      // it cannot be weakened by a conflicting .palignore because negations are deliberately ignored.
+      for(const name of ['.gitignore','.palignore','.cereignore'])try{const file=join(root,name),stat=await lstat(file);if(stat.isFile()&&!stat.isSymbolicLink()&&stat.size<=32768)patterns.push(...(await readFile(file,'utf8')).split(/\r?\n/).filter(s=>s&&!s.startsWith('#')&&!s.startsWith('!')).map(s=>s.replace(/^\//,'').replace(/\/$/,'')));}catch{}
+      this.gitIgnores.set(root,patterns.slice(0,256));
       await this.walk(root,root);await this.git(root);
     }
     this.timer=setInterval(()=>void this.flush(),50);this.timer.unref();

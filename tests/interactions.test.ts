@@ -8,7 +8,7 @@ import { Store } from '../broker/store.ts';
 import type { Session } from '../broker/types.ts';
 
 async function setup(t: any, provider: Session['provider'] = 'codex') {
-  const path = await mkdtemp(join(tmpdir(), 'cere-interactions-'));
+  const path = await mkdtemp(join(tmpdir(), 'pal-interactions-'));
   const core = new Core(new Store(path), () => ({async send(){},async interrupt(){},async close(){}}));
   const session: Session = {id:crypto.randomUUID(),provider,nativeId:'root',title:'Questions',cwd:path,mode:'managed',status:'working',created:Date.now(),updated:Date.now(),draft:'',scroll:0,model:''};
   core.store.saveSession(session);

@@ -9,7 +9,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { TelemetryService } from '../broker/telemetry/service.ts';
 import { telemetryDefaults } from '../broker/telemetry/protocol.ts';
 const exec=promisify(execFile),sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
-const parent=await mkdtemp(join(tmpdir(),'cere-telemetry-load-')),root=join(parent,'project'),runtime=join(parent,'runtime');
+const parent=await mkdtemp(join(tmpdir(),'pal-telemetry-load-')),root=join(parent,'project'),runtime=join(parent,'runtime');
 const service=new TelemetryService(()=>{},runtime);
 const git=(...args:string[])=>exec('git',['-c','core.hooksPath=/dev/null','-c','user.name=Telemetry Test','-c','user.email=telemetry@example.invalid',...args],{cwd:root,timeout:60000,maxBuffer:1024*1024});
 async function files(value:string){for(let directory=0;directory<128;directory++){const path=join(root,'src',String(directory));await mkdir(path,{recursive:true});await Promise.all(Array.from({length:32},(_,n)=>writeFile(join(path,`${n}.txt`),value)));}}

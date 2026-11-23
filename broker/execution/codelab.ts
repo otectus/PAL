@@ -11,9 +11,12 @@
  * programs, text conversion and pagers turned off.
  */
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { privateDir } from '../paths.ts';
+import { terminateProcessGroup } from '../process-group.ts';
 import type { Workbench } from '../workbench.ts';
 import type { ArtifactRef } from '../tools/contracts.ts';
 import { safeName } from '../artifacts/store.ts';
@@ -52,7 +55,7 @@ export class Execution {
     this.grants.set(grant.id, grant); this.core.changed(); return grant;
   }
   /** Code Lab: runs Python over read-only copies of the selected artifact versions; outputs become artifacts. */
-  /** Every run is tracked so closing Cere waits for it to record its outcome before the database closes. */
+  /** Every run is tracked so closing PAL waits for it to record its outcome before the database closes. */
   run(...args: Parameters<Execution['runInner']>) { return this.workbench.track(this.runInner(...args)); }
   private async runInner(sessionId: string, p: { code: unknown; inputs?: unknown; purpose?: unknown; origin: 'model' | 'user'; turnId?: string; approval: 'individual' | 'grant' | 'user'; signal?: AbortSignal; timeoutSeconds?: unknown }) {
     const wallMs = p.timeoutSeconds === undefined ? 60_000 : Number.isInteger(p.timeoutSeconds) && (p.timeoutSeconds as number) >= 1 && (p.timeoutSeconds as number) <= 600 ? (p.timeoutSeconds as number) * 1000 : (() => { throw new Error('A Code Lab time limit is 1–600 seconds'); })();
@@ -68,6 +71,7 @@ export class Execution {
     const code = await artifacts.install({ sessionId, bytes: Buffer.from(p.code), name: 'analysis.py', mime: 'text/x-python', source: p.origin === 'model' ? 'tool-output' : 'user-import', turnId: p.turnId,
       policy: artifacts.inherit(sessionId, refs), provenance: { kind: 'codelab-code', purpose: typeof p.purpose === 'string' ? p.purpose.slice(0, 300) : '' } });
     const runtime = await pythonRuntime();
+    if (this.core.closed) throw new Error('PAL is closing');
     let operation = this.workbench.operations.create({ sessionId, ...(p.turnId ? { turnId: p.turnId } : {}), kind: 'codelab.run', origin: p.origin, label: 'Code Lab: ' + (typeof p.purpose === 'string' && p.purpose ? p.purpose.slice(0, 80) : 'analysis'),
       payloadDigest: createHash('sha256').update(JSON.stringify({ code: code.sha256, inputs: refs })).digest('hex'), witness: { approval: p.approval, inputs: inputs.map(input => input.version.versionId) },
       inputs: [...refs.map(ref => ({ artifactId: ref.artifactId, versionId: ref.versionId, purpose: 'input' })), { artifactId: code.artifactId, versionId: code.versionId, purpose: 'code' }],
@@ -75,8 +79,9 @@ export class Execution {
     const controller = new AbortController(); this.workbench.runControllers.set(operation.id, controller);
     const signal = p.signal ? AbortSignal.any([p.signal, controller.signal]) : controller.signal;
     const removeJob = this.core.jobs.add('codelab', operation.label, () => controller.abort(new Error('Cancelled')));
-    const scratch = await mkdtemp(join(privateDir(join(this.core.store.directory, 'runs')), 'lab-'));
+    let scratch: string | undefined;
     try {
+      scratch = await mkdtemp(join(privateDir(join(this.core.store.directory, 'runs')), 'lab-'));
       operation = this.workbench.operations.transition(operation.id, 'queued');
       operation = this.workbench.operations.transition(operation.id, 'running');
       this.card(operation.id);
@@ -89,26 +94,34 @@ export class Execution {
         binds.push({ source: join(scratch, 'input-' + index), target: '/work/input/' + name });
       }
       const result = await sandboxed({ argv: ['/usr/bin/python3', '-I', '/work/main.py'], binds, cwd: '/work', signal, limits: { wallMs } });
-      return this.finish(operation.id, sessionId, result, refs, code, p.turnId);
+      return await this.finish(operation.id, sessionId, result, refs, code, p.turnId);
     } catch (error: any) {
       const current = this.workbench.operations.get(operation.id);
       if (!['completed', 'failed', 'cancelled', 'interrupted'].includes(current.state)) this.workbench.operations.transition(operation.id, signal.aborted ? (current.state === 'cancel_requested' ? 'cancelled' : 'interrupted') : 'failed', { error: { code: error?.code || 'failed', message: String(error?.message || error).slice(0, 500) } });
       this.card(operation.id);
       throw error;
-    } finally { removeJob(); this.workbench.runControllers.delete(operation.id); await rm(scratch, { recursive: true, force: true }); }
+    } finally { removeJob(); this.workbench.runControllers.delete(operation.id); if (scratch) await rm(scratch, { recursive: true, force: true }); }
   }
   private async finish(operationId: string, sessionId: string, result: SandboxResult, refs: ArtifactRef[], code: { artifactId: string; versionId: string }, turnId?: string) {
     const artifacts = this.workbench.artifacts, policy = artifacts.inherit(sessionId, refs), produced: ArtifactRef[] = [];
+    const outputErrors: string[] = result.outputProblem ? [result.outputProblem] : [];
     for (const output of result.outputs) {
-      const version = await artifacts.install({ sessionId, turnId, bytes: output.bytes, name: output.name.split('/').pop()!, source: 'tool-output', policy, operationId,
-        parents: [...refs.map(ref => ({ artifactId: ref.artifactId, versionId: ref.versionId, relation: 'analysis-input' })), { artifactId: code.artifactId, versionId: code.versionId, relation: 'analysis-code' }],
-        provenance: { kind: 'codelab', operationId, exitCode: result.exitCode ?? -1, code: code.versionId } }).catch(() => null);
-      if (version) produced.push({ artifactId: version.artifactId, versionId: version.versionId, purpose: version.kind === 'image' ? 'plot' : 'output' });
+      const name = output.name.split('/').pop()!;
+      try {
+        const version = await artifacts.install({ sessionId, turnId, bytes: output.bytes, name, source: 'tool-output', policy, operationId,
+          parents: [...refs.map(ref => ({ artifactId: ref.artifactId, versionId: ref.versionId, relation: 'analysis-input' })), { artifactId: code.artifactId, versionId: code.versionId, relation: 'analysis-code' }],
+          provenance: { kind: 'codelab', operationId, exitCode: result.exitCode ?? -1, code: code.versionId } });
+        produced.push({ artifactId: version.artifactId, versionId: version.versionId, purpose: version.kind === 'image' ? 'plot' : 'output' });
+      } catch (error) {
+        outputErrors.push(`${name}: ${error instanceof Error ? error.message : 'Could not save this output'}`);
+      }
     }
     const current = this.workbench.operations.get(operationId);
-    const state = result.cancelled ? 'cancelled' : result.timedOut ? 'failed' : 'completed';
+    const state = result.cancelled ? 'cancelled' : result.timedOut || outputErrors.length ? 'failed' : 'completed';
+    const failure = result.timedOut ? { code: 'timeout', message: 'Stopped at the time limit' }
+      : outputErrors.length ? { code: 'output_failed', message: outputErrors.join('\n').slice(0, 1200) } : undefined;
     const operation = this.workbench.operations.transition(operationId, state === 'cancelled' && current.state !== 'cancel_requested' ? 'interrupted' : state, { results: produced,
-      ...(result.timedOut ? { error: { code: 'timeout', message: 'Stopped at the time limit' } } : {}), ...(result.cancelled ? { cancellation: { requested: Date.now(), confirmed: true, note: 'The run’s processes were stopped' } } : {}),
+      ...(failure ? { error: failure } : {}), ...(result.cancelled ? { cancellation: { requested: Date.now(), confirmed: true, note: 'The run’s processes were stopped' } } : {}),
       details: { ...current.details, exitCode: result.exitCode, signal: result.signal, durationMs: result.durationMs, stdout: result.stdout, stderr: result.stderr, truncated: result.truncated, ...(result.outputProblem ? { outputProblem: result.outputProblem } : {}) } });
     try { this.core.workflows.observeAction(sessionId, 'codelab.run', { operationId }, { exitCode: result.exitCode ?? -1, durationMs: result.durationMs }); } catch { /* no results record for this conversation */ }
     this.card(operationId);
@@ -130,6 +143,7 @@ export class Execution {
     if (!status.available) throw Object.assign(new Error(status.problem || 'Command runs are unavailable'), { code: 'isolation_unavailable' });
     const timeout = Math.min(Math.max(5, p.timeoutSeconds || 300), labLimits.commandWallMs / 1000) * 1000;
     const before = await this.manifest(root);
+    if (this.core.closed) throw new Error('PAL is closing');
     let operation = this.workbench.operations.create({ sessionId, ...(p.turnId ? { turnId: p.turnId } : {}), kind: 'command.run', origin: p.origin, label: 'Command: ' + (p.argv as string[]).join(' ').slice(0, 100),
       payloadDigest: createHash('sha256').update(JSON.stringify([root.id, p.argv, p.network])).digest('hex'), witness: { root: root.id, revision: root.revision, network: !!p.network }, inputs: [],
       details: { argv: p.argv, root: root.name, network: !!p.network, timeoutSeconds: timeout / 1000, limits: status.enforced } });
@@ -153,7 +167,83 @@ export class Execution {
       this.card(operation.id);
       return finished;
     } catch (error: any) {
-      if (!['completed', 'failed', 'cancelled', 'interrupted'].includes(this.workbench.operations.get(operation.id).state)) this.workbench.operations.transition(operation.id, 'failed', { error: { code: error?.code || 'failed', message: String(error?.message || error).slice(0, 500) } });
+      const current = this.workbench.operations.get(operation.id);
+      if (!['completed', 'failed', 'cancelled', 'interrupted'].includes(current.state)) this.workbench.operations.transition(operation.id, signal.aborted ? (current.state === 'cancel_requested' ? 'cancelled' : 'interrupted') : 'failed', { error: { code: error?.code || 'failed', message: String(error?.message || error).slice(0, 500) } });
+      this.card(operation.id); throw error;
+    } finally { removeJob(); this.workbench.runControllers.delete(operation.id); }
+  }
+  /**
+   * A host command (PAL Everywhere §7.5): reviewed shell code, or a program and its arguments, run as the desktop
+   * account. It is not isolated: it can reach everything that account can (files, keys, network, the desktop), and
+   * the folder is only its working directory. Output is bounded; the time limit and Stop end its whole process
+   * group, and an end that could not be confirmed is reported, never shown as success.
+   */
+  hostCommand(...args: Parameters<Execution['hostInner']>) { return this.workbench.track(this.hostInner(...args)); }
+  private async hostInner(sessionId: string, root: WorkspaceRoot, p: { program: { kind: 'shell'; shell: 'bash' | 'sh' | 'fish' | 'zsh'; command: string } | { kind: 'argv'; argv: string[] };
+    cwd?: string; timeoutSeconds?: number; origin: 'model' | 'user'; turnId?: string; signal?: AbortSignal }) {
+    const shells: Record<string, string[]> = { bash: ['/usr/bin/bash', '/bin/bash'], sh: ['/usr/bin/sh', '/bin/sh'], fish: ['/usr/bin/fish', '/bin/fish'], zsh: ['/usr/bin/zsh', '/bin/zsh'] };
+    let argv: string[];
+    if (p.program.kind === 'shell') {
+      if (typeof p.program.command !== 'string' || !p.program.command.trim() || p.program.command.includes('\0') || Buffer.byteLength(p.program.command) > 64 * 1024) throw new Error('Give the shell command as text up to 64 KiB');
+      const shell = (shells[p.program.shell] || []).find(path => existsSync(path));
+      if (!shell) throw Object.assign(new Error(`${p.program.shell} is not installed on this computer`), { code: 'dependency_missing' });
+      argv = [shell, '-c', p.program.command];
+    } else {
+      if (!Array.isArray(p.program.argv) || !p.program.argv.length || p.program.argv.length > labLimits.argv || p.program.argv.some(arg => typeof arg !== 'string' || arg.includes('\0'))) throw new Error('Give the program and its arguments as a list');
+      argv = p.program.argv;
+    }
+    const timeout = Math.min(Math.max(5, p.timeoutSeconds || 300), 1800) * 1000, cwd = root.path + (p.cwd ? '/' + p.cwd : '');
+    const label = (p.program.kind === 'shell' ? p.program.command : p.program.argv.join(' ')).replace(/\s+/g, ' ').slice(0, 100);
+    if (this.core.closed) throw new Error('PAL is closing');
+    let operation = this.workbench.operations.create({ sessionId, ...(p.turnId ? { turnId: p.turnId } : {}), kind: 'command.host', origin: p.origin, label: 'Host: ' + label,
+      payloadDigest: createHash('sha256').update(JSON.stringify([root.id, argv, p.cwd || ''])).digest('hex'), witness: { root: root.id, revision: root.revision, execution: 'desktop-account' }, inputs: [],
+      details: { program: p.program, cwd, root: root.name, execution: 'desktop-account', timeoutSeconds: timeout / 1000 } });
+    const controller = new AbortController(); this.workbench.runControllers.set(operation.id, controller);
+    const signal = p.signal ? AbortSignal.any([p.signal, controller.signal]) : controller.signal;
+    const removeJob = this.core.jobs.add('codelab', operation.label, () => controller.abort(new Error('Cancelled')));
+    const limit = 256 * 1024, started = Date.now();
+    try {
+      operation = this.workbench.operations.transition(operation.id, 'queued'); operation = this.workbench.operations.transition(operation.id, 'running'); this.card(operation.id);
+      const env: Record<string, string> = { ...process.env as Record<string, string>, PAL_HOST_COMMAND: '1' };
+      for (const key of Object.keys(env)) if (/^(?:PAL|CERE)_.*(TOKEN|SECRET|KEY)/.test(key)) delete env[key];
+      const result = await new Promise<{ exitCode: number | null; signal: string | null; stdout: string; stderr: string; truncated: boolean; timedOut: boolean; cancelled: boolean; survivors: number }>((resolve, reject) => {
+        let stdout = '', stderr = '', truncated = false, timedOut = false, cancelled = false, last = 0;
+        signal.throwIfAborted();
+        const child = spawn(argv[0], argv.slice(1), { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+        let stopping: Promise<boolean> | undefined;
+        const stopGroup = (why: 'timeout' | 'cancel') => {
+          if (stopping) return;
+          if (why === 'timeout') timedOut = true; else cancelled = true;
+          stopping = terminateProcessGroup(child.pid).then(() => true, () => false);
+        };
+        const timer = setTimeout(() => stopGroup('timeout'), timeout); timer.unref();
+        const abort = () => stopGroup('cancel'); signal.addEventListener('abort', abort, { once: true });
+        const take = (current: string, chunk: Buffer) => { if (current.length >= limit) { truncated = true; return current; } const next = current + chunk.toString('utf8'); if (next.length > limit) truncated = true; return next.slice(0, limit); };
+        child.stdout!.on('data', (chunk: Buffer) => { stdout = take(stdout, chunk); if (Date.now() - last > 500) { last = Date.now(); this.workbench.operations.update(operation.id, { details: { ...operation.details, stdout: stdout.slice(-8000) } }); } });
+        child.stderr!.on('data', (chunk: Buffer) => { stderr = take(stderr, chunk); });
+        child.on('error', error => { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(Object.assign(new Error(`Could not start ${argv[0]}: ${error.message}`), { code: (error as any).code === 'ENOENT' ? 'not_found' : 'failed' })); });
+        child.on('close', async (code, killed) => {
+          clearTimeout(timer); signal.removeEventListener('abort', abort);
+          let survivors = 0;
+          if (stopping) survivors = await stopping ? 0 : 1;
+          else if (child.pid) {
+            try { process.kill(-child.pid, 0); survivors = 1; } catch {}
+          }
+          resolve({ exitCode: code, signal: killed, stdout, stderr, truncated, timedOut, cancelled, survivors });
+        });
+      });
+      const current = this.workbench.operations.get(operation.id);
+      const state = result.cancelled ? (current.state === 'cancel_requested' ? 'cancelled' : 'interrupted') : result.timedOut ? 'failed' : 'completed';
+      const finished = this.workbench.operations.transition(operation.id, state, {
+        ...(result.timedOut ? { error: { code: 'timeout', message: 'Stopped at the time limit' } } : {}),
+        ...(result.survivors ? { cancellation: { requested: Date.now(), confirmed: false, note: 'Some processes of this command were still running after it ended.' } } : {}),
+        details: { ...current.details, exitCode: result.exitCode, signal: result.signal, durationMs: Date.now() - started, stdout: result.stdout, stderr: result.stderr, truncated: result.truncated, survivors: result.survivors } });
+      try { this.core.workflows.observeAction(sessionId, 'command.host', { command: label, root: root.name }, { exitCode: result.exitCode ?? -1, durationMs: Date.now() - started }); } catch { /* none */ }
+      this.card(operation.id);
+      return finished;
+    } catch (error: any) {
+      const current = this.workbench.operations.get(operation.id);
+      if (!['completed', 'failed', 'cancelled', 'interrupted'].includes(current.state)) this.workbench.operations.transition(operation.id, signal.aborted ? (current.state === 'cancel_requested' ? 'cancelled' : 'interrupted') : 'failed', { error: { code: error?.code || 'failed', message: String(error?.message || error).slice(0, 500) } });
       this.card(operation.id); throw error;
     } finally { removeJob(); this.workbench.runControllers.delete(operation.id); }
   }

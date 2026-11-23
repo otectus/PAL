@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 ColumnLayout {
     id:knowledge
-    Layout.fillWidth:true;spacing:14
+    Layout.fillWidth:true;spacing:Theme.space4
     property var search:App.state.settings?.webSearch||({enabled:false,provider:"auto",searxngUrl:""})
     property var memory:App.state.settings?.memory||({enabled:false,model:"nomic-embed-text"})
     property var status:App.state.memory||({})
@@ -55,7 +55,7 @@ ColumnLayout {
         description:"Let Ollama look up current information and cite its sources. Desktop control is not required."
         CCheckBox { objectName:"webSearchEnabled";text:"Enable web search";checked:knowledge.search.enabled;enabled:knowledge.webRequest<0;onClicked:{knowledge.webError="";knowledge.webRequest=App.rpc("settings.update",{webSearch:{enabled:checked}})} }
         ColumnLayout {
-            visible:knowledge.search.enabled;Layout.fillWidth:true;spacing:8
+            visible:knowledge.search.enabled;Layout.fillWidth:true;spacing:Theme.space2
             RowLayout {
                 Layout.fillWidth:true
                 CComboBox { id:provider;objectName:"webSearchProvider";Layout.fillWidth:true;Layout.minimumWidth:0;model:knowledge.providers;textRole:"label";valueRole:"id";Accessible.name:"Search provider";currentIndex:Math.max(0,knowledge.providers.findIndex(p=>p.id===knowledge.search.provider)) }
@@ -73,7 +73,7 @@ ColumnLayout {
         description:"Share project facts and earlier conversations across Codex, Claude and Ollama."
         CCheckBox { objectName:"memoryEnabled";text:"Remember and recall conversations";checked:knowledge.memory.enabled;enabled:knowledge.memoryRequest<0;onClicked:{knowledge.checkAfterSave=false;knowledge.memoryError="";knowledge.memoryRequest=App.rpc("settings.update",{memory:{enabled:checked}})} }
         ColumnLayout {
-            visible:knowledge.memory.enabled;Layout.fillWidth:true;spacing:8
+            visible:knowledge.memory.enabled;Layout.fillWidth:true;spacing:Theme.space2
             CComboBox {
                 objectName:"memoryEmbeddingProvider";Layout.fillWidth:true;model:[{id:"ollama",label:"Ollama embeddings"},{id:"google",label:"Gemini API embeddings"}];textRole:"label";valueRole:"id"
                 Accessible.name:"Memory embedding provider";currentIndex:knowledge.memory.embeddingProvider==="google"?1:0;enabled:knowledge.memoryRequest<0
@@ -93,7 +93,7 @@ ColumnLayout {
                 }
             }
             ColumnLayout {
-                objectName:"embeddingImpact";visible:!!knowledge.impact||!!knowledge.impactError;Layout.fillWidth:true;spacing:6
+                objectName:"embeddingImpact";visible:!!knowledge.impact||!!knowledge.impactError;Layout.fillWidth:true;spacing:Theme.space2
                 CText { objectName:"embeddingImpactText";Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:Theme.secondary;color:knowledge.impactError?Theme.danger:Theme.text;text:knowledge.impactError?"Could not check "+embedding.text.trim()+": "+knowledge.impactError:knowledge.impactText() }
                 RowLayout {
                     Layout.fillWidth:true
@@ -132,10 +132,11 @@ ColumnLayout {
         }
         CText { visible:!!knowledge.memoryError;text:knowledge.memoryError;color:Theme.danger;font.pixelSize:Theme.secondary }
         CCheckBox { objectName:"showMemoryCitations";text:"Show memory citations in replies";checked:App.state.settings?.showMemoryCitations===true;onClicked:App.rpc("settings.update",{showMemoryCitations:checked}) }
-        CText { text:"Replies that draw on memory cite it as [evidence:…]. Off keeps those markers out of the conversation and out of copies, quotes and speech. Saved replies keep them, and Cere still records what each reply cited.";color:Theme.muted;font.pixelSize:Theme.secondary }
+        CText { text:"Replies that draw on memory cite it as [evidence:…]. Off keeps those markers out of the conversation and out of copies, quotes and speech. Saved replies keep them, and PAL still records what each reply cited.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CButton { objectName:"manageMemories";text:"Manage project memory";enabled:App.connected&&!!App.session.id&&!App.session.temporary;onClicked:manager.open() }
         CText { text:App.session.id?"Review, correct or forget shared facts and conversation passages. Memory stays separate for each project and server.":"Select a conversation to manage its project’s memory.";color:Theme.muted;font.pixelSize:Theme.secondary }
     }
+    MemoryCurationSettings { Layout.fillWidth:true }
     CSection {
         title:"Documents and notes"
         description:"Ground answers in your own files. Everything is read on this computer, and answers name the file they used."
@@ -150,7 +151,7 @@ ColumnLayout {
         CCheckBox { objectName:"notesVaultCloud";visible:!!knowledge.vault.path;text:"Codex, Claude and cloud models may search and read notes";checked:knowledge.vault.allowCloud;enabled:knowledge.vaultRequest<0;onClicked:knowledge.updateVault({allowCloud:checked}) }
         CText { objectName:"notesVaultStatus";visible:knowledge.vault.enabled&&!!knowledge.vaultStatus;color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true
             text:knowledge.vaultStatus?knowledge.vaultStatus.notes+" readable notes · "+knowledge.vaultStatus.private+" private notes skipped"+(knowledge.vaultStatus.unreadable?" · "+knowledge.vaultStatus.unreadable+" notes skipped because their front matter could not be read":""):"" }
-        CText { text:"Notes marked private: true, or whose privacy settings Cere cannot read, are never searched. Hidden folders and linked files are skipped. A model can only propose an edit: you review the exact change, it is refused if the note changed meanwhile, and the previous text is kept as a private backup.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        CText { text:"Notes marked private: true, or whose privacy settings PAL cannot read, are never searched. Hidden folders and linked files are skipped. A model can only propose an edit: you review the exact change, it is refused if the note changed meanwhile, and the previous text is kept as a private backup.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
         RowLayout {
             visible:!!knowledge.vault.path;Layout.fillWidth:true
             CButton { text:"Recount notes";enabled:knowledge.vault.enabled&&knowledge.vaultStatusRequest<0;onClicked:knowledge.scanVault() }

@@ -6,27 +6,27 @@
 // A category's `chip` is a shorter label for the narrow strip; its full label stays its name.
 
 var groups = [
-    {id: "cere", label: "Your companion"},
+    {id: "pal", label: "Your companion"},
     {id: "assistant", label: "Assistant"},
     {id: "system", label: "System"}
 ]
 
 var categories = [
-    {id: "companion", group: "cere", label: "Companion", icon: "desktop",
+    {id: "companion", group: "pal", label: "Companion", icon: "desktop",
         blurb: "How your companion looks, where they sit, and whether they wander. Profiles reduce distractions when you need to focus.",
         keywords: "appearance avatar character theme color colour pet window desktop size placement position dock home monitor login startup profile always on top",
         settings: [
             {label: "Avatar & colors", target: "avatarSelection", keywords: "appearance character portrait skin theme colour color"},
             {label: "Desktop profile", target: "desktopProfile", keywords: "normal focus gaming presentation mode"},
             {label: "Always on top", target: "alwaysOnTop", keywords: "topmost above fullscreen windows"},
-            {label: "Show or hide companion", target: "hideCere", keywords: "hidden visible pet cere"},
-            {label: "Start Cere at login", target: "autostart", keywords: "startup boot autostart"},
+            {label: "Show or hide companion", target: "hidePAL", keywords: "hidden visible pet pal"},
+            {label: "Start PAL at login", target: "autostart", keywords: "startup boot autostart"},
             {label: "Character size", target: "characterSize", keywords: "scale pet bigger smaller"},
             {label: "Monitor home and docking", target: "saveHome", keywords: "position dock left right go home save monitor"},
             {label: "Roaming", target: "roaming", keywords: "follow mouse pointer wander move"},
             {label: "Interface size", target: "interfaceScale", keywords: "zoom scale text panel"}
         ]},
-    {id: "personality", group: "cere", label: "Personality", icon: "edit",
+    {id: "personality", group: "pal", label: "Personality", icon: "edit",
         blurb: "Your companion’s name and conversation style. Shape their tone and attitude.",
         keywords: "tone style manner prompt attitude identity name",
         settings: [
@@ -38,7 +38,7 @@ var categories = [
             {label: "Style details and checkpoints", target: "behaviorPresetDetails", keywords: "traits tone formality warmth humor directness posture tool limits formatting checks emoji checkpoint restore"},
             {label: "Export or import styles", target: "packageExport", keywords: "package share portable json import export"}
         ]},
-    {id: "voice", group: "cere", label: "Voice", icon: "microphone",
+    {id: "voice", group: "pal", label: "Voice", icon: "microphone",
         blurb: "How replies sound when read aloud, and how voice input hears you.",
         keywords: "speech tts speak read aloud audio sound piper kokoro elevenlabs indextts whisper",
         settings: [
@@ -50,12 +50,12 @@ var categories = [
             {label: "Speaking voice", target: "speechVoice", keywords: "piper kokoro heart bella"},
             {label: "Speaking speed", target: "speechRate", keywords: "rate fast slow"},
             {label: "Pitch", target: "speechPitch", keywords: "tone semitones lower higher"},
-            {label: "Speaking volume", target: "speechVolume", keywords: "loudness mute cere"},
+            {label: "Speaking volume", target: "speechVolume", keywords: "loudness mute pal"},
             {label: "Brief reading", target: "speechBrief", keywords: "short opening summary"},
             {label: "Test voice", target: "ttsTest", keywords: "preview try listen sample"},
             {label: "Local voice input", target: "whisperExecutable", keywords: "whisper transcription microphone push to talk dictation"}
         ]},
-    {id: "motion", group: "cere", label: "Motion & expressions", chip: "Motion", icon: "star",
+    {id: "motion", group: "pal", label: "Motion & expressions", chip: "Motion", icon: "star",
         blurb: "How your companion moves, breathes and reacts while keeping you company.",
         keywords: "animation movement gestures expressions quiet reduced intensity idle energy preview",
         settings: [
@@ -117,30 +117,53 @@ var categories = [
             {label: "Custom tools", target: "addCustomTool", keywords: "http rest api request webhook command program template custom tool"}
         ]},
     {id: "scripts", group: "assistant", label: "Saved scripts", chip: "Scripts", icon: "terminal",
-        blurb: "Commands you trust Cere to run. Each one is reviewed in Desktop before it runs.",
+        blurb: "Commands you trust PAL to run. Each one is reviewed in Desktop before it runs.",
         keywords: "commands executable shell run working folder",
         settings: [
             {label: "Add a saved script", target: "addScript", keywords: "new command executable"}
         ]},
-    {id: "mobile", group: "system", label: "Cere Mobile", icon: "chat",
-        blurb: "Take Cere along on your Android phone, paired over a network you choose.",
-        keywords: "android phone remote pairing qr wireguard tailscale lan devices gateway",
+    {id: "skills", group: "assistant", label: "Skills", icon: "skills",
+        blurb: "Reusable instructions and files a model loads when a task fits, reviewed once per version.",
+        keywords: "skill package SKILL.md instructions recipe import repository zip",
+        settings: [
+            {label: "Import a skill folder", target: "importSkillFolder", keywords: "add new package"},
+            {label: "Import from a repository", target: "skillRepository", keywords: "git github url"}
+        ]},
+    {id: "setups", group: "assistant", label: "Working setups", chip: "Setups", icon: "setups",
+        blurb: "Named combinations of model, Workbench families, style, instructions, collections and skills, applied to a conversation after you see what changes.",
+        keywords: "setup preset template profile developer research assets documents companion specialist specialists helper agent",
+        settings: [
+            {label: "Apply a setup", target: "setupsList", keywords: "use conversation start"},
+            {label: "Specialists", target: "specialistsSettings", keywords: "specialist specialists focused helper helpers agent concurrency document editor"},
+            {label: "Import setups", target: "importSetups", keywords: "file share export"}
+        ]},
+    {id: "usage", group: "assistant", label: "Usage & budgets", chip: "Usage", icon: "context",
+        blurb: "What every conversation used, from this desktop and your phones, and the monthly limit PAL keeps for paid requests.",
+        keywords: "tokens cost spending billing price budget limit ledger api usage",
+        settings: [
+            {label: "Usage totals", target: "usageTotals", keywords: "tokens requests images reported estimated"},
+            {label: "Monthly limit", target: "usageMonthlyLimit", keywords: "budget stop cap spending"},
+            {label: "Prices", target: "usagePrices", keywords: "per million tokens cost currency"}
+        ]},
+    {id: "mobile", group: "system", label: "PAL Mobile", icon: "chat",
+        blurb: "Take PAL along on your Android phone, paired over a network you choose.",
+        keywords: "android phone remote pairing qr wireguard tailscale lan devices gateway this computer full access limited access observer",
         settings: [
             {label: "Disable remote access", target: "disableRemote", keywords: "off stop gateway"},
             {label: "Pair a phone", target: "pairingResponse", keywords: "qr pairing response verify"}
         ]},
     {id: "telemetry", group: "system", label: "Workspace telemetry", chip: "Telemetry", icon: "context",
         blurb: "Share recent shell and file activity only from the workspaces you pick.",
-        keywords: "shell hooks files activity fish bash zsh cere-run workspaces edits",
+        keywords: "shell hooks files activity fish bash zsh pal-run workspaces edits",
         settings: [
             {label: "Enable workspace telemetry", target: "telemetryEnabled", keywords: "activity listener watcher"},
             {label: "Add a workspace", target: "telemetryAddWorkspace", keywords: "folder project root"},
             {label: "Ignore patterns", target: "telemetryIgnores", keywords: "exclude paths"},
             {label: "Include command text", target: "telemetryCommands", keywords: "commands redact secrets"},
-            {label: "Include stderr from cere-run", target: "telemetryOutput", keywords: "errors output"}
+            {label: "Include stderr from pal-run", target: "telemetryOutput", keywords: "errors output"}
         ]},
     {id: "application", group: "system", label: "Application", icon: "settings",
-        blurb: "Cere’s shortcut, how you send messages, your backups, a health check and the way out.",
+        blurb: "PAL’s shortcut, how you send messages, your backups, a health check and the way out.",
         keywords: "hyprland shortcut keybinding send key enter composer backup restore recovery health diagnostics quit exit",
         settings: [
             {label: "Copy Hyprland shortcut", target: "copyShortcut", keywords: "keybinding super toggle"},
@@ -152,7 +175,7 @@ var categories = [
         ]}
 ]
 
-// Where Settings opens first, and where it reopens in this process: both Cere windows share it.
+// Where Settings opens first, and where it reopens in this process: both PAL windows share it.
 var defaultCategory = "companion"
 var lastCategory = defaultCategory
 function remember(id) { if (category(id)) lastCategory = id }
@@ -210,12 +233,19 @@ function rank(label, text, words) {
 function search(query, hidden, avatars) {
     var words = String(query || "").toLowerCase().split(/\s+/).filter(function (word) { return word.length > 0 })
     if (!words.length) return []
+    var phrase = words.join(" ")
+    var exactAvatar = (avatars || []).some(function (avatar) {
+        return [avatar.id, avatar.label].concat(avatar.aliases || []).some(function (name) {
+            return String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() === phrase
+        })
+    })
     var results = []
     visibleCategories(hidden, avatars).forEach(function (entry) {
         var own = rank(entry.label, (entry.label + " " + entry.keywords).toLowerCase(), words)
         if (own) results.push({category: entry, setting: null, score: own === 100 ? 95 : own >= 70 ? 50 : 20, order: results.length})
         entry.settings.forEach(function (setting) {
             var score = rank(setting.label, (setting.label + " " + setting.keywords).toLowerCase(), words)
+            if (setting.target === "avatarSelection" && exactAvatar) score = 110
             if (score) results.push({category: entry, setting: setting, score: score, order: results.length})
         })
     })

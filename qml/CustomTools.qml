@@ -5,7 +5,7 @@ import QtQuick.Layouts
 // address, headers, program and credential stay as written here. Every call asks first unless allowed.
 ColumnLayout {
     id:tools
-    Layout.fillWidth:true;spacing:10
+    Layout.fillWidth:true;spacing:Theme.space2
     readonly property string configsKey:JSON.stringify(App.state.settings?.customTools||[])
     readonly property string statusKey:JSON.stringify(App.state.customTools||[])
     property var configs:JSON.parse(configsKey)
@@ -28,9 +28,9 @@ ColumnLayout {
             required property var modelData
             required property int index
             readonly property var live:tools.status(modelData.id)
-            Layout.fillWidth:true;implicitHeight:cardColumn.implicitHeight+24;radius:Theme.radiusControl;color:Theme.raised;border.color:Theme.border
+            Layout.fillWidth:true;implicitHeight:cardColumn.implicitHeight+Theme.space5;radius:Theme.radiusControl;color:Theme.raised;border.color:Theme.border
             ColumnLayout {
-                id:cardColumn;anchors.fill:parent;anchors.margins:12;spacing:6
+                id:cardColumn;anchors.fill:parent;anchors.margins:Theme.space3;spacing:Theme.space2
                 RowLayout {
                     Layout.fillWidth:true
                     CText { objectName:"customToolName_"+card.index;Layout.fillWidth:true;text:card.modelData.name;font.weight:Font.DemiBold;elide:Text.ElideRight }
@@ -40,12 +40,12 @@ ColumnLayout {
                 CCheckBox { objectName:"customToolAllowed_"+card.index;text:"Run without asking";checked:card.modelData.allowed;enabled:tools.request<0;onToggled:tools.replace(card.modelData.id,{allowed:checked}) }
                 RowLayout {
                     visible:card.live.credential!=="none";Layout.fillWidth:true
-                    CText { text:card.live.credentialSet?"Key saved for this address":"Key not set";color:card.live.credentialSet?Theme.text:Theme.amber;font.pixelSize:Theme.secondary;Layout.preferredWidth:180 }
+                    CText { text:card.live.credentialSet?"Key saved for this address":"Key not set";color:card.live.credentialSet?Theme.text:Theme.amber;font.pixelSize:Theme.secondary;Layout.preferredWidth:Theme.fieldWidth }
                     CField { id:credential;objectName:"customToolCredential_"+card.index;Layout.fillWidth:true;echoMode:TextInput.Password;placeholderText:card.live.credentialSet?"Leave empty to keep":"Key";Accessible.description:"Key for "+card.modelData.name }
                     CButton { text:"Save";enabled:credential.text.length>0;onClicked:{App.rpc("customTools.credential",{id:card.modelData.id,value:credential.text});credential.clear()} }
                 }
                 Flow {
-                    Layout.fillWidth:true;spacing:8
+                    Layout.fillWidth:true;spacing:Theme.space2
                     CButton { text:"Edit…";enabled:tools.request<0;onClicked:editor.openFor(card.modelData) }
                     CButton { text:"Remove";danger:true;enabled:tools.request<0;onClicked:tools.save(tools.configs.filter(item=>item.id!==card.modelData.id),"Removed the tool and its key.") }
                 }
@@ -57,7 +57,7 @@ ColumnLayout {
     CText { visible:!!tools.feedback;text:tools.feedback;color:Theme.accentText;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CDialog {
         id:editor;objectName:"customToolEditor"
-        preferredWidth:640
+        preferredWidth:Theme.dialogWide
         property var existing:null
         readonly property bool isHttp:kind.currentIndex===0
         readonly property var methods:["GET","POST","PUT","PATCH","DELETE"]
@@ -86,15 +86,15 @@ ColumnLayout {
         CField { id:description;objectName:"customToolFormDescription";Layout.fillWidth:true;placeholderText:"What it does, for the model";maximumLength:1000;Accessible.name:"Custom tool description" }
         CComboBox { id:kind;objectName:"customToolFormKind";Layout.fillWidth:true;model:["HTTP request","Command"];Accessible.name:"Custom tool kind" }
         CText { text:"Inputs · one per line: name | type | required or optional | description. Types: string, number, integer, boolean.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
-        CTextArea { id:inputs;objectName:"customToolFormInputs";Layout.fillWidth:true;Layout.preferredHeight:70;wrapMode:TextEdit.NoWrap;textFormat:TextEdit.PlainText;placeholderText:"title | string | required | Issue title";Accessible.name:"Custom tool inputs" }
+        CTextArea { id:inputs;objectName:"customToolFormInputs";Layout.fillWidth:true;Layout.preferredHeight:Theme.editorShort;wrapMode:TextEdit.NoWrap;textFormat:TextEdit.PlainText;placeholderText:"title | string | required | Issue title";Accessible.name:"Custom tool inputs" }
         ColumnLayout {
-            visible:editor.isHttp;Layout.fillWidth:true;spacing:8
+            visible:editor.isHttp;Layout.fillWidth:true;spacing:Theme.space2
             RowLayout {
                 Layout.fillWidth:true
-                CComboBox { id:method;objectName:"customToolFormMethod";Layout.preferredWidth:110;model:editor.methods;Accessible.name:"HTTP method" }
+                CComboBox { id:method;objectName:"customToolFormMethod";Layout.preferredWidth:Theme.fieldShort;model:editor.methods;Accessible.name:"HTTP method" }
                 CField { id:url;objectName:"customToolFormUrl";Layout.fillWidth:true;placeholderText:"https://api.example.com/items/{id}?q={query}";Accessible.name:"Request address with slots" }
             }
-            CTextArea { id:headers;objectName:"customToolFormHeaders";Layout.fillWidth:true;Layout.preferredHeight:50;wrapMode:TextEdit.NoWrap;textFormat:TextEdit.PlainText;placeholderText:"Fixed headers, one per line: Accept: application/json";Accessible.name:"Fixed request headers" }
+            CTextArea { id:headers;objectName:"customToolFormHeaders";Layout.fillWidth:true;Layout.preferredHeight:Theme.rowDetailHeight;wrapMode:TextEdit.NoWrap;textFormat:TextEdit.PlainText;placeholderText:"Fixed headers, one per line: Accept: application/json";Accessible.name:"Fixed request headers" }
             RowLayout {
                 Layout.fillWidth:true
                 CComboBox { id:body;objectName:"customToolFormBody";Layout.fillWidth:true;model:["No body","JSON body with the other inputs"];Accessible.name:"Request body" }
@@ -104,13 +104,13 @@ ColumnLayout {
             CCheckBox { id:allowPrivate;objectName:"customToolFormPrivate";text:"Allow this computer and local network addresses" }
         }
         ColumnLayout {
-            visible:!editor.isHttp;Layout.fillWidth:true;spacing:8
+            visible:!editor.isHttp;Layout.fillWidth:true;spacing:Theme.space2
             RowLayout {
                 Layout.fillWidth:true
                 CField { id:program;objectName:"customToolFormProgram";Layout.fillWidth:true;placeholderText:"Program, such as /usr/bin/rg";Accessible.name:"Program" }
                 CButton { text:"Browse";onClicked:{const path=App.chooseFile();if(path)program.text=path} }
             }
-            CTextArea { id:args;objectName:"customToolFormArgs";Layout.fillWidth:true;Layout.preferredHeight:60;wrapMode:TextEdit.NoWrap;textFormat:TextEdit.PlainText;placeholderText:"Arguments, one per line, such as --max-count=20 and {pattern}";Accessible.name:"Program arguments" }
+            CTextArea { id:args;objectName:"customToolFormArgs";Layout.fillWidth:true;Layout.preferredHeight:Theme.rowDetailHeight;wrapMode:TextEdit.NoWrap;textFormat:TextEdit.PlainText;placeholderText:"Arguments, one per line, such as --max-count=20 and {pattern}";Accessible.name:"Program arguments" }
             RowLayout {
                 Layout.fillWidth:true
                 CField { id:cwd;objectName:"customToolFormCwd";Layout.fillWidth:true;placeholderText:"Working folder";Accessible.name:"Working folder" }
@@ -120,11 +120,11 @@ ColumnLayout {
         RowLayout {
             Layout.fillWidth:true
             CText { text:"Time limit (seconds)";font.pixelSize:Theme.secondary }
-            CField { id:timeout;objectName:"customToolFormTimeout";Layout.preferredWidth:80;Accessible.name:"Time limit in seconds" }
+            CField { id:timeout;objectName:"customToolFormTimeout";Layout.preferredWidth:Theme.fieldTiny;Accessible.name:"Time limit in seconds" }
             Item { Layout.fillWidth:true }
             CCheckBox { id:enabledBox;objectName:"customToolFormEnabled";text:"On" }
         }
-        CText { objectName:"customToolPreview";Layout.fillWidth:true;wrapMode:Text.Wrap;font.family:"monospace";font.pixelSize:Theme.caption;color:Theme.muted;text:"Runs as: "+(editor.isHttp?editor.methods[method.currentIndex]+" "+url.text:program.text+" "+tools.lines(args.text).join(" ")) }
+        CText { objectName:"customToolPreview";Layout.fillWidth:true;wrapMode:Text.Wrap;font.family:Theme.mono;font.pixelSize:Theme.caption;color:Theme.muted;text:"Runs as: "+(editor.isHttp?editor.methods[method.currentIndex]+" "+url.text:program.text+" "+tools.lines(args.text).join(" ")) }
         CText { visible:!!tools.error&&editor.opened;text:tools.error;color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
         RowLayout {
             Layout.fillWidth:true

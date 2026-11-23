@@ -6,6 +6,8 @@
 
 #include <memory>
 
+class QImage;
+
 class AvatarPuppet : public QQuickItem
 {
     Q_OBJECT
@@ -13,6 +15,7 @@ class AvatarPuppet : public QQuickItem
     Q_PROPERTY(QVariantMap definition READ definition WRITE setDefinition NOTIFY definitionChanged)
     Q_PROPERTY(QVariantMap pose READ pose WRITE setPose NOTIFY poseChanged)
     Q_PROPERTY(int surfaceFrame READ surfaceFrame WRITE setSurfaceFrame NOTIFY surfaceFrameChanged)
+    Q_PROPERTY(bool asynchronous READ asynchronous WRITE setAsynchronous NOTIFY asynchronousChanged)
     Q_PROPERTY(bool ready READ ready NOTIFY readyChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
 
@@ -32,6 +35,9 @@ public:
     int surfaceFrame() const;
     void setSurfaceFrame(int frame);
 
+    bool asynchronous() const;
+    void setAsynchronous(bool asynchronous);
+
     bool ready() const;
     QString error() const;
 
@@ -49,6 +55,7 @@ signals:
     void definitionChanged();
     void poseChanged();
     void surfaceFrameChanged();
+    void asynchronousChanged();
     void readyChanged();
     void errorChanged();
 
@@ -62,6 +69,7 @@ private:
 
     void loadSource();
     void rebuild();
+    void finishSourceLoad(quint64 revision, QImage image);
     bool prepareFrameImages(int frame, QString *error);
     void setStatus(bool ready, const QString &error);
 };

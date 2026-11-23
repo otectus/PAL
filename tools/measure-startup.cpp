@@ -1,7 +1,7 @@
 // Startup cost of the interface's controller: wall time to construct it (catalog, avatars, themes)
 // and the process's peak resident memory afterwards. Used to compare builds before and after a
 // change to startup work; the numbers belong to the machine and build that produced them.
-//   cere-measure-startup ROOT [RUNS]
+//   pal-measure-startup ROOT [RUNS]
 #include "controller.h"
 #include <QElapsedTimer>
 #include <QFile>

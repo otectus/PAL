@@ -6,9 +6,9 @@ import { promisify } from 'node:util';
 import { IndexEngine } from '../broker/indextts-engine.ts';
 import { defaultIndexConfig, indexChunks } from '../broker/indextts-config.ts';
 
-const reference=process.env.CERE_INDEXTTS_REFERENCE;
-if(!reference)throw new Error('Set CERE_INDEXTTS_REFERENCE to a 3–15 second authorized recording.');
-const directory=resolve(process.env.CERE_INDEXTTS_EVIDENCE||'/tmp/cere-indextts-evidence');await mkdir(directory,{recursive:true,mode:0o700});
+const reference=process.env.PAL_INDEXTTS_REFERENCE;
+if(!reference)throw new Error('Set PAL_INDEXTTS_REFERENCE to a 3–15 second authorized recording.');
+const directory=resolve(process.env.PAL_INDEXTTS_EVIDENCE||'/tmp/pal-indextts-evidence');await mkdir(directory,{recursive:true,mode:0o700});
 const run=promisify(execFile);
 async function memory(){try{return Number((await run('nvidia-smi',['--query-gpu=memory.used','--format=csv,noheader,nounits'])).stdout.trim().split('\n')[0]);}catch{return null;}}
 const results:any[]=[];
@@ -19,7 +19,7 @@ for(const precision of ['bf16','fp32'] as const){
   const timer=setInterval(()=>void memory().then(n=>peak=Math.max(peak,n||0)),100);timer.unref();
   try{
     const caps=await engine.load();await record({device:'cuda:0',precision,loadSeconds:(performance.now()-start)/1000,vramMiB:await memory(),peakVramMiB:peak});
-    const input='Hello, I am Cere. Today we are testing a local voice that can speak clearly and naturally. I will read this short passage, pause between its sentences, and then finish with a warm goodbye. See you soon! '.padEnd(200,'.').slice(0,200);
+    const input='Hello, I am PAL. Today we are testing a local voice that can speak clearly and naturally. I will read this short passage, pause between its sentences, and then finish with a warm goodbye. See you soon! '.padEnd(200,'.').slice(0,200);
     const began=performance.now();let bytes=0,first=0;
     for await(const chunk of engine.synthesize({generationId:'gpu-benchmark',chunks:indexChunks(input,caps.lowVram?40:160),language:'en',reference,emotion:{source:'same-as-speaker'},durationFactor:1})){
       if(!first)first=(performance.now()-began)/1000;bytes+=chunk.pcm.length;
@@ -33,12 +33,12 @@ for(const precision of ['bf16','fp32'] as const){
   catch(error:any){await record({device:'cuda:0',precision,loadSeconds:(performance.now()-start)/1000,code:error.code,peakVramMiB:peak});}
   finally{clearInterval(timer);await engine.unload();await record({device:'cuda:0',precision,workerExited:!engine.pid,memoryAfterUnloadMiB:await memory(),baselineMiB:before});}
 }
-if(process.env.CERE_INDEXTTS_BENCHMARK_CPU!=='0'){
+if(process.env.PAL_INDEXTTS_BENCHMARK_CPU!=='0'){
 const engine=new IndexEngine({...defaultIndexConfig,device:'cpu',precision:'fp32'});
 try{
   const start=performance.now(),caps=await engine.load();await record({device:'cpu',precision:'fp32',loadSeconds:(performance.now()-start)/1000,capabilities:caps});
   await record({offlineProbe:await engine.command('offline-test')});
-  const text='Hello, I am Cere. Today we are testing a local voice that can speak clearly and naturally. I will read this short passage, pause between its sentences, and then finish with a warm goodbye. See you soon!';
+  const text='Hello, I am PAL. Today we are testing a local voice that can speak clearly and naturally. I will read this short passage, pause between its sentences, and then finish with a warm goodbye. See you soon!';
   const input=(text+' ').padEnd(200,'.').slice(0,200);let bytes=0,first=0;
   const began=performance.now();
   for await(const chunk of engine.synthesize({generationId:'benchmark',chunks:indexChunks(input,160),language:'en',reference,emotion:{source:'same-as-speaker'},durationFactor:1})){

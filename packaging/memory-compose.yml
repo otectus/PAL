@@ -1,3 +1,4 @@
+# This on-disk Compose project identifier owns the installed Neo4j and Qdrant volumes.
 name: cere-memory
 
 services:

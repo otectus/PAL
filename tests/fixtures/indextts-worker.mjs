@@ -12,7 +12,7 @@ lines.on('line',line=>{
   if(request.op==='validate'){copyFileSync(request.source,request.target);send({id:request.id,event:'done',sampleRate:request.sampleRate,duration:4});return;}
   if(request.op==='synthesize'){
     current=request;
-    if(request.mode==='hold'||process.env.CERE_FAKE_INDEX_HOLD==='1'){process.on('SIGTERM',()=>{});return;}
+    if(request.mode==='hold'||process.env.PAL_FAKE_INDEX_HOLD==='1'){process.on('SIGTERM',()=>{});return;}
     if(request.mode==='crash'){process.exit(1);return;}
     if(request.mode==='oom'){send({id:request.id,event:'error',code:'OUT_OF_MEMORY'});process.exit(2);return;}
     if(request.mode==='invalid'){process.stdout.write('not json\n');return;}

@@ -5,6 +5,7 @@ import QtCore
 // Only layout preferences are written to the shared desktop settings file.
 QtObject {
     id: state
+    // Only an explicit request takes over a narrow conversation.
     property bool open: false
     property string tab: "files"
     property var roots: ({})
@@ -19,19 +20,29 @@ QtObject {
     property string artifactId: ""
     property string versionId: ""
     property var images: ({})
+    // Research report links keep their run and exact revision per conversation, just like images.
+    property var researchSelections: ({})
     property real zoom: 1
     property var editorDrafts: ({})
     property var fileDrafts: ({})
     property var references: ({})
+    // Project folders key scratchpad drafts. Independent library notes use their stable note IDs.
+    property var noteStates: ({})
     /** The palette's "Create image" opens the Images pane with its Create panel showing. */
     property bool createRequested: false
-    readonly property Settings layout: Settings {
-        id: preferences
+    component LayoutPreferences: Settings {
         location: App.layoutSettingsUrl
         category: "navigation"
-        property real paneWidth: 460
+        property real paneWidth: Theme.paneDefault
         property bool collapsed: false
+        property bool dockOpen: false
+        property real sidebarWidth: Theme.sidebarDefault
+        property real composerHeight: 0
+        property real activityHeight: 0
+        property real settingsNavWidth: Theme.settingsRailWidth
+        property bool showPaneTabs: true
     }
+    readonly property LayoutPreferences layout: LayoutPreferences { id: preferences }
     property alias paneWidth: preferences.paneWidth
     signal requested()
     function show(tab) { if (tab) state.tab = tab; open = true; requested() }
@@ -44,6 +55,8 @@ QtObject {
     function selectImage(sessionId, artifact, version) { const next = Object.assign({}, images); if (artifact && version) next[sessionId] = { artifactId: artifact, versionId: version }; else delete next[sessionId]; images = next; artifactId = artifact || ""; versionId = version || "" }
     function imageFor(sessionId) { return images[sessionId] || ({ artifactId: "", versionId: "" }) }
     function clearImage(sessionId) { selectImage(sessionId, "", "") }
+    function selectResearch(sessionId, runId, versionId) { const next = Object.assign({}, researchSelections); if (runId) next[sessionId] = { id: runId, versionId: versionId || "" }; else delete next[sessionId]; researchSelections = next }
+    function researchFor(sessionId) { return researchSelections[sessionId] || ({ id: "", versionId: "" }) }
     function activateSession(sessionId) { const selectedFile = fileFor(sessionId), selectedImage = imageFor(sessionId); file = selectedFile; changeSetId = changeSetFor(sessionId); artifactId = selectedImage.artifactId; versionId = selectedImage.versionId }
     function rootFor(sessionId) { return roots[sessionId] || "" }
     function setRoot(sessionId, rootId) { const next = Object.assign({}, roots); next[sessionId] = rootId; roots = next }
@@ -59,4 +72,6 @@ QtObject {
     signal insertIntoComposer(string sessionId, string text)
     function referencesFor(sessionId) { return references[sessionId] || [] }
     function setReferences(sessionId, list) { const next = Object.assign({}, references); next[sessionId] = list; references = next }
+    function noteState(project) { return noteStates[project] }
+    function keepNoteState(project, value) { const next = Object.assign({}, noteStates); next[project] = value; noteStates = next }
 }

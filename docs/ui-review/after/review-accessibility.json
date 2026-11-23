@@ -65,7 +65,7 @@
             {
                 "focusable": true,
                 "h": 40,
-                "name": "Search Cere",
+                "name": "Search PAL",
                 "objectName": "sidebarCommandPalette",
                 "role": 43,
                 "tiny": false,
@@ -763,7 +763,7 @@
             {
                 "focusable": true,
                 "h": 40,
-                "name": "Search Cere",
+                "name": "Search PAL",
                 "objectName": "sidebarCommandPalette",
                 "role": 43,
                 "tiny": false,
@@ -1331,7 +1331,7 @@
             {
                 "focusable": true,
                 "h": 40,
-                "name": "Search Cere",
+                "name": "Search PAL",
                 "objectName": "sidebarCommandPalette",
                 "role": 43,
                 "tiny": false,
@@ -1581,7 +1581,7 @@
             {
                 "focusable": true,
                 "h": 32,
-                "name": "Start Cere at login",
+                "name": "Start PAL at login",
                 "objectName": "",
                 "role": 44,
                 "tiny": false,
@@ -1721,7 +1721,7 @@
             {
                 "focusable": true,
                 "h": 42,
-                "name": "Cere speaking voice",
+                "name": "PAL speaking voice",
                 "objectName": "speechVoice",
                 "role": 46,
                 "tiny": false,
@@ -1751,7 +1751,7 @@
             {
                 "focusable": true,
                 "h": 32,
-                "name": "Cere’s volume",
+                "name": "PAL’s volume",
                 "objectName": "speechVolume",
                 "role": 51,
                 "tiny": false,
@@ -1881,7 +1881,7 @@
             {
                 "focusable": true,
                 "h": 40,
-                "name": "Spend a moment with Cere",
+                "name": "Spend a moment with PAL",
                 "objectName": "playMotionShowcase",
                 "role": 43,
                 "tiny": false,
@@ -1901,7 +1901,7 @@
             {
                 "focusable": true,
                 "h": 42,
-                "name": "Choose Cere’s expression",
+                "name": "Choose PAL’s expression",
                 "objectName": "animationPicker",
                 "role": 46,
                 "tiny": false,
@@ -2011,7 +2011,7 @@
             {
                 "focusable": true,
                 "h": 40,
-                "name": "Hide Cere",
+                "name": "Hide PAL",
                 "objectName": "",
                 "role": 43,
                 "tiny": false,
@@ -2071,7 +2071,7 @@
             {
                 "focusable": true,
                 "h": 32,
-                "name": "Trusted phone — no fingerprint or PIN for Cere actions",
+                "name": "Trusted phone — no fingerprint or PIN for PAL actions",
                 "objectName": "",
                 "role": 44,
                 "tiny": false,
@@ -2781,7 +2781,7 @@
             {
                 "focusable": true,
                 "h": 32,
-                "name": "Include stderr from explicit cere-run commands",
+                "name": "Include stderr from explicit pal-run commands",
                 "objectName": "telemetryOutput",
                 "role": 44,
                 "tiny": false,
@@ -2929,7 +2929,7 @@
             {
                 "focusable": true,
                 "h": 40,
-                "name": "Search Cere",
+                "name": "Search PAL",
                 "objectName": "sidebarCommandPalette",
                 "role": 43,
                 "tiny": false,
@@ -3317,7 +3317,7 @@
             {
                 "focusable": true,
                 "h": 40,
-                "name": "Search Cere",
+                "name": "Search PAL",
                 "objectName": "openCommandPalette",
                 "role": 43,
                 "tiny": false,
@@ -3605,7 +3605,7 @@
             {
                 "focusable": true,
                 "h": 40,
-                "name": "Search Cere",
+                "name": "Search PAL",
                 "objectName": "openCommandPalette",
                 "role": 43,
                 "tiny": false,

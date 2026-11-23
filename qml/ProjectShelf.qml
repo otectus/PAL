@@ -8,6 +8,7 @@ import QtQuick.Layouts
 Item {
     id: shelf
     objectName: "projectShelf"
+    implicitHeight: Theme.editorMedium
     property string sessionId: ""
     property var shelfData: null
     property string error: ""
@@ -29,30 +30,33 @@ Item {
         property string empty: ""
         property int count: 0
         default property alias rows: body.data
-        Layout.fillWidth: true; spacing: 4
+        Layout.fillWidth: true; spacing: Theme.space1
         CText { text: parent.title + (parent.count ? " · " + parent.count : ""); font.weight: Font.DemiBold; font.pixelSize: Theme.secondary }
         CText { visible: !parent.count; text: parent.empty; color: Theme.muted; font.pixelSize: Theme.caption }
-        ColumnLayout { id: body; Layout.fillWidth: true; spacing: 2 }
+        ColumnLayout { id: body; Layout.fillWidth: true; spacing: Theme.space1 }
     }
-    component Row: RowLayout {
+    component Row: GridLayout {
         id: row
         property string label: ""
         property string detail: ""
         property string icon: "file"
         property var ref: null
-        Layout.fillWidth: true; spacing: 8
-        CIcon { name: row.icon; Layout.preferredWidth: 18; Layout.preferredHeight: 18 }
+        readonly property bool narrow: shelf.width < Theme.paneMinimum
+        columns: narrow ? 2 : 3; columnSpacing: Theme.space2; rowSpacing: 0
+        Layout.fillWidth: true
+        CIcon { name: row.icon; Layout.row: 0; Layout.column: 0; Layout.preferredWidth: Theme.iconSize; Layout.preferredHeight: Theme.iconSize }
         ColumnLayout {
+            Layout.row: 0; Layout.column: 1
             Layout.fillWidth: true; spacing: 0
             CText { text: row.label; elide: Text.ElideMiddle; wrapMode: Text.NoWrap; font.pixelSize: Theme.secondary }
             CText { visible: !!row.detail; text: row.detail; elide: Text.ElideRight; wrapMode: Text.NoWrap; color: Theme.muted; font.pixelSize: Theme.caption }
         }
-        CButton { visible: !!row.ref; text: "Use in next message"; quiet: true; implicitHeight: 30; font.pixelSize: Theme.caption; Accessible.name: "Use " + row.label + " in the next message"; onClicked: shelf.use(row.ref) }
+        CButton { visible: !!row.ref; Layout.row: row.narrow ? 1 : 0; Layout.column: row.narrow ? 1 : 2; text: "Use in next message"; quiet: true; implicitHeight: Theme.compactHeight; font.pixelSize: Theme.caption; Accessible.name: "Use " + row.label + " in the next message"; onClicked: shelf.use(row.ref) }
     }
     ScrollView {
         anchors.fill: parent; clip: true; contentWidth: availableWidth
         ColumnLayout {
-            width: parent.width; spacing: 14
+            width: parent.width; spacing: Theme.space4
             CText { text: "Things this project has collected. Each keeps its own rules: sharing a file with the project makes it findable here, not part of every prompt."; color: Theme.muted; font.pixelSize: Theme.caption }
             CText { visible: !!shelf.error; text: shelf.error; color: Theme.danger; font.pixelSize: Theme.secondary }
             CText { objectName: "shelfNotice"; visible: !!shelf.notice; text: shelf.notice; color: Theme.accentText; font.pixelSize: Theme.caption; Accessible.role: Accessible.AlertMessage }

@@ -1,6 +1,6 @@
 import QtQuick
 import QtTest
-import "../../qml" as Cere
+import "../../qml" as PAL
 
 Item {
     id: scene
@@ -8,7 +8,7 @@ Item {
     height: 180
     visible: true
     property var moodConfig: ({})
-    readonly property var avatarIds: Cere.AvatarCatalog.entries.map(function(entry) { return entry.id })
+    readonly property var avatarIds: PAL.AvatarCatalog.entries.map(function(entry) { return entry.id })
     Component.onCompleted: {
         var request=new XMLHttpRequest()
         request.open("GET",Qt.resolvedUrl("../../assets/motions.json"),false);request.send()
@@ -19,12 +19,12 @@ Item {
     TestCase {
     id: testCase
     anchors.fill: parent
-    name: "CerePortrait"
+    name: "PALPortrait"
     when: windowShown
 
     Component {
         id: portraitComponent
-        Cere.CerePortrait {
+        PAL.PALPortrait {
             moodConfig: scene.moodConfig
             width: 96
             height: 96
@@ -45,18 +45,18 @@ Item {
         var portrait = make({settings:({assistantName:"Étoile", reducedMotion:true}), mood:"concerned"})
         compare(portrait.face, 7)
         var originalColor = portrait.color.toString()
-        for (var id of scene.avatarIds.filter(function(id) { return id !== Cere.AvatarCatalog.defaultId })) {
+        for (var id of scene.avatarIds.filter(function(id) { return id !== PAL.AvatarCatalog.defaultId })) {
             portrait.blinking = false
-            portrait.avatar = Cere.AvatarCatalog.avatarFor(id)
+            portrait.avatar = PAL.AvatarCatalog.avatarFor(id)
             tryVerify(function() { return portrait.artworkReady }, 10000)
             compare(portrait.loadedFaces, 12)
             compare(portrait.face, 7)
-            compare(portrait.color, Cere.Theme.paletteFor(id).portraitSurface)
+            compare(portrait.color, PAL.Theme.paletteFor(id).portraitSurface)
             verify(portrait.description.indexOf("Étoile · ") === 0)
             portrait.blinking = true
             compare(portrait.face, 7) // The neutral blink must not erase concern.
         }
-        portrait.avatar = ({id:"cere_default",portrait:"cere_default-portraits.png"})
+        portrait.avatar = ({id:"pal",portrait:"pal-portraits.png"})
         tryVerify(function() { return portrait.artworkReady }, 10000)
         compare(portrait.loadedFaces, 12)
         compare(portrait.color, originalColor)
@@ -135,7 +135,7 @@ Item {
 
     Component {
         id: sourceComponent
-        Cere.MoodSource { active: true; config: scene.moodConfig; session: ({id:"alpha",status:"idle"}) }
+        PAL.MoodSource { active: true; config: scene.moodConfig; session: ({id:"alpha",status:"idle"}) }
     }
     function test_shared_source_holds_competing_stream_moods_and_clears_new_turns() {
         var source=createTemporaryObject(sourceComponent,host)
@@ -172,7 +172,7 @@ Item {
         return scene.avatarIds.map(function(id) { return {tag:id,id:id} })
     }
     function test_hover_click_and_every_expression_texture_is_ready(data) {
-        var portrait = make({avatar:Cere.AvatarCatalog.avatarFor(data.id)})
+        var portrait = make({avatar:PAL.AvatarCatalog.avatarFor(data.id)})
         var expected = ["neutral", "curious", "thinking", "happy", "cheeky", "skeptical", "tender", "concerned", "surprised", "focused", "sleepy"]
         for (var frame = 0; frame < expected.length; ++frame) {
             portrait.mood = expected[frame]

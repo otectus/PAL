@@ -12,11 +12,11 @@ import { Core } from '../../broker/core.ts';
 import { Store } from '../../broker/store.ts';
 import { resetHelperPath } from '../../broker/workspace/fsclient.ts';
 
-/** Builds cere-workspacefs from the current source once per source version; undefined without a compiler. */
+/** Builds pal-workspacefs from the current source once per source version; undefined without a compiler. */
 export function workspaceHelper(): string | undefined {
   const source = fileURLToPath(new URL('../../native/workspacefs.cpp', import.meta.url));
   const digest = createHash('sha256').update(readFileSync(source)).digest('hex').slice(0, 16);
-  const directory = join(tmpdir(), 'cere-test-workspacefs'), target = join(directory, digest);
+  const directory = join(tmpdir(), 'pal-test-workspacefs'), target = join(directory, digest);
   if (existsSync(target)) return target;
   try {
     mkdirSync(directory, { recursive: true });
@@ -30,10 +30,28 @@ export function workspaceHelper(): string | undefined {
 export function useWorkspaceHelper() {
   const helper = workspaceHelper();
   if (!helper) return false;
-  process.env.CERE_WORKSPACEFS = helper; resetHelperPath();
+  process.env.PAL_WORKSPACEFS = helper; resetHelperPath();
   return true;
 }
-export const skipWithoutHelper = useWorkspaceHelper() ? false : 'needs a C++20 compiler to build cere-workspacefs';
+export const skipWithoutHelper = useWorkspaceHelper() ? false : 'needs a C++20 compiler to build pal-workspacefs';
+
+/** Builds the terminal worker (with the vendored libvterm) once per source version; undefined without a C compiler. */
+export function terminalWorker(): string | undefined {
+  const root = fileURLToPath(new URL('../../native/', import.meta.url));
+  const sources = [join(root, 'terminal/pal-terminal.c'), ...['encoding', 'keyboard', 'mouse', 'parser', 'pen', 'screen', 'state', 'unicode', 'vterm'].map(name => join(root, `third_party/libvterm/src/${name}.c`))];
+  const digest = createHash('sha256').update(sources.map(source => readFileSync(source, 'utf8')).join('\0')).digest('hex').slice(0, 16);
+  const directory = join(tmpdir(), 'pal-test-terminal'), target = join(directory, digest);
+  if (existsSync(target)) return target;
+  try {
+    mkdirSync(directory, { recursive: true });
+    const temporary = `${target}.${process.pid}`;
+    execFileSync(process.env.CC || 'cc', ['-std=c11', '-O1', '-I', join(root, 'third_party/libvterm/include'), '-I', join(root, 'third_party/libvterm/src'), '-o', temporary, ...sources, '-lutil'], { stdio: 'pipe' });
+    renameSync(temporary, target);
+    return target;
+  } catch { return undefined; }
+}
+/** Points the broker at the test terminal worker; false when it cannot be built (the test should skip). */
+export function useTerminalWorker() { const worker = terminalWorker(); if (!worker) return false; process.env.PAL_TERMINAL_WORKER = worker; return true; }
 
 export type Step = (body: any, index: number) => { content?: string; tool_calls?: { function: { name: string; arguments: Record<string, unknown> } }[] } | Promise<{ content?: string; tool_calls?: any[] }>;
 const model = (id: string, capabilities: string[], extra: Record<string, unknown> = {}) => ({ model: id, name: id, capabilities, details: { parameter_size: '3B' }, ...extra });
@@ -48,7 +66,7 @@ export async function until(check: () => boolean | Promise<boolean>, timeout = 8
  * successive /api/chat requests; the last step repeats. `requests` holds every chat request body.
  */
 export async function workbenchFixture(t: any, steps: Step[] = [() => ({ content: 'Done.' })], options: { cloud?: boolean } = {}) {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-workbench-')), state = join(directory, 'state'), project = join(directory, 'project');
+  const directory = await mkdtemp(join(tmpdir(), 'pal-workbench-')), state = join(directory, 'state'), project = join(directory, 'project');
   await mkdir(project); await mkdir(state);
   const requests: any[] = [];
   const catalog = [model('chat:latest', ['completion', 'tools', 'vision']), model('text-tools:latest', ['completion', 'tools']), model('plain:latest', ['completion']), model('cloudy:cloud', ['completion', 'tools'], { remote_host: 'https://ollama.com' }), model('see:latest', ['completion', 'vision'])];

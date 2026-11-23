@@ -7,7 +7,7 @@ import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
 
 test('Q08 the send key is a validated setting that defaults to Enter and survives restarts', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-send-key-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-send-key-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   assert.equal(core.settings.sendKey, 'enter', 'existing profiles keep Enter to send');

@@ -20,7 +20,7 @@ if (!metadata.width || metadata.width !== metadata.height) {
 if (!metadata.hasAlpha) throw new Error('Icon master must have an alpha channel');
 
 for (const size of sizes) {
-  const output = join(outputRoot, `${size}x${size}`, 'apps', 'cere.png');
+  const output = join(outputRoot, `${size}x${size}`, 'apps', 'pal.png');
   await mkdir(dirname(output), { recursive: true });
   await sharp(input, { failOn: 'error' })
     .resize(size, size, {

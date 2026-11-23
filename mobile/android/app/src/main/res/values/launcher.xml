@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Both layers keep the tilted face inside the adaptive icon's 66 dp safe circle. -->
+    <fraction name="pal_launcher_inset">21%</fraction>
+</resources>

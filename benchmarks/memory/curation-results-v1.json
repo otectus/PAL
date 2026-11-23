@@ -1,0 +1,724 @@
+{
+  "desktop": "0.1.6",
+  "start_commit": "67e54613646efc17575096dafff4552e89b786b0",
+  "assessment_contract": "pal-assessment-2",
+  "heldout": {
+    "qualified": false,
+    "profile": "synthetic_smoke",
+    "cases": 11,
+    "support_accuracy": 0.6363636363636364,
+    "support_precision": 0.5714285714285714,
+    "precision_interval": [
+      0.2504542304090258,
+      0.8417830777373732
+    ],
+    "supported": 7,
+    "valuable_preserved": 4,
+    "valuable": 6,
+    "rows": [
+      {
+        "target": "case-0",
+        "project": "elm",
+        "support": "supported",
+        "expected": "supported",
+        "keep": true,
+        "elapsed_ms": 6526
+      },
+      {
+        "target": "case-1",
+        "project": "aster",
+        "support": "supported",
+        "expected": "supported",
+        "keep": true,
+        "elapsed_ms": 5958
+      },
+      {
+        "target": "case-2",
+        "project": "larch",
+        "support": "supported",
+        "expected": "insufficient",
+        "keep": true,
+        "elapsed_ms": 19096
+      },
+      {
+        "target": "case-3",
+        "project": "lotus",
+        "error": "INVALID_CITATION",
+        "elapsed_ms": 17584
+      },
+      {
+        "target": "case-4",
+        "project": "moss",
+        "support": "insufficient",
+        "expected": "insufficient",
+        "keep": false,
+        "elapsed_ms": 19048
+      },
+      {
+        "target": "case-5",
+        "project": "ivy",
+        "support": "supported",
+        "expected": "supported",
+        "keep": true,
+        "elapsed_ms": 16256
+      },
+      {
+        "target": "case-6",
+        "project": "palm",
+        "support": "supported",
+        "expected": "insufficient",
+        "keep": true,
+        "elapsed_ms": 16572
+      },
+      {
+        "target": "case-7",
+        "project": "willow",
+        "support": "contradicted",
+        "expected": "contradicted",
+        "keep": false,
+        "elapsed_ms": 15312
+      },
+      {
+        "target": "case-8",
+        "project": "ash",
+        "support": "supported",
+        "expected": "insufficient",
+        "keep": false,
+        "elapsed_ms": 8431
+      },
+      {
+        "target": "case-9",
+        "project": "birch",
+        "support": "supported",
+        "expected": "supported",
+        "keep": true,
+        "elapsed_ms": 5082
+      },
+      {
+        "target": "case-10",
+        "project": "sage",
+        "support": "insufficient",
+        "expected": "insufficient",
+        "keep": false,
+        "elapsed_ms": 8580
+      }
+    ],
+    "dataset": "pal-curation-synthetic-1",
+    "model": "hf.co/empero-ai/Qwen3.8-4B-Distill-GGUF:Q8_0",
+    "model_version": "hf.co/empero-ai/Qwen3.8-4B-Distill-GGUF:Q8_0",
+    "model_digest": "2f028bd499903c94579b0d0f4db80d12ca81b6d28ce7978867980248d51404e4",
+    "fingerprint": "f97c3e1b064af1983775f136198ad68822d215f3daa2eb32bbf739aa4dc7be24",
+    "elapsed_ms": 138447,
+    "usage": {
+      "requests": 11,
+      "input_tokens": 4912,
+      "output_tokens": 2326,
+      "cost_micros": null,
+      "unknown_cost": 11,
+      "uncertain": 0
+    }
+  },
+  "canonical": {
+    "model": {
+      "requested": "hf.co/empero-ai/Qwen3.8-4B-Distill-GGUF:Q8_0",
+      "local_tag_digest": "2f028bd499903c94579b0d0f4db80d12ca81b6d28ce7978867980248d51404e4",
+      "local_size_bytes": 4610580151,
+      "resolved_route": {
+        "connectionRef": "default:ollama",
+        "connectionRevision": 0,
+        "credentialRef": "none",
+        "credentialRevision": "none",
+        "adapterId": "ollama",
+        "endpoint": "http://127.0.0.1:11434",
+        "modelId": "hf.co/empero-ai/Qwen3.8-4B-Distill-GGUF:Q8_0",
+        "processing": "local",
+        "modelVersion": "hf.co/empero-ai/Qwen3.8-4B-Distill-GGUF:Q8_0",
+        "modelDigest": "2f028bd499903c94579b0d0f4db80d12ca81b6d28ce7978867980248d51404e4",
+        "fingerprint": "f97c3e1b064af1983775f136198ad68822d215f3daa2eb32bbf739aa4dc7be24"
+      }
+    },
+    "usage": {
+      "requests": 6,
+      "input_tokens": 4377,
+      "output_tokens": 1533,
+      "cost_micros": null,
+      "unknown_cost": 6,
+      "uncertain": 0
+    },
+    "process_calls": [
+      {
+        "wall_ms": 33466,
+        "chat_requests": 2
+      },
+      {
+        "wall_ms": 36497,
+        "chat_requests": 2
+      },
+      {
+        "wall_ms": 16576,
+        "chat_requests": 1
+      },
+      {
+        "wall_ms": 15935,
+        "chat_requests": 1
+      }
+    ],
+    "cases": [
+      {
+        "key": "preference",
+        "category": "preference",
+        "role": "user",
+        "quote_bytes": 34,
+        "trust": "explicit_user",
+        "support": null,
+        "suggested_action": null,
+        "decision": null,
+        "status": "candidate",
+        "job_state": "blocked",
+        "error_code": "INVALID_CITATION"
+      },
+      {
+        "key": "decision",
+        "category": "decision",
+        "role": "user",
+        "quote_bytes": 61,
+        "trust": "explicit_user",
+        "support": null,
+        "suggested_action": null,
+        "decision": null,
+        "status": "candidate",
+        "job_state": "blocked",
+        "error_code": "INVALID_CITATION"
+      },
+      {
+        "key": "plan",
+        "category": "goal",
+        "role": "user",
+        "quote_bytes": 56,
+        "trust": "explicit_user",
+        "support": "supported",
+        "suggested_action": "keep",
+        "decision": "preserve",
+        "status": "candidate",
+        "job_state": "applied",
+        "error_code": null
+      },
+      {
+        "key": "assistant",
+        "category": "project_convention",
+        "role": "assistant",
+        "quote_bytes": 74,
+        "trust": "derived_summary",
+        "support": "supported",
+        "suggested_action": "keep",
+        "decision": "preserve",
+        "status": "candidate",
+        "job_state": "applied",
+        "error_code": null
+      }
+    ],
+    "retention": {
+      "case": "plan",
+      "protection": {
+        "origin": "model_decision",
+        "decision_id": "2fca8686-4406-4291-9bb1-e8a2865f0e84"
+      },
+      "forecast_before_fixture_deadlines": {
+        "target_kind": "statement",
+        "status": "candidate",
+        "baseline_expires_at_us": 1795842083484000,
+        "effective_expires_at_us": 1797829370179000,
+        "last_support_loss_at_us": 1797829370179000,
+        "protection_reasons": [
+          "automatic_preservation"
+        ]
+      },
+      "fixture": {
+        "raw_payload_and_candidate_deadlines_moved_to_past": true
+      },
+      "expiration": {
+        "expired": 1,
+        "grace": {
+          "protected": 0,
+          "blocked": 0
+        }
+      },
+      "after_expiry": {
+        "status": "candidate",
+        "target_erased": false,
+        "candidate_deadline_expired": true,
+        "raw_payload_erased": true,
+        "raw_payload_bytes": 0,
+        "retained_excerpt": "I plan to publish the Orchid migration guide next month.",
+        "retained_excerpt_bytes": 56,
+        "evidence_erased": false,
+        "active_holds": 1,
+        "inspect_status": "candidate"
+      }
+    },
+    "source_erasure": {
+      "case": "plan",
+      "source_observation_id": "9e6a5549-e6be-4442-8c91-5f8768d1f74c",
+      "result": {
+        "id": "e6a14eae-4026-4f27-bcec-1781cb91729f",
+        "job_id": "e6a14eae-4026-4f27-bcec-1781cb91729f",
+        "state": "SUPPRESSED",
+        "suppressed": true,
+        "purge_complete": false,
+        "deleted": 7,
+        "revision": 17
+      },
+      "inspection_after_erasure": {
+        "code": "NOT_FOUND",
+        "message": "Memory record is not available in this scope"
+      },
+      "recall_items_after_erasure": 0,
+      "sqlite": {
+        "live_payload_matches": 0,
+        "live_evidence_matches": 0,
+        "live_statement_matches": 0,
+        "retrieval_document_matches": 0,
+        "remaining_assessments": 0,
+        "active_holds": 0
+      },
+      "registry_entries": 3
+    },
+    "safety": {
+      "synthetic_only": true,
+      "disposable_profile": true,
+      "isolated_scopes": true,
+      "local_endpoint": "http://127.0.0.1:11434",
+      "cloud_requests": false,
+      "experimental_acceptance": {
+        "enabled": true,
+        "mechanism": "unmeasuredFingerprint",
+        "fingerprint": "f97c3e1b064af1983775f136198ad68822d215f3daa2eb32bbf739aa4dc7be24"
+      }
+    }
+  },
+  "simulated_lifecycle": {
+    "fixtureVersion": "pal-lifecycle-small-v1",
+    "route": {
+      "connectionRef": "default:ollama",
+      "adapterId": "ollama",
+      "configuredModel": "hf.co/empero-ai/Qwen3.8-4B-Distill-GGUF:Q8_0",
+      "returnedModel": "hf.co/empero-ai/Qwen3.8-4B-Distill-GGUF:Q8_0",
+      "modelVersion": "hf.co/empero-ai/Qwen3.8-4B-Distill-GGUF:Q8_0",
+      "modelDigest": "2f028bd499903c94579b0d0f4db80d12ca81b6d28ce7978867980248d51404e4",
+      "processing": "local",
+      "connectionRevision": 0,
+      "fingerprint": "f97c3e1b064af1983775f136198ad68822d215f3daa2eb32bbf739aa4dc7be24",
+      "outputMode": "json_schema"
+    },
+    "actualActions": [
+      {
+        "id": "formatter-preference",
+        "baseline": "accept_deterministic",
+        "preservationOnly": "accept_deterministic",
+        "guardedExperimental": "accept_guarded_experimental"
+      },
+      {
+        "id": "sqlite-decision",
+        "baseline": "leave_candidate",
+        "preservationOnly": "preserve_uncertain",
+        "guardedExperimental": "accept_guarded_experimental"
+      },
+      {
+        "id": "tentative-migration",
+        "baseline": "leave_candidate",
+        "preservationOnly": "preserve_uncertain",
+        "guardedExperimental": "preserve_uncertain"
+      },
+      {
+        "id": "assistant-outcome",
+        "baseline": "leave_candidate",
+        "preservationOnly": "leave_candidate",
+        "guardedExperimental": "leave_candidate"
+      }
+    ],
+    "passes": {
+      "deterministicBaseline": {
+        "latencyMs": 0,
+        "rule": "Accept only an exact first-person, actual preference; no model call and no semantic inference.",
+        "actions": {
+          "formatter-preference": "accept_deterministic",
+          "sqlite-decision": "leave_candidate",
+          "tentative-migration": "leave_candidate",
+          "assistant-outcome": "leave_candidate"
+        },
+        "abstentions": [
+          {
+            "id": "sqlite-decision",
+            "reason": "not_represented_by_baseline_rule"
+          },
+          {
+            "id": "tentative-migration",
+            "reason": "planned_not_actual"
+          },
+          {
+            "id": "assistant-outcome",
+            "reason": "assistant_not_authority"
+          }
+        ],
+        "modelCalls": 0,
+        "retention": {
+          "bytes": 36,
+          "sources": [
+            {
+              "id": "formatter-preference",
+              "label": "user:turn-1",
+              "bytes": 36,
+              "action": "accept_deterministic"
+            }
+          ]
+        }
+      },
+      "preservationOnly": {
+        "latencyMs": 27198,
+        "modelCalls": 4,
+        "assessmentReusedByLaterPasses": true,
+        "actions": {
+          "formatter-preference": "accept_deterministic",
+          "sqlite-decision": "preserve_uncertain",
+          "tentative-migration": "preserve_uncertain",
+          "assistant-outcome": "leave_candidate"
+        },
+        "abstentions": [
+          {
+            "id": "assistant-outcome",
+            "source": "assistant:turn-4",
+            "reason": "assistant_not_authority"
+          }
+        ],
+        "retention": {
+          "bytes": 131,
+          "sources": [
+            {
+              "id": "formatter-preference",
+              "label": "user:turn-1",
+              "bytes": 36,
+              "action": "accept_deterministic"
+            },
+            {
+              "id": "sqlite-decision",
+              "label": "user:turn-2",
+              "bytes": 51,
+              "action": "preserve_uncertain"
+            },
+            {
+              "id": "tentative-migration",
+              "label": "user:turn-3",
+              "bytes": 44,
+              "action": "preserve_uncertain"
+            }
+          ]
+        }
+      },
+      "guardedSemanticAcceptance": {
+        "experimentalDisposableProfileOnly": true,
+        "marginalLatencyMs": 10087,
+        "assessmentLatencyReusedMs": 27198,
+        "separateAdjudicationCalls": 2,
+        "actions": {
+          "formatter-preference": "accept_guarded_experimental",
+          "sqlite-decision": "accept_guarded_experimental",
+          "tentative-migration": "preserve_uncertain",
+          "assistant-outcome": "leave_candidate"
+        },
+        "abstentions": [
+          {
+            "id": "assistant-outcome",
+            "source": "assistant:turn-4",
+            "reason": "assistant_not_authority"
+          }
+        ],
+        "adjudications": {
+          "formatter-preference": {
+            "output": {
+              "targetVersionId": "formatter-preference",
+              "evidenceIds": [
+                "ev-pref"
+              ],
+              "resolvedReasons": [
+                "The user explicitly stated 'I prefer Ruff for Python formatting' which is a direct, unambiguous statement of preference."
+              ],
+              "subjectPreserved": true,
+              "polarityPreserved": true,
+              "modalityPreserved": true,
+              "timePreserved": true,
+              "entailed": true,
+              "ambiguous": false
+            },
+            "latencyMs": 4666,
+            "error": null,
+            "accepted": true
+          },
+          "sqlite-decision": {
+            "output": {
+              "targetVersionId": "sqlite-decision",
+              "evidenceIds": [
+                "ev-decision"
+              ],
+              "resolvedReasons": [
+                "The claim 'Atlas keeps SQLite authoritative' is directly supported by the user's explicit statement in turn-2: 'For Atlas, we decided to keep SQLite authoritative.' This is a clear, unambiguous declaration of a design decision that remains in effect. The '"
+              ],
+              "subjectPreserved": true,
+              "polarityPreserved": true,
+              "modalityPreserved": true,
+              "timePreserved": true,
+              "entailed": true,
+              "ambiguous": false
+            },
+            "latencyMs": 5421,
+            "error": null,
+            "accepted": true
+          }
+        },
+        "retention": {
+          "bytes": 131,
+          "sources": [
+            {
+              "id": "formatter-preference",
+              "label": "user:turn-1",
+              "bytes": 36,
+              "action": "accept_guarded_experimental"
+            },
+            {
+              "id": "sqlite-decision",
+              "label": "user:turn-2",
+              "bytes": 51,
+              "action": "accept_guarded_experimental"
+            },
+            {
+              "id": "tentative-migration",
+              "label": "user:turn-3",
+              "bytes": 44,
+              "action": "preserve_uncertain"
+            }
+          ]
+        }
+      },
+      "retrievalValuePriorAndOptionalReranker": {
+        "latencyMs": 1355,
+        "queries": [
+          {
+            "id": "formatter-query",
+            "query": "Which formatter does the user prefer?",
+            "expected": "formatter-preference",
+            "deterministic": {
+              "order": [
+                "formatter-preference"
+              ],
+              "expectedRank": 1
+            },
+            "preservationOnly": {
+              "order": [
+                "formatter-preference",
+                "sqlite-decision",
+                "tentative-migration"
+              ],
+              "expectedRank": 1
+            },
+            "guardedAcceptance": {
+              "order": [
+                "formatter-preference",
+                "sqlite-decision",
+                "tentative-migration"
+              ],
+              "expectedRank": 1
+            },
+            "valuePrior": {
+              "rows": [
+                {
+                  "id": "formatter-preference",
+                  "score": 0.55,
+                  "baseScore": 0.5,
+                  "assessedValue": 1
+                },
+                {
+                  "id": "sqlite-decision",
+                  "score": 0,
+                  "baseScore": 0,
+                  "assessedValue": 1
+                },
+                {
+                  "id": "tentative-migration",
+                  "score": 0,
+                  "baseScore": 0,
+                  "assessedValue": 0.875
+                }
+              ],
+              "expectedRank": 1
+            },
+            "optionalReranker": {
+              "order": [
+                "formatter-preference",
+                "sqlite-decision",
+                "tentative-migration"
+              ],
+              "expectedRank": 1,
+              "latencyMs": 688,
+              "route": "f97c3e1b064af1983775f136198ad68822d215f3daa2eb32bbf739aa4dc7be24",
+              "error": null
+            }
+          },
+          {
+            "id": "storage-query",
+            "query": "What authoritative storage decision governs Atlas?",
+            "expected": "sqlite-decision",
+            "deterministic": {
+              "order": [
+                "formatter-preference"
+              ],
+              "expectedRank": null
+            },
+            "preservationOnly": {
+              "order": [
+                "sqlite-decision",
+                "tentative-migration",
+                "formatter-preference"
+              ],
+              "expectedRank": 1
+            },
+            "guardedAcceptance": {
+              "order": [
+                "sqlite-decision",
+                "tentative-migration",
+                "formatter-preference"
+              ],
+              "expectedRank": 1
+            },
+            "valuePrior": {
+              "rows": [
+                {
+                  "id": "sqlite-decision",
+                  "score": 0.55,
+                  "baseScore": 0.5,
+                  "assessedValue": 1
+                },
+                {
+                  "id": "tentative-migration",
+                  "score": 0.18124999999999997,
+                  "baseScore": 0.16666666666666666,
+                  "assessedValue": 0.875
+                },
+                {
+                  "id": "formatter-preference",
+                  "score": 0,
+                  "baseScore": 0,
+                  "assessedValue": 1
+                }
+              ],
+              "expectedRank": 1
+            },
+            "optionalReranker": {
+              "order": [
+                "sqlite-decision",
+                "tentative-migration",
+                "formatter-preference"
+              ],
+              "expectedRank": 1,
+              "latencyMs": 649,
+              "route": "f97c3e1b064af1983775f136198ad68822d215f3daa2eb32bbf739aa4dc7be24",
+              "error": null
+            }
+          }
+        ]
+      }
+    },
+    "totalLatencyMs": 38642,
+    "limitations": [
+      "The four short English fixtures are synthetic and do not measure production precision, multilingual quality, calibration, or long-context behavior.",
+      "Guarded acceptance is an experimental policy simulation in this disposable benchmark; it does not mutate PAL settings or production memory.",
+      "Preservation bytes count exact UTF-8 source passages retained by the simulated action, not SQLite page, index, WAL, backup, or embedding storage.",
+      "Lexical and value-prior ranks are deterministic simulations; the optional reranker is one bounded local-model call and falls back to value-prior order on invalid output.",
+      "A successful structured-output route probe or this small lifecycle run does not establish factual reliability for other models or tasks."
+    ]
+  },
+  "external_lexical": {
+    "locomo": {
+      "baseline": {
+        "dataset": "locomo",
+        "sha256": "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4",
+        "scopes": 4,
+        "questions": 20,
+        "recall_at_5": 0.4,
+        "mrr_at_5": 0.3333333333333333,
+        "model_requests": 0,
+        "measure": "At least one labeled source in the first five canonical results; lexical baseline, no answer generator."
+      },
+      "updated": {
+        "dataset": "locomo",
+        "sha256": "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4",
+        "scopes": 4,
+        "questions": 20,
+        "recall_at_5": 0.4,
+        "mrr_at_5": 0.3333333333333333,
+        "model_requests": 0,
+        "measure": "At least one labeled source in the first five canonical results; lexical baseline, no answer generator."
+      }
+    },
+    "longmemeval": {
+      "baseline": {
+        "dataset": "longmemeval",
+        "sha256": "821a2034d219ab45846873dd14c14f12cfe7776e73527a483f9dac095d38620c",
+        "scopes": 20,
+        "questions": 20,
+        "recall_at_5": 0.9,
+        "mrr_at_5": 0.5516666666666666,
+        "model_requests": 0,
+        "measure": "At least one labeled source in the first five canonical results; lexical baseline, no answer generator."
+      },
+      "updated": {
+        "dataset": "longmemeval",
+        "sha256": "821a2034d219ab45846873dd14c14f12cfe7776e73527a483f9dac095d38620c",
+        "scopes": 20,
+        "questions": 20,
+        "recall_at_5": 0.9,
+        "mrr_at_5": 0.5516666666666666,
+        "model_requests": 0,
+        "measure": "At least one labeled source in the first five canonical results; lexical baseline, no answer generator."
+      }
+    }
+  },
+  "scale": {
+    "cpu": "13th Gen Intel(R) Core(TM) i7-13700HX",
+    "node": "v26.13.1",
+    "artifacts": 100000,
+    "unresolved": 10000,
+    "forecast": {
+      "n": 5,
+      "p50_ms": 148.30305400001816,
+      "p95_ms": 200.25890600000275
+    },
+    "enqueue": {
+      "n": 10,
+      "p50_ms": 5.881111000024248,
+      "p95_ms": 7.039621999982046
+    },
+    "claim": {
+      "n": 20,
+      "p50_ms": 7.421661000000313,
+      "p95_ms": 20.49150699999882
+    },
+    "commit": {
+      "n": 20,
+      "p50_ms": 8.192498999997042,
+      "p95_ms": 8.968386999971699
+    },
+    "listing": {
+      "n": 10,
+      "p50_ms": 1.758590000012191,
+      "p95_ms": 2.5400879999797326
+    },
+    "added_queue_and_assessment_bytes": 262144,
+    "database_bytes": 208437248,
+    "rss_bytes": 177192960,
+    "model_requests": 0
+  },
+  "calibration": {
+    "release_qualified": false,
+    "independently_human_reviewed_corpus": false,
+    "live_cloud_evaluation": false
+  }
+}

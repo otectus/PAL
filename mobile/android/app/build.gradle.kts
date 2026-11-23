@@ -5,15 +5,16 @@ plugins {
 }
 
 android {
-    namespace = "dev.otectus.cere.mobile"
+    namespace = "dev.otectus.pal.mobile"
     compileSdk = 37
 
     defaultConfig {
+        // Stable Android identity keeps the existing pairing, keystore and private cache on upgrade.
         applicationId = "dev.otectus.cere.mobile"
         minSdk = 30
         targetSdk = 37
-        versionCode = 1005
-        versionName = "0.1.5"
+        versionCode = 2000000
+        versionName = "2.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

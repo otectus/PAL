@@ -1,5 +1,6 @@
 import { readFileSync,unlinkSync,readdirSync } from 'node:fs';
 import { resolve,join } from 'node:path';
+import { eraseResearchCopies } from './research/library.ts';
 import type { Store } from './store.ts';
 import type { Session } from './types.ts';
 export type ErasureMatcher = ((text:string)=>boolean)&{identifies?:(id:unknown)=>boolean};
@@ -37,14 +38,15 @@ export function eraseWorkingCopies(store:Store,session:Session,matches:ErasureMa
   }
   const runKey='workflow-run:'+session.id,run=store.get<any>(runKey,null);if(run)store.set(runKey,{...scrub(run),...(identified(run.messageId,run.turnId,run.sourceEventId)?{prompt:removedText}:{})});
   store.set('workflow:results',store.get<any[]>('workflow:results',[]).flatMap(row=>row.sessionId===session.id?(identified(row.messageId,row.turnId,row.sourceEventId)?[]:[scrub(row)]):[row]));
-  eraseArtifactCopies(store,session,matches,scrub);
+  const removedResearch=eraseResearchCopies(store,session.id,matches);
+  eraseArtifactCopies(store,session,matches,scrub,removedResearch);
 }
 /**
- * Text Cere keeps as files (extractions, OCR text, analysis output) is a working copy too: a file whose
+ * Text PAL keeps as files (extractions, OCR text, analysis output) is a working copy too: a file whose
  * text matches leaves this conversation and its project, and its bytes and thumbnails go once nothing
  * else holds it. Prompts recorded with an image are scrubbed; the image itself stays.
  */
-function eraseArtifactCopies(store:Store,session:Session,matches:ErasureMatcher,scrub:(value:any)=>any){
+function eraseArtifactCopies(store:Store,session:Session,matches:ErasureMatcher,scrub:(value:any)=>any,removedResearch:Set<string>){
   if(!store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='artifact_refs'").get())return;
   const objects=join(store.directory,'artifacts','objects'),erased=new Set<string>();
   const held=store.db.prepare("SELECT DISTINCT artifact_id AS id FROM artifact_refs WHERE owner_kind='session' AND owner_id=?").all(session.id).map(row=>String(row.id));
@@ -52,6 +54,7 @@ function eraseArtifactCopies(store:Store,session:Session,matches:ErasureMatcher,
     let hit=false;
     for(const row of store.db.prepare('SELECT id,sha256,data FROM artifact_versions WHERE artifact_id=?').all(id)){
       const version=JSON.parse(String(row.data));
+      if(['research','research-export'].includes(version.provenance?.kind) && removedResearch.has(version.provenance.runId))hit=true;
       if(version.provenance&&matches(JSON.stringify(version.provenance))){version.provenance=scrub(version.provenance);store.db.prepare('UPDATE artifact_versions SET data=? WHERE id=?').run(JSON.stringify(version),String(row.id));}
       if(hit||!/^(text\/|application\/(json|xml))/.test(version.mime||'')||version.bytes>16*1024*1024)continue;
       try{hit=matches(readFileSync(join(objects,String(row.sha256).slice(0,2),String(row.sha256)),'utf8'));}catch{}

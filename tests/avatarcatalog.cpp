@@ -14,7 +14,10 @@ int main(int argc,char **argv) {
         return result;
     };
     const auto catalog=expect(entries,true,"shipped manifest");
-    if(catalog.canonical("cere")!="cere_default"||catalog.canonical("unknown")!=catalog.defaultId)ok=false;
+    if(catalog.defaultId!="pal"||catalog.canonical("pal")!="pal"||catalog.canonical("cere")!="pal"||
+        catalog.canonical("cere_default")!="pal"||catalog.canonical("cere_gothic")!="pal_gothic"||
+        catalog.canonical("cere_punk")!="pal_punk"||catalog.canonical("cere_punk_unmasked")!="pal_punk_unmasked"||
+        catalog.canonical("unknown")!=catalog.defaultId)ok=false;
     if(catalog.entries.size()!=entries.size())ok=false;
     auto future=entries.first().toObject();
     future["id"]="future_companion";future["label"]="Future companion";future["default"]=false;future["aliases"]=QJsonArray{"past_companion"};

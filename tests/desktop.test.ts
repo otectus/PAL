@@ -10,13 +10,13 @@ import type {Settings} from '../broker/types.ts';
 // Exercise the actual process arguments and output parsing without touching
 // the user's playback, screenshots or desktop.
 async function fixture(t:any) {
-  const dir=await mkdtemp(join(tmpdir(),'cere-desktop-test-'));
-  const old={PATH:process.env.PATH,CERE_STATE_DIR:process.env.CERE_STATE_DIR,CERE_DESKTOP_FIXTURE:process.env.CERE_DESKTOP_FIXTURE};
-  process.env.PATH=dir;process.env.CERE_STATE_DIR=dir;process.env.CERE_DESKTOP_FIXTURE=dir;
+  const dir=await mkdtemp(join(tmpdir(),'pal-desktop-test-'));
+  const old={PATH:process.env.PATH,PAL_STATE_DIR:process.env.PAL_STATE_DIR,PAL_DESKTOP_FIXTURE:process.env.PAL_DESKTOP_FIXTURE};
+  process.env.PATH=dir;process.env.PAL_STATE_DIR=dir;process.env.PAL_DESKTOP_FIXTURE=dir;
   t.after(async()=>{for(const [k,v] of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;await rm(dir,{recursive:true,force:true});});
   await writeFile(join(dir,'state.json'),JSON.stringify({names:['org.mpris.MediaPlayer2.chromium.instance1','org.mpris.MediaPlayer2.spotify'],status:'Paused'}));
   const script=`#!${process.execPath}
-const fs=require('node:fs'),path=require('node:path'),dir=process.env.CERE_DESKTOP_FIXTURE;
+const fs=require('node:fs'),path=require('node:path'),dir=process.env.PAL_DESKTOP_FIXTURE;
 const tool=path.basename(process.argv[1]),a=process.argv.slice(2),s=JSON.parse(fs.readFileSync(path.join(dir,'state.json')));
 fs.appendFileSync(path.join(dir,'calls.jsonl'),JSON.stringify({tool,args:a})+'\\n');
 const out=(type,data)=>console.log(JSON.stringify({type,data}));
@@ -92,7 +92,7 @@ test('missing Satty is actionable and duplicate capture requests cannot open com
 });
 
 test('W10 dependency diagnostics name each missing program and the feature it disables', () => {
-  const report = dependencyReport('/nonexistent-cere-path');
+  const report = dependencyReport('/nonexistent-pal-path');
   assert.ok(report.length >= 10);
   for (const name of ['grim', 'satty', 'wpctl', 'busctl']) assert.equal(report.find(entry => entry.name === name)?.available, false, name + ' is reported missing on an empty PATH');
   assert.match(report.find(entry => entry.name === 'satty')!.feature, /capture/i);

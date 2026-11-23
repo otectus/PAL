@@ -18,11 +18,11 @@ export const voiceCommands: VoiceCommand[] = [
 const normalize = (text: string) => text.toLowerCase().normalize('NFKC').replace(/[’']/g, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
 
 /** The command a whole transcript names, or undefined when it is ordinary text. */
-export function matchCommand(transcript: unknown, assistantName = 'Cere'): VoiceCommand | undefined {
+export function matchCommand(transcript: unknown, assistantName = 'PAL'): VoiceCommand | undefined {
   if (typeof transcript !== 'string' || transcript.length > 120 || /["“”«»]/.test(transcript)) return undefined;
   let text = normalize(transcript);
-  // "Cere, stop speaking" and "hey Cere stop speaking" address the assistant; "please" is optional.
-  for (const name of new Set([normalize(assistantName), 'cere'])) if (name) text = text.replace(new RegExp(`^(hey |ok |okay )?${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `), '');
+  // "PAL, stop speaking" and "hey PAL stop speaking" address the assistant; "please" is optional.
+  for (const name of new Set([normalize(assistantName), 'pal', 'cere'])) if (name) text = text.replace(new RegExp(`^(hey |ok |okay )?${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `), '');
   text = text.replace(/^please /, '').replace(/ please$/, '');
   return voiceCommands.find(command => command.phrases.includes(text));
 }

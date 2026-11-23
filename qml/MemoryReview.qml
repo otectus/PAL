@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 CDialog {
     id:review
-    preferredWidth:680
+    preferredWidth:Theme.dialogLarge
     property string sessionId:""
     property var listing:({rows:[],assertions:[]})
     property var selected:({})
@@ -13,7 +13,8 @@ CDialog {
     property string feedback:""
     function call(method,args){operation=method;request=App.rpc(method,Object.assign({sessionId:sessionId},args||{}))}
     function reload(){call("memoryReview.list",{offset:offset})}
-    onOpened:reload()
+    onOpened:{reload();curation.reload()}
+    onClosed:curation.selected=null
     CText { text:"Project memory review";font.pixelSize:Theme.page }
     CText { text:"Proposed decisions and constraints keep their supporting passage. Confirm or Correct adds your reviewed project note and capsule entry. Keep local restricts the note to local recall.";color:Theme.muted;wrapMode:Text.Wrap }
     CButton { text:"Browse memory and older facts";onClicked:{allMemory.sessionId=review.sessionId;allMemory.open()} }
@@ -23,16 +24,17 @@ CDialog {
     }
     CText { visible:!(review.listing.rows||[]).length;text:"No message proposals. Use a message’s menu to propose a decision or constraint.";color:Theme.muted }
     CText { visible:!!review.selected.id;text:review.selected.sourceLabel||"";color:Theme.amber }
-    CTextArea { visible:!!review.selected.id;Layout.fillWidth:true;Layout.preferredHeight:100;readOnly:true;selectByMouse:true;wrapMode:TextEdit.Wrap;text:review.selected.sourceText||"";color:Theme.text;Accessible.name:"Supporting passage" }
-    CTextArea { id:note;visible:!!review.selected.id;Layout.fillWidth:true;Layout.preferredHeight:100;wrapMode:TextEdit.Wrap;color:Theme.text;Accessible.name:"Reviewed memory text" }
+    CTextArea { visible:!!review.selected.id;Layout.fillWidth:true;Layout.preferredHeight:Theme.editorShort;readOnly:true;selectByMouse:true;wrapMode:TextEdit.Wrap;text:review.selected.sourceText||"";color:Theme.text;Accessible.name:"Supporting passage" }
+    CTextArea { id:note;visible:!!review.selected.id;Layout.fillWidth:true;Layout.preferredHeight:Theme.editorShort;wrapMode:TextEdit.Wrap;color:Theme.text;Accessible.name:"Reviewed memory text" }
     Flow {
-        Layout.fillWidth:true;spacing:6
+        Layout.fillWidth:true;spacing:Theme.space2
         visible:!!review.selected.id
         Repeater {
             model:[{label:"Confirm",choice:"confirm"},{label:"Correct",choice:"correct"},{label:"Keep local",choice:"local"},{label:"Forget proposal",choice:"forget"}]
             CButton { required property var modelData;text:modelData.label;enabled:review.request<0;onClicked:review.call("memoryReview.resolve",{id:review.selected.id,expectedRevision:review.selected.currentRevision,text:note.text,choice:modelData.choice}) }
         }
     }
+    MemoryCurationInbox { id:curation;Layout.fillWidth:true;sessionId:review.sessionId;onInspectRequested:recordId=>{inspector.sessionId=review.sessionId;inspector.open();inspector.openRecord(recordId)} }
     CText { text:"Graph proposals and conflicts";font.bold:true }
     Repeater {
         model:review.listing.assertions||[]

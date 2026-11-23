@@ -102,16 +102,16 @@ class Showcase : public QObject {
     }
 
     void workspace(const QString &page="tab_Chat"){
-        if(!(window=titled("Cere"))){app->expand();QVERIFY(waitFor([&]{return (window=titled("Cere"))!=nullptr;}));}
+        if(!(window=titled("PAL"))){app->expand();QVERIFY(waitFor([&]{return (window=titled("PAL"))!=nullptr;}));}
         if(window->size()!=workspaceSize){window->resize(workspaceSize);QTest::qWait(300);}
         closePopups();click(page);QTest::qWait(300);
     }
     void compact(){
-        if(auto workspace=titled("Cere"))workspace->hide();
-        if(!(window=titled("Cere Panel"))){app->togglePanel();QVERIFY(waitFor([&]{return (window=titled("Cere Panel"))!=nullptr;}));}
+        if(auto workspace=titled("PAL"))workspace->hide();
+        if(!(window=titled("PAL Panel"))){app->togglePanel();QVERIFY(waitFor([&]{return (window=titled("PAL Panel"))!=nullptr;}));}
         QTest::qWait(600);
     }
-    void hideWindows(){app->closePanel();if(auto workspace=titled("Cere"))workspace->hide();window=nullptr;QTest::qWait(400);}
+    void hideWindows(){app->closePanel();if(auto workspace=titled("PAL"))workspace->hide();window=nullptr;QTest::qWait(400);}
     void closePopups(){
         if(!window)return;
         std::function<void(QObject*)> walk=[&](QObject *object){
@@ -166,7 +166,7 @@ class Showcase : public QObject {
         }
         return image;
     }
-    // Cere's own windows over a wallpaper of the screen, cropped to the windows plus a margin.
+    // PAL's own windows over a wallpaper of the screen, cropped to the windows plus a margin.
     QImage scene(const QList<QQuickWindow*> &windows,int margin=72){
         rest();QTest::qWait(300);
         const auto screen=qGuiApp->primaryScreen()->geometry();
@@ -175,7 +175,7 @@ class Showcase : public QObject {
         for(auto w:windows){
             if(!w||!w->isVisible())continue;
             const auto image=w->grabWindow();const QPoint at=w->position()-screen.topLeft();
-            if(w->title()!="Cere Pet")shadow(p,image,at);
+            if(w->title()!="PAL Pet")shadow(p,image,at);
             p.drawImage(at,image);bounds|=QRect(at,image.size());
         }
         p.end();
@@ -190,8 +190,8 @@ class Showcase : public QObject {
         for(const auto &image:images){const QPoint at(x,margin+height-image.height());if(shadows)shadow(p,image,at);p.drawImage(at,image);x+=image.width()+gap;}
         return canvas;
     }
-    QQuickWindow *pet(){return titled("Cere Pet");}
-    QQuickWindow *bubble(){return titled("Cere Approval");}
+    QQuickWindow *pet(){return titled("PAL Pet");}
+    QQuickWindow *bubble(){return titled("PAL Approval");}
     QQuickItem *player(){return pet()?pet()->findChild<QQuickItem*>("gesturePlayer"):nullptr;}
     // The pet's own still pose, trimmed to its visible pixels plus a margin.
     QImage petImage(){
@@ -202,11 +202,15 @@ class Showcase : public QObject {
         return image.copy(used.adjusted(-12,-12,12,12).intersected(image.rect()));
     }
 
+    bool conversationTool(const QString &name){
+        return click("conversationMore") && waitFor([&]{return item(name)!=nullptr;}) && click(name);
+    }
+
 private slots:
     void initTestCase(){
-        out=qEnvironmentVariable("CERE_SCREENSHOTS_DIR");QVERIFY2(!out.isEmpty(),"Set CERE_SCREENSHOTS_DIR");QVERIFY(QDir().mkpath(out));
+        out=qEnvironmentVariable("PAL_SCREENSHOTS_DIR");QVERIFY2(!out.isEmpty(),"Set PAL_SCREENSHOTS_DIR");QVERIFY(QDir().mkpath(out));
         qApp->setQuitOnLastWindowClosed(false);
-        app=std::make_unique<Controller>(CERE_SOURCE_DIR,false);
+        app=std::make_unique<Controller>(PAL_SOURCE_DIR,false);
         app->start(false);QVERIFY(waitFor([&]{return app->connected();},15000));
         QVERIFY(waitFor([&]{const auto c=app->state().value("capabilities").toMap();
             for(const auto provider:{"codex","claude","ollama","antigravity"})if(c.value(provider).toMap().value("modelsStatus").toString()!="ready")return false;return true;},20000));
@@ -340,11 +344,11 @@ private slots:
     }
 
     void handoff(){
-        workspace();open("Plan the 2.4 release");QVERIFY(click("chatHandoff"));QTest::qWait(800);
+        workspace();open("Plan the 2.4 release");QVERIFY(conversationTool("menuHandoff"));QTest::qWait(800);
         shot("handoff");closePopups();
     }
     void completionInbox(){
-        workspace();open("Plan the 2.4 release");QVERIFY(click("chatInbox"));QTest::qWait(800);
+        workspace();open("Plan the 2.4 release");QVERIFY(conversationTool("menuInbox"));QTest::qWait(800);
         shot("completion-inbox");closePopups();
     }
     void permissionCenter(){
@@ -380,7 +384,7 @@ private slots:
         workspace();open("Fix the flaky login test");
         auto composer=item("composer");QVERIFY(composer);
         composer->setProperty("text","Also add the 50-run check to the nightly CI job.");
-        QVERIFY(click("contextDrawerButton"));QTest::qWait(1500);
+        QVERIFY(conversationTool("menuContext"));QTest::qWait(1500);
         shot("context-drawer");closePopups();composer->setProperty("text","");
     }
 
@@ -391,7 +395,7 @@ private slots:
         for(const auto &message:app->messages())if(message.toMap().value("text").toString().startsWith("Decision recorded"))decision=message.toMap();
         QVERIFY(!decision.isEmpty());
         QVERIFY(!call("memoryReview.propose",{{"sessionId",decision.value("sessionId")},{"messageId",decision.value("id")},{"kind","decision"}}).contains("error"));
-        QVERIFY(click("chatMemoryReview"));
+        QVERIFY(conversationTool("menuMemoryReview"));
         QVERIFY(waitFor([&]{return findText(window->contentItem(),"Model suggestion")!=nullptr;}));
         QVERIFY(clickText("Model suggestion"));QTest::qWait(800);
         shot("memory-review");closePopups();
@@ -423,7 +427,7 @@ private slots:
             open("Fix the flaky login test");compact();QTest::qWait(900);scrollTo("messageList",0);rest();
             panels<<window->grabWindow();pets<<petImage();
         }
-        QVERIFY(settings({{"avatar","cere"},{"reducedMotion",false}}));
+        QVERIFY(settings({{"avatar","pal"},{"reducedMotion",false}}));
         save(lineup(panels,40,56,true),"themes");
         save(lineup(pets,24,40,false),"avatars");
         hideWindows();
@@ -431,7 +435,7 @@ private slots:
 
     // The six illustrated gestures, each held at its endpoint.
     void gestures(){
-        QVERIFY(settings({{"avatar","cere"},{"reducedMotion",false},{"motionIntensity",.7}}));
+        QVERIFY(settings({{"avatar","pal_classic"},{"reducedMotion",false},{"motionIntensity",.7}}));
         hideWindows();auto actor=player();QVERIFY(actor);
         actor->setProperty("followAppMotion",false);
         QList<QImage> poses;
@@ -450,7 +454,7 @@ private slots:
 int main(int argc,char **argv){
     qputenv("QT_QUICK_CONTROLS_STYLE","Basic");
     QApplication application(argc,argv);
-    application.setApplicationName("cere");application.setOrganizationName("Cere");
+    application.setApplicationName("pal");application.setOrganizationName("PAL");
     Showcase showcase;
     return QTest::qExec(&showcase,argc,argv);
 }

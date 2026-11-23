@@ -41,7 +41,7 @@ async function ollama(t: any) {
 async function settled(core: Core) { for (let index = 0; index < 200 && !core.localModels.job?.done; index++) await new Promise(resolve => setTimeout(resolve, 10)); }
 
 test('M09 lists models with what uses them, pulls one at a time with progress, and cancels cleanly', async t => {
-  const fixture = await ollama(t), dir = await mkdtemp(join(tmpdir(), 'cere-local-models-'));
+  const fixture = await ollama(t), dir = await mkdtemp(join(tmpdir(), 'pal-local-models-'));
   const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   await core.updateSettings({ ollama: { host: fixture.host } });
@@ -65,7 +65,7 @@ test('M09 lists models with what uses them, pulls one at a time with progress, a
 });
 
 test('M09 deletion needs confirmation and is refused for a model in use; load and unload use keep_alive', async t => {
-  const fixture = await ollama(t), dir = await mkdtemp(join(tmpdir(), 'cere-local-models-'));
+  const fixture = await ollama(t), dir = await mkdtemp(join(tmpdir(), 'pal-local-models-'));
   const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   await core.updateSettings({ ollama: { host: fixture.host } });
@@ -84,7 +84,7 @@ test('M09 deletion needs confirmation and is refused for a model in use; load an
 });
 
 test('M09 an embedding switch is measured with the candidate model first; spaces never mix', async t => {
-  const fixture = await ollama(t), dir = await mkdtemp(join(tmpdir(), 'cere-local-models-'));
+  const fixture = await ollama(t), dir = await mkdtemp(join(tmpdir(), 'pal-local-models-'));
   const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   await core.updateSettings({ ollama: { host: fixture.host }, memory: { enabled: true, model: 'nomic-embed-text' } });

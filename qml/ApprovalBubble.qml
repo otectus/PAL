@@ -48,22 +48,22 @@ Item {
     }
     Component.onCompleted: syncApprovals()
     Connections { target:App; function onStateChanged(){bubble.syncApprovals()} }
-    implicitWidth:392
-    implicitHeight:Math.min(460,body.implicitHeight+32)
+    implicitWidth:Theme.compactPane
+    implicitHeight:Math.min(Theme.bubbleHeight,body.implicitHeight+Theme.space6)
     Rectangle {
-        width:16;height:16;rotation:45;y:bubble.tailY-8
-        x:bubble.tailOnRight?parent.width-20:4
+        width:Theme.iconSmall;height:Theme.iconSmall;rotation:45;y:bubble.tailY-Theme.iconSmall/2
+        x:bubble.tailOnRight?parent.width-Theme.gutter:Theme.space1
         color:Theme.surface;border.color:bubble.accent
     }
     Rectangle {
-        anchors.fill:parent;anchors.leftMargin:10;anchors.rightMargin:10
+        anchors.fill:parent;anchors.leftMargin:Theme.space2;anchors.rightMargin:Theme.space2
         color:Theme.surface;border.color:bubble.accent;radius:Theme.radiusCard
         ScrollView {
-            id:viewport;anchors.fill:parent;anchors.margins:12;clip:true
+            id:viewport;anchors.fill:parent;anchors.margins:Theme.space3;clip:true
             contentWidth:availableWidth;contentHeight:body.implicitHeight
             ScrollBar.horizontal.policy:ScrollBar.AlwaysOff;ScrollBar.vertical:CScrollBar{}
             ColumnLayout {
-                id:body;width:viewport.availableWidth;spacing:10
+                id:body;width:viewport.availableWidth;spacing:Theme.space2
                 CText {
                     objectName:"bubbleHeading"
                     text:bubble.needsInput?"Input needed"+(bubble.approvals.length>1?" · "+bubble.approvals.length:"")

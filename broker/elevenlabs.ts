@@ -81,8 +81,8 @@ export class ElevenLabs{
     const controller=new AbortController(),combined=AbortSignal.any([signal,controller.signal,AbortSignal.timeout(5*60*1000)]),env=this.options.env||process.env;
     combined.throwIfAborted();
     const format=['-t','raw','-e','signed-integer','-b','16','-L','-c','1','-r','24000'];
-    const filter=spawn(env.CERE_SOX_BIN||'sox',['-q','-D',...format,'-',...format,'-',...(tuning.rate!==1?['tempo',String(tuning.rate)]:[]),...(tuning.pitch?['pitch',String(tuning.pitch*100)]:[]),'vol',String(tuning.volume)],{env,stdio:['pipe','pipe','ignore']});
-    const player=spawn(env.CERE_APLAY_BIN||'aplay',[...playbackArgs(audioSelection().output),'-q','-t','raw','-r','24000','-f','S16_LE','-c','1'],{env,stdio:['pipe','ignore','ignore']});
+    const filter=spawn(env.PAL_SOX_BIN||env.CERE_SOX_BIN||'sox',['-q','-D',...format,'-',...format,'-',...(tuning.rate!==1?['tempo',String(tuning.rate)]:[]),...(tuning.pitch?['pitch',String(tuning.pitch*100)]:[]),'vol',String(tuning.volume)],{env,stdio:['pipe','pipe','ignore']});
+    const player=spawn(env.PAL_APLAY_BIN||env.CERE_APLAY_BIN||'aplay',[...playbackArgs(audioSelection().output),'-q','-t','raw','-r','24000','-f','S16_LE','-c','1'],{env,stdio:['pipe','ignore','ignore']});
     const children=[filter,player];let failure:Error|undefined;
     const stop=()=>{for(const c of children)c.kill('SIGKILL');};
     const fail=()=>{failure||=new ElevenError('PLAYBACK');controller.abort();};

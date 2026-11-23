@@ -7,7 +7,7 @@ import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
 
 async function setup(t: any) {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-completions-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-completions-'));
   const core = new Core(new Store(directory), () => ({async send() {}, async interrupt() {}, async close() {}}));
   t.after(async () => { await core.close(); await rm(directory, {recursive:true, force:true}); });
   const session = await core.create({provider:'codex', cwd:directory, trusted:true});

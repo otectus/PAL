@@ -131,12 +131,12 @@ function codex() {
       reply({ thread: { id: 'demo-thread' }, approvalPolicy: m.params.approvalPolicy, approvalsReviewer: 'user', sandbox: { type: 'workspaceWrite', writableRoots: [process.cwd()], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } });
     if (m.method === 'turn/start') {
       for (const timer of timers) clearTimeout(timer);
-      // Item IDs stay unique when Cere restarts this process to resume the thread, as Codex's do.
+      // Item IDs stay unique when PAL restarts this process to resume the thread, as Codex's do.
       const id = current = `${process.pid}.${++turn}`; timers = [];
       reply({ turn: { id: `turn-${id}` } });
       send({ method: 'turn/started', params: { threadId: 'demo-thread', turn: { id: `turn-${id}` } } });
-      // Recalled memory arrives as a cere_memory_data block before the person's words.
-      const prompt = String(m.params.input?.[0]?.text || '').replace(/^\s*<cere_memory_data>[\s\S]*?<\/cere_memory_data>/, '');
+      // Recalled memory arrives as a pal_memory_data block before the person's words.
+      const prompt = String(m.params.input?.[0]?.text || '').replace(/^\s*<pal_memory_data>[\s\S]*?<\/pal_memory_data>/, '');
       for (const [delay, message] of codexTurn(prompt, id)) timers.push(later(delay, () => {
         if (message.id !== undefined) waiting.set(message.id, id);
         send(message);

@@ -77,7 +77,7 @@ export class IndexTTS {
       await this.engine?.unload();this.engine=undefined;
       if(this.disposed)return;
       await new Promise<void>((done)=>{
-        const proc=this.job=spawn(this.env.CERE_INDEXTTS_SETUP_PYTHON||'python3',args,{env:this.env,detached:process.platform==='linux',stdio:['ignore','pipe','ignore']});
+        const proc=this.job=spawn(this.env.PAL_INDEXTTS_SETUP_PYTHON||this.env.CERE_INDEXTTS_SETUP_PYTHON||'python3',args,{env:this.env,detached:process.platform==='linux',stdio:['ignore','pipe','ignore']});
         let buffer='',failure:IndexError|undefined,complete=false;
         proc.stdout!.setEncoding('utf8');proc.stdout!.on('data',(part:string)=>{
           buffer+=part;if(buffer.length>65536){failure=new IndexError('IPC_ERROR');this.killJob();return;}
@@ -160,8 +160,8 @@ export class IndexTTS {
   }
   private async playChunks(chunks:AsyncIterable<{generationId:string;pcm:Buffer}>,sampleRate:number,signal:AbortSignal,tuning:{pitch:number;volume:number},id:string,onAudio:()=>void){
     const format=['-t','raw','-e','signed-integer','-b','16','-L','-c','1'];
-    const filter=spawn(this.env.CERE_SOX_BIN||'sox',['-q','-D',...format,'-r',String(sampleRate),'-',...format,'-r','48000','-','rate','48000',...(tuning.pitch?['pitch',String(tuning.pitch*100)]:[]),'vol',String(tuning.volume)],{env:this.env,stdio:['pipe','pipe','ignore']});
-    const player=spawn(this.env.CERE_APLAY_BIN||'aplay',[...playbackArgs(audioSelection().output),'-q','-t','raw','-r','48000','-f','S16_LE','-c','1'],{env:this.env,stdio:['pipe','ignore','ignore']});
+    const filter=spawn(this.env.PAL_SOX_BIN||this.env.CERE_SOX_BIN||'sox',['-q','-D',...format,'-r',String(sampleRate),'-',...format,'-r','48000','-','rate','48000',...(tuning.pitch?['pitch',String(tuning.pitch*100)]:[]),'vol',String(tuning.volume)],{env:this.env,stdio:['pipe','pipe','ignore']});
+    const player=spawn(this.env.PAL_APLAY_BIN||this.env.CERE_APLAY_BIN||'aplay',[...playbackArgs(audioSelection().output),'-q','-t','raw','-r','48000','-f','S16_LE','-c','1'],{env:this.env,stdio:['pipe','ignore','ignore']});
     let failure:IndexError|undefined,started=false;
     const terminate=()=>{filter.kill('SIGKILL');player.kill('SIGKILL');};
     const fail=()=>{failure=new IndexError('PLAYBACK_FAILED');terminate();};

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import readline from 'node:readline';
 import { appendFileSync } from 'node:fs';
-if(process.env.CERE_AGY_TEST_LOG)appendFileSync(process.env.CERE_AGY_TEST_LOG,JSON.stringify(process.argv.slice(2))+'\n');
+if(process.env.PAL_AGY_TEST_LOG)appendFileSync(process.env.PAL_AGY_TEST_LOG,JSON.stringify(process.argv.slice(2))+'\n');
 if(process.argv.includes('--help')) {console.error('--input-format --output-format --conversation --disable-slash-commands');process.exit(0);}
 if(process.argv.includes('models')) {console.log('fixture-model\tFixture Model');process.exit(0);}
 const send=value=>process.stdout.write(JSON.stringify(value)+'\n');

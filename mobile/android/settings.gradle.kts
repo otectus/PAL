@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "CereMobile"
+rootProject.name = "PALMobile"
 include(":app", ":core:protocol", ":core:data")

@@ -1,12 +1,12 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-// M13: one OpenAI-compatible chat endpoint. Its capabilities are the user's declaration: Cere sends only
+// M13: one OpenAI-compatible chat endpoint. Its capabilities are the user's declaration: PAL sends only
 // what is declared and does not verify it. The key is saved for this endpoint's origin and is never sent
 // to another one.
 ColumnLayout {
     id:endpoint
-    Layout.fillWidth:true;spacing:8
+    Layout.fillWidth:true;spacing:Theme.space2
     readonly property var saved:App.state.settings?.compatible||({baseUrl:"",label:"",requiresKey:true,tools:false,images:false,streaming:true,usage:false,contextLength:0,maxOutputTokens:0})
     readonly property var capability:(App.state.capabilities||{}).compatible||({})
     readonly property string origin:(/^(https?:\/\/[^/]+)/.exec(saved.baseUrl||"")||["",""])[1]
@@ -24,22 +24,22 @@ ColumnLayout {
         color:endpoint.capability.available?Theme.accentText:Theme.amber
         text:(endpoint.saved.label||"Compatible endpoint")+" · "+(!endpoint.saved.baseUrl?"Not set":endpoint.capability.modelsStatus==="loading"?"Connecting…":endpoint.capability.available?"Ready":endpoint.saved.requiresKey&&!endpoint.capability.configured?"Key needed":"Not connected")
     }
-    CText { text:"Any server that speaks the OpenAI chat-completions API, such as LM Studio, llama.cpp, vLLM or a hosted gateway. Conversations with it are desktop only and count as cloud for memory and notes, because Cere cannot tell where the endpoint sends text.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    CText { text:"Any server that speaks the OpenAI chat-completions API, such as LM Studio, llama.cpp, vLLM or a hosted gateway. Conversations with it are desktop only and count as cloud for memory and notes, because PAL cannot tell where the endpoint sends text.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CField { id:baseUrl;objectName:"compatibleBaseUrl";Layout.fillWidth:true;placeholderText:"Base URL, such as http://127.0.0.1:1234/v1";maximumLength:2048;Accessible.name:"Compatible endpoint base URL" }
     CField { id:label;objectName:"compatibleLabel";Layout.fillWidth:true;placeholderText:"Name (optional), such as Workstation";maximumLength:60;Accessible.name:"Compatible endpoint name" }
-    CText { text:"What this endpoint supports · your declaration; Cere does not verify it";font.weight:Font.DemiBold;Layout.fillWidth:true;wrapMode:Text.Wrap }
+    CText { text:"What this endpoint supports · your declaration; PAL does not verify it";font.weight:Font.DemiBold;Layout.fillWidth:true;wrapMode:Text.Wrap }
     Flow {
-        Layout.fillWidth:true;spacing:8
+        Layout.fillWidth:true;spacing:Theme.space2
         CCheckBox { id:requiresKey;objectName:"compatibleRequiresKey";text:"Needs a key" }
         CComboBox { id:processing;objectName:"compatibleProcessing";Layout.fillWidth:true;model:["Not sure where it processes requests","Processes on this computer","Processes on my own server","A cloud service"];Accessible.name:"Where the endpoint processes requests" }
-        CText { text:"Cere cannot tell where a compatible server sends your content: a local address may still forward to the cloud. Workspace folders and images limited to local processing are withheld unless you say it runs on this computer.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        CText { text:"PAL cannot tell where a compatible server sends your content: a local address may still forward to the cloud. Workspace folders and images limited to local processing are withheld unless you say it runs on this computer.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
         CCheckBox { id:tools;objectName:"compatibleTools";text:"Tool calling" }
         CCheckBox { id:images;objectName:"compatibleImages";text:"Image input" }
         CCheckBox { id:streaming;objectName:"compatibleStreaming";text:"Streaming replies" }
         CCheckBox { id:usage;objectName:"compatibleUsage";text:"Reports token usage" }
     }
     GridLayout {
-        Layout.fillWidth:true;columns:width>=480?2:1;columnSpacing:8;rowSpacing:8
+        Layout.fillWidth:true;columns:width>=Theme.formBreakpoint?2:1;columnSpacing:Theme.space2;rowSpacing:Theme.space2
         CField {
             id:contextLength;objectName:"compatibleContext";Layout.fillWidth:true;placeholderText:"Context window in tokens (not declared: 8,192 assumed)";Accessible.name:"Declared context window"
             validator:IntValidator { bottom:0;top:10000000 }
@@ -49,7 +49,7 @@ ColumnLayout {
             validator:IntValidator { bottom:0;top:1000000 }
         }
     }
-    CText { text:"Cere sends tools, images, a usage request or an output limit only when declared here. Token counts appear in Context only when the endpoint reports them; Cere never estimates cost. Saving stops replies in progress on this endpoint.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    CText { text:"PAL sends tools, images, a usage request or an output limit only when declared here. Token counts appear in Context only when the endpoint reports them; PAL never estimates cost. Saving stops replies in progress on this endpoint.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CButton {
         objectName:"compatibleSave";text:endpoint.saveRequest>=0?"Saving…":"Save endpoint";primary:true;Layout.fillWidth:true
         enabled:App.connected&&endpoint.saveRequest<0
@@ -62,7 +62,7 @@ ColumnLayout {
     }
     CField { id:apiKey;objectName:"apiKey_compatible";Layout.fillWidth:true;placeholderText:"Key";echoMode:TextInput.Password;maximumLength:8192;enabled:!!endpoint.saved.baseUrl;Accessible.description:"Compatible endpoint key" }
     GridLayout {
-        Layout.fillWidth:true;columns:width>=520?3:1
+        Layout.fillWidth:true;columns:width>=Theme.toolbarBreakpoint?3:1
         CButton { objectName:"compatibleSaveKey";Layout.fillWidth:true;text:"Save key";enabled:App.connected&&!!endpoint.saved.baseUrl&&endpoint.keyRequest<0&&apiKey.text.trim().length>0;onClicked:{endpoint.error="";endpoint.keyRequest=App.rpc("provider.credentials",{provider:"compatible",key:apiKey.text.trim()});apiKey.clear()} }
         CButton { objectName:"compatibleRefresh";Layout.fillWidth:true;text:endpoint.capability.modelsStatus==="loading"?"Connecting…":"Connect / refresh";enabled:App.connected&&!!endpoint.saved.baseUrl&&endpoint.capability.modelsStatus!=="loading";onClicked:{endpoint.error="";endpoint.refreshRequest=App.rpc("provider.models",{provider:"compatible"})} }
         CButton { Layout.fillWidth:true;text:"Remove saved key";visible:endpoint.capability.source==="saved"||endpoint.keyElsewhere;enabled:App.connected&&endpoint.keyRequest<0;onClicked:{endpoint.error="";endpoint.keyRequest=App.rpc("provider.credentials",{provider:"compatible",key:""})} }

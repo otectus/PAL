@@ -7,7 +7,7 @@ import { call, skipWithoutHelper, workbenchFixture } from './fixtures/workbench.
 test('12.3 a narrow helper reads only its inputs, answers in the fixed shape, is recorded in Activity and changes nothing', { skip: skipWithoutHelper }, async t => {
   let helperRequest: any;
   const f = await workbenchFixture(t, [
-    () => call('cere_tools', { add: ['helpers_review'] }),
+    () => call('pal_tools', { add: ['helpers_review'] }),
     () => call('helpers_review', { role: 'document_summary', request: 'What are the key dates?', inputs: [{ kind: 'file', rootId: rootId, path: 'plan.md' }] }),
     body => { helperRequest = body; return { content: JSON.stringify({ observations: [{ text: 'Launch is on 3 March.', source: 'plan.md line 1' }], suggestions: [{ text: 'Confirm the venue.' }] }) }; },
     () => ({ content: 'The plan launches on 3 March.' }),

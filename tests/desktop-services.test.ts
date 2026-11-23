@@ -18,7 +18,7 @@ import { audioStatus, desktopAction, mediaStatus } from '../broker/desktop.ts';
 import { defaultSettings } from '../broker/types.ts';
 
 const run = promisify(execFile);
-const privateDesktop = process.env.CERE_VIRTUAL_DESKTOP === '1' && !!process.env.HYPRLAND_INSTANCE_SIGNATURE && !!process.env.DBUS_SESSION_BUS_ADDRESS;
+const privateDesktop = process.env.PAL_VIRTUAL_DESKTOP === '1' && !!process.env.HYPRLAND_INSTANCE_SIGNATURE && !!process.env.DBUS_SESSION_BUS_ADDRESS;
 const skip = privateDesktop ? false : 'needs the private desktop of tools/test-virtual-desktop.sh';
 const settings = { ...defaultSettings, categories: ['audio', 'media', 'apps', 'files'] } as any;
 const until = async (check: () => Promise<boolean>, what: string) => {
@@ -37,7 +37,7 @@ test('volume and mute act on the private PipeWire sink, read back, and are resto
   await until(async () => { await run('pw-cli', ['info', '0'], { timeout: 2000 }); return true; }, 'PipeWire');
   started(t, 'wireplumber', []);
   await until(async () => { await run('wpctl', ['status'], { timeout: 2000 }); return true; }, 'WirePlumber');
-  await run('pw-cli', ['create-node', 'adapter', '{ factory.name=support.null-audio-sink node.name=cere-fixture-sink node.description="Cere fixture sink" media.class=Audio/Sink object.linger=true audio.position=[FL FR] }']);
+  await run('pw-cli', ['create-node', 'adapter', '{ factory.name=support.null-audio-sink node.name=pal-fixture-sink node.description="PAL fixture sink" media.class=Audio/Sink object.linger=true audio.position=[FL FR] }']);
   await until(async () => (await audioStatus()).available === true, 'the fixture sink to become the default');
   const original = await audioStatus() as { percent: number; muted: boolean };
   const target = original.percent === 35 ? 40 : 35;
@@ -55,16 +55,16 @@ test('volume and mute act on the private PipeWire sink, read back, and are resto
 });
 
 test('media control drives an MPRIS player once per command and refuses unsupported or vanished targets', { skip }, async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-mpris-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-mpris-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const log = join(directory, 'calls.log'), name = 'org.mpris.MediaPlayer2.cerefixture';
-  const player = started(t, 'python3', ['tests/fixtures/fake-mpris.py', 'cerefixture', log]);
+  const log = join(directory, 'calls.log'), name = 'org.mpris.MediaPlayer2.palfixture';
+  const player = started(t, 'python3', ['tests/fixtures/fake-mpris.py', 'palfixture', log]);
   await new Promise<void>((resolve, reject) => {
     player.stdout!.on('data', data => { if (String(data).includes('ready')) resolve(); });
     player.once('exit', () => reject(new Error('The fixture player exited')));
   });
   const status = await mediaStatus(name) as any;
-  assert.deepEqual([status.name, status.status, status.canPlayPause, status.canNext], ['Cere fixture player', 'Paused', true, false]);
+  assert.deepEqual([status.name, status.status, status.canPlayPause, status.canNext], ['PAL fixture player', 'Paused', true, false]);
   const played = await desktopAction('media.control', { command: 'PlayPause', player: name }, settings) as any;
   assert.equal(played.player, name);
   assert.equal((await mediaStatus(name) as any).status, 'Playing', 'the player reports the change');
@@ -82,18 +82,18 @@ test('media control drives an MPRIS player once per command and refuses unsuppor
 
 test('application launch and file opening run the reviewed entry, resolve links, and refuse removed targets', { skip }, async t => {
   // The sandbox home is private: the fixture entry and its file association exist only in this run.
-  const applications = join(homedir(), '.local/share/applications'), entry = join(applications, 'cere-fixture.desktop');
-  const directory = await mkdtemp(join(tmpdir(), 'cere-open-')), marker = join(directory, 'opened.log');
+  const applications = join(homedir(), '.local/share/applications'), entry = join(applications, 'pal-fixture.desktop');
+  const directory = await mkdtemp(join(tmpdir(), 'pal-open-')), marker = join(directory, 'opened.log');
   t.after(() => rm(directory, { recursive: true, force: true }));
   await mkdir(applications, { recursive: true }); await mkdir(join(homedir(), '.config'), { recursive: true });
   const program = join(directory, 'open.sh');
   await writeFile(program, `#!/bin/sh\nprintf '%s\\n' "\${1:-launched}" >> '${marker}'\n`, { mode: 0o755 });
-  await writeFile(entry, `[Desktop Entry]\nType=Application\nName=Cere fixture\nExec=${program} %f\nMimeType=text/plain;\n`);
-  await writeFile(join(homedir(), '.config/mimeapps.list'), '[Default Applications]\ntext/plain=cere-fixture.desktop\n');
+  await writeFile(entry, `[Desktop Entry]\nType=Application\nName=PAL fixture\nExec=${program} %f\nMimeType=text/plain;\n`);
+  await writeFile(join(homedir(), '.config/mimeapps.list'), '[Default Applications]\ntext/plain=pal-fixture.desktop\n');
   t.after(async () => { await unlink(entry).catch(() => {}); await unlink(join(homedir(), '.config/mimeapps.list')).catch(() => {}); });
 
-  assert.ok((await desktopAction('apps.list', {}, settings) as any[]).some(app => app.id === 'cere-fixture.desktop'), 'the entry is listed');
-  assert.equal(await desktopAction('apps.launch', { desktopId: 'cere-fixture.desktop' }, settings), 'Application launched');
+  assert.ok((await desktopAction('apps.list', {}, settings) as any[]).some(app => app.id === 'pal-fixture.desktop'), 'the entry is listed');
+  assert.equal(await desktopAction('apps.launch', { desktopId: 'pal-fixture.desktop' }, settings), 'Application launched');
   await until(async () => (await lines(marker)).includes('launched'), 'the launched application');
 
   // A link is opened as the file it names, which is what the review showed.
@@ -107,7 +107,7 @@ test('application launch and file opening run the reviewed entry, resolve links,
   await unlink(file);
   await assert.rejects(desktopAction('files.open', { path: link }, settings), /ENOENT/);
   await unlink(entry);
-  await assert.rejects(desktopAction('apps.launch', { desktopId: 'cere-fixture.desktop' }, settings), /no longer installed/);
+  await assert.rejects(desktopAction('apps.launch', { desktopId: 'pal-fixture.desktop' }, settings), /no longer installed/);
   await new Promise(resolve => setTimeout(resolve, 300));
   assert.deepEqual(await lines(marker), before, 'nothing ran for the removed targets');
 });

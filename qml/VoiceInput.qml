@@ -24,8 +24,8 @@ CButton {
     property int commandRequest:-1
     function runCommand(){if(!command)return;commandRequest=App.rpc("voice.command",{id:command.id,sessionId:voiceInput.sessionId});review.close()}
     implicitWidth:Theme.controlHeight;implicitHeight:Theme.controlHeight;Layout.preferredWidth:Theme.controlHeight;Layout.preferredHeight:Theme.controlHeight
-    leftPadding:10;rightPadding:10;quiet:true;primary:recording;danger:transcribing
-    Accessible.name:recording?"Finish voice input":transcribing?"Cancel transcription":"Voice input"
+    leftPadding:Theme.space2;rightPadding:Theme.space2;quiet:true;primary:recording;danger:transcribing
+    Accessible.name:transcription.state==="unavailable"?"Voice input setup":recording?"Finish voice input":transcribing?"Cancel transcription":"Voice input"
     Accessible.description:statusText||help
     help:transcription.state==="unavailable"?"Set up local voice input in Settings → Voice":recording?"Finish recording":transcribing?"Cancel transcription":"Record a voice message"
     enabled:available&&App.connected&&!!sessionId&&(requestId<0||transcribing)&&((transcription.state!=="recording"&&transcription.state!=="transcribing")||ownsRecording)
@@ -36,7 +36,8 @@ CButton {
     }
     function cancel(){call("transcription.cancel",{})}
     onClicked:{
-        if(transcribing)cancel()
+        if(transcription.state==="unavailable")error=help
+        else if(transcribing)cancel()
         else if(recording)call("transcription.finish",{})
         else call("transcription.start",{sessionId:sessionId})
     }
@@ -49,7 +50,7 @@ CButton {
         CText { text:"Edit the local transcript before inserting it. Nothing is sent automatically.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
         CText { visible:voiceInput.resultSessionId!==voiceInput.sessionId;text:"This transcript belongs to another session. Return to that session before inserting it.";color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
         CTextArea {
-            id:transcript;objectName:"transcriptionText";Layout.fillWidth:true;Layout.preferredHeight:180
+            id:transcript;objectName:"transcriptionText";Layout.fillWidth:true;Layout.preferredHeight:Theme.editorMedium
             wrapMode:TextEdit.Wrap;selectByMouse:true;color:Theme.text;font.family:Theme.font
             Accessible.name:"Editable voice transcript"
         }

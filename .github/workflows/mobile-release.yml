@@ -1,4 +1,4 @@
-name: Cere Mobile signed release
+name: PAL Mobile signed release
 on:
   push:
     tags: ['mobile-v*']
@@ -32,7 +32,7 @@ jobs:
       - run: sdkmanager 'build-tools;36.0.0'
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          name: cere-mobile-unsigned
+          name: pal-mobile-unsigned
           path: unsigned
       - name: Sign and verify the tested APK
         env:
@@ -51,7 +51,7 @@ jobs:
           node tools/mobile-release-evidence.ts check "$RELEASE_EVIDENCE" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" \
             --unsigned-apk unsigned/outputs/apk/release/app-release-unsigned.apk --signer "$MOBILE_SIGNING_CERT_SHA256"
           umask 077
-          task_key="$RUNNER_TEMP/cere-mobile-release.jks"
+          task_key="$RUNNER_TEMP/pal-mobile-release.jks"
           trap 'rm -f "$task_key"' EXIT
           printf '%s' "$MOBILE_KEYSTORE_BASE64" | base64 --decode > "$task_key"
           mkdir -p release
@@ -68,7 +68,7 @@ jobs:
           cp docs/mobile/NOTICES.txt release/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: cere-mobile-signed
+          name: pal-mobile-signed
           path: release/*
           if-no-files-found: error
           retention-days: 30
@@ -85,7 +85,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          name: cere-mobile-signed
+          name: pal-mobile-signed
           path: release
       - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
@@ -93,4 +93,4 @@ jobs:
       - name: Upload a draft release for final install and upgrade review
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --draft --title "Cere Mobile $GITHUB_REF_NAME" --notes-file docs/mobile/RELEASE-NOTES.md
+        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --draft --title "PAL Mobile $GITHUB_REF_NAME" --notes-file docs/mobile/RELEASE-NOTES.md

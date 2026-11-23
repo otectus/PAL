@@ -13,9 +13,9 @@ import type { Session } from '../broker/types.ts';
 import { defaultPersonality } from '../broker/personality.ts';
 
 async function fixture(t: any) {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-permissions-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-permissions-'));
   const executable = resolve('tests/fixtures/permissions-cli.mjs'), log = join(directory, 'requests.jsonl');
-  for (const [key, value] of Object.entries({ CERE_CODEX_BIN: executable, CERE_CLAUDE_BIN: executable, CERE_PERMISSION_TEST_LOG: log })) {
+  for (const [key, value] of Object.entries({ PAL_CODEX_BIN: executable, PAL_CLAUDE_BIN: executable, PAL_PERMISSION_TEST_LOG: log })) {
     const previous = process.env[key]; process.env[key] = value;
     t.after(() => { if (previous === undefined) delete process.env[key]; else process.env[key] = previous; });
   }
@@ -48,9 +48,9 @@ test('Codex applies bypass per turn and restores the configured sandbox on disab
 
 test('Codex resumes a large saved conversation without downloading its history', async t => {
   const f = await fixture(t), events: any[] = [];
-  const previous = process.env.CERE_PERMISSION_TEST_HISTORY_BYTES;
-  process.env.CERE_PERMISSION_TEST_HISTORY_BYTES = String(9 * 1024 * 1024);
-  t.after(() => { if (previous === undefined) delete process.env.CERE_PERMISSION_TEST_HISTORY_BYTES; else process.env.CERE_PERMISSION_TEST_HISTORY_BYTES = previous; });
+  const previous = process.env.PAL_PERMISSION_TEST_HISTORY_BYTES;
+  process.env.PAL_PERMISSION_TEST_HISTORY_BYTES = String(9 * 1024 * 1024);
+  t.after(() => { if (previous === undefined) delete process.env.PAL_PERMISSION_TEST_HISTORY_BYTES; else process.env.PAL_PERMISSION_TEST_HISTORY_BYTES = previous; });
   const adapter = new CodexAdapter({ ...f.session, nativeId: 'permission-thread' }, {
     token: 'fixture', event: event => events.push(event), native() {}, async approve() { return { choice: 'deny' }; }
   });
@@ -67,7 +67,7 @@ test('Codex resumes a large saved conversation without downloading its history',
   assert.equal(requests.filter(message => message.method === 'turn/start').length, 1);
 });
 
-test('CERE-033 ignores a retired process exit after personality replacement', async t => {
+test('PAL-033 ignores a retired process exit after personality replacement', async t => {
   const f = await fixture(t), events: any[] = []; let personality = 'First instructions';
   let answer!: (value: any) => void;
   const adapter = new CodexAdapter(f.session, { token: 'fixture', event: event => events.push(event), native() {}, approve() { return new Promise(resolve => { answer = resolve; }); }, personality: () => personality });
@@ -148,7 +148,7 @@ test('Codex presents safe MCP sign-in links for explicit approval and rejects ot
   assert.equal(approvals.length,1);assert.equal(approvals[0].kind,'question');assert.equal(approvals[0].url,'https://example.com/login');assert.deepEqual(approvals[0].choices,['allow','deny']);
   assert.deepEqual(writes,[{id:'url-safe',result:{action:'accept'}},{id:'url-bad',result:{action:'decline'}},{id:'empty-form',result:{action:'decline'}}]);
   assert.equal(events.some(event=>event.type==='message'&&/unsupported sign-in URL/.test(event.text)),true);
-  assert.equal(events.some(event=>event.type==='message'&&/form Cere cannot display/.test(event.text)),true);
+  assert.equal(events.some(event=>event.type==='message'&&/form PAL cannot display/.test(event.text)),true);
   adapter.process.write=originalWrite;
 });
 
@@ -215,8 +215,8 @@ test('Claude launches in bypass mode only when selected and disables its optiona
 });
 
 test('Claude never starts a second print process while the previous turn is still exiting', async t => {
-  const f = await fixture(t); const previous = process.env.CERE_FIXTURE_LINGER_MS; process.env.CERE_FIXTURE_LINGER_MS = '600';
-  t.after(() => { if (previous === undefined) delete process.env.CERE_FIXTURE_LINGER_MS; else process.env.CERE_FIXTURE_LINGER_MS = previous; });
+  const f = await fixture(t); const previous = process.env.PAL_FIXTURE_LINGER_MS; process.env.PAL_FIXTURE_LINGER_MS = '600';
+  t.after(() => { if (previous === undefined) delete process.env.PAL_FIXTURE_LINGER_MS; else process.env.PAL_FIXTURE_LINGER_MS = previous; });
   const events: any[] = [];
   const adapter = new ClaudeAdapter({ ...f.session, provider: 'claude' }, { token: 'fixture', event: event => events.push(event), native() {}, async approve() {} });
   t.after(() => adapter.close());
@@ -237,7 +237,7 @@ test('Claude remote sessions use the enforceable restricted CLI boundary', async
   assert.equal(verified,true);assert.ok(args.includes('--restricted'));assert.ok(args.includes('--strict-mcp-config'));
   assert.equal(args[args.indexOf('--permission-mode')+1],'manual');
   assert.ok(!args.includes('--dangerously-skip-permissions'));assert.ok(!args.includes('--settings'));
-  assert.ok(args.includes('--permission-prompt-tool'));assert.equal(args[args.indexOf('--permission-prompt-tool')+1],'mcp__cere__approve');
+  assert.ok(args.includes('--permission-prompt-tool'));assert.equal(args[args.indexOf('--permission-prompt-tool')+1],'mcp__pal__approve');
   const mediaDirectory=args[args.indexOf('--add-dir')+1];assert.ok(mediaDirectory.endsWith('/media'));await assert.rejects(stat(mediaDirectory),{code:'ENOENT'});
   assert.equal(claudeRestrictedHelp('flags --restricted --strict-mcp-config choices: "manual"'),true);
   assert.equal(claudeRestrictedHelp('flags --strict-mcp-config choices: "manual"'),false);
@@ -272,22 +272,22 @@ test('Codex refreshes personality between turns while retaining thread, user inp
 });
 
 test('Codex refreshes a changed name without changing personality or interrupting a running process', async t => {
-  const f = await fixture(t); let name = 'Cere';
+  const f = await fixture(t); let name = 'PAL';
   const adapter = new CodexAdapter(f.session, { token: 'fixture', event() {}, native() {}, async approve() {}, assistantName: () => name });
   t.after(() => adapter.close());
   await adapter.send('First'); const originalProcess = adapter.process;
   name = 'Daemona';
   assert.equal(adapter.process, originalProcess);
-  assert.equal(adapter.appliedAssistantName, 'Cere');
+  assert.equal(adapter.appliedAssistantName, 'PAL');
   await adapter.send('Renamed');
   assert.notEqual(adapter.process, originalProcess);
   await adapter.send('Still Daemona');
-  name = 'Cere'; await adapter.send('Reset name');
+  name = 'PAL'; await adapter.send('Reset name');
   const threads = (await f.messages()).filter(m => ['thread/start','thread/resume'].includes(m.method));
   assert.equal(threads.length, 3);
   assert.match(threads[1].params.developerInstructions, /You are Daemona,/);
-  assert.doesNotMatch(threads[1].params.developerInstructions, /You are Cere,/);
-  assert.match(threads[2].params.developerInstructions, /You are Cere,/);
+  assert.doesNotMatch(threads[1].params.developerInstructions, /You are PAL,/);
+  assert.match(threads[2].params.developerInstructions, /You are PAL,/);
   for (const thread of threads.slice(1)) assert.equal(thread.params.threadId, 'permission-thread');
 });
 
@@ -308,36 +308,36 @@ test('Claude appends the current personality on each resumed turn without replac
 });
 
 test('Claude picks up a new assistant name on the next resumed turn', async t => {
-  const f = await fixture(t); let name = 'Cere';
+  const f = await fixture(t); let name = 'PAL';
   const adapter = new ClaudeAdapter({ ...f.session, provider: 'claude' }, { token: 'fixture', event() {}, native() {}, async approve() {}, assistantName: () => name });
   t.after(() => adapter.close());
-  for (const next of ['Cere', 'Daemona']) { name = next; await adapter.send('Hello'); await once(adapter.process!, 'exit'); }
+  for (const next of ['PAL', 'Daemona']) { name = next; await adapter.send('Hello'); await once(adapter.process!, 'exit'); }
   const prompts = (await f.messages()).filter(m => m.personality);
-  assert.match(prompts[0].personality, /You are Cere,/);
+  assert.match(prompts[0].personality, /You are PAL,/);
   assert.match(prompts[1].personality, /You are Daemona,/);
   assert.equal(prompts[1].mode, 0o600);
 });
 
-test('Codex carries the memory guidance only while Cere offers memory tools, and resumes when that changes', async t => {
+test('Codex carries the memory guidance only while PAL offers memory tools, and resumes when that changes', async t => {
   const f = await fixture(t); let memory = false;
   const adapter = new CodexAdapter(f.session, { token: 'fixture', event() {}, native() {}, async approve() {}, memoryGuidance: () => memory });
   t.after(() => adapter.close());
   await adapter.send('First'); memory = true; await adapter.send('Second'); await adapter.send('Third');
   const threads = (await f.messages()).filter(m => ['thread/start','thread/resume'].includes(m.method));
   assert.equal(threads.length, 2);
-  assert.doesNotMatch(threads[0].params.developerInstructions, /Cere shared project memory/);
-  assert.match(threads[1].params.developerInstructions, /Cere shared project memory/);
+  assert.doesNotMatch(threads[0].params.developerInstructions, /PAL shared project memory/);
+  assert.match(threads[1].params.developerInstructions, /PAL shared project memory/);
   assert.equal(threads[1].params.threadId, 'permission-thread');
 });
 
-test('Claude carries the memory guidance only on turns when Cere offers memory tools', async t => {
+test('Claude carries the memory guidance only on turns when PAL offers memory tools', async t => {
   const f = await fixture(t); let memory = false;
   const adapter = new ClaudeAdapter({ ...f.session, provider: 'claude' }, { token: 'fixture', event() {}, native() {}, async approve() {}, memoryGuidance: () => memory });
   t.after(() => adapter.close());
   for (const next of [false, true]) { memory = next; await adapter.send('Hello'); await once(adapter.process!, 'exit'); }
   const prompts = (await f.messages()).filter(m => m.personality);
-  assert.doesNotMatch(prompts[0].personality, /Cere shared project memory/);
-  assert.match(prompts[1].personality, /Cere shared project memory/);
+  assert.doesNotMatch(prompts[0].personality, /PAL shared project memory/);
+  assert.match(prompts[1].personality, /PAL shared project memory/);
 });
 
 test('Claude tracks foreground and background agents without leaking forwarded child messages',async t=>{
@@ -350,6 +350,12 @@ test('Claude tracks foreground and background agents without leaking forwarded c
   proc.emit('message',{type:'system',subtype:'task_started',task_id:'task-1',tool_use_id:'agent-tool',task_type:'local_agent',subagent_type:'researcher',description:'Investigate',prompt:'Read the sources',is_backgrounded:true});
   proc.emit('message',{type:'user',parent_tool_use_id:null,message:{content:[{type:'tool_result',tool_use_id:'agent-tool',content:'Agent launched in background'}]}});
   proc.emit('message',{type:'assistant',parent_tool_use_id:'agent-tool',message:{id:'child',content:[{type:'text',text:'child-only report'}]}});
+  proc.emit('message',{type:'assistant',parent_tool_use_id:'agent-tool',message:{content:[{type:'tool_use',id:'child-read',name:'Read',input:{file_path:'child-private-path'}}]}});
+  proc.emit('message',{type:'user',parent_tool_use_id:'agent-tool',message:{content:[{type:'tool_result',tool_use_id:'child-read',is_error:true,content:'child-private-output'}]}});
+  const childCalls = events.filter(event => event.type === 'agentTool' && event.id === 'child-read');
+  assert.deepEqual(childCalls.map(event => [event.toolActivity.agentId,event.toolActivity.status]), [['agent-tool','started'],['agent-tool','failed']]);
+  assert.equal(childCalls[0].toolActivity.name,'Read');
+  assert.doesNotMatch(JSON.stringify(childCalls),/child-private/);
   proc.emit('message',{type:'tool_progress',tool_use_id:'child-tool',tool_name:'Read',parent_tool_use_id:'agent-tool',elapsed_time_seconds:2});
   proc.emit('message',{type:'result',session_id:'claude-thread',is_error:false});
   assert.equal(events.filter(event=>event.type==='agent'&&event.id==='agent-tool').at(-1).data.status,'running');
@@ -395,7 +401,7 @@ test('terminal wrapper inherits the saved CLI bypass setting for both providers'
       while (buffer.includes('\n')) {
         const end = buffer.indexOf('\n'), m = JSON.parse(buffer.slice(0, end)); buffer = buffer.slice(end + 1);
         if (legacy && m.method === 'settings.inspect') {
-          socket.write(JSON.stringify({ id: m.id, error: { message: 'Unknown Cere method: settings.inspect' } }) + '\n');
+          socket.write(JSON.stringify({ id: m.id, error: { message: 'Unknown PAL method: settings.inspect' } }) + '\n');
           continue;
         }
         const result = m.method === 'windows.list' ? [] : m.method === 'session.link' ? { id: 'linked' } : m.method === 'settings.inspect' ? { bypassCliPermissions: bypass } : m.method === 'state' ? { settings: { bypassCliPermissions: bypass } } : true;
@@ -408,7 +414,7 @@ test('terminal wrapper inherits the saved CLI bypass setting for both providers'
   for (const previous of [false, true]) for (const provider of ['codex', 'claude']) for (const setting of [false, true]) {
     legacy = previous;
     bypass = setting;
-    const child = spawn(process.execPath, ['broker/terminal.ts', provider, '--fixture'], { env: { ...process.env, CERE_RUNTIME_DIR: f.directory, PATH: f.directory + ':' + process.env.PATH }, stdio: 'pipe' });
+    const child = spawn(process.execPath, ['broker/terminal.ts', provider, '--fixture'], { env: { ...process.env, PAL_RUNTIME_DIR: f.directory, PATH: f.directory + ':' + process.env.PATH }, stdio: 'pipe' });
     assert.equal((await once(child, 'close'))[0], 0);
     const args = (await f.messages()).filter(m => m.args).at(-1).args;
     assert.equal(args.includes(provider === 'codex' ? '--dangerously-bypass-approvals-and-sandbox' : '--dangerously-skip-permissions'), setting);
@@ -464,7 +470,7 @@ function withEnv(t: any, values: Record<string, string | undefined>) {
 }
 
 test('Claude holds a result while background work runs and ends the turn with that work', async t => {
-  const f = await fixture(t); withEnv(t, { CERE_FIXTURE_LINGER_MS: '500' });
+  const f = await fixture(t); withEnv(t, { PAL_FIXTURE_LINGER_MS: '500' });
   const events: any[] = [], natives: string[] = [];
   const adapter = new ClaudeAdapter({ ...f.session, provider: 'claude' }, { token: 'fixture', event: event => events.push(event), native: id => natives.push(id), async approve() {} });
   t.after(() => adapter.close());
@@ -486,7 +492,7 @@ test('Claude holds a result while background work runs and ends the turn with th
 });
 
 test('Claude ignores a replaced process and cancels a turn stopped before it starts', async t => {
-  const f = await fixture(t); withEnv(t, { CERE_FIXTURE_LINGER_MS: '3000' });
+  const f = await fixture(t); withEnv(t, { PAL_FIXTURE_LINGER_MS: '3000' });
   const events: any[] = [];
   const adapter = new ClaudeAdapter({ ...f.session, provider: 'claude' }, { token: 'fixture', event: event => events.push(event), native() {}, async approve() {} });
   t.after(() => adapter.close());
@@ -562,16 +568,16 @@ test('CLI detection requires supported versions and finds launchers a service PA
   assert.deepEqual(cliVersionCheck('claude', '2.2.0 (Claude Code)'), { version: '2.2.0' });
   assert.deepEqual(cliVersionCheck('codex', 'codex-cli 0.162.1'), { version: '0.162.1' });
   assert.deepEqual(cliVersionCheck('codex', 'codex-ui-fixture'), {});
-  assert.throws(() => cliVersionCheck('claude', '2.1.258 (Claude Code)'), (error: any) => error instanceof CliCompatibilityError && error.message === 'Update Claude Code to 2.1.259 or newer; Cere found 2.1.258.');
+  assert.throws(() => cliVersionCheck('claude', '2.1.258 (Claude Code)'), (error: any) => error instanceof CliCompatibilityError && error.message === 'Update Claude Code to 2.1.259 or newer; PAL found 2.1.258.');
   assert.throws(() => cliVersionCheck('codex', 'codex-cli 0.157.9'), /Update Codex to 0\.158\.0 or newer/);
-  assert.equal(cliStartError('codex', Object.assign(new Error('spawn codex ENOENT'), { code: 'ENOENT' })), 'Codex was not found on PATH or in ~/.local/bin. Install it, or set CERE_CODEX_BIN to its path.');
+  assert.equal(cliStartError('codex', Object.assign(new Error('spawn codex ENOENT'), { code: 'ENOENT' })), 'Codex was not found on PATH or in ~/.local/bin. Install it, or set PAL_CODEX_BIN to its path.');
   assert.equal(cliStartError('claude', { killed: true, signal: 'SIGTERM' }), 'Claude Code did not answer within 10 seconds.');
   assert.equal(cliStartError('claude', Object.assign(new Error('Command failed'), { code: 2 })), 'Claude Code did not start (exit status 2).');
-  const home = await mkdtemp(join(tmpdir(), 'cere-home-')), empty = join(home, 'empty');
+  const home = await mkdtemp(join(tmpdir(), 'pal-home-')), empty = join(home, 'empty');
   t.after(() => rm(home, { recursive: true, force: true }));
   await mkdir(join(home, '.local/bin'), { recursive: true }); await mkdir(empty);
   const launcher = join(home, '.local/bin/claude'); await writeFile(launcher, '#!/bin/sh\n', { mode: 0o755 });
-  withEnv(t, { HOME: home, PATH: empty, CERE_CLAUDE_BIN: undefined });
+  withEnv(t, { HOME: home, PATH: empty, PAL_CLAUDE_BIN: undefined });
   assert.equal(providerExecutable('claude'), launcher);
   const env: NodeJS.ProcessEnv = { PATH: '/opt/tools' }, expected = [join(home, '.local/bin'), '/opt/tools', '/usr/local/bin', '/usr/bin'].join(':');
   assert.equal(ensureUserPath(env), expected); assert.equal(ensureUserPath(env), expected);
@@ -585,6 +591,6 @@ test('Claude history titles skip command, caveat and memory records', () => {
     { type: 'user', message: { content: [{ type: 'text', text: 'Fix the login bug' }] } },
   ]), 'Fix the login bug');
   assert.equal(claudeTranscriptTitle([{ type: 'user', message: { content: 'First prompt' } }, { type: 'ai-title', aiTitle: 'Old' }, { type: 'ai-title', aiTitle: 'Login fix' }]), 'Login fix');
-  assert.equal(claudeTranscriptTitle([{ type: 'user', message: { content: '<cere_memory_data>\n{"episodes":[]}\n</cere_memory_data>\n\nWhat changed?' } }]), 'What changed?');
+  assert.equal(claudeTranscriptTitle([{ type: 'user', message: { content: '<pal_memory_data>\n{"episodes":[]}\n</pal_memory_data>\n\nWhat changed?' } }]), 'What changed?');
   assert.equal(claudeTranscriptTitle([{ type: 'summary' }]), '');
 });

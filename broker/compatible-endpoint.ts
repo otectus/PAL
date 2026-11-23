@@ -1,7 +1,7 @@
 /**
  * M13: one user-configured OpenAI-compatible chat endpoint. The base URL is validated here; https is
  * required outside this computer and the local network. Its key is bound to the endpoint's origin
- * (credentials.ts), and the capabilities are the user's declaration: Cere sends only what is declared
+ * (credentials.ts), and the capabilities are the user's declaration: PAL sends only what is declared
  * and labels the declaration as unverified.
  */
 import { isIP } from 'node:net';

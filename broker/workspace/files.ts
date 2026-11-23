@@ -1,6 +1,6 @@
 /**
  * Reading a workspace: listings, metadata, filename discovery, search and line-numbered excerpts. All
- * filesystem access goes through cere-workspacefs beneath the root. Results are bounded, say when and
+ * filesystem access goes through pal-workspacefs beneath the root. Results are bounded, say when and
  * why they were bounded, and carry a continuation cursor instead of silently dropping the rest.
  *
  * Names and contents are untrusted data. They are returned as plain strings for plain-text rendering;
@@ -29,10 +29,10 @@ function describe(entry: any, path: string): EntryInfo {
     ...(entry.type === 'directory' && excludedDirectories.includes(name) ? { excluded: true } : {}), ...(entry.type === 'file' && credentialName(name) ? { credential: true } : {}),
     ...(entry.type === 'file' && entry.nlink > 1 ? { links: entry.nlink } : {}) };
 }
-/** Refuses paths the model may never read: Cere's state and other private locations, credentials and VCS internals. */
+/** Refuses paths the model may never read: PAL's state and other private locations, credentials and VCS internals. */
 export function readable(root: WorkspaceRoot, rel: string) {
-  if (excludedInside(root.path).some(location => rel === location || rel.startsWith(location + '/'))) throw new WorkspaceError('private', 'That location is private (credentials or Cere’s own state) and is not available to models');
-  if (credentialName(baseName(rel))) throw new WorkspaceError('credential', `${baseName(rel)} looks like a credential or key file. Cere does not read it for a model; open it yourself if you need to.`);
+  if (excludedInside(root.path).some(location => rel === location || rel.startsWith(location + '/'))) throw new WorkspaceError('private', 'That location is private (credentials or PAL’s own state) and is not available to models');
+  if (credentialName(baseName(rel))) throw new WorkspaceError('credential', `${baseName(rel)} looks like a credential or key file. PAL does not read it for a model; open it yourself if you need to.`);
   if (vcsInternal(rel)) throw new WorkspaceError('vcs-internal', 'Version-control internals are not read for a model; use the Git tools or open the file yourself.');
 }
 
@@ -56,7 +56,7 @@ export async function list(root: WorkspaceRoot, rel: string, p: { cursor?: unkno
 export async function statPath(root: WorkspaceRoot, rel: string, signal?: AbortSignal) {
   const value = await run(['stat', ...rootArgs(handle(root)), rel || '.', '--max-bytes', String(workspaceLimits.readableFileBytes)], { signal, timeoutMs: 15_000 });
   return { ...describe(value, rel), ino: String(value.ino), mode: (value.mode & 0o777).toString(8), ...(value.sha256 ? { version: 'sha256:' + value.sha256 } : value.type === 'file' ? { versionNote: 'Too large to hash for a version' } : {}),
-    ...(value.nlink > 1 && value.type === 'file' ? { linkNote: `This file has ${value.nlink} hard links. Cere replaces this name only; other links keep the old content.` } : {}) };
+    ...(value.nlink > 1 && value.type === 'file' ? { linkNote: `This file has ${value.nlink} hard links. PAL replaces this name only; other links keep the old content.` } : {}) };
 }
 
 const globFor = (pattern: string) => /[*?[]/.test(pattern) ? pattern : `*${pattern}*`;
@@ -138,7 +138,7 @@ async function regexSearch(root: WorkspaceRoot, rel: string, pattern: string, li
     files.push({ path, version: excerpt.version, matches: [...lines].sort((a, b) => a - b).filter(line => line <= excerpt.lines.length).map(line => ({ line, text: excerpt.lines[line - 1].slice(0, 400), ...(excerpt.lines[line - 1].length > 400 ? { clipped: true } : {}) })) });
   }
   return { mode: 'regex' as const, caseSensitive, files, complete: !stopped, ...(stopped ? { stoppedBecause: stopReason(stopped) } : {}),
-    note: 'Line numbers come from ripgrep; each excerpt was read again through Cere’s confined file access.' };
+    note: 'Line numbers come from ripgrep; each excerpt was read again through PAL’s confined file access.' };
 }
 
 /** A text file decoded strictly as UTF-8, split into lines, with its exact version. */

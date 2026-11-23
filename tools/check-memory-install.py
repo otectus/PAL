@@ -12,7 +12,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--root', type=Path, required=True, help='Installed share/cere directory')
+parser.add_argument('--root', type=Path, required=True, help='Installed share/pal directory')
 args = parser.parse_args()
 root = args.root.resolve()
 
@@ -41,18 +41,19 @@ class OllamaFixture(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
-with tempfile.TemporaryDirectory(prefix='cere-install-check-') as temporary:
+with tempfile.TemporaryDirectory(prefix='pal-install-check-') as temporary:
     directory = Path(temporary)
     server = ThreadingHTTPServer(('127.0.0.1', 0), OllamaFixture)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    env = {**os.environ, 'CERE_STATE_DIR': str(directory / 'state'),
-           'CERE_RUNTIME_DIR': str(directory / 'runtime'),
-           'CERE_OLLAMA_HOST': f'http://127.0.0.1:{server.server_port}',
-           'CERE_QDRANT_URL': 'http://127.0.0.1:9', 'CERE_NEO4J_URI': 'bolt://127.0.0.1:9',
-           'CERE_QDRANT_API_KEY': '', 'CERE_NEO4J_PASSWORD': '',
-           'CERE_CODEX_BIN': '/nonexistent/cere-fixture-codex',
-           'CERE_CLAUDE_BIN': '/nonexistent/cere-fixture-claude'}
-    env.pop('CERE_MEMORY_CREDENTIALS_FILE', None)
+    env = {**os.environ, 'PAL_STATE_DIR': str(directory / 'state'),
+           'PAL_RUNTIME_DIR': str(directory / 'runtime'),
+           'PAL_OLLAMA_HOST': f'http://127.0.0.1:{server.server_port}',
+           'PAL_QDRANT_URL': 'http://127.0.0.1:9', 'PAL_NEO4J_URI': 'bolt://127.0.0.1:9',
+           'PAL_QDRANT_API_KEY': '', 'PAL_NEO4J_PASSWORD': '',
+           'PAL_CODEX_BIN': '/nonexistent/pal-fixture-codex',
+           'PAL_CLAUDE_BIN': '/nonexistent/pal-fixture-claude'}
+    for prefix in ('PAL', 'CERE'):
+        env.pop(prefix + '_MEMORY_CREDENTIALS_FILE', None)
     socket_path = directory / 'runtime/broker.sock'
 
     def rpc(method, params=None):

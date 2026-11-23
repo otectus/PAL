@@ -5,9 +5,9 @@ import QtQuick.Layouts
 Rectangle {
     id: stage
     objectName: "motionStage"
-    implicitHeight: 320
+    implicitHeight: Theme.motionPreviewHeight
     color: Theme.stageSurface
-    radius: 14
+    radius: Theme.radiusPanel
     border.color: Theme.stageBorder
     property bool playing: false
     property int step: 0
@@ -22,14 +22,14 @@ Rectangle {
 
     Rectangle {
         anchors.horizontalCenter: parent.horizontalCenter
-        y: 28; width: 202; height: 202; radius: 101
+        y: Theme.gutter + Theme.space2; width: Theme.motionSpotlight; height: width; radius: width / 2
         color: Theme.stageSpotlight
         border.color: Theme.stageSpotlightBorder
     }
     GesturePlayer {
         id: actor
         objectName: "motionStagePlayer"
-        width: 208; height: 225
+        width: Theme.motionActorWidth; height: Math.round(width * Theme.petHeight / Theme.petWidth)
         anchors.horizontalCenter: parent.horizontalCenter
         y: 13
         followAppMotion: false
@@ -45,13 +45,13 @@ Rectangle {
     }
     ColumnLayout {
         anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-        anchors.margins: 12
-        spacing: 7
+        anchors.margins: Theme.space3
+        spacing: Theme.space2
         CText {
             Layout.alignment: Qt.AlignHCenter
             horizontalAlignment: Text.AlignHCenter
             text: stage.playing ? stage.current.caption : "A little more " + App.assistantName
-            color: Theme.muted; font.pixelSize: 12
+            color: Theme.muted; font.pixelSize: Theme.caption
         }
         CButton {
             objectName: "playMotionShowcase"

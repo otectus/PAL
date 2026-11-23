@@ -7,7 +7,7 @@ import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
 
 async function setup(t: any) {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-pinned-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-pinned-'));
   const core = new Core(new Store(directory), () => ({async send() {}, async interrupt() {}, async close() {}}));
   t.after(async () => { await core.close(); await rm(directory, {recursive:true,force:true}); });
   const spoken: {text:string;sessionId?:string}[] = [], stopped: string[] = [];
@@ -120,7 +120,7 @@ test('long pinned replies retain full transcripts, ephemeral previews are bounde
 });
 
 test('broker restart restores the inbox without replaying pinned speech or avatar replies', async () => {
-  const directory=await mkdtemp(join(tmpdir(),'cere-pinned-restart-'));
+  const directory=await mkdtemp(join(tmpdir(),'pal-pinned-restart-'));
   let core=new Core(new Store(directory),()=>({async send(){},async interrupt(){},async close(){}}));
   try {
     core.speech.speak=()=>true;

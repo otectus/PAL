@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 MenuSeparator {
-    topPadding: 4; bottomPadding: 4
-    contentItem: Rectangle { implicitWidth: 200; implicitHeight: 1; color: Theme.line }
+    topPadding: Theme.space1; bottomPadding: Theme.space1
+    contentItem: Rectangle { implicitWidth: Theme.pickerWidth; implicitHeight: Theme.hairline; color: Theme.line }
 }

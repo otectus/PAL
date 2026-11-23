@@ -21,7 +21,7 @@ async function openaiConnection(core: Core, extra: Record<string, unknown> = {})
 }
 async function importImage(core: Core, sessionId: string, bytes: Buffer, name = 'photo.png', destinations?: Record<string, boolean>) {
   const { mkdtemp } = await import('node:fs/promises'), { join } = await import('node:path'), { tmpdir } = await import('node:os');
-  const directory = await mkdtemp(join(tmpdir(), 'cere-image-')); const path = join(directory, name);
+  const directory = await mkdtemp(join(tmpdir(), 'pal-image-')); const path = join(directory, name);
   await writeFile(path, bytes);
   return core.rpc('artifacts.import', { sessionId, path, ...(destinations ? { destinations } : {}) });
 }
@@ -192,13 +192,15 @@ test('IM09/IM10 ComfyUI: a restart reconciles by status without resubmitting; ca
   const remoteId = comfy.state.prompts[2].prompt_id;
   await f.core.close();
   await comfy.finish(remoteId);
-  const reopened = new Core(new Store(f.state)); t.after(() => reopened.close());
-  await until(() => reopened.workbench.operations.get(third.operationId).state === 'completed', 10000);
-  assert.equal(comfy.state.prompts.length, 3, 'nothing was submitted again');
-  assert.match(reopened.workbench.operations.get(third.operationId).recovery!, /nothing was submitted again/);
+  const reopened = new Core(new Store(f.state));
+  try {
+    await until(() => reopened.workbench.operations.get(third.operationId).state === 'completed', 10000);
+    assert.equal(comfy.state.prompts.length, 3, 'nothing was submitted again');
+    assert.match(reopened.workbench.operations.get(third.operationId).recovery!, /nothing was submitted again/);
+  } finally { await reopened.close(); }
 });
 
-test('IM10b with targeted interrupt declared, Cere interrupts only its own running job by ID', async t => {
+test('IM10b with targeted interrupt declared, PAL interrupts only its own running job by ID', async t => {
   const f = await workbenchFixture(t);
   const comfy = await fakeComfy(t, { runMs: 100000, targetedInterrupt: true });
   await f.core.updateSettings({ workbench: { imageConnections: [{ name: 'Studio', kind: 'comfyui', origin: comfy.origin, route: 'local', targetedInterrupt: true, budget: { imagesPerDay: 0, modelMayStart: false } }] } });
@@ -228,7 +230,7 @@ test('IM11/IM12 the media downloader blocks private and redirected destinations 
   await assert.rejects(verifyImage(Buffer.from('not an image')), /not a valid image/);
   await assert.rejects(verifyImage((await png(64, 64)).subarray(0, 60)), /truncated|not a valid image/);
   const bomb = await sharp({ create: { width: 9000, height: 9000, channels: 3, background: '#000000' } }).png({ compressionLevel: 9 }).toBuffer();
-  assert.ok(bomb.length < 2_000_000); await assert.rejects(verifyImage(bomb), /more pixels than Cere decodes/);
+  assert.ok(bomb.length < 2_000_000); await assert.rejects(verifyImage(bomb), /more pixels than PAL decodes/);
   const frames = await sharp({ create: { width: 8, height: 16, channels: 4, background: '#ff0000' } }).webp({ pageHeight: 8 } as any).toBuffer().catch(() => null);
   if (frames && ((await sharp(frames, { animated: true }).metadata()).pages || 1) > 1) await assert.rejects(verifyImage(frames), /animated/);
 });
@@ -291,16 +293,18 @@ test('IM18 the gallery returns after a restart with verified bytes; altered byte
   const session = await imageSession(f);
   const imported = await importImage(f.core, session.id, await png(300, 200, '#123456'));
   await f.core.close();
-  const reopened = new Core(new Store(f.state)); t.after(() => reopened.close());
-  const listed = reopened.workbench.artifacts.list(session.id).artifacts;
-  assert.equal(listed.length, 1); assert.equal(listed[0].latest.image?.width, 300);
-  const thumbnail = await reopened.rpc('artifacts.thumbnail', { sessionId: session.id, artifactId: imported.artifactId });
-  assert.match(thumbnail.data, /^data:image\/png;base64,/);
-  const path = reopened.workbench.artifacts.objectPath(imported.sha256);
-  await writeFile(path, Buffer.concat([await readFile(path), Buffer.from('x')]));
-  await assert.rejects(reopened.workbench.artifacts.bytes(session.id, imported.artifactId), /no longer match/);
-  const other = await reopened.create({ provider: 'ollama', model: 'chat:latest', cwd: f.project, capabilities: { images: true } });
-  assert.throws(() => reopened.workbench.artifacts.version(other.id, imported.artifactId), /not available in this conversation/, 'an ID from another conversation grants nothing');
+  const reopened = new Core(new Store(f.state));
+  try {
+    const listed = reopened.workbench.artifacts.list(session.id).artifacts;
+    assert.equal(listed.length, 1); assert.equal(listed[0].latest.image?.width, 300);
+    const thumbnail = await reopened.rpc('artifacts.thumbnail', { sessionId: session.id, artifactId: imported.artifactId });
+    assert.match(thumbnail.data, /^data:image\/png;base64,/);
+    const path = reopened.workbench.artifacts.objectPath(imported.sha256);
+    await writeFile(path, Buffer.concat([await readFile(path), Buffer.from('x')]));
+    await assert.rejects(reopened.workbench.artifacts.bytes(session.id, imported.artifactId), /no longer match/);
+    const other = await reopened.create({ provider: 'ollama', model: 'chat:latest', cwd: f.project, capabilities: { images: true } });
+    assert.throws(() => reopened.workbench.artifacts.version(other.id, imported.artifactId), /not available in this conversation/, 'an ID from another conversation grants nothing');
+  } finally { await reopened.close(); }
 });
 
 test('IM15 an MCP image becomes an artifact; structured content and resource links stay available, nothing is fetched', async t => {

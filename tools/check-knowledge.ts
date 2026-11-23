@@ -1,5 +1,5 @@
 // Explicit live check. Only synthetic facts and public search terms leave this
-// isolated temporary project; the user's Cere settings/history are not opened.
+// isolated temporary project; the user's PAL settings/history are not opened.
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -29,7 +29,7 @@ export async function run(argv: string[]) {
   const model = argv[0] && !argv[0].startsWith('--') ? argv[0] : undefined;
   const memoryOnly = argv.includes('--memory-only');
   const webOnly = argv.includes('--web-only');
-  const directory = await mkdtemp(join(tmpdir(), 'cere-knowledge-live-')), project = join(directory, 'project');
+  const directory = await mkdtemp(join(tmpdir(), 'pal-knowledge-live-')), project = join(directory, 'project');
   await mkdir(project);
   let core = new Core(new Store(join(directory, 'state')));
   const report: any = { directory, model: model || null, checks: [] };

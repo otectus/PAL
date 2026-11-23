@@ -12,7 +12,7 @@ test('offline calculator and conversions do not evaluate code and preserve arith
   assert.throws(()=>calculate('process.exit()'));assert.throws(()=>calculate('1/0'));assert.throws(()=>calculate('2 + NaN'));
   assert.equal(convert(32,'F','C'),0);assert.equal(convert(1,'MiB','KiB'),1024);assert.throws(()=>convert(1,'m','g'));assert.throws(()=>convert(-1,'K','C'));
 });
-async function fixture(t:any){const dir=await mkdtemp(join(tmpdir(),'cere-companion-'));const core=new Core(new Store(dir),()=>({async send(){},async interrupt(){},async close(){}}));await core.memory.ready;t.after(async()=>{if(!core.closed)await core.close();await rm(dir,{recursive:true,force:true})});return{core,dir};}
+async function fixture(t:any){const dir=await mkdtemp(join(tmpdir(),'pal-companion-'));const core=new Core(new Store(dir),()=>({async send(){},async interrupt(){},async close(){}}));await core.memory.ready;t.after(async()=>{if(!core.closed)await core.close();await rm(dir,{recursive:true,force:true})});return{core,dir};}
 test('notes use revisions and reviewed routines consume exact previews once',async t=>{
   const {core}=await fixture(t);const note=await core.rpc('utility.save',{kind:'note',title:'Plan',text:'Work locally',done:false});
   await assert.rejects(core.rpc('utility.save',{...note,text:'Stale',expectedRevision:'0'}),/changed/);

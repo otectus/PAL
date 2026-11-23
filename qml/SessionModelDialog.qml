@@ -38,7 +38,7 @@ CDialog {
         loadRequest=App.rpc("provider.models",{provider:original.provider,sessionId:sessionId})
     }
     function submissionBlocker(){
-        if(!App.connected)return "Reconnect Cere to apply this change."
+        if(!App.connected)return "Reconnect PAL to apply this change."
         if((isNative||isOllama)&&loadRequest>=0)return "Wait for the provider’s model list."
         if(isNative&&picker.currentIndex<0)return "Choose a provider model or its default."
         if(!isNative&&!modelId)return "Choose a model or enter its model ID."
@@ -78,11 +78,11 @@ CDialog {
     CText { visible:trust.visible;text:dialog.original.cwd||"";color:Theme.accentText;font.pixelSize:Theme.secondary }
     // Model options: sent only when set, each in the field this provider takes; empty keeps its default.
     ColumnLayout {
-        visible:!dialog.isNative;Layout.fillWidth:true;spacing:6
+        visible:!dialog.isNative;Layout.fillWidth:true;spacing:Theme.space2
         SectionLabel { text:"MODEL OPTIONS";Accessible.role:Accessible.Heading }
         CText { text:"Empty fields keep the model’s default.";color:Theme.muted;font.pixelSize:Theme.secondary }
         GridLayout {
-            columns:dialog.width<440?1:2;Layout.fillWidth:true;columnSpacing:8;rowSpacing:4
+            columns:dialog.width<Theme.formBreakpoint?1:2;Layout.fillWidth:true;columnSpacing:Theme.space2;rowSpacing:Theme.space1
             CText { text:"Temperature";Layout.fillWidth:false } CField { id:temperature;objectName:"optionTemperature";Layout.fillWidth:true;placeholderText:"0–2";validator:DoubleValidator{bottom:0;top:2;decimals:2} Accessible.name:"Temperature" }
             CText { text:"Maximum reply";Layout.fillWidth:false } CField { id:maxOutput;objectName:"optionMaxOutput";Layout.fillWidth:true;placeholderText:"tokens";validator:IntValidator{bottom:256} Accessible.name:"Maximum reply tokens" }
             CText { visible:dialog.isOllama;text:"Context window";Layout.fillWidth:false } CField { id:contextTokens;objectName:"optionContext";visible:dialog.isOllama;Layout.fillWidth:true;placeholderText:"tokens (smaller uses less memory)";validator:IntValidator{bottom:2048} Accessible.name:"Context window tokens" }

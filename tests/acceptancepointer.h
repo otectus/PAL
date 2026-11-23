@@ -39,7 +39,7 @@ public:
         if (display) { wl_display_flush(display); wl_display_disconnect(display); }
     }
     bool create() {
-        if (qEnvironmentVariable("CERE_VIRTUAL_DESKTOP") != "1" ||
+        if (qEnvironmentVariable("PAL_VIRTUAL_DESKTOP") != "1" ||
             QFileInfo::exists("/dev/uinput") || QFileInfo::exists("/dev/input")) return false;
         display = wl_display_connect(nullptr);
         if (!display) return false;

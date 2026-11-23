@@ -1,16 +1,23 @@
 import QtQuick
 import QtQuick.Controls
-// A 12 px track with a thumb that stays visible (3:1 or more) whenever there is more to see.
+
 ScrollBar {
     id: bar
     policy: ScrollBar.AsNeeded
-    minimumSize: 0.08
-    padding: 2
-    Accessible.name: bar.horizontal ? "Horizontal scroll bar" : "Vertical scroll bar"
-    contentItem: Rectangle {
-        implicitWidth: 8; implicitHeight: 8; radius: 4
-        color: bar.pressed ? Theme.accentText : bar.hovered ? Theme.scrollThumbHover : Theme.scrollThumb
-        opacity: bar.size < 1 ? 1 : 0
+    padding: 0
+    minimumSize: Math.min(1, Theme.minimumTarget / Math.max(1, horizontal ? width : height))
+    Accessible.name: horizontal ? qsTr("Horizontal scroll bar") : qsTr("Vertical scroll bar")
+    contentItem: Item {
+        implicitWidth: Theme.minimumTarget
+        implicitHeight: Theme.minimumTarget
+        Rectangle {
+            anchors.centerIn: parent
+            width: bar.horizontal ? parent.width : Theme.space1
+            height: bar.horizontal ? Theme.space1 : parent.height
+            radius: Theme.radiusChip
+            color: bar.pressed ? Theme.accent : bar.hovered ? Theme.scrollThumbHover : Theme.scrollThumb
+            visible: bar.size < 1
+        }
     }
-    background: Rectangle { color: "transparent" }
+    background: null
 }

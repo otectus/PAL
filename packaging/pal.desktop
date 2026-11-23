@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=PAL
+GenericName=Personal Assistant for Linux
+Comment=Chat with PAL and manage your desktop sessions
+Exec=pal --show
+Icon=pal
+Terminal=false
+Categories=Utility;
+StartupNotify=false

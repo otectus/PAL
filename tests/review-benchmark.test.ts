@@ -8,7 +8,7 @@ import { runCanonical } from "../benchmarks/memory/canonical-run.ts";
 
 const corpus = async () => JSON.parse(await readFile(new URL("./fixtures/memory/retrieval-cases.json", import.meta.url), "utf8")).cases;
 async function scratch(t: any) {
-  const directory = await mkdtemp(join(tmpdir(), "cere-benchmark-test-"));
+  const directory = await mkdtemp(join(tmpdir(), "pal-benchmark-test-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   return directory;
 }

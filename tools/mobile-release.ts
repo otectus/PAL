@@ -19,8 +19,12 @@ if(!badging.includes(`name='${packageId}'`)||!badging.includes(`versionCode='${v
 const verified=execFileSync(join(buildTools,'apksigner'),['verify','--verbose','--print-certs',apk],{encoding:'utf8'});
 const signer=/^Signer #1 certificate SHA-256 digest: ([a-fA-F0-9]{64})$/m.exec(verified)?.[1];if(signer?.toLowerCase()!==fingerprint.toLowerCase())throw new Error('APK signer differs from the reviewed certificate');
 if(development&&badging.includes('application-debuggable'))throw new Error('A development snapshot is the R8 dev build, not a debuggable one');
-const output=resolve(destination),name=development?`cere-mobile-v${versionName}-dev.apk`:`cere-${tag}.apk`,bytes=readFileSync(apk),sha256=createHash('sha256').update(bytes).digest('hex');mkdirSync(output,{recursive:true});
-if(resolve(apk)!==join(output,name))copyFileSync(apk,join(output,name));
+const output=resolve(destination),name=development?`pal-mobile-v${versionName}-dev.apk`:`pal-${tag}.apk`,bytes=readFileSync(apk),sha256=createHash('sha256').update(bytes).digest('hex');mkdirSync(output,{recursive:true});
+// Older phones discover updates only when both the release assets and apk.name use the published prefix.
+const legacyName = name.replace(/^pal-/, 'cere-');
+for (const filename of [name, legacyName]) {
+  if (resolve(apk) !== join(output, filename)) copyFileSync(apk, join(output, filename));
+}
 // The APK speaks protocol 1 at hello revision 0 and uses each newer feature only when a desktop
 // offers it, so any desktop serving cere.mobile.v1 works; features names what it can use.
 const contract=JSON.parse(readFileSync(new URL('../protocol/mobile/v1/CONTRACT.json',import.meta.url),'utf8'));
@@ -31,10 +35,10 @@ if(evidence)writeFileSync(join(output,'RELEASE-EVIDENCE.json'),evidence);
 const sourceCommit=process.env.GITHUB_SHA||process.env.SOURCE_COMMIT||null,sourceDirty=process.env.SOURCE_DIRTY==='1';
 const metadata={packageId,versionName,versionCode,minSdk:30,
   protocol:{major:contract.protocol.major,minMinor:0,maxMinor:0,desktopMinor:contract.protocol.minor,features:Object.keys(contract.features||{})},
-  minimumDesktop:'0.1.0/mobile-v1',...(development?{development:true}:{}),sourceCommit,...(sourceDirty?{sourceDirty:true}:{}),sourceRepository:'https://github.com/otectus/Cere',apk:{name,sha256},signingCertificateSha256:fingerprint.toLowerCase(),
+  minimumDesktop:'0.1.0/mobile-v1',...(development?{development:true}:{}),sourceCommit,...(sourceDirty?{sourceDirty:true}:{}),sourceRepository:'https://github.com/otectus/PAL',apk:{name:legacyName,sha256},signingCertificateSha256:fingerprint.toLowerCase(),
   ...(evidence?{evidence:{file:'RELEASE-EVIDENCE.json',sha256:createHash('sha256').update(evidence).digest('hex')}}:{})};
 writeFileSync(join(output,development?'mobile-development.json':'mobile-release.json'),JSON.stringify(metadata,null,2)+'\n');
 writeFileSync(join(output,'SIGNING-CERTIFICATE-SHA256.txt'),fingerprint.toLowerCase()+'\n');
-writeFileSync(join(output,'SHA256SUMS'),`${sha256}  ${name}\n`);
-writeFileSync(join(output,'BUILD-PROVENANCE.json'),JSON.stringify({repository:'https://github.com/otectus/Cere',tag,commit:sourceCommit,...(sourceDirty?{dirty:true}:{}),workflowRun:process.env.GITHUB_RUN_ID||null,artifact:name,sha256},null,2)+'\n');
+writeFileSync(join(output,'SHA256SUMS'),`${sha256}  ${name}\n${sha256}  ${legacyName}\n`);
+writeFileSync(join(output,'BUILD-PROVENANCE.json'),JSON.stringify({repository:'https://github.com/otectus/PAL',tag,commit:sourceCommit,...(sourceDirty?{dirty:true}:{}),workflowRun:process.env.GITHUB_RUN_ID||null,artifact:name,sha256},null,2)+'\n');
 console.log(`Prepared ${name} (${bytes.length} bytes); SHA-256 ${sha256}`);

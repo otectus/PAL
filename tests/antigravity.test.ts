@@ -8,13 +8,13 @@ import { discoverProviderModels } from '../broker/models.ts';
 import type { Session } from '../broker/types.ts';
 
 async function fixture(t:any) {
-  const directory=await mkdtemp(join(tmpdir(),'cere-agy-')),log=join(directory,'argv');
-  const old=process.env.CERE_ANTIGRAVITY_BIN,oldLog=process.env.CERE_AGY_TEST_LOG;
-  process.env.CERE_ANTIGRAVITY_BIN=resolve('tests/fixtures/antigravity.mjs');process.env.CERE_AGY_TEST_LOG=log;
+  const directory=await mkdtemp(join(tmpdir(),'pal-agy-')),log=join(directory,'argv');
+  const old=process.env.PAL_ANTIGRAVITY_BIN,oldLog=process.env.PAL_AGY_TEST_LOG;
+  process.env.PAL_ANTIGRAVITY_BIN=resolve('tests/fixtures/antigravity.mjs');process.env.PAL_AGY_TEST_LOG=log;
   const session:Session={id:'agy',provider:'antigravity',nativeId:null,title:'Test',cwd:directory,mode:'managed',status:'idle',created:0,updated:0,draft:'',scroll:0,model:'fixture-model',effort:'high'};
   const events:any[]=[],native:string[]=[];let bypass=false;
   const adapter=new AntigravityAdapter(session,{token:'test',event:e=>events.push(e),native:id=>native.push(id),approve:async()=>({choice:'deny'}),bypassCliPermissions:()=>bypass});
-  t.after(async()=>{await adapter.close();if(old===undefined)delete process.env.CERE_ANTIGRAVITY_BIN;else process.env.CERE_ANTIGRAVITY_BIN=old;if(oldLog===undefined)delete process.env.CERE_AGY_TEST_LOG;else process.env.CERE_AGY_TEST_LOG=oldLog;await rm(directory,{recursive:true,force:true});});
+  t.after(async()=>{await adapter.close();if(old===undefined)delete process.env.PAL_ANTIGRAVITY_BIN;else process.env.PAL_ANTIGRAVITY_BIN=old;if(oldLog===undefined)delete process.env.PAL_AGY_TEST_LOG;else process.env.PAL_AGY_TEST_LOG=oldLog;await rm(directory,{recursive:true,force:true});});
   return{adapter,session,events,native,log,setBypass:()=>{bypass=true;}};
 }
 test('AntiGravity streams distinct replies, resumes only its ID, and honors explicit CLI bypass',async t=>{

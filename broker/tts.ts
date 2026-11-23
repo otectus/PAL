@@ -3,7 +3,7 @@ import type { Provider } from './types.ts';
 import type { ElevenLabs } from './elevenlabs.ts';
 import { spawn } from 'node:child_process';
 import { access, readFile, readdir, stat } from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { constants, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,8 +14,8 @@ import type { Emotion } from './indextts-config.ts';
 import { audioSelection, chosenDevice, playbackArgs } from './audio-devices.ts';
 
 export const defaultVoice = 'en_US-amy-medium';
-export const ttsTestLine = "Hello, I'm Cere. Local voice is ready. Let's make a little trouble.";
-export function voiceTestLine(name: string) { return ttsTestLine.replace("I'm Cere.", () => `I'm ${name}.`); }
+export const ttsTestLine = "Hello, I'm PAL. Local voice is ready. Let's make a little trouble.";
+export function voiceTestLine(name: string) { return ttsTestLine.replace("I'm PAL.", () => `I'm ${name}.`); }
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export type Voice = { id: string; model: string; config: string; sampleRate: number; language: string; backend?: 'kokoro'; runtime?: string; nativeVoice?: string };
 type SpeechSettings = { voice: string; speechEnabled: boolean; quiet: boolean; speechProviders?:Partial<Record<Provider,boolean>>; speechRate?: number; speechPitch?: number; speechVolume?: number; ttsProvider?:'local'|'indextts'|'elevenlabs' };
@@ -30,7 +30,9 @@ export function validateVoice(value: unknown): string {
 }
 
 export function kokoroManifestPath(env: NodeJS.ProcessEnv = process.env): string {
-  return resolve(env.CERE_KOKORO_MANIFEST || join(env.XDG_DATA_HOME || join(homedir(), '.local/share'), 'cere/kokoro/manifest.json'));
+  const data = env.XDG_DATA_HOME || join(homedir(), '.local/share');
+  const current = join(data, 'pal/kokoro/manifest.json'), legacy = join(data, 'cere/kokoro/manifest.json');
+  return resolve(env.PAL_KOKORO_MANIFEST || env.CERE_KOKORO_MANIFEST || (existsSync(current) || !existsSync(legacy) ? current : legacy));
 }
 
 const kokoroVoiceNames = new Set(['af_heart','af_bella']);
@@ -55,8 +57,9 @@ async function resolveKokoroVoice(id:string, manifestPath:string):Promise<Voice>
 }
 
 export function voiceDirectories(env: NodeJS.ProcessEnv = process.env): string[] {
-  if (env.CERE_VOICES_DIR) return [resolve(env.CERE_VOICES_DIR)];
-  return [join(paths().config, 'voices'), join(env.XDG_DATA_HOME || join(homedir(), '.local/share'), 'piper/voices'),
+  if (env.PAL_VOICES_DIR || env.CERE_VOICES_DIR) return [resolve(env.PAL_VOICES_DIR || env.CERE_VOICES_DIR!)];
+  const config = env.XDG_CONFIG_HOME || join(homedir(), '.config');
+  return [...new Set([join(paths().config, 'voices'), join(config, 'pal/voices'), join(config, 'cere/voices')]), join(env.XDG_DATA_HOME || join(homedir(), '.local/share'), 'piper/voices'),
     join(root, 'voices'), join(root, 'tts/voices'), join(root, 'build/tts/voices')];
 }
 
@@ -155,7 +158,7 @@ function child(command: string, args: string[], options: {
 }
 
 export async function piperExecutable(env: NodeJS.ProcessEnv = process.env): Promise<string> {
-  if (env.CERE_PIPER_BIN) return env.CERE_PIPER_BIN;
+  if (env.PAL_PIPER_BIN || env.CERE_PIPER_BIN) return env.PAL_PIPER_BIN || env.CERE_PIPER_BIN!;
   for (const path of [join(root, 'tts/piper/piper'), join(root, 'build/tts/piper/piper')]) {
     try { await access(path, constants.X_OK); return path; } catch { /* Try installed Piper. */ }
   }
@@ -175,8 +178,8 @@ async function playLocal(command: string, args: string[], input: string, name: s
     // engine's native synthesis control; volume never changes system volume.
     const effects = [...(tuning.pitch ? ['pitch',String(tuning.pitch * 100)] : []),
       ...(tuning.volume !== 1 ? ['vol',String(tuning.volume)] : [])];
-    const filter = adjusted ? spawn(env.CERE_SOX_BIN || 'sox', ['-q','-D',...format,'-',...format,'-',...effects], {env,stdio:['pipe','pipe','pipe']}) : undefined;
-    const player = spawn(env.CERE_APLAY_BIN || 'aplay', [...playbackArgs(audioSelection().output),'-q','-t','raw','-r',String(voice.sampleRate),'-f','S16_LE','-c','1'], {env,stdio:['pipe','ignore','ignore']});
+    const filter = adjusted ? spawn(env.PAL_SOX_BIN || env.CERE_SOX_BIN || 'sox', ['-q','-D',...format,'-',...format,'-',...effects], {env,stdio:['pipe','pipe','pipe']}) : undefined;
+    const player = spawn(env.PAL_APLAY_BIN || env.CERE_APLAY_BIN || 'aplay', [...playbackArgs(audioSelection().output),'-q','-t','raw','-r',String(voice.sampleRate),'-f','S16_LE','-c','1'], {env,stdio:['pipe','ignore','ignore']});
     const children = [{proc:synth,label:name}, ...(filter ? [{proc:filter,label:'Voice tuning (SoX)'}] : []), {proc:player,label:'aplay'}];
     let remaining=children.length, failure:Error|undefined, bytes=0, killTimer:NodeJS.Timeout|undefined;
     const terminate = () => {
@@ -258,7 +261,7 @@ export class Speech {
   }
   speak(text: string, test = false, sessionId?: string, replyId?: string, indexOverrides?:IndexOverrides, sourceProvider?:Provider): boolean {
     const settings = this.settings();
-    if (this.closed || this.env.CERE_TTS_DISABLED === '1' || settings.speechVolume === 0 || !test && (!settings.speechEnabled || settings.quiet)) return false;
+    if (this.closed || (this.env.PAL_TTS_DISABLED || this.env.CERE_TTS_DISABLED) === '1' || settings.speechVolume === 0 || !test && (!settings.speechEnabled || settings.quiet)) return false;
     if(!test&&sourceProvider&&settings.speechProviders?.[sourceProvider]===false)return false;
     // Protect pronunciation annotations from generic markup removal.
     if(settings.ttsProvider==='indextts'||indexOverrides){
@@ -311,20 +314,20 @@ export class Speech {
         this.update({state:'idle'});return;
       }
       let accepted = false, fallback = '';
-      // Speech Dispatcher cannot be pointed at a device, so a chosen speaker uses Cere's own player.
+      // Speech Dispatcher cannot be pointed at a device, so a chosen speaker uses PAL's own player.
       const tuned = item.rate !== 1 || item.pitch !== 0 || item.volume !== 1 || !!audioSelection().output;
       if (!tuned) {
         const connect = new AbortController();
         const timeout = setTimeout(() => connect.abort(new Error('Speech Dispatcher did not connect')), 3000); timeout.unref();
         try {
-          const result = await child(this.env.CERE_TTS_PYTHON || 'python3', [join(root, 'broker/speechd-client.py')], {
+          const result = await child(this.env.PAL_TTS_PYTHON || this.env.CERE_TTS_PYTHON || 'python3', [join(root, 'broker/speechd-client.py')], {
             env: this.env, signal: AbortSignal.any([controller.signal, connect.signal]), timeout: 15 * 60 * 1000,
             input: JSON.stringify({ text: item.text, voice: voice.id }),
             line: line => {
               if (line === 'accepted') { accepted = true; clearTimeout(timeout); this.update({ state: 'speaking', backend: 'speech-dispatcher' }); }
             },
           });
-          if (result.code !== 0 || !accepted) throw new Error(result.timedOut ? 'Speech Dispatcher playback timed out' : 'Speech Dispatcher or its Cere Piper module is unavailable');
+          if (result.code !== 0 || !accepted) throw new Error(result.timedOut ? 'Speech Dispatcher playback timed out' : 'Speech Dispatcher or its PAL Piper module is unavailable');
         } catch (error: any) {
           controller.signal.throwIfAborted();
           // Never replay an utterance that the dispatcher already accepted.

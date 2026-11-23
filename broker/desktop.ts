@@ -13,7 +13,7 @@ export const actionDefinitions: ToolDefinition[] = [
   { name: 'audio.status', title: 'Read volume', category: 'audio', description: 'Read the current output volume and mute status', schema: {}, readOnly: true },
   { name: 'media.status', title: 'Read media status', category: 'media', description: 'Read the active media player and playback status', schema: {}, readOnly: true },
   { name: 'script.list', title: 'List saved scripts', category: 'scripts', description: 'List saved executable commands and IDs. Run only a saved ID with script_run.', schema: {}, readOnly: true },
-  { name: 'timer.list', title: 'List timers', category: 'timers', description: 'List pending Cere timers', schema: {}, readOnly: true },
+  { name: 'timer.list', title: 'List timers', category: 'timers', description: 'List pending PAL timers', schema: {}, readOnly: true },
   { name: 'apps.launch', title: 'Launch application', category: 'apps', description: 'Launch an installed desktop application', schema: { desktopId: { type: 'string' } } },
   { name: 'files.open', title: 'Open file or project', category: 'files', description: 'Open an absolute local path in its default application', schema: { path: { type: 'string' } } },
   { name: 'windows.focus', title: 'Focus window', category: 'windows', description: 'Focus an existing Hyprland window', schema: { address: { type: 'string' } } },
@@ -24,7 +24,7 @@ export const actionDefinitions: ToolDefinition[] = [
   { name: 'media.control', title: 'Media playback', category: 'media', description: 'Control an MPRIS player. Defaults to Spotify when available, otherwise the active player.', required:['command'], schema: { command: { type: 'string', enum: ['PlayPause', 'Next', 'Previous', 'Stop'] }, player: {type:'string',description:'Optional MPRIS bus name, for example org.mpris.MediaPlayer2.spotify'} } },
   { name: 'screenshot.capture', title: 'Capture in Satty', category: 'capture', description: 'Open a capture of the focused display in Satty for cropping and annotation. Return only the image explicitly saved by the user.', schema: {} },
   { name: 'timer.start', title: 'Set a timer', category: 'timers', description: 'Create a local reminder', schema: { minutes: { type: 'integer', minimum: 1, maximum: 10080 }, label: { type: 'string' } } },
-  { name: 'script.run', title: 'Run saved script', category: 'scripts', description: 'Run a script explicitly saved in Cere settings', schema: { id: { type: 'string' } } },
+  { name: 'script.run', title: 'Run saved script', category: 'scripts', description: 'Run a script explicitly saved in PAL settings', schema: { id: { type: 'string' } } },
 ];
 export function validateAction(name: string, args: any) {
   const def = actionDefinitions.find(d => d.name === name);
@@ -173,7 +173,7 @@ export async function captureInSatty(signal?: AbortSignal) {
     const monitors=JSON.parse((await exec('hyprctl',['-j','monitors'],{timeout:3000,signal})).stdout);
     const monitor=monitors.find((m:any)=>m.focused&&!m.disabled)||monitors.find((m:any)=>!m.disabled);
     if(!monitor)throw new Error('No active display is available to capture.');
-    // Let the dismissed Cere panel finish unmapping before capturing its display.
+    // Let the dismissed PAL panel finish unmapping before capturing its display.
     await new Promise<void>((resolve,reject)=>{
       const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve();},200);
       const abort=()=>{clearTimeout(timer);reject(signal!.reason);};
@@ -182,7 +182,7 @@ export async function captureInSatty(signal?: AbortSignal) {
     await exec('grim',['-o',monitor.name,raw],{timeout:10000,signal});
     // Separate input/output means Escape can never accidentally share the unedited capture.
     await exec('satty',['--filename',raw,'--output-filename',path,'--initial-tool','crop',
-      '--app-id',`org.satty.cere.capture_${id.replaceAll('-','_')}`,
+      '--app-id',`org.satty.pal.capture_${id.replaceAll('-','_')}`,
       '--save-after-copy','--early-exit','all','--actions-on-enter','save-to-file,exit','--actions-on-escape','exit'],{maxBuffer:1024*1024,signal});
     signal?.throwIfAborted();
     if(!(await stat(path).catch(()=>null))?.size)return {cancelled:true,message:'Capture cancelled'};

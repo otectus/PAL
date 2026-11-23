@@ -14,7 +14,7 @@ ColumnLayout {
     property string fallback: ""
     readonly property string heading: provider ? Labels.provider(provider) + " · " + sessionId.slice(0, 8) : fallback
     readonly property string text: [heading, title, cwd].filter(line => line.length > 0).join("\n")
-    spacing: 1
+    spacing: Theme.space1
     Accessible.role: Accessible.StaticText
     Accessible.name: text
     Text {
@@ -38,6 +38,6 @@ ColumnLayout {
         color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.caption
         maximumLineCount: 1; elide: Text.ElideMiddle
         HoverHandler { id: projectHover }
-        ToolTip.visible: projectHover.hovered && project.truncated; ToolTip.text: project.text; ToolTip.delay: 600
+        ToolTip.visible: projectHover.hovered && project.truncated; ToolTip.text: project.text; ToolTip.delay: Theme.tooltipDelay
     }
 }

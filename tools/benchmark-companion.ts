@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
-const directory=await mkdtemp(join(tmpdir(),'cere-companion-benchmark-'));
+const directory=await mkdtemp(join(tmpdir(),'pal-companion-benchmark-'));
 const core=new Core(new Store(directory),()=>({async send(){},async interrupt(){},async close(){}}));
 const summary=(values:number[])=>{values.sort((a,b)=>a-b);return{p50:values[Math.floor(values.length*.5)],p95:values[Math.floor(values.length*.95)],max:values.at(-1)}};
 try{

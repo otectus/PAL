@@ -19,7 +19,7 @@ One table for the desktop and the phone. The broker owns the state (`Session.sta
 
 **Activity line** (both clients, shared words in `tests/fixtures/activity-labels.json`): recalling "Recalling memory…", thinking "Thinking…", speaking "Writing a response…", working "Using tools…", delegating "Delegating work…", waitingForAgents "Waiting for subagents…", compacting "Compacting context…", planning "Planning…". An activity the phone does not know keeps its general line.
 
-**Precedence.** A lost connection is shown first ("Connection lost — reconnecting…" on the desktop, "Reconnecting" in the phone portrait and the cached-state banner), then an unresponsive broker (desktop: "Cere is not responding — waiting for it…"), then Stopping, then a request this client can answer, then agents, then the activity. "Your input" is said only when an actionable request is on screen (W05.2).
+**Precedence.** A lost connection is shown first ("Connection lost — reconnecting…" on the desktop, "Reconnecting" in the phone portrait and the cached-state banner), then an unresponsive broker (desktop: "PAL is not responding — waiting for it…"), then Stopping, then a request this client can answer, then agents, then the activity. "Your input" is said only when an actionable request is on screen (W05.2).
 
 **Ownership.** One provider writer per turn. A phone-started turn runs under the phone's grants (`ordinarySettings`), never desktop bypasses; a desktop-started Ollama turn cannot be taken over by a phone, which says so and offers Stop. Delegated child requests appear on the parent conversation on both clients.
 

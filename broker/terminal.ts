@@ -4,7 +4,7 @@ import { request } from './client.ts';
 import { cliBypassArgs } from './permissions.ts';
 import type { Provider } from './types.ts';
 const [provider,...args]=process.argv.slice(2);
-if(!['codex','claude'].includes(provider)){console.error('Usage: cere terminal codex|claude [CLI arguments]');process.exit(2);}
+if(!['codex','claude'].includes(provider)){console.error('Usage: pal terminal codex|claude [CLI arguments]');process.exit(2);}
 let address='';
 try{
   const clients=await request('windows.list');let pid=process.ppid;
@@ -14,7 +14,7 @@ try{
   }
 }catch{}
 let id='';
-try{const session=await request('session.link',{provider,cwd:process.cwd(),pid:process.pid,address});id=session.id;}catch(e:any){console.error('Cere link unavailable: '+e.message);}
+try{const session=await request('session.link',{provider,cwd:process.cwd(),pid:process.pid,address});id=session.id;}catch(e:any){console.error('PAL link unavailable: '+e.message);}
 let bypass = false;
 // Do not require a potentially projected full desktop snapshot merely to read
 // the one policy bit that controls this terminal launch.
@@ -22,7 +22,7 @@ try {
   bypass = (await request('settings.inspect')).bypassCliPermissions === true;
 } catch (error) {
   // A terminal can be upgraded while the previous broker is still running.
-  if (error instanceof Error && error.message === 'Unknown Cere method: settings.inspect') {
+  if (error instanceof Error && error.message === 'Unknown PAL method: settings.inspect') {
     try { bypass = (await request('state')).settings?.bypassCliPermissions === true; } catch {}
   }
 }

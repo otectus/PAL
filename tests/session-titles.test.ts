@@ -8,7 +8,7 @@ import { Store } from '../broker/store.ts';
 import type { Hooks } from '../broker/providers.ts';
 
 async function fixture(t: any) {
-  const directory=await mkdtemp(join(tmpdir(),'cere-titles-'));
+  const directory=await mkdtemp(join(tmpdir(),'pal-titles-'));
   let hooks: Hooks | undefined;
   const core=new Core(new Store(directory),(_session,value)=>{
     hooks=value;

@@ -82,7 +82,7 @@
     {"id": "fact-01", "category": "fact", "store": "conversation", "memory": "The broker socket lives in the runtime directory as broker.sock.", "query": "Where is the broker socket?", "overlap": "high"},
     {"id": "fact-02", "category": "fact", "store": "conversation", "memory": "The embedding model on this machine is nomic-embed-text v2 moe.", "query": "Which embedding model is installed here?", "overlap": "high"},
     {"id": "fact-03", "category": "fact", "store": "saved", "memory": "My Ollama server runs on the workstation at port 11434.", "query": "What port does the Ollama server use?", "overlap": "high"},
-    {"id": "fact-04", "category": "fact", "store": "conversation", "memory": "Hyprland window rules for Cere live in the user's compositor configuration.", "query": "Where do the compositor rules for Cere go?", "overlap": "partial"},
+    {"id": "fact-04", "category": "fact", "store": "conversation", "memory": "Hyprland window rules for PAL live in the user's compositor configuration.", "query": "Where do the compositor rules for PAL go?", "overlap": "partial"},
     {"id": "fact-05", "category": "fact", "store": "conversation", "memory": "The phone pairs over WireGuard with the desktop gateway.", "query": "How does the Android app reach the desktop?", "overlap": "none"}
   ],
   "corrections": [

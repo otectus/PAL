@@ -9,7 +9,7 @@ import type { Hooks } from '../broker/providers.ts';
 import type { Provider } from '../broker/types.ts';
 
 async function fixture(t: any, provider: Provider = 'codex') {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-provider-memory-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-provider-memory-'));
   const sent: string[] = [];
   let hooks: Hooks;
   const core = new Core(new Store(directory), (_session, h) => {
@@ -36,14 +36,14 @@ for (const provider of ['codex', 'claude'] as const) {
     const f = await fixture(t, provider), captured: any[] = [], prepared: any[] = [];
     f.core.memory.context = async (session, text, _signal, budget, route) => {
       prepared.push({provider:session.provider, text, budget, route});
-      return '<cere_memory_data>shared project decision</cere_memory_data>';
+      return '<pal_memory_data>shared project decision</pal_memory_data>';
     };
     f.core.memory.capture = async (_session, text, answer, _signal, authorize) => {
       authorize?.(); captured.push({text, answer}); return {outcome:'captured'};
     };
     await f.core.send({id:f.session.id, text:'Continue the work'});
     assert.deepEqual(prepared, [{provider, text:'Continue the work', budget:4000, route:'cloud'}]);
-    assert.match(f.sent[0], /^<cere_memory_data>shared project decision/);
+    assert.match(f.sent[0], /^<pal_memory_data>shared project decision/);
     assert.ok(f.sent[0].endsWith('Continue the work'));
     assert.equal(f.core.store.messages(f.session.id).find(m => m.role === 'user')?.text, 'Continue the work');
     f.hooks().event({type:'message', id:'reply', text:'A completed reply'});
@@ -121,7 +121,7 @@ test('Stop cancels native MCP memory calls', async t => {
 
 test('memory policy changes before provider acceptance reject stale native context', async t => {
   const {core, session, sent} = await fixture(t);
-  core.memory.context = async () => '<cere_memory_data>private evidence</cere_memory_data>';
+  core.memory.context = async () => '<pal_memory_data>private evidence</pal_memory_data>';
   core.factory = (_session, _hooks) => ({
     async send(_text, _images, options) {
       await core.updateSettings({memory:{allowCloudMemory:false}});

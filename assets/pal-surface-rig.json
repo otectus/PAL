@@ -1,0 +1,16 @@
+{
+  "texture": "pal-surface.png",
+  "presentation": "reference",
+  "static": true,
+  "surfaceSequences": null,
+  "parts": [
+    {
+      "name": "reference",
+      "bone": "root",
+      "sourceRect": [0, 0, 1024, 1024],
+      "rect": [0, 8, 192, 192],
+      "surfaceMotion": false,
+      "z": 0
+    }
+  ]
+}

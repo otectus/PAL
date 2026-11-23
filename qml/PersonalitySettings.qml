@@ -6,7 +6,7 @@ CSection {
     title:"Personality"
     description:"Choose your companion’s name and conversation style."
     property string savedBaseline:""
-    property string savedName:"Cere"
+    property string savedName:"PAL"
     property string savedAvatar:AvatarCatalog.defaultId
     property string savedRevision:"0"
     property bool conflict:false
@@ -33,7 +33,7 @@ CSection {
     readonly property bool previewStale:preview.draft!==undefined&&(previewShown!==fingerprint()||preview.settingsRevision!==(App.state.settingsRevision||"0"))
     function adopt(settings){
         savedBaseline=settings.personality??""
-        savedName=settings.assistantName||"Cere"
+        savedName=settings.assistantName||"PAL"
         savedAvatar=AvatarCatalog.avatarFor(settings.avatar).id
         editor.text=savedBaseline;nameField.text=savedName
         savedRevision=App.state.settingsRevision||"0";conflict=false;loaded=true
@@ -41,7 +41,7 @@ CSection {
     function syncSaved(){
         const settings=App.state.settings||{}
         if(!loaded||!dirty)adopt(settings)
-        else if((settings.personality??"")!==savedBaseline||(settings.assistantName||"Cere")!==savedName||AvatarCatalog.avatarFor(settings.avatar).id!==savedAvatar)conflict=true
+        else if((settings.personality??"")!==savedBaseline||(settings.assistantName||"PAL")!==savedName||AvatarCatalog.avatarFor(settings.avatar).id!==savedAvatar)conflict=true
         else savedRevision=App.state.settingsRevision||"0"
     }
     function fingerprint(){return JSON.stringify([editor.text,nameField.text])}
@@ -86,14 +86,14 @@ CSection {
     CText { text:"Name";font.weight:Font.DemiBold }
     CField {
         id:nameField;objectName:"assistantName";Layout.fillWidth:true
-        placeholderText:"Cere";maximumLength:64;readOnly:personality.requestId>=0
+        placeholderText:"PAL";maximumLength:64;readOnly:personality.requestId>=0
         Accessible.name:"Assistant name"
         onTextChanged:{personality.error="";personality.feedback="";personality.schedulePreview()}
     }
-    CText { text:"Used in conversation and on companion labels. Up to 64 characters; leave blank to use Cere.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { text:"Used in conversation and on companion labels. Up to 64 characters; leave blank to use PAL.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CText { text:"Personality";font.weight:Font.DemiBold }
     ScrollView {
-        Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredHeight:280
+        Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredHeight:Theme.editorLarge
         clip:true
         ScrollBar.horizontal.policy:ScrollBar.AlwaysOff
         ScrollBar.vertical:CScrollBar {}
@@ -103,7 +103,7 @@ CSection {
             wrapMode:TextEdit.Wrap;selectByMouse:true
             readOnly:personality.requestId>=0
             font.family:Theme.font;font.pixelSize:Theme.body
-            padding:12
+            padding:Theme.space3
             placeholderText:"Leave blank for a clear, helpful, neutral voice."
             Accessible.name:"Assistant personality"
             onTextChanged:{personality.error="";personality.feedback="";personality.schedulePreview()}
@@ -115,7 +115,7 @@ CSection {
     }
     CText { text:"Personality changes voice and manner, not permissions. Leave blank for a neutral voice. Restore default fills the editor; Save applies it.";color:Theme.muted;font.pixelSize:Theme.secondary }
     GridLayout {
-        Layout.fillWidth:true;columns:width>=480?3:1;columnSpacing:8;rowSpacing:8
+        Layout.fillWidth:true;columns:width>=Theme.formBreakpoint?3:1;columnSpacing:Theme.space2;rowSpacing:Theme.space2
         CButton {
             objectName:"personalitySave";text:personality.requestId>=0?"Saving…":"Save changes";primary:true;Layout.fillWidth:true
             enabled:App.connected&&personality.loaded&&personality.requestId<0&&personality.dirty&&!personality.conflict&&editor.length<=personality.maximumLength&&nameField.length<=64
@@ -137,9 +137,9 @@ CSection {
     CText { objectName:"personalityFeedback";visible:!!personality.feedback;text:personality.feedback;color:Theme.accentText;font.pixelSize:Theme.secondary }
 
     CText { text:"Saved styles";font.weight:Font.DemiBold }
-    CText { text:"Keep named copies of personality text. Loading a style only fills the editor; Save changes applies it. A project or a single conversation can also use a saved style, from project settings or the conversation’s Style tool. Styles never change the name, avatar, voice or models, and can withhold Cere tools but never grant them.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    CText { text:"Keep named copies of personality text. Loading a style only fills the editor; Save changes applies it. A project or a single conversation can also use a saved style, from project settings or the conversation’s Style tool. Styles never change the name, avatar, voice or models, and can withhold PAL tools but never grant them.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     GridLayout {
-        Layout.fillWidth:true;columns:width>=480?2:1;columnSpacing:8;rowSpacing:8
+        Layout.fillWidth:true;columns:width>=Theme.formBreakpoint?2:1;columnSpacing:Theme.space2;rowSpacing:Theme.space2
         CComboBox {
             id:presetPicker;objectName:"behaviorPresetPicker";Layout.fillWidth:true
             model:personality.presets;textRole:"label";enabled:personality.presets.length>0
@@ -175,7 +175,7 @@ CSection {
     }
     CText { objectName:"behaviorPresetError";visible:!!personality.presetError;text:personality.presetError;color:Theme.danger;font.pixelSize:Theme.secondary }
     GridLayout {
-        Layout.fillWidth:true;columns:width>=480?3:1;columnSpacing:8;rowSpacing:8
+        Layout.fillWidth:true;columns:width>=Theme.formBreakpoint?3:1;columnSpacing:Theme.space2;rowSpacing:Theme.space2
         CButton { objectName:"behaviorPresetDetails";Layout.fillWidth:true;text:"Style details…";help:"Traits, standing instructions, tool limits, formatting checks and checkpoints";enabled:App.connected&&!!personality.selectedPreset&&personality.presetRequest<0;onClicked:{profileEditor.load(personality.selectedPreset);profileEditor.open()} }
         CButton { objectName:"packageExport";Layout.fillWidth:true;text:"Export styles and recipes…";enabled:App.connected;onClicked:packageDialog.openExport() }
         CButton { objectName:"packageImport";Layout.fillWidth:true;text:"Import a package…";enabled:App.connected;onClicked:{const path=App.chooseFile();if(path)packageDialog.previewFile(path)} }
@@ -186,13 +186,13 @@ CSection {
     CButton {
         objectName:"personalityPreviewToggle";Layout.fillWidth:true;quiet:true;alignLeft:true
         text:(personality.previewOpen?"▾  ":"▸  ")+"Preview the personality instructions"
-        help:"Show the exact personality block Cere adds for this draft and for the saved settings"
+        help:"Show the exact personality block PAL adds for this draft and for the saved settings"
         Accessible.description:help
         onClicked:{personality.previewOpen=!personality.previewOpen;if(personality.previewOpen)personality.requestPreview()}
     }
     ColumnLayout {
-        visible:personality.previewOpen;Layout.fillWidth:true;spacing:8
-        CText { text:personality.preview.note||"Cere’s personality block. Provider and project instructions may add other context.";color:Theme.muted;font.pixelSize:Theme.secondary }
+        visible:personality.previewOpen;Layout.fillWidth:true;spacing:Theme.space2
+        CText { text:personality.preview.note||"PAL’s personality block. Provider and project instructions may add other context.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CText {
             objectName:"personalityPreviewStatus"
             text:personality.previewError?personality.previewError
@@ -204,15 +204,15 @@ CSection {
         }
         CText { text:"Draft · "+(personality.preview.characters?.draft||0)+" characters";font.pixelSize:Theme.caption;color:Theme.muted }
         ScrollView {
-            Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredHeight:180;clip:true
+            Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredHeight:Theme.editorMedium;clip:true
             ScrollBar.horizontal.policy:ScrollBar.AlwaysOff;ScrollBar.vertical:CScrollBar {}
-            CTextArea { objectName:"personalityPreviewDraft";readOnly:true;textFormat:TextEdit.PlainText;wrapMode:TextEdit.Wrap;selectByMouse:true;font.family:Theme.font;font.pixelSize:Theme.secondary;padding:10;text:personality.preview.draft||"";Accessible.name:"Draft personality instructions" }
+            CTextArea { objectName:"personalityPreviewDraft";readOnly:true;textFormat:TextEdit.PlainText;wrapMode:TextEdit.Wrap;selectByMouse:true;font.family:Theme.font;font.pixelSize:Theme.secondary;padding:Theme.space2;text:personality.preview.draft||"";Accessible.name:"Draft personality instructions" }
         }
         CText { text:"Saved · settings revision "+(personality.preview.settingsRevision||"0")+" · "+(personality.preview.characters?.saved||0)+" characters";font.pixelSize:Theme.caption;color:Theme.muted }
         ScrollView {
-            Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredHeight:180;clip:true
+            Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredHeight:Theme.editorMedium;clip:true
             ScrollBar.horizontal.policy:ScrollBar.AlwaysOff;ScrollBar.vertical:CScrollBar {}
-            CTextArea { objectName:"personalityPreviewSaved";readOnly:true;textFormat:TextEdit.PlainText;wrapMode:TextEdit.Wrap;selectByMouse:true;font.family:Theme.font;font.pixelSize:Theme.secondary;padding:10;text:personality.preview.saved||"";Accessible.name:"Saved personality instructions" }
+            CTextArea { objectName:"personalityPreviewSaved";readOnly:true;textFormat:TextEdit.PlainText;wrapMode:TextEdit.Wrap;selectByMouse:true;font.family:Theme.font;font.pixelSize:Theme.secondary;padding:Theme.space2;text:personality.preview.saved||"";Accessible.name:"Saved personality instructions" }
         }
         CButton { objectName:"personalityPreviewRefresh";text:"Refresh preview";quiet:true;enabled:App.connected&&personality.previewRequest<0;onClicked:personality.requestPreview() }
     }

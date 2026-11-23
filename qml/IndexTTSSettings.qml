@@ -6,7 +6,7 @@ ColumnLayout {
     id:panel
     objectName:"indexTtsSettings"
     Layout.fillWidth:true
-    spacing:10
+    spacing:Theme.space2
     property var config:App.state.settings?.indextts||({})
     property var status:App.state.indextts||({})
     property var caps:status.capabilities||({})
@@ -58,7 +58,7 @@ ColumnLayout {
     CCheckBox { id:installEmotion;text:"Include Qwen text emotion · about 1.13 GiB extra download";checked:panel.caps.emotionInstalled===true }
     CText { text:"Text emotion also needs additional working memory (roughly 1.1 GiB for FP16 weights, plus inference buffers). It loads on first use; on a small GPU it may run out of memory.";font.pixelSize:Theme.secondary;color:Theme.muted }
     GridLayout {
-        Layout.fillWidth:true;columns:width>440?3:1
+        Layout.fillWidth:true;columns:width>Theme.formBreakpoint?3:1
         CButton { text:"Download / repair";enabled:license.checked&&!panel.status.busy;onClicked:panel.call("indextts.install",{acceptLicense:true,emotion:installEmotion.checked,deepspeed:installDeepSpeed.checked}) }
         CButton { text:"Verify installation";enabled:!panel.status.busy;onClicked:panel.call("indextts.verify") }
         CButton { text:"Cancel download";enabled:panel.status.state==="downloading";onClicked:panel.call("indextts.cancelDownload") }
@@ -94,7 +94,7 @@ ColumnLayout {
         SpinBox { from:20;to:1000;value:panel.config.chunkChars||160;editable:true;enabled:!panel.status.busy;onValueModified:panel.save({chunkChars:value}) }
     }
     CText { text:"Small GPUs use shorter chunks. Stop ends playback immediately and unloads the worker; the next request reloads the model.";color:Theme.muted;font.pixelSize:Theme.secondary }
-    Rectangle { Layout.fillWidth:true;implicitHeight:1;color:Theme.line }
+    Rectangle { Layout.fillWidth:true;implicitHeight:Theme.hairline;color:Theme.line }
     CText { text:"Voice profiles";font.weight:Font.DemiBold }
     Repeater {
         model:panel.profiles
@@ -103,7 +103,7 @@ ColumnLayout {
             Layout.fillWidth:true
             CText { text:modelData.name+" · "+modelData.language+(panel.config.profileId===modelData.id?" · default":"") }
             Flow {
-                Layout.fillWidth:true;spacing:6
+                Layout.fillWidth:true;spacing:Theme.space2
                 CButton { text:"Edit";onClicked:panel.edit(modelData) }
                 CButton { text:"Preview";enabled:!panel.status.busy;onClicked:panel.call("indextts.preview",{profileId:modelData.id}) }
                 CButton { text:"Set default";enabled:!panel.status.busy;onClicked:panel.save({profileId:modelData.id}) }
@@ -114,7 +114,7 @@ ColumnLayout {
     CButton { text:"New voice";onClicked:panel.edit(null) }
     CField { id:voiceName;objectName:"indexVoiceName";Layout.fillWidth:true;placeholderText:"Voice name";Accessible.name:"IndexTTS voice name" }
     CComboBox { id:language;Layout.fillWidth:true;model:panel.caps.languages||[];Accessible.name:"Voice language" }
-    CText { text:"Use a clean 3–15 second recording. Cere keeps the original privately and creates a mono reference. When editing, blank paths keep existing recordings.";font.pixelSize:Theme.secondary;color:Theme.muted }
+    CText { text:"Use a clean 3–15 second recording. PAL keeps the original privately and creates a mono reference. When editing, blank paths keep existing recordings.";font.pixelSize:Theme.secondary;color:Theme.muted }
     RowLayout {
         Layout.fillWidth:true
         CField { id:reference;Layout.fillWidth:true;placeholderText:"Speaker reference audio path";Accessible.name:"Speaker reference path" }
@@ -139,7 +139,7 @@ ColumnLayout {
                 required property int index
                 required property string modelData
                 Layout.fillWidth:true
-                CText { text:modelData;Layout.preferredWidth:95;font.pixelSize:Theme.secondary }
+                CText { text:modelData;Layout.preferredWidth:Theme.fieldShort;font.pixelSize:Theme.secondary }
                 CSlider { Layout.fillWidth:true;from:0;to:1;stepSize:.05;value:panel.vector[index];Accessible.name:modelData;onMoved:{const v=panel.vector.slice();v[index]=value;panel.vector=v} }
             }
         }

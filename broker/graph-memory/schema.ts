@@ -1,3 +1,6 @@
+import type { DatabaseSync } from "node:sqlite";
+import { curationMigrationSql } from "./curation-schema.ts";
+import { repairLegacyPins, retentionMigrationSql } from "./retention-migration.ts";
 export const schema = `
 CREATE TABLE schema_migrations(id INTEGER PRIMARY KEY,checksum TEXT NOT NULL,applied_us INTEGER NOT NULL) STRICT;
 CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL) STRICT;
@@ -51,8 +54,11 @@ CREATE TABLE embedding_records(artifact_id TEXT NOT NULL REFERENCES artifacts(id
  * Ordered upgrades after the initial schema. Each entry is applied once in its
  * own transaction and verified by checksum on every open, so these texts are
  * immutable once published. Append new migrations; never edit an existing one.
+ * A `repair` runs in the same transaction just before its migration's SQL and is
+ * not checksummed: it may only make existing data acceptable to that migration,
+ * never change what the migration does to data it already accepted.
  */
-export const migrations: { id: number; sql: string }[] = [
+export const migrations: { id: number; sql: string; repair?: (db: DatabaseSync) => void }[] = [
   {
     id: 2,
     sql: `
@@ -108,4 +114,6 @@ CREATE INDEX retention_pins_target ON retention_pins(target_id,released_revision
 CREATE INDEX retention_pins_scope ON retention_pins(scope_id,released_revision);
 `,
   },
+  { id: 6, sql: curationMigrationSql },
+  { id: 7, sql: retentionMigrationSql, repair: repairLegacyPins },
 ];

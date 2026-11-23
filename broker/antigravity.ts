@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { RpcProcess } from './wire.ts';
 import { providerExecutable, type Hooks } from './providers.ts';
 import { personalityInstructions } from './personality.ts';
+import { toolCall } from './tool-activity.ts';
 import type { Adapter, Session, SendOptions, ModelOption } from './types.ts';
 
 function pinnedEffort(model: string = '') { return /-(low|medium|high|max)$/.exec(model)?.[1]; }
@@ -30,7 +31,7 @@ export class AntigravityAdapter implements Adapter {
   async send(text: string, images: string[] = [], options: SendOptions = {}) {
     if(this.task)throw new Error('This AntiGravity session is busy');
     if (this.process) throw new Error('The previous AntiGravity process needs to be stopped before starting another turn');
-    if(this.hooks.restrictive)throw new Error('AntiGravity is available on the desktop only; its CLI cannot confirm Cere’s remote permission policy');
+    if(this.hooks.restrictive)throw new Error('AntiGravity is available on the desktop only; its CLI cannot confirm PAL’s remote permission policy');
     if(images.length)throw new Error('AntiGravity headless input supports text attachments only. Use an API provider for images.');
     const fixed=pinnedEffort(this.session.model);
     // Catalog slugs such as gemini-3.1-pro-high already select an effort. Also
@@ -77,7 +78,8 @@ export class AntigravityAdapter implements Adapter {
             if(step.step_type==='agent_response') {
               if(typeof step.text_delta==='string') {lastReply=id;replies.set(id,(replies.get(id)||'')+step.text_delta);this.hooks.event({type:'delta',id,text:step.text_delta});}
               if(step.state==='DONE'&&replies.get(id)){this.hooks.event({type:'message',id,text:replies.get(id)});completed.add(id);}
-            } else if(step.step_type==='tool') this.hooks.event({type:'tool',id,text:(step.tool_name||'Tool')+'\n'+JSON.stringify(step.tool_info||{})});
+            } else if(step.step_type==='tool') this.hooks.event({type:'tool',id,text:(step.tool_name||'Tool')+'\n'+JSON.stringify(step.tool_info||{}),
+              toolActivity:toolCall(step.tool_name,step.tool_info,step.state==='DONE'?'completed':undefined)});
             else if(step.step_type!=='user_input')this.hooks.event({type:'activity',text:'thinking'});
           }
           if(value.event==='result') {

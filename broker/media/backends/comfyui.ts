@@ -1,12 +1,12 @@
 /**
- * ComfyUI: a configured server that runs the user's reviewed workflows. Cere binds a few named inputs
+ * ComfyUI: a configured server that runs the user's reviewed workflows. PAL binds a few named inputs
  * (prompt, negative prompt, seed, size, image, mask) in an API-format workflow the user imported, submits
  * it once with a prompt ID chosen and recorded before dispatch, observes progress, and downloads only the
  * declared output node's images through the validated downloader on the configured origin.
  *
  * Cancellation never touches anyone else's work: a queued job is removed by its own ID and the removal is
  * verified; a running job is interrupted only when the user has declared that the server interrupts by
- * prompt ID (older servers interrupt whatever runs). Otherwise Cere stops waiting and says the job may
+ * prompt ID (older servers interrupt whatever runs). Otherwise PAL stops waiting and says the job may
  * still be running. Nothing installs models, nodes or packages.
  */
 import { createHash, randomUUID } from 'node:crypto';
@@ -35,7 +35,7 @@ export const localNodes = new Set(['KSampler', 'KSamplerAdvanced', 'SamplerCusto
 const cloudPattern = /(Api(Node)?$|^OpenAI|Dalle|GPTImage|Ideogram|FluxPro|Stability|Luma|Recraft|Kling|Pika|Pixverse|Minimax|Runway|Gemini|Veo|Vidu|Moonvalley|Tripo|Rodin|ByteDance|Hailuo|Rodin|Topaz|Bria)/;
 const workflowLimits = { bytes: 2 * 1024 * 1024, nodes: 500 };
 
-/** Validates an API-format workflow and detects the inputs Cere can bind. */
+/** Validates an API-format workflow and detects the inputs PAL can bind. */
 export function analyzeWorkflow(graph: unknown, name: string): Omit<ComfyWorkflow, 'id' | 'created' | 'reviewedLocal'> {
   const text = JSON.stringify(graph);
   if (!graph || typeof graph !== 'object' || Array.isArray(graph) || Buffer.byteLength(text) > workflowLimits.bytes) throw new Error('Import a workflow saved with “Export (API)” in ComfyUI, up to 2 MB');
@@ -54,9 +54,9 @@ export function analyzeWorkflow(graph: unknown, name: string): Omit<ComfyWorkflo
   const latent = byType('EmptyLatentImage', 'EmptySD3LatentImage')[0];
   const images = byType('LoadImage'), masks = byType('LoadImageMask');
   const output = byType('SaveImage')[0];
-  if (!output) throw new Error('The workflow needs a SaveImage node; Cere downloads only that output');
+  if (!output) throw new Error('The workflow needs a SaveImage node; PAL downloads only that output');
   const operation: ComfyWorkflow['operation'] = (masks.length || images.length > 1) && images.length ? 'masked-edit' : images.length ? (sampler || guider ? 'edit' : 'upscale') : 'generate';
-  if (operation !== 'upscale' && !(positive || fluxGuidance)) throw new Error('Cere could not find the prompt text input (a CLIPTextEncode connected to the sampler)');
+  if (operation !== 'upscale' && !(positive || fluxGuidance)) throw new Error('PAL could not find the prompt text input (a CLIPTextEncode connected to the sampler)');
   const types = [...new Set(nodes.map(([, node]) => String(node.class_type)))].sort();
   return {
     name: name.slice(0, 80), digest: createHash('sha256').update(text).digest('hex'), operation,
@@ -95,7 +95,7 @@ export class ComfyImages implements ImageBackend {
       negativePrompt: capability(w.bindings.negative ? 'supported' : 'unsupported', local), usage: capability('unsupported', local),
       cancel: capability('supported', local, this.connection.targetedInterrupt ? 'Queued jobs are removed; a running job is interrupted by its ID' : 'Queued jobs are removed; a running job is not interrupted, because that could stop someone else’s work'),
       query: capability('supported', local),
-      notes: [route === 'cloud' ? `This workflow uses cloud nodes (${w.cloudNodes.join(', ')}); content leaves your server.` : route === 'unknown' ? `This workflow uses custom nodes Cere has not reviewed (${w.unknownNodes.slice(0, 6).join(', ')}); confirm they run locally to treat it as local.` : 'Runs on your ComfyUI server.'],
+      notes: [route === 'cloud' ? `This workflow uses cloud nodes (${w.cloudNodes.join(', ')}); content leaves your server.` : route === 'unknown' ? `This workflow uses custom nodes PAL has not reviewed (${w.unknownNodes.slice(0, 6).join(', ')}); confirm they run locally to treat it as local.` : 'Runs on your ComfyUI server.'],
       billed: route === 'cloud',
     };
   }
@@ -108,7 +108,7 @@ export class ComfyImages implements ImageBackend {
     if (request.negativePrompt && !this.workflow.bindings.negative) refuse('This workflow has no negative prompt input');
     if (request.seed !== undefined && !this.workflow.bindings.seed) refuse('This workflow has no seed input');
     if (request.format !== 'png') refuse('ComfyUI saves PNG; convert afterwards if you need another format');
-    if (request.background === 'transparent') refuse('Transparency depends on the workflow; Cere cannot request it');
+    if (request.background === 'transparent') refuse('Transparency depends on the workflow; PAL cannot request it');
     if (request.aspectRatio || request.imageSize || request.quality) refuse('ComfyUI takes exact sizes, such as 1024x768');
     if (request.size) {
       const match = /^(\d+)x(\d+)$/.exec(request.size);
@@ -135,8 +135,8 @@ export class ComfyImages implements ImageBackend {
   }
   private async upload(bytes: Buffer, context: BackendContext, kind: string) {
     const form = new FormData();
-    form.append('image', new Blob([new Uint8Array(bytes)], { type: 'image/png' }), `cere-${kind}-${randomUUID().slice(0, 8)}.png`);
-    form.append('type', 'input'); form.append('subfolder', 'cere'); form.append('overwrite', 'false');
+    form.append('image', new Blob([new Uint8Array(bytes)], { type: 'image/png' }), `pal-${kind}-${randomUUID().slice(0, 8)}.png`);
+    form.append('type', 'input'); form.append('subfolder', 'pal'); form.append('overwrite', 'false');
     const response = await context.fetch(this.connection.origin + '/upload/image', { method: 'POST', body: form, headers: this.headers(), redirect: 'error', signal: context.signal });
     if (!response.ok) throw new BackendRefusal('upload_failed', `ComfyUI did not accept the ${kind} image (HTTP ${response.status})`);
     const value: any = await response.json();
@@ -156,14 +156,14 @@ export class ComfyImages implements ImageBackend {
       set(b.seed, seed);
       if (request.size) { const [width, height] = request.size.split('x').map(Number); set(b.width, width); set(b.height, height); }
       // The prompt ID is chosen and recorded before submission, so a lost answer can be reconciled by status.
-      const promptId = randomUUID(), clientId = 'cere-' + randomUUID();
+      const promptId = randomUUID(), clientId = 'pal-' + randomUUID();
       context.beforeDispatch();
       context.dispatched(promptId);
       let response: Response;
       try {
         response = await context.fetch(this.connection.origin + '/prompt', { method: 'POST', redirect: 'error', signal: context.signal, headers: this.headers({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ prompt: graph, client_id: clientId, prompt_id: promptId }) });
-      } catch (error) { context.signal.throwIfAborted(); throw Object.assign(new Error('ComfyUI did not answer the submission. Cere will check its status instead of submitting again.'), { code: 'unreachable', cause: error }); }
+      } catch (error) { context.signal.throwIfAborted(); throw Object.assign(new Error('ComfyUI did not answer the submission. PAL will check its status instead of submitting again.'), { code: 'unreachable', cause: error }); }
       const value: any = await response.json().catch(() => ({}));
       if (!response.ok || (value?.node_errors && Object.keys(value.node_errors).length)) {
         const detail = [value?.error?.message, ...Object.values(value?.node_errors || {}).flatMap((node: any) => (node?.errors || []).map((error: any) => `${node.class_type || 'node'}: ${error.message}${error.details ? ' (' + error.details + ')' : ''}`))].filter(Boolean).join('; ').slice(0, 600);
@@ -236,7 +236,7 @@ export class ComfyImages implements ImageBackend {
       return after.state === 'queued' ? { confirmed: false, note: 'ComfyUI still lists the job as queued; it may run.' } : { confirmed: true, note: 'Removed from the ComfyUI queue before it started.' };
     }
     if (state.state === 'running') {
-      if (!this.connection.targetedInterrupt) return { confirmed: false, note: 'It is already running on the ComfyUI server. Cere does not interrupt the server, because that could stop someone else’s job. Stop it in ComfyUI if needed.' };
+      if (!this.connection.targetedInterrupt) return { confirmed: false, note: 'It is already running on the ComfyUI server. PAL does not interrupt the server, because that could stop someone else’s job. Stop it in ComfyUI if needed.' };
       await post('/interrupt', { prompt_id: remoteId });
       for (let attempt = 0; attempt < 10; attempt++) {
         await new Promise(resolve => setTimeout(resolve, 500));

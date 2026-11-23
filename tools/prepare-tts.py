@@ -69,7 +69,7 @@ def main():
                     if target.exists():
                         shutil.rmtree(target)
                     shutil.move(str(Path(temporary) / 'piper'), target)
-                    # Unused Arabic model/helper executables are not part of Cere.
+                    # Unused Arabic model/helper executables are not part of PAL.
                     for unused in ('espeak-ng', 'piper_phonemize', 'libtashkeel_model.ort'):
                         (target / unused).unlink(missing_ok=True)
                     shutil.rmtree(target / 'pkgconfig', ignore_errors=True)

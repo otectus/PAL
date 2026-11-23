@@ -25,7 +25,7 @@ const gate = (target: string, value: number, passed: boolean) => ({ target, valu
 
 export async function runNaturalLanguage(options: { cases?: any } = {}) {
   const corpus = options.cases ?? JSON.parse(await readFile(new URL('../../tests/fixtures/memory/natural-language-cases.json', import.meta.url), 'utf8'));
-  const directory = await mkdtemp(join(tmpdir(), 'cere-nl-baseline-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-nl-baseline-'));
   const c = new Canonical(directory);
   try {
     const scope = c.registerScope({ key: 'nl:project', label: 'Natural-language baseline' }).id;
@@ -38,7 +38,7 @@ export async function runNaturalLanguage(options: { cases?: any } = {}) {
     const corrections = corpus.corrections.map((item: any) => ({ ...item, originalId: observe(item.original).id, correctionId: observe(item.correction).id }));
     // Look-alikes that live only in another project's scope.
     const leaks = corpus.scopeLeaks.map((item: any) => ({ ...item, id: observe(item.memory, other).id }));
-    // Memories the user later asked Cere to forget.
+    // Memories the user later asked PAL to forget.
     const erased = corpus.erasures.map((item: any) => ({ ...item, id: observe(item.memory).id }));
     for (const item of erased) c.forget({ scope_id: scope, id: item.id });
 

@@ -68,7 +68,7 @@ test('M10 a chosen device that is missing fails visibly before any recorder or p
 });
 
 test('M10 device settings accept only listed-style IDs, and a new speaker stops speech without replaying it', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-audio-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-audio-'));
   const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); selectAudio({ input: '', output: '' }); });
   for (const value of ['hw:0', 'pw:name; rm -rf /', 'alsa:$(id)', 'pw:'] as string[]) await assert.rejects(core.updateSettings({ audio: { input: value } }), /Choose an audio device from the list/, value);

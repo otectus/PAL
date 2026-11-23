@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="1024" android:viewportHeight="1024">
+    <!-- Leave the visor open so a single launcher or status-bar tint still reveals the eyes. -->
+    <group android:translateX="-115" android:translateY="-127">
+        <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+            android:pathData="M248,589 C259,397 419,274 679,264 C866,255 966,342 990,501 C966,559 974,627 1009,680 C1005,843 925,938 756,972 C641,997 514,995 422,961 L318,1015 Q279,1034 283,989 L319,884 C285,849 267,801 262,761 Q284,672 248,589 Z M295,647 C286,519 347,467 498,440 C584,425 704,398 777,404 C894,398 940,477 953,595 C971,753 927,809 796,835 C665,862 504,885 410,854 C338,829 306,758 295,647 Z" />
+        <path android:fillColor="#FFFFFFFF"
+            android:pathData="M435,614 C429,548 522,531 534,599 L547,696 C555,765 460,780 450,714 Z M718,577 C710,513 803,496 817,564 L830,665 C839,733 742,748 732,681 Z" />
+        <path android:fillColor="#FFFFFFFF"
+            android:pathData="M222,625 C242,622 250,681 254,721 Q258,771 225,763 C174,755 166,643 222,625 Z M1010,519 C1046,503 1083,581 1064,627 Q1041,683 1016,653 C996,630 989,538 1010,519 Z" />
+    </group>
+</vector>

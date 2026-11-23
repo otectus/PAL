@@ -31,10 +31,16 @@ export const sse = (events: unknown[]) => new Response(events.map(event => `data
 export async function fakeComfy(t: any, options: { targetedInterrupt?: boolean; runMs?: number; fail?: string; others?: { id: string; running: boolean }[] } = {}) {
   const state = { prompts: [] as any[], uploads: [] as string[], deletes: [] as string[], interrupts: [] as any[], history: {} as Record<string, any>, pending: [] as string[], running: [] as string[], images: new Map<string, Buffer>(), finishedOthers: [] as string[] };
   for (const other of options.others || []) (other.running ? state.running : state.pending).push(other.id);
+  const timers = new Map<string, NodeJS.Timeout>();
+  const stopTimer = (id: string) => {
+    clearTimeout(timers.get(id));
+    timers.delete(id);
+  };
   const finish = async (id: string) => {
+    stopTimer(id);
     state.running = state.running.filter(item => item !== id);
     if (options.fail) { state.history[id] = { outputs: {}, status: { status_str: 'error', completed: false, messages: [['execution_error', { exception_message: options.fail }]] } }; return; }
-    const name = `cere_${id.slice(0, 8)}_00001_.png`;
+    const name = `pal_${id.slice(0, 8)}_00001_.png`;
     state.images.set(name, await png(80, 60, '#cc3366'));
     state.history[id] = { outputs: { '9': { images: [{ filename: name, subfolder: '', type: 'output' }] } }, status: { status_str: 'success', completed: true, messages: [] } };
   };
@@ -44,7 +50,7 @@ export async function fakeComfy(t: any, options: { targetedInterrupt?: boolean; 
     const id = state.pending.shift()!;
     if (!state.prompts.some(prompt => prompt.prompt_id === id)) { state.running.push(id); return; } // another user's job keeps running
     state.running.push(id);
-    setTimeout(() => void finish(id).then(advance), options.runMs ?? 150);
+    timers.set(id, setTimeout(() => void finish(id).then(advance), options.runMs ?? 150));
   };
   const read = async (req: IncomingMessage) => { const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk as Buffer); return Buffer.concat(chunks); };
   const server = createServer(async (req, res) => {
@@ -52,7 +58,7 @@ export async function fakeComfy(t: any, options: { targetedInterrupt?: boolean; 
     const send = (value: unknown, status = 200) => { res.statusCode = status; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(value)); };
     if (url.pathname === '/system_stats') return send({ system: { comfyui_version: 'fixture' }, devices: [{ name: 'Fixture GPU', vram_total: 6 * 2 ** 30, vram_free: 5 * 2 ** 30 }] });
     if (url.pathname === '/object_info') return send(Object.fromEntries(['KSampler', 'CheckpointLoaderSimple', 'CLIPTextEncode', 'EmptyLatentImage', 'VAEDecode', 'SaveImage', 'LoadImage', 'LoadImageMask', 'VAEEncode', 'SetLatentNoiseMask'].map(type => [type, { input: { required: type === 'CheckpointLoaderSimple' ? { ckpt_name: [['fixture.safetensors']] } : {} } }])));
-    if (url.pathname === '/upload/image' && req.method === 'POST') { await read(req); const name = `upload-${state.uploads.length + 1}.png`; state.uploads.push(name); return send({ name, subfolder: 'cere', type: 'input' }); }
+    if (url.pathname === '/upload/image' && req.method === 'POST') { await read(req); const name = `upload-${state.uploads.length + 1}.png`; state.uploads.push(name); return send({ name, subfolder: 'pal', type: 'input' }); }
     if (url.pathname === '/prompt' && req.method === 'POST') {
       const body = JSON.parse(String(await read(req)));
       state.prompts.push(body);
@@ -67,7 +73,7 @@ export async function fakeComfy(t: any, options: { targetedInterrupt?: boolean; 
       state.interrupts.push(body);
       // A server with targeted interrupt stops only the named running job; an old one stops whatever runs.
       const target = options.targetedInterrupt ? (state.running.includes(body.prompt_id) ? body.prompt_id : undefined) : state.running[0];
-      if (target) { state.running = state.running.filter(item => item !== target); state.history[target] = { outputs: {}, status: { status_str: 'error', completed: false, messages: [['execution_interrupted', {}]] } }; advance(); }
+      if (target) { stopTimer(target); state.running = state.running.filter(item => item !== target); state.history[target] = { outputs: {}, status: { status_str: 'error', completed: false, messages: [['execution_interrupted', {}]] } }; advance(); }
       return send({});
     }
     if (url.pathname === '/view') { const image = state.images.get(url.searchParams.get('filename') || ''); if (!image) { res.statusCode = 404; return res.end(); } res.setHeader('Content-Type', 'image/png'); return res.end(image); }
@@ -76,7 +82,14 @@ export async function fakeComfy(t: any, options: { targetedInterrupt?: boolean; 
   const sockets = new WebSocketServer({ server, path: '/ws' });
   sockets.on('connection', socket => socket.send(JSON.stringify({ type: 'status', data: { status: { exec_info: { queue_remaining: state.pending.length } } } })));
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise<void>(resolve => { sockets.close(); server.closeAllConnections(); server.close(() => resolve()); }));
+  t.after(() => new Promise<void>(resolve => {
+    for (const timer of timers.values()) clearTimeout(timer);
+    timers.clear();
+    for (const socket of sockets.clients) socket.terminate();
+    sockets.close();
+    server.closeAllConnections();
+    server.close(() => resolve());
+  }));
   return { origin: `http://127.0.0.1:${(server.address() as any).port}`, state, advance, finish };
 }
 /** A minimal API-format text-to-image workflow (and its image-to-image variant). */
@@ -87,7 +100,7 @@ export function workflow(edit = false, mask = false) {
     '6': { class_type: 'CLIPTextEncode', inputs: { text: 'placeholder', clip: ['4', 1] } },
     '7': { class_type: 'CLIPTextEncode', inputs: { text: '', clip: ['4', 1] } },
     '8': { class_type: 'VAEDecode', inputs: { samples: ['3', 0], vae: ['4', 2] } },
-    '9': { class_type: 'SaveImage', inputs: { filename_prefix: 'cere', images: ['8', 0] } },
+    '9': { class_type: 'SaveImage', inputs: { filename_prefix: 'pal', images: ['8', 0] } },
   };
   if (edit) { graph['11'] = { class_type: 'LoadImage', inputs: { image: 'placeholder.png' } }; graph['10'] = { class_type: 'VAEEncode', inputs: { pixels: ['11', 0], vae: ['4', 2] } }; }
   else graph['5'] = { class_type: 'EmptyLatentImage', inputs: { width: 512, height: 512, batch_size: 1 } };

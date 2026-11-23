@@ -17,7 +17,7 @@ java {
 // repository, so Kotlin checks the same files as the broker's tests.
 val repositoryRoot = rootProject.projectDir.resolve("../..").canonicalFile
 tasks.withType<Test>().configureEach {
-    systemProperty("cere.repositoryRoot", repositoryRoot.path)
+    systemProperty("pal.repositoryRoot", repositoryRoot.path)
     inputs.dir(repositoryRoot.resolve("protocol/mobile/v1")).withPropertyName("protocolFixtures")
     inputs.file(repositoryRoot.resolve("tests/fixtures/memory-citations.json")).withPropertyName("citationFixtures")
     inputs.file(repositoryRoot.resolve("tests/fixtures/portrait-states.json")).withPropertyName("portraitFixtures")

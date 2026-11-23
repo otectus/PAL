@@ -19,7 +19,7 @@ const gate = (target: string, value: number, passed: boolean) => ({ target, valu
 
 export async function runDocuments(options: { cases?: any } = {}) {
   const corpus = options.cases ?? JSON.parse(await readFile(new URL('../../tests/fixtures/memory/document-cases.json', import.meta.url), 'utf8'));
-  const directory = await mkdtemp(join(tmpdir(), 'cere-document-baseline-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-document-baseline-'));
   const c = new Canonical(directory);
   try {
     // Collections register a project-kind scope of their own, with no parent (knowledge-collections.ts).

@@ -1,9 +1,9 @@
-# Cere local speech bundle
+# PAL local speech bundle
 
-Cere redistributes the unmodified `en_US-amy-medium` model and JSON configuration
+PAL redistributes the unmodified `en_US-amy-medium` model and JSON configuration
 published by Michael Hansen / Rhasspy. The original model card is in
 `voices/MODEL_CARD`. The pinned downloads, SHA-256 digests and source URLs are in
-`manifest.json`. No model weights have been retrained or modified by Cere.
+`manifest.json`. No model weights have been retrained or modified by PAL.
 
 ## Voice provenance
 
@@ -12,9 +12,9 @@ repository metadata. This is **not a blanket license statement for every trainin
 dataset**. Amy's [model card](https://huggingface.co/rhasspy/piper-voices/blob/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/amy/medium/MODEL_CARD)
 directs readers to [MycroftAI/mimic3-voices](https://github.com/MycroftAI/mimic3-voices)
 for dataset licensing. That project's top-level license is **CC-BY-SA-4.0**, not
-plain CC-BY. Cere preserves the model card, repository metadata and that full
+plain CC-BY. PAL preserves the model card, repository metadata and that full
 license in `licenses/`, with attribution to Mycroft AI and the Mimic 3 contributors.
-The card does not identify a particular Mimic 3 dataset; Cere makes no claim of
+The card does not identify a particular Mimic 3 dataset; PAL makes no claim of
 more specific dataset clearance. It also reports fine-tuning from Lessac medium.
 Redistributors should retain this provenance rather than describe Amy as simply
 an MIT-licensed voice. Custom voices retain their own authors' terms.
@@ -26,10 +26,10 @@ not the newer OHF Python engine. Piper and piper-phonemize are MIT licensed,
 copyright Michael Hansen. ONNX Runtime 1.14.1 is MIT licensed, copyright Microsoft,
 with additional third-party notices. fmt 10.0.0, spdlog 1.12.0 and uni-algo carry
 their own included licenses. eSpeak NG is GPL-3.0-or-later; the executable bundle
-must not be described as wholly MIT. Cere runs it as a separate process.
+must not be described as wholly MIT. PAL runs it as a separate process.
 
 Full license texts and ONNX Runtime's notices are in `licenses/`. ONNX Runtime's two
-texts come from Cere's repository (`packaging/licenses/onnxruntime-1.14.1/`) because its
+texts come from PAL's repository (`packaging/licenses/onnxruntime-1.14.1/`) because its
 GitHub repository is no longer published; they match the digests pinned in `manifest.json`. Source archives
 for Piper, piper-phonemize, the Rhasspy eSpeak NG fork, fmt and spdlog accompany
 the binaries in `sources/`. Piper's and piper-phonemize's CMakeLists and Dockerfiles
@@ -40,7 +40,7 @@ phonemizer/eSpeak tools have been omitted; the Piper executable, shared librarie
 and eSpeak data are unmodified.
 
 Installed/system Piper overrides (including the GPL-3.0 OHF engine) have their
-own distributions and notices; they are not relicensed by Cere.
+own distributions and notices; they are not relicensed by PAL.
 
 ## Optional IndexTTS
 

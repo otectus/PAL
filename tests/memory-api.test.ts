@@ -46,7 +46,7 @@ test('Gemini embedding request uses retrieval tasks and fixed authenticated endp
 });
 
 test('API memory service works without Ollama and excludes local-only embedding backlog', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-api-memory-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-api-memory-'));
   const service = new MemoryService(dir); clearInterval(service.timer);
   t.after(async () => { await service.close(); await rm(dir, { recursive: true, force: true }); });
   service.credentials.key = () => 'fixture-key';

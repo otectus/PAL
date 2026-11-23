@@ -20,7 +20,7 @@ function response(res: ServerResponse, content: string, calls?: any[]) { res.end
 async function until(check: () => boolean) { const end=Date.now()+6000;while(!check()){if(Date.now()>end)throw new Error('Timed out');await new Promise(r=>setTimeout(r,5));} }
 async function finished(core: Core, id: string) { await until(()=>['idle','error','interrupted'].includes(core.store.session(id).status));core.flush(); }
 async function fixture(t: any) {
-  const directory=await mkdtemp(join(tmpdir(),'cere-knowledge-'));
+  const directory=await mkdtemp(join(tmpdir(),'pal-knowledge-'));
   const models=[{model:'chat',capabilities:['completion','tools'],digest:'chat-1'},{model:'plain',capabilities:['completion'],digest:'plain-1'},
     {model:'nomic-embed-text:latest',capabilities:['embedding'],digest:'embed-1'}, {model:'other:latest',capabilities:['embedding'],digest:'other-1'}];
   const requests:any[]=[],embeddings:any[]=[];
@@ -110,6 +110,7 @@ test('nomic uses retrieval prefixes, validates vectors and never silently trunca
 
 test('semantic graph memory survives restart, crosses conversations, and stays within project and server',async t=>{
   const f=await fixture(t),s=await session(f);await f.core.updateSettings({memory:{enabled:true}});
+  await f.core.memory.service.call('policy_update', { policy: { deadline_ms: 5000 } });
   await f.core.memory.capture(s,'I like espresso in the morning.','Your preferred coffee is espresso.');
   const saved=await f.core.memory.save(s,'Coffee should be served without sugar.');
   await f.core.memory.save(s,'Bananas are ripe fruit.');
@@ -174,6 +175,7 @@ test('an empty projection preserves local hits, but erasure during projection lo
 
 test('embedding outages preserve canonical memory; model and digest changes use separate spaces',async t=>{
   const f=await fixture(t),s=await session(f);await f.core.updateSettings({memory:{enabled:true}});
+  await f.core.memory.service.call('policy_update', { policy: { deadline_ms: 5000 } });
   const saved=await f.core.memory.save(s,'Coffee preference: espresso.');f.failEmbed=true;
   let result=await f.core.memory.recall(s,'coffee',signal());assert.equal(result.mode,'keyword');assert.match(result.warning,/degraded/);assert.equal(result.results[0].id,saved.id);
   f.failEmbed=false;result=await f.core.memory.recall(s,'coffee',signal());assert.equal(result.mode,'semantic');
@@ -255,7 +257,7 @@ test('extraction model defaults, persists, and switches the model dispatched by 
   t.mock.method(service.canonical, 'call', async (method: string, params: any = {}) => {
     if (method === 'extraction_next') return { id: 'run', observation_id: 'source', source_revision: 1, role: 'user', sensitivity: 'cloud_allowed', text: 'Use Ruff.' };
     if (method === 'extraction_result') { results.push(params); return {}; }
-    if (method === 'apply_extraction') return {};
+    if (method === 'apply_extraction') { results.push(params); return {}; }
     return original(method, params);
   });
   await service.extraction();

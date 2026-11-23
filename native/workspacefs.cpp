@@ -1,4 +1,4 @@
-// cere-workspacefs: Cere's confined filesystem helper for Workbench file tools.
+// pal-workspacefs: PAL's confined filesystem helper for Workbench file tools.
 //
 // Every path is resolved relative to an open root directory with openat2(RESOLVE_BENEATH |
 // RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS), so "..", absolute paths and symbolic links (including a
@@ -10,10 +10,10 @@
 // against the expected content hash immediately before it is renamed over the old name. Replacing a
 // name never writes through an existing inode, so other hard links to the old file keep their content.
 //
-// What this cannot do: an editor outside Cere can still change a file between the final hash check and
+// What this cannot do: an editor outside PAL can still change a file between the final hash check and
 // the rename. That window is short but real; it is reported, not hidden.
 //
-// Usage: cere-workspacefs OP ARGS... ; one JSON object on stdout. Expected failures exit 0 with
+// Usage: pal-workspacefs OP ARGS... ; one JSON object on stdout. Expected failures exit 0 with
 // {"ok":false,"code":...}; only usage errors and crashes exit non-zero.
 #include <linux/openat2.h>
 #include <sys/random.h>
@@ -166,13 +166,13 @@ long openat2Call(int dirfd, const char *path, uint64_t flags, mode_t mode) {
 [[noreturn]] void failErrno(int error, const std::string &what) {
     switch (error) {
         case ENOENT: fail("missing", what + " does not exist");
-        case ELOOP: fail("symlink", what + " is or passes through a symbolic link, which Cere does not follow");
+        case ELOOP: fail("symlink", what + " is or passes through a symbolic link, which PAL does not follow");
         case EXDEV: fail("escape", what + " is outside the allowed folder");
         case ENOTDIR: fail("not-directory", what + " is not inside a folder");
         case EISDIR: fail("is-directory", what + " is a folder");
         case EACCES: case EPERM: fail("denied", "Permission denied for " + what);
         case EEXIST: case ENOTEMPTY: fail("exists", what + " already exists");
-        case ENOSYS: fail("unsupported", "This kernel lacks openat2; Cere cannot confine file access safely here");
+        case ENOSYS: fail("unsupported", "This kernel lacks openat2; PAL cannot confine file access safely here");
         case ENOSPC: case EDQUOT: fail("no-space", "No space left for " + what);
         case EROFS: fail("read-only", what + " is on a read-only filesystem");
         case ENAMETOOLONG: fail("name-too-long", what + " has a name that is too long");
@@ -234,7 +234,7 @@ Fd openRegular(const Root &root, const std::string &rel, struct stat &st, const 
     Fd path = beneath(root, rel, O_PATH, what);
     if (fstat(path.get(), &st) != 0) failErrno(errno, what);
     if (S_ISDIR(st.st_mode)) fail("is-directory", what + " is a folder");
-    if (!S_ISREG(st.st_mode)) fail("special-file", what + " is not a regular file (" + typeName(st.st_mode) + "); Cere does not read it");
+    if (!S_ISREG(st.st_mode)) fail("special-file", what + " is not a regular file (" + typeName(st.st_mode) + "); PAL does not read it");
     return reopenRegular(std::move(path), st, what);
 }
 Fd openRegularAt(int dirfd, const std::string &name, struct stat &st, const std::string &what) {
@@ -242,7 +242,7 @@ Fd openRegularAt(int dirfd, const std::string &name, struct stat &st, const std:
     if (raw < 0) failErrno(errno, what);
     Fd path(raw);
     if (fstat(raw, &st) != 0) failErrno(errno, what);
-    if (S_ISLNK(st.st_mode)) fail("symlink", what + " is a symbolic link, which Cere does not follow");
+    if (S_ISLNK(st.st_mode)) fail("symlink", what + " is a symbolic link, which PAL does not follow");
     if (S_ISDIR(st.st_mode)) fail("is-directory", what + " is a folder");
     if (!S_ISREG(st.st_mode)) fail("special-file", what + " is not a regular file");
     return reopenRegular(std::move(path), st, what);
@@ -295,7 +295,7 @@ std::unique_ptr<Temporary> temporaryIn(int dirfd, const std::string &base) {
     auto temp = std::make_unique<Temporary>(); temp->dir = dirfd;
     std::string stem = base.substr(0, 40);
     for (int attempt = 0; attempt < 8; ++attempt) {
-        std::string name = "." + stem + ".cere-" + randomSuffix();
+        std::string name = "." + stem + ".pal-" + randomSuffix();
         int raw = ::openat(dirfd, name.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
         if (raw >= 0) { temp->name = name; temp->fd = Fd(raw); return temp; }
         if (errno != EEXIST) failErrno(errno, "A temporary file");
@@ -404,7 +404,7 @@ std::string opList(const Args &a) {
 std::string opRead(const Args &a) {
     need(a, 4); Root root = openRoot(a.positional[0], a.positional[1], a.positional[2]);
     struct stat st{}; Fd fd = openRegular(root, relArg(a.positional[3]), st, "The file");
-    if (st.st_size > a.maxBytes) fail("too-large", "The file is larger than Cere reads (" + std::to_string(static_cast<long long>(st.st_size)) + " bytes)");
+    if (st.st_size > a.maxBytes) fail("too-large", "The file is larger than PAL reads (" + std::to_string(static_cast<long long>(st.st_size)) + " bytes)");
     Sha256 hash; bool grew = false; std::string data = readAll(fd.get(), static_cast<size_t>(a.maxBytes), &hash, &grew);
     if (grew) fail("changed", "The file grew while it was being read; try again");
     return "{\"ok\":true," + statJson(st) + ",\"sha256\":" + quote(hash.hex()) + ",\"data\":" + quote(base64(reinterpret_cast<const unsigned char *>(data.data()), data.size())) + "}";
@@ -463,7 +463,7 @@ std::string opCopy(const Args &a) {
     need(a, 8);
     Root source = openRoot(a.positional[0], a.positional[1], a.positional[2]), target = openRoot(a.positional[4], a.positional[5], a.positional[6]);
     struct stat st{}; Fd input = openRegular(source, relArg(a.positional[3]), st, "The source file");
-    if (st.st_size > a.maxBytes) fail("too-large", "The file is larger than Cere copies in one operation");
+    if (st.st_size > a.maxBytes) fail("too-large", "The file is larger than PAL copies in one operation");
     Parent parent = parentOf(target, relArg(a.positional[7]), "the destination");
     checkExpectation(parent.dir.get(), parent.base, "absent", parent.base);
     auto temp = temporaryIn(parent.dir.get(), parent.base);
@@ -677,7 +677,7 @@ std::string opProbe() {
 }  // namespace
 
 int main(int argc, char **argv) {
-    if (argc < 2) { std::fputs("usage: cere-workspacefs OP ARGS...\n", stderr); return 2; }
+    if (argc < 2) { std::fputs("usage: pal-workspacefs OP ARGS...\n", stderr); return 2; }
     std::string op = argv[1], out;
     try {
         Args args = parse(argc, argv, 2);

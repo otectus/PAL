@@ -159,10 +159,10 @@ test('FS08 a move to another filesystem that cannot remove the original reports 
   const f = await workbenchFixture(t);
   const devices = new Map<number, string>();
   // Only private locations: never the real home folder outside the isolated test desktop.
-  for (const candidate of [f.directory, tmpdir(), '/dev/shm', ...(process.env.CERE_VIRTUAL_DESKTOP === '1' ? [homedir()] : [])]) { try { const info = statSync(candidate); if (!devices.has(info.dev)) devices.set(info.dev, candidate); } catch { /* absent */ } }
+  for (const candidate of [f.directory, tmpdir(), '/dev/shm', ...(process.env.PAL_VIRTUAL_DESKTOP === '1' ? [homedir()] : [])]) { try { const info = statSync(candidate); if (!devices.has(info.dev)) devices.set(info.dev, candidate); } catch { /* absent */ } }
   const other = [...devices.entries()].find(([dev]) => dev !== statSync(f.project).dev);
   if (!other) return t.skip('no second filesystem is available here');
-  const second = await (await import('node:fs/promises')).mkdtemp(join(other[1], 'cere-xdev-'));
+  const second = await (await import('node:fs/promises')).mkdtemp(join(other[1], 'pal-xdev-'));
   t.after(() => rm(second, { recursive: true, force: true }));
   const { session, root } = await f.session();
   const target = await f.core.rpc('workspace.addRoot', { sessionId: session.id, path: second, policy: { write: true, organize: true } });
@@ -175,17 +175,17 @@ test('FS08 a move to another filesystem that cannot remove the original reports 
   assert.equal(await readFile(join(second, 'data.txt'), 'utf8'), 'payload\n'); assert.equal(await readFile(join(f.project, 'locked/data.txt'), 'utf8'), 'payload\n');
 });
 
-test('FS09 undo restores Cere’s exact output, and offers a copy instead of overwriting a newer external edit', opts, async t => {
+test('FS09 undo restores PAL’s exact output, and offers a copy instead of overwriting a newer external edit', opts, async t => {
   const f = await workbenchFixture(t);
   await writeFile(join(f.project, 'notes.txt'), 'original\n'); await writeFile(join(f.project, 'keep.txt'), 'keep\n');
   const { session, root } = await f.session();
   const review = await f.core.rpc('changes.propose', { sessionId: session.id, operations: [
-    { kind: 'patch_text', rootId: root.id, path: 'notes.txt', content: 'edited by Cere\n' }, { kind: 'trash', rootId: root.id, path: 'keep.txt' }, { kind: 'create_text', rootId: root.id, path: 'sub/new.txt', content: 'n\n' } ] });
+    { kind: 'patch_text', rootId: root.id, path: 'notes.txt', content: 'edited by PAL\n' }, { kind: 'trash', rootId: root.id, path: 'keep.txt' }, { kind: 'create_text', rootId: root.id, path: 'sub/new.txt', content: 'n\n' } ] });
   assert.deepEqual(review.operations.map((op: any) => op.kind), ['patch_text', 'trash', 'mkdir', 'create_text'], 'a missing parent folder becomes an explicit operation');
   assert.equal((await f.core.rpc('changes.apply', { id: review.id, digest: review.digest })).status, 'applied');
   await assert.rejects(stat(join(f.project, 'keep.txt')), /ENOENT/);
   assert.equal((await f.core.rpc('changes.trash', { sessionId: session.id })).length, 1, 'the trashed file is kept privately');
-  await writeFile(join(f.project, 'notes.txt'), 'edited by Cere, then by someone else\n');
+  await writeFile(join(f.project, 'notes.txt'), 'edited by PAL, then by someone else\n');
   const undo = await f.core.rpc('changes.undo', { id: review.id });
   assert.deepEqual(undo.operations.map((op: any) => [op.kind, op.path]), [['trash', 'sub/new.txt'], ['remove_folder', 'sub'], ['restore', 'keep.txt'], ['create_text', 'notes (restored).txt']]);
   assert.match(undo.operations[3].review.notes[0], /restored beside it/, 'the newer external edit is not overwritten');
@@ -194,7 +194,7 @@ test('FS09 undo restores Cere’s exact output, and offers a copy instead of ove
   assert.equal(applied.status, 'applied');
   assert.equal(await readFile(join(f.project, 'keep.txt'), 'utf8'), 'keep\n');
   await assert.rejects(stat(join(f.project, 'sub')), /ENOENT/);
-  assert.equal(await readFile(join(f.project, 'notes.txt'), 'utf8'), 'edited by Cere, then by someone else\n');
+  assert.equal(await readFile(join(f.project, 'notes.txt'), 'utf8'), 'edited by PAL, then by someone else\n');
   assert.equal(await readFile(join(f.project, 'notes (restored).txt'), 'utf8'), 'original\n');
   await assert.rejects(f.core.rpc('changes.undo', { id: review.id }), /Nothing|safely|left/, 'undo never replays over newer state');
 });

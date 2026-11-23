@@ -13,7 +13,7 @@ import { promisify } from 'node:util';
 import { cp } from 'node:fs/promises';
 
 async function fixture(t: any) {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-tts-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-tts-'));
   const voices = join(directory, 'voices'); await mkdir(voices);
   const addVoice = async (id: string, rate = 22050, short = false) => {
     await writeFile(join(voices, id + '.onnx'), 'fixture model');
@@ -47,7 +47,7 @@ async function fixture(t: any) {
     process.on('SIGTERM',()=>{log({tool:'sox-stopped'});process.exit(0)});
     process.stdin.pipe(process.stdout);`);
   const settings = { ...defaultSettings };
-  const env: NodeJS.ProcessEnv = { ...process.env, CERE_TTS_DISABLED: '0', CERE_VOICES_DIR: voices, CERE_PIPER_BIN: piper, CERE_APLAY_BIN: aplay, CERE_TTS_PYTHON: dispatcher, CERE_SOX_BIN: sox };
+  const env: NodeJS.ProcessEnv = { ...process.env, PAL_TTS_DISABLED: '0', PAL_VOICES_DIR: voices, PAL_PIPER_BIN: piper, PAL_APLAY_BIN: aplay, PAL_TTS_PYTHON: dispatcher, PAL_SOX_BIN: sox };
   const speech = new Speech(() => settings, () => {}, env);
   t.after(async () => { await speech.close(); await rm(directory, { recursive: true, force: true }); });
   const logs = async () => (await readFile(calls, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
@@ -112,7 +112,7 @@ test('dispatcher playback is asynchronous and uses the selected local voice exac
 
 test('unavailable dispatcher falls back to raw Piper PCM with safe arguments and voice sample rate', async t => {
   const f = await fixture(t); await f.addVoice('custom', 16000, true); f.settings.voice = 'custom';
-  const text = "Leading --flag; $(touch /tmp/cere-tts-should-never-exist) 'quoted' & end";
+  const text = "Leading --flag; $(touch /tmp/pal-tts-should-never-exist) 'quoted' & end";
   f.speech.speak(text); await f.speech.idle();
   const logs = await f.logs(), synth = logs.find(l => l.tool === 'piper'), player = logs.find(l => l.tool === 'aplay-start');
   assert.equal(synth.text, text + '\n');
@@ -130,7 +130,7 @@ test('selected Kokoro voice bypasses Dispatcher and Piper while preserving rate 
     if(process.env.KOKORO_HOLD){process.on('SIGTERM',()=>{log({tool:'kokoro-stopped'});process.exit(0)});setInterval(()=>{},1000)}else process.stdout.write(Buffer.alloc(4800,7));`);
   const model=join(install,'kokoro.onnx'),voiceData=join(install,'voices.bin'),manifest=join(install,'manifest.json');
   await writeFile(model,'model');await writeFile(voiceData,'voices');await writeFile(manifest,JSON.stringify({version:1,python:runtime,model,voiceData,voices:['af_heart']}));
-  f.env.CERE_KOKORO_MANIFEST=manifest;f.settings.voice='kokoro-af_heart';f.settings.speechRate=.9;
+  f.env.PAL_KOKORO_MANIFEST=manifest;f.settings.voice='kokoro-af_heart';f.settings.speechRate=.9;
   assert.equal(f.speech.speak('A warmer local voice.'),true);await f.speech.idle();
   const logs=await f.logs(),synth=logs.find(row=>row.tool==='kokoro'),player=logs.find(row=>row.tool==='aplay-start');
   assert.deepEqual(synth.request,{text:'A warmer local voice.'});assert.ok(synth.args.includes('af_heart'));assert.equal(synth.args.at(-1),'0.9');
@@ -152,7 +152,7 @@ test('missing Python falls back, but an accepted dispatcher message is never rep
   const f = await fixture(t); f.env.TTS_DISPATCHER = 'accepted-error';
   f.speech.speak('Only once'); await f.speech.idle();
   assert.equal(f.speech.state.state, 'error'); assert.equal((await f.logs()).length, 1);
-  f.env.CERE_TTS_PYTHON = join(f.directory, 'missing');
+  f.env.PAL_TTS_PYTHON = join(f.directory, 'missing');
   f.speech.speak('Fallback'); await f.speech.idle();
   assert.equal(f.speech.state.state, 'idle'); assert.equal(f.speech.state.backend, 'piper');
 });
@@ -187,14 +187,14 @@ class SSIPClient:
     def cancel(self, scope='self'): log('cancel',scope)
     def close(self): log('close')
 `);
-  f.env.CERE_TTS_PYTHON = 'python3'; f.env.PYTHONPATH = f.directory; f.env.SPEECHD_ADDRESS = 'unix:/tmp/cere-tts-fixture.sock';
+  f.env.PAL_TTS_PYTHON = 'python3'; f.env.PYTHONPATH = f.directory; f.env.SPEECHD_ADDRESS = 'unix:/tmp/pal-tts-fixture.sock';
   f.speech.speak('The bridge works'); await f.speech.idle();
   assert.equal(f.speech.state.backend, 'speech-dispatcher'); assert.equal(f.speech.state.state, 'idle');
   f.env.TTS_HOLD = '1'; f.speech.speak('Stop this');
   await until(async () => f.speech.state.state === 'speaking'); f.speech.stop(); await f.speech.idle();
   const calls = (await readFile(pythonCalls, 'utf8')).trim().split('\n').map(l => JSON.parse(l));
-  assert.ok(calls.some(c => c[0] === 'connect' && c[3] === 'unix_socket:/tmp/cere-tts-fixture.sock'));
-  assert.ok(calls.some(c => c[0] === 'module' && c[1] === 'cere-piper'));
+  assert.ok(calls.some(c => c[0] === 'connect' && c[3] === 'unix_socket:/tmp/pal-tts-fixture.sock'));
+  assert.ok(calls.some(c => c[0] === 'module' && c[1] === 'pal-piper'));
   assert.ok(calls.filter(c => c[0] === 'cancel').length >= 2);
   assert.ok(calls.filter(c => c[0] === 'cancel').every(c => c[1] === 'self'));
   assert.equal((await f.logs()).length, 0);
@@ -203,10 +203,10 @@ class SSIPClient:
 });
 
 test('missing Piper/audio devices report errors without rejecting the response or hanging', async t => {
-  const f = await fixture(t); f.env.CERE_APLAY_BIN = join(f.directory, 'missing');
+  const f = await fixture(t); f.env.PAL_APLAY_BIN = join(f.directory, 'missing');
   assert.equal(f.speech.speak('No device'), true); await f.speech.idle();
   assert.equal(f.speech.state.state, 'error'); assert.match(f.speech.state.error, /aplay/);
-  f.env.CERE_PIPER_BIN = join(f.directory, 'missing-piper');
+  f.env.PAL_PIPER_BIN = join(f.directory, 'missing-piper');
   f.speech.speak('No runtime'); await f.speech.idle();
   assert.equal(f.speech.state.state, 'error');
 });
@@ -220,7 +220,7 @@ test('quiet/disabled settings suppress automatic speech while explicit test is a
   assert.equal(f.speech.speak('Pinned but muted', false, 'pinned'), false);
   assert.equal(f.speech.speak(ttsTestLine, true), true); await f.speech.idle();
   assert.equal((await f.logs()).filter(l => l.tool === 'piper').length, 1);
-  f.env.CERE_TTS_DISABLED = '1'; assert.equal(f.speech.speak(ttsTestLine, true), false);
+  f.env.PAL_TTS_DISABLED = '1'; assert.equal(f.speech.speak(ttsTestLine, true), false);
 });
 
 test('pinned speech survives ordinary queue eviction and cancellation is scoped to its conversation', async t => {
@@ -278,11 +278,11 @@ test('tuned Piper bypasses dispatcher, snapshots each queued adjustment and reap
 
 test('missing or failed tuning reports an error without silently playing an unadjusted voice', async t => {
   const f=await fixture(t);f.env.TTS_DISPATCHER='ok';f.settings.speechPitch=2;
-  f.env.CERE_SOX_BIN=join(f.directory,'missing-sox');
+  f.env.PAL_SOX_BIN=join(f.directory,'missing-sox');
   f.speech.speak('Missing tuning');await f.speech.idle();
   assert.equal(f.speech.state.state,'error');assert.match(f.speech.state.error,/SoX/);
   assert.equal((await f.logs()).some(row=>row.tool==='speechd'),false);
-  f.env.CERE_SOX_BIN=await f.executable('broken-sox.mjs',"process.stderr.write('Fixture processing fault');process.exit(1)");
+  f.env.PAL_SOX_BIN=await f.executable('broken-sox.mjs',"process.stderr.write('Fixture processing fault');process.exit(1)");
   f.speech.speak('Failed tuning');await f.speech.idle();
   assert.equal(f.speech.state.state,'error');
   assert.equal((await f.logs()).some(row=>row.tool==='speechd'),false);
@@ -311,9 +311,9 @@ test('voice tuning settings migrate, validate atomically, persist and volume zer
 test('real SoX raises and lowers pitch without changing duration, and attenuates volume', async t => {
   try { await promisify(execFile)('sox',['--version']); } catch { t.skip('Install SoX to validate real audio processing');return; }
   const f=await fixture(t),output=join(f.directory,'tuned.pcm');
-  f.env.CERE_SOX_BIN='sox';
-  f.env.CERE_PIPER_BIN=await f.executable('tone.mjs',`for await(const chunk of process.stdin){};const pcm=Buffer.alloc(22050*2);for(let i=0;i<22050;i++)pcm.writeInt16LE(Math.round(6000*Math.sin(2*Math.PI*440*i/22050)),i*2);process.stdout.write(pcm);`);
-  f.env.CERE_APLAY_BIN=await f.executable('capture.mjs',`import {writeFileSync} from 'node:fs';const chunks=[];for await(const chunk of process.stdin)chunks.push(chunk);writeFileSync(${JSON.stringify(output)},Buffer.concat(chunks));`);
+  f.env.PAL_SOX_BIN='sox';
+  f.env.PAL_PIPER_BIN=await f.executable('tone.mjs',`for await(const chunk of process.stdin){};const pcm=Buffer.alloc(22050*2);for(let i=0;i<22050;i++)pcm.writeInt16LE(Math.round(6000*Math.sin(2*Math.PI*440*i/22050)),i*2);process.stdout.write(pcm);`);
+  f.env.PAL_APLAY_BIN=await f.executable('capture.mjs',`import {writeFileSync} from 'node:fs';const chunks=[];for await(const chunk of process.stdin)chunks.push(chunk);writeFileSync(${JSON.stringify(output)},Buffer.concat(chunks));`);
   const voice=await resolveVoice(defaultVoice,[f.voices]);
   const measure=async(pitch:number,volume:number)=>{
     await playPiper('Test tone',voice,new AbortController().signal,f.env,1,{pitch,volume});
@@ -374,7 +374,7 @@ test('voice settings migrate/persist atomically and slash/debug tests bypass the
   await core.updateSettings({assistantName:'Daemona'});
   await core.send({id:s.id,text:'/tts-test'});await core.rpc('tts.test');
   assert.equal(sends,0);
-  assert.deepEqual(spoken.slice(2),[[ttsTestLine.replace('Cere','Daemona'),true],[ttsTestLine.replace('Cere','Daemona'),true]]);
+  assert.deepEqual(spoken.slice(2),[[ttsTestLine.replace('PAL','Daemona'),true],[ttsTestLine.replace('PAL','Daemona'),true]]);
   assert.deepEqual(await core.rpc('tts.status'), core.speech.snapshot());
 });
 
@@ -392,16 +392,16 @@ test('dispatcher setup preserves existing configuration and voice files and regi
   const run = () => promisify(execFile)(process.execPath, [join(project, 'tools/setup-speech.ts'), '--config-dir', config, '--voices-dir', f.voices]);
   await run(); const first = await readFile(join(config, 'speechd.conf'), 'utf8'); await run();
   assert.equal(await readFile(join(config, 'speechd.conf'), 'utf8'), first);
-  assert.ok(first.endsWith(original)); assert.equal(first.match(/AddModule "cere-piper"/g)?.length, 1);
+  assert.ok(first.endsWith(original)); assert.equal(first.match(/AddModule "pal-piper"/g)?.length, 1);
   assert.equal(await readFile(join(f.voices, defaultVoice + '.onnx'), 'utf8'), 'user voice, do not overwrite');
-  const module = await readFile(join(config, 'modules/cere-piper.conf'), 'utf8');
+  const module = await readFile(join(config, 'modules/pal-piper.conf'), 'utf8');
   assert.match(module, /AddVoice "en-us" "FEMALE1" "custom"/);
   assert.doesNotMatch(module,/kokoro-/);
   assert.match(module, /GenericExecuteSynth/); assert.match(module, /project with/);
 });
 
 test('provider speech switches migrate, merge and persist with atomic validation',async t=>{
-  const directory=await mkdtemp(join(tmpdir(),'cere-speech-providers-'));let core=new Core(new Store(directory));t.after(async()=>{await core.close();await rm(directory,{recursive:true,force:true});});
+  const directory=await mkdtemp(join(tmpdir(),'pal-speech-providers-'));let core=new Core(new Store(directory));t.after(async()=>{await core.close();await rm(directory,{recursive:true,force:true});});
   assert.ok(Object.values(core.settings.speechProviders).every(Boolean));
   await core.updateSettings({speechProviders:{codex:false,openai:false}});await core.updateSettings({speechProviders:{google:false}});
   const saved=structuredClone(core.settings.speechProviders);assert.equal(saved.codex,false);assert.equal(saved.claude,true);

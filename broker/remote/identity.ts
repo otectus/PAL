@@ -50,7 +50,7 @@ export class Identity {
     if (!existsSync(cert)) {
       const pair=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
       writeFileSync(key,pair.privateKey.export({type:'pkcs8',format:'pem'}),{mode:0o600});
-      await exec('openssl',['req','-new','-x509','-sha256','-days','365','-key',key,'-out',cert,'-subj','/CN=Cere Mobile Gateway','-addext','subjectAltName='+config.addresses.map(a=>'IP:'+a).join(',')],{timeout:10000});
+      await exec('openssl',['req','-new','-x509','-sha256','-days','365','-key',key,'-out',cert,'-subj','/CN=PAL Mobile Gateway','-addext','subjectAltName='+config.addresses.map(a=>'IP:'+a).join(',')],{timeout:10000});
       chmodSync(cert,0o600);
     }
     const certificate=new X509Certificate(readFileSync(cert));
@@ -64,7 +64,7 @@ export class Identity {
     const key=join(this.directory,'tls.pem'),cert=join(this.directory,'tls.crt'),next=join(this.directory,'tls.next.crt');
     if(!existsSync(key)) {await this.ensure(config);return;}
     try {
-      await exec('openssl',['req','-new','-x509','-sha256','-days','365','-key',key,'-out',next,'-subj','/CN=Cere Mobile Gateway','-addext','subjectAltName='+config.addresses.map(a=>'IP:'+a).join(',')],{timeout:10000});
+      await exec('openssl',['req','-new','-x509','-sha256','-days','365','-key',key,'-out',next,'-subj','/CN=PAL Mobile Gateway','-addext','subjectAltName='+config.addresses.map(a=>'IP:'+a).join(',')],{timeout:10000});
       const certificate=new X509Certificate(readFileSync(next));
       if(config.addresses.some(a=>!certificate.checkIP(a)))throw new Error('Renewed certificate does not match the selected addresses');
       chmodSync(next,0o600);renameSync(next,cert);

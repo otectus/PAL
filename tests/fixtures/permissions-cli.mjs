@@ -2,7 +2,7 @@
 // Captures CLI protocol and argv without authentication, inference or tool execution.
 import { appendFileSync, readFileSync, statSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-const log = value => appendFileSync(process.env.CERE_PERMISSION_TEST_LOG, JSON.stringify(value) + '\n');
+const log = value => appendFileSync(process.env.PAL_PERMISSION_TEST_LOG, JSON.stringify(value) + '\n');
 const args = process.argv.slice(2);
 log({ args });
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
@@ -14,8 +14,8 @@ if (args.includes('app-server')) {
     if (m.method === 'config/read') reply({ config: { approval_policy: 'on-request', approvals_reviewer: 'user', sandbox_mode: 'workspace-write', developer_instructions: 'Existing project guidance must survive.' } });
     if (m.method === 'thread/start' || m.method === 'thread/resume') {
       const thread = { id: 'permission-thread' };
-      if (m.method === 'thread/resume' && process.env.CERE_PERMISSION_TEST_HISTORY_BYTES) {
-        thread.turns = m.params.excludeTurns ? [] : [{ id: 'old-turn', items: [{ type: 'agentMessage', id: 'old-message', text: 'x'.repeat(Number(process.env.CERE_PERMISSION_TEST_HISTORY_BYTES)) }] }];
+      if (m.method === 'thread/resume' && process.env.PAL_PERMISSION_TEST_HISTORY_BYTES) {
+        thread.turns = m.params.excludeTurns ? [] : [{ id: 'old-turn', items: [{ type: 'agentMessage', id: 'old-message', text: 'x'.repeat(Number(process.env.PAL_PERMISSION_TEST_HISTORY_BYTES)) }] }];
       }
       reply({ thread, approvalPolicy: m.params.approvalPolicy, approvalsReviewer: m.params.approvalsReviewer, sandbox: { type: 'workspaceWrite', writableRoots: [process.cwd()], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } });
     }
@@ -31,6 +31,6 @@ if (args.includes('app-server')) {
   process.stdin.on('end', () => {
     send({ type: 'result', session_id: 'claude-permission-thread', is_error: false });
     // A real CLI can take a moment to exit after its result.
-    if (process.env.CERE_FIXTURE_LINGER_MS) setTimeout(() => {}, Number(process.env.CERE_FIXTURE_LINGER_MS));
+    if (process.env.PAL_FIXTURE_LINGER_MS) setTimeout(() => {}, Number(process.env.PAL_FIXTURE_LINGER_MS));
   });
 }

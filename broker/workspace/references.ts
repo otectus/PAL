@@ -34,8 +34,8 @@ export function validReferences(value: unknown): Reference[] {
   if (!Array.isArray(value) || value.length > referenceLimits.perMessage) throw new Error(`Reference up to ${referenceLimits.perMessage} items in one message`);
   return value.map(item => { const parsed = referenceSchema.safeParse(item); if (!parsed.success) throw new Error('A reference is no longer valid; pick it again'); return parsed.data; });
 }
-/** Text from a source never closes Cere's boundary early. */
-const fence = (text: string) => text.replaceAll('</cere_reference>', '<\\/cere_reference>');
+/** Text from a source never closes PAL's boundary early. */
+const fence = (text: string) => text.replaceAll('</pal_reference>', '<\\/pal_reference>');
 const attribute = (value: string) => value.replace(/["<>\n\r]/g, ' ').slice(0, 300);
 
 export class References {
@@ -104,10 +104,10 @@ export class References {
     const blocks: string[] = [], images: string[] = [], labels: string[] = [], notes: string[] = [], policies: DestinationPolicy[] = [];
     let total = 0, vision: boolean | undefined;
     const add = (attributes: Record<string, string>, body: string) => {
-      const head = `<cere_reference ${Object.entries(attributes).map(([key, val]) => `${key}="${attribute(val)}"`).join(' ')}>`;
+      const head = `<pal_reference ${Object.entries(attributes).map(([key, val]) => `${key}="${attribute(val)}"`).join(' ')}>`;
       let text = fence(body);
       if (total + text.length > referenceLimits.totalChars) { text = text.slice(0, Math.max(0, referenceLimits.totalChars - total)); notes.push(`${attributes.source} was shortened to fit this message`); }
-      total += text.length; blocks.push(`${head}\n${text}\n</cere_reference>`);
+      total += text.length; blocks.push(`${head}\n${text}\n</pal_reference>`);
     };
     const refuse = (what: string, policy: DestinationPolicy) => new Error(`${what} may only be processed by models on ${policy.remote ? 'this computer or your own servers' : 'this computer'}. Choose a permitted model or change where it may be processed.`);
     const collectionIds: string[] = [];
@@ -142,7 +142,7 @@ export class References {
             const parsed = await this.workbench.extractor.parseFile(file.bytes, ref.path, mime, signal).catch((error: Error) => { throw new Error(`${source} could not be read: ${error.message}`); });
             const body = Extractor.asCollectionText({ ...parsed, units: parsed.units } as any).slice(0, referenceLimits.fileBytes);
             add({ kind: 'document', source, version: file.version, status: parsed.status }, body + (parsed.warnings.length ? `\n[Notes: ${parsed.warnings.slice(0, 5).join(' ')}]` : ''));
-          } else throw new Error(`${source} is ${kind}; Cere cannot include it as text`);
+          } else throw new Error(`${source} is ${kind}; PAL cannot include it as text`);
         } else {
           const out: string[] = []; let bytes = 0, end = 0;
           for (let line = 1; line <= file.lines.length && out.length < referenceLimits.fileLines; line++) {

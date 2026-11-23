@@ -10,7 +10,7 @@ import type { ModelOption, ProjectDefaults } from '../broker/types.ts';
 const defaults:ProjectDefaults={provider:'codex',model:'fixture',effort:'high',trusted:true,tools:false,temporary:false};
 const models:ModelOption[]=[{id:'fixture',displayName:'Fixture',description:'',efforts:[{id:'high',displayName:'High'}],defaultEffort:'high',isDefault:true,capabilities:['tools']}];
 async function setup(t:any){
-  const directory=await mkdtemp(join(tmpdir(),'cere-projects-'));
+  const directory=await mkdtemp(join(tmpdir(),'pal-projects-'));
   const core=new Core(new Store(join(directory,'state')),()=>({async send(){},async close(){},async interrupt(){}}),async()=>models);
   t.after(async()=>{await core.close();await rm(directory,{recursive:true,force:true});});
   const cwd=join(directory,'project');await mkdir(cwd);

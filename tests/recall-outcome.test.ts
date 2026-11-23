@@ -39,7 +39,7 @@ test('Q04 every outcome and reason the broker can record has plain-language text
 const idle = () => ({ async send() {}, async interrupt() {}, async close() {} });
 
 test('Q04 outcomes are bounded per conversation, per turn, content-free and readable without recalling', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-recall-outcome-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-recall-outcome-'));
   const core = new Core(new Store(dir), idle);
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   await core.memory.ready;
@@ -123,7 +123,7 @@ test('M04 the drawer describes each recorded plan layer, keeps unknowns explicit
 });
 
 test('RC-02 a one-turn Without memory posture sends no recalled memory and says why; the next turn recalls', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-recall-withheld-')), chats: any[] = [];
+  const dir = await mkdtemp(join(tmpdir(), 'pal-recall-withheld-')), chats: any[] = [];
   const server = createServer(async (req, res) => {
     let text = ''; for await (const chunk of req) text += chunk;
     if (req.url === '/api/tags') res.end(JSON.stringify({ models: [{ model: 'chat', name: 'chat', capabilities: ['completion', 'tools'], digest: 'a'.repeat(64) }] }));
@@ -146,13 +146,13 @@ test('RC-02 a one-turn Without memory posture sends no recalled memory and says 
     return JSON.stringify(chats.at(-1).messages);
   };
   const withheld = await send('When is the orchid launch?', 'posture:no-memory');
-  assert.doesNotMatch(withheld, /<cere_memory_data>|moved to Friday/);
+  assert.doesNotMatch(withheld, /<pal_memory_data>|moved to Friday/);
   assert.match(withheld, /Current posture: Without memory, for this turn only/);
   const [first] = core.memory.outcomes(session.id);
   assert.deepEqual([first.outcome, first.reason], ['disabled', 'style_withheld']);
   assert.match(library.describe(first).title + library.describe(first).detail, /withholds automatic memory recall/);
   const next = await send('Remind me when the orchid launch is.');
-  assert.match(next, /<cere_memory_data>/); assert.match(next, /moved to Friday/);
+  assert.match(next, /<pal_memory_data>/); assert.match(next, /moved to Friday/);
   assert.doesNotMatch(next, /Without memory|withholds automatic memory recall/);
   assert.equal(core.memory.outcomes(session.id)[0].outcome, 'included');
 });

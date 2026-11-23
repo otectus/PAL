@@ -30,7 +30,14 @@ export type Session = {
   connectionId?: string; connectionRevision?: number;
   api?: { tools: boolean };
   revision?: string; draftRevision?: string; configRevision?: string; turnId?: string;
-  remote?: RemoteExecution; effectivePolicy?: 'restricted' | 'unknown';
+  /**
+   * The authorization snapshot of the phone controlling this conversation now (authority.ts). `effectivePolicy`
+   * is the provider launch policy that snapshot established: `restricted` (a limited phone's verified
+   * restricted mode), `desktop` (an owner phone: the desktop's normal launch policy) or `unknown`.
+   */
+  remote?: RemoteExecution; effectivePolicy?: 'restricted' | 'desktop' | 'unknown';
+  /** The owner phone that last controlled this conversation, kept for attribution after control returned to the desktop. */
+  remoteOrigin?: { deviceId: string; role: import('./authority.ts').DeviceRole; at: number };
   agents?: AgentActivity[];
   folderId?: string; pinned?: boolean; archived?: boolean; readAt?: number; unread?:boolean;
   draftAttachments?: Attachment[];
@@ -64,15 +71,22 @@ export type ProjectDefaults = { provider: Provider; model: string; effort: strin
 /** What "Save as my defaults" keeps for new general conversations. Trust is confirmed for each conversation's folder instead. */
 export type ConversationDefaults = Omit<ProjectDefaults, 'trusted'>;
 export type Project = { cwd: string; name: string; revision: string; updated: number; favorite: boolean; defaults: ProjectDefaults; behaviorProfileId?: string;
-  /** A06: whether Cere-managed API/Ollama turns read the project's convention files. */
+  /** A06: whether PAL-managed API/Ollama turns read the project's convention files. */
   conventions?: boolean };
 export type Source = { title: string; url: string };
+/** Small display fields retained when a provider replaces a tool's input with its result. */
+export type ToolActivity = {
+  name?: string; target?: string; description?: string; summary?: string; action?: 'read' | 'search' | 'listFiles';
+  status?: AgentActivity['status'] | 'started' | 'declined' | 'pending' | 'unknown' | 'notice';
+  exitCode?: number; durationMs?: number; agentId?: string; agentName?: string;
+};
 /**
  * `kind` refines `role`: tool rows are 'tool' or 'agent', assistant rows may be 'question', and user rows may be
- * 'answer', 'queued' or 'queue-cancelled'. A 'delegation' row is user-role text that Cere writes itself when
+ * 'answer', 'queued' or 'queue-cancelled'. A 'delegation' row is user-role text that PAL writes itself when
  * delegated work reports back to the conversation that started it; it is never the user's words.
  */
 export type Message = { id: string; sessionId: string; role: string; text: string; time: number; kind?: string; sources?: Source[]; revision?: string; turnId?: string;
+  toolActivity?: ToolActivity;
   /** M02: formatting checks this reply did not meet. A note only: the text is never changed. */
   styleNotes?: { constraint: string; label: string; count: number }[];
   /** Broker-issued artifact versions this row produced or refers to; cards resolve them through the broker. */
@@ -148,7 +162,7 @@ export type Approval = {
   fields?: Record<string, any>;
   remoteAllow?: boolean;
 };
-export type ProviderEvent = { type: string; id?: string; text?: string; data?: any };
+export type ProviderEvent = { type: string; id?: string; text?: string; data?: any; toolActivity?: ToolActivity };
 export type SendOptions = {
   /** Sources the user referenced with @, resolved and re-authorized by the Workbench; kept apart from the user's words. */
   references?: { text: string; images: string[]; restricted?: import('./tools/contracts.ts').DestinationPolicy };
@@ -165,7 +179,7 @@ export type SendOptions = {
   onRejected?: () => void;
   /** The provider accepted the turn. Unlike onAccepted, send() does not wait for it. */
   acknowledged?: () => void;
-  /** The transcript message of the user's turn, kept with Cere-managed history as its source. */
+  /** The transcript message of the user's turn, kept with PAL-managed history as its source. */
   messageId?: string;
 };
 export interface Adapter {

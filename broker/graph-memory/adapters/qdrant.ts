@@ -89,6 +89,7 @@ export class QdrantVectorRepository implements VectorRepository {
     this.endpoint = localEndpoint(config.endpoint);
     if (!config.apiKey) throw new TypeError('Qdrant API key is required');
     if (!Number.isSafeInteger(config.dimension) || config.dimension <= 0) throw new TypeError('Qdrant vector dimension must be positive');
+    // Storage identity predates the product rename and remains stable for existing collections.
     this.prefix = safePrefix(config.collectionPrefix ?? 'cere_memory');
     this.fetchImpl = config.fetch ?? globalThis.fetch;
   }

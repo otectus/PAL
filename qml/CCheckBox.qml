@@ -5,19 +5,19 @@ CheckBox {
     id: control
     Layout.fillWidth: true
     Layout.minimumWidth: 0
-    implicitWidth: 200
-    implicitHeight: Math.max(32, label.implicitHeight+8)
-    spacing: 10; padding: 4
+    implicitWidth: Theme.pickerWidth
+    implicitHeight: Math.max(Theme.compactHeight, label.implicitHeight+Theme.space2)
+    spacing: Theme.space2; padding: Theme.space1
     font.family: Theme.font; font.pixelSize: Theme.body
     Accessible.name: text
     indicator: Rectangle {
         x: control.leftPadding; y: (control.height-height)/2
-        width: 20; height: 20; radius: Theme.radiusChip
+        width: Theme.iconSize; height: Theme.iconSize; radius: Theme.radiusChip
         color: control.checked ? Theme.accentText : Theme.input
-        border.color: control.activeFocus ? Theme.focus : control.hovered ? Theme.borderHover : control.checked ? Theme.accentText : Theme.border
-        border.width: control.activeFocus ? Theme.focusWidth : 1
-        opacity: control.enabled ? 1 : 0.45
-        Text { anchors.centerIn: parent; text: "✓"; visible: control.checked; color: Theme.background; font.family: Theme.font; font.pixelSize: Theme.section; font.bold: true }
+        border.color: control.visualFocus ? Theme.focus : control.hovered ? Theme.borderHover : control.checked ? Theme.accentText : Theme.border
+        border.width: control.visualFocus ? Theme.focusWidth : Theme.hairline
+        opacity: control.enabled ? 1 : Theme.disabledOpacity
+        CIcon { anchors.centerIn: parent; name: "check"; visible: control.checked; color: Theme.background; width: Theme.iconSmall; height: width }
     }
     contentItem: Text {
         id: label

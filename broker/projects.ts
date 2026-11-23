@@ -81,7 +81,7 @@ export class Projects {
       this.core.store.db.prepare('INSERT INTO projects VALUES (?,?) ON CONFLICT(cwd) DO UPDATE SET data=excluded.data').run(cwd,JSON.stringify(next));
       this.core.store.catalogRevision++;this.core.changed();return next;
     }
-    // A06: whether Cere-managed API and Ollama turns read this project's convention files.
+    // A06: whether PAL-managed API and Ollama turns read this project's convention files.
     if(method==='projects.setConventions') {
       if(typeof p.cwd!=='string'||!isAbsolute(p.cwd)||typeof p.enabled!=='boolean')throw new Error('Choose a project and whether to read its conventions');
       const cwd=await realpath(p.cwd),project=this.expected(cwd,p.expectedRevision);

@@ -27,18 +27,18 @@ test('Code Lab is off until the user turns it on, and refuses to run unconfined'
   assert.ok(!f.core.toolsFor(session.id).some(tool => tool.function.name === 'codelab_run'));
 });
 
-test('DA07 code cannot read host credentials, Cere’s data or the network, and sees no inherited environment', opts, async t => {
+test('DA07 code cannot read host credentials, PAL’s data or the network, and sees no inherited environment', opts, async t => {
   const { f, session } = await lab(t);
-  process.env.CERE_TEST_SECRET = 'leaked-if-visible';
+  process.env.PAL_TEST_SECRET = 'leaked-if-visible';
   await mkdir(join(f.directory, 'fake-ssh'), { recursive: true }); await writeFile(join(f.directory, 'fake-ssh', 'id_ed25519'), 'PRIVATE KEY');
-  const code = `import os, socket, json\nr = {}\nfor p in [${JSON.stringify(join(f.directory, 'fake-ssh'))}, ${JSON.stringify(f.state)}, ${JSON.stringify(f.project)}, os.path.expanduser('~'), '/run/user']:\n    try: r[p] = os.listdir(p)\n    except Exception as e: r[p] = type(e).__name__\ntry:\n    socket.create_connection(('1.1.1.1', 443), timeout=3); r['network'] = 'reached'\nexcept Exception as e: r['network'] = type(e).__name__\nr['secret'] = os.environ.get('CERE_TEST_SECRET', 'absent')\nr['keys'] = sorted(k for k in os.environ if 'KEY' in k or 'TOKEN' in k)\nprint(json.dumps(r))\n`;
+  const code = `import os, socket, json\nr = {}\nfor p in [${JSON.stringify(join(f.directory, 'fake-ssh'))}, ${JSON.stringify(f.state)}, ${JSON.stringify(f.project)}, os.path.expanduser('~'), '/run/user']:\n    try: r[p] = os.listdir(p)\n    except Exception as e: r[p] = type(e).__name__\ntry:\n    socket.create_connection(('1.1.1.1', 443), timeout=3); r['network'] = 'reached'\nexcept Exception as e: r['network'] = type(e).__name__\nr['secret'] = os.environ.get('PAL_TEST_SECRET', 'absent')\nr['keys'] = sorted(k for k in os.environ if 'KEY' in k or 'TOKEN' in k)\nprint(json.dumps(r))\n`;
   await f.core.workbench.execution.run(session.id, { code, origin: 'user', approval: 'user' });
   const operation = await ran(f, session.id);
   assert.equal(operation.state, 'completed', operation.error?.message);
   const report = JSON.parse(String(operation.details!.stdout).trim());
   for (const path of [join(f.directory, 'fake-ssh'), f.state, f.project, '/run/user']) assert.match(String(report[path]), /Error/, path + ' must not be visible');
   assert.notEqual(report.network, 'reached'); assert.equal(report.secret, 'absent'); assert.deepEqual(report.keys, []);
-  delete process.env.CERE_TEST_SECRET;
+  delete process.env.PAL_TEST_SECRET;
 });
 
 test('DA08 loops, process floods and output floods are stopped by enforced limits; cancelling is observable', opts, async t => {
@@ -50,7 +50,7 @@ test('DA08 loops, process floods and output floods are stopped by enforced limit
   operation = f.core.workbench.operations.list(session.id)[0];
   assert.equal(operation.details!.truncated, true); assert.ok(String(operation.details!.stdout).length <= 256 * 1024);
   // The run's children re-exec with a random marker, so a check finds only processes of this run.
-  const marker = 'cere-run-' + crypto.randomUUID();
+  const marker = 'pal-run-' + crypto.randomUUID();
   const running = f.core.workbench.execution.run(session.id, { code: `import os, sys, time\nfor i in range(8):\n    if os.fork() == 0:\n        os.execv(sys.executable, [sys.executable, '-c', 'import time; time.sleep(120)', '${marker}'])\ntime.sleep(120)`, origin: 'user', approval: 'user', timeoutSeconds: 100 });
   await until(() => f.core.workbench.operations.list(session.id)[0].state === 'running' && f.core.workbench.operations.list(session.id)[0].details?.timeLimitSeconds === 100);
   const { execFileSync } = await import('node:child_process');
@@ -97,7 +97,19 @@ test('a model’s Code Lab run waits for review, then reports the exit status an
   assert.equal((await f.core.workbench.artifacts.bytes(session.id, result.artifacts[0].artifactId)).data.toString(), '42');
 });
 
-test('closing Cere during a Code Lab run stops it and still records the run as interrupted', opts, async t => {
+test('a Code Lab output import failure completes the operation with an error', opts, async t => {
+  const { f, session } = await lab(t);
+  await f.core.workbench.execution.run(session.id, {
+    code: "open('/work/output/chart.png', 'wb').write(bytes.fromhex('89504e470d0a1a0a'))\nopen('/work/output/data.txt', 'w').write('some output')",
+    origin: 'user', approval: 'user',
+  });
+  const operation = f.core.workbench.operations.list(session.id)[0];
+  assert.equal(operation.state, 'failed');
+  assert.match(operation.error?.message || '', /image/i);
+  assert.equal(operation.results.length, 1, 'readable output remains available');
+});
+
+test('closing PAL during a Code Lab run stops it and still records the run as interrupted', opts, async t => {
   const f = await workbenchFixture(t);
   const { session } = await f.session(null as any);
   await f.core.updateSettings({ workbench: { codeLab: { enabled: true } } });

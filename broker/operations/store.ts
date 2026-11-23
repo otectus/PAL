@@ -25,7 +25,7 @@ const transitions: Record<OperationState, OperationState[]> = {
   cancel_requested: ['cancelled', 'unknown', 'completed', 'failed'],
   completed: [], failed: [], cancelled: [], declined: [], expired: [], interrupted: [], unknown: ['completed', 'failed'],
 };
-export type OperationKind = 'image.generate' | 'image.edit' | 'image.transform' | 'vision.analyze' | 'ocr' | 'extraction' | 'codelab.run' | 'command.run' | 'export';
+export type OperationKind = 'image.generate' | 'image.edit' | 'image.transform' | 'vision.analyze' | 'ocr' | 'extraction' | 'codelab.run' | 'command.run' | 'command.host' | 'specialist.run' | 'export';
 export type Operation = {
   id: string; sessionId: string; turnId?: string; parentId?: string; groupId?: string;
   kind: OperationKind; origin: 'model' | 'user' | 'schedule'; label: string;
@@ -38,7 +38,7 @@ export type Operation = {
   backend?: { connectionId: string; kind: string; model?: string; workflow?: string; revision: number; route: ProcessingRoute };
   /** The backend's job ID when it has one; it permits status queries, never resubmission. */
   remoteId?: string;
-  /** Only what the backend reported; Cere never invents a percentage. */
+  /** Only what the backend reported; PAL never invents a percentage. */
   progress?: { value?: number; max?: number; note?: string; at: number };
   results: ArtifactRef[];
   partials?: ArtifactRef[];
@@ -105,7 +105,7 @@ export class OperationStore {
     return this.store.db.prepare(`SELECT data FROM operations WHERE session_id=? AND json_extract(data,'$.payloadDigest')=? AND state NOT IN (${terminalStates.map(() => '?').join(',')})`).all(sessionId, payloadDigest, ...terminalStates).map(row => JSON.parse(String(row.data)) as Operation)[0];
   }
   /**
-   * After a restart: nothing outstanding resumes by itself. Work that never left Cere is interrupted;
+   * After a restart: nothing outstanding resumes by itself. Work that never left PAL is interrupted;
    * a dispatch whose answer was lost is unknown; a job with a backend ID that supports status queries is
    * marked for reconciliation by status, never by resubmission.
    */
@@ -113,9 +113,11 @@ export class OperationStore {
     const reconcile: Operation[] = [];
     for (const operation of this.active()) {
       if ((operation.state === 'running' || operation.state === 'dispatching' || operation.state === 'cancel_requested') && operation.remoteId && queryable(operation)) { reconcile.push(this.update(operation.id, { details: { ...operation.details, reconciling: true } })); continue; }
-      if (operation.state === 'dispatching' || operation.state === 'cancel_requested' || (operation.state === 'running' && operation.backend && operation.backend.route !== 'local' && !['image.transform', 'codelab.run', 'command.run', 'extraction'].includes(operation.kind)))
-        this.transition(operation.id, 'unknown', { recovery: 'Cere restarted before this request’s outcome was known. It may have completed and may have been billed; it was not sent again.' });
-      else this.transition(operation.id, operation.state === 'running' ? 'interrupted' : operation.state === 'queued' ? 'interrupted' : 'cancelled', { recovery: operation.state === 'running' ? 'Cere restarted while this was running locally; nothing was sent again.' : 'Cere restarted before this was started; nothing was sent.' });
+      // A host command ran as the desktop account outside any sandbox: it may have been stopped with PAL or still be running.
+      if (operation.kind === 'command.host' && ['running', 'cancel_requested'].includes(operation.state)) { this.transition(operation.id, 'unknown', { recovery: 'PAL restarted while this command was running as your desktop account. It may have been stopped or may have finished; it was not run again. Check its effects before running it again.' }); continue; }
+      if (operation.state === 'dispatching' || operation.state === 'cancel_requested' || (operation.state === 'running' && operation.backend && operation.backend.route !== 'local' && !['image.transform', 'codelab.run', 'command.run', 'command.host', 'extraction'].includes(operation.kind)))
+        this.transition(operation.id, 'unknown', { recovery: 'PAL restarted before this request’s outcome was known. It may have completed and may have been billed; it was not sent again.' });
+      else this.transition(operation.id, operation.state === 'running' ? 'interrupted' : operation.state === 'queued' ? 'interrupted' : 'cancelled', { recovery: operation.state === 'running' ? 'PAL restarted while this was running locally; nothing was sent again.' : 'PAL restarted before this was started; nothing was sent.' });
     }
     return reconcile;
   }

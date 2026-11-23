@@ -11,7 +11,7 @@ CDialog {
     property bool failed:false
     property int request:-1
     property string operation:""
-    readonly property bool compactForm:width<440
+    readonly property bool compactForm:width<Theme.formBreakpoint
     function call(method,args){if(request>=0)return;operation=method;feedback="";failed=false;request=App.rpc(method,args||{})}
 
     CText { text:recovery.accessibleTitle;font.pixelSize:Theme.page;font.weight:Font.DemiBold;Accessible.role:Accessible.Heading }
@@ -45,7 +45,7 @@ CDialog {
 
     CSection {
         title:"Restore from a backup"
-        description:"Review the exact contents and replacement behavior before Cere changes anything. This computer keeps its connections, keys, paired phones and preferences."
+        description:"Review the exact contents and replacement behavior before PAL changes anything. This computer keeps its connections, keys, paired phones and preferences."
         CField { id:source;objectName:"restoreDirectory";Layout.fillWidth:true;placeholderText:"Backup directory";Accessible.name:"Backup directory";onTextChanged:recovery.review={} }
         GridLayout {
             Layout.fillWidth:true;columns:recovery.compactForm?1:2;columnSpacing:Theme.space2;rowSpacing:Theme.space2
@@ -54,7 +54,7 @@ CDialog {
         }
         CText {
             objectName:"restoreReview";visible:!!recovery.review.id;Layout.fillWidth:true
-            text:recovery.review.id?(recovery.review.folders+" folders · "+recovery.review.sessions+" conversations · "+recovery.review.messages+" messages"+(recovery.review.artifacts?" · "+recovery.review.artifacts.artifacts+" files"+(recovery.review.artifacts.missingBytes?" ("+recovery.review.artifacts.missingBytes+" versions would come back without their contents)":""):"")+"\n"+recovery.review.warning+"\n"+(recovery.review.replaced||"")+"\n"+(recovery.review.kept||"")+"\n"+(recovery.review.memory?"Backed-up memory will be restored with current forgetting records.":"Current memory is retained.")+"\nCere will restart its broker. The previous profile, including its backups folder, is retained in a private recovery directory."):""
+            text:recovery.review.id?(recovery.review.folders+" folders · "+recovery.review.sessions+" conversations · "+recovery.review.messages+" messages"+(recovery.review.artifacts?" · "+recovery.review.artifacts.artifacts+" files"+(recovery.review.artifacts.missingBytes?" ("+recovery.review.artifacts.missingBytes+" versions would come back without their contents)":""):"")+"\n"+recovery.review.warning+"\n"+(recovery.review.replaced||"")+"\n"+(recovery.review.kept||"")+"\n"+(recovery.review.memory?"Backed-up memory will be restored with current forgetting records.":"Current memory is retained.")+"\nPAL will restart its broker. The previous profile, including its backups folder, is retained in a private recovery directory."):""
             wrapMode:Text.Wrap;color:Theme.text;font.pixelSize:Theme.secondary
         }
         CButton {
@@ -66,12 +66,13 @@ CDialog {
     }
 
     CSection {
+        visible:App.state.recoveryPending===true
         title:"Pending restore"
-        description:"If a previously staged restore has not restarted Cere yet, cancel it here."
+        description:"If a previously staged restore has not restarted PAL yet, cancel it here."
         CButton { objectName:"cancelRestore";Layout.fillWidth:true;text:"Cancel a pending restore";enabled:App.connected && recovery.request<0;onClicked:recovery.call("recovery.cancel") }
     }
 
-    CText { text:recovery.feedback;visible:text.length>0;color:recovery.failed?Theme.danger:Theme.accentText;wrapMode:Text.Wrap;Accessible.name:text }
+    CText { text:recovery.feedback;visible:text.length>0;color:recovery.failed?Theme.danger:Theme.success;wrapMode:Text.Wrap;Accessible.name:text }
     footerContent:Component {
         CButton { Layout.fillWidth:true;text:"Close";enabled:recovery.request<0;onClicked:recovery.close() }
     }

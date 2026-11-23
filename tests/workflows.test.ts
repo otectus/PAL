@@ -22,7 +22,7 @@ class FakeStore {
 }
 
 async function fixture(t:test.TestContext){
-  const root=await mkdtemp(join(tmpdir(),'cere-workflows-')),project=join(root,'project'),other=join(root,'other');await mkdir(project);await mkdir(other);
+  const root=await mkdtemp(join(tmpdir(),'pal-workflows-')),project=join(root,'project'),other=join(root,'other');await mkdir(project);await mkdir(other);
   t.after(()=>rm(root,{recursive:true,force:true}));
   const store=new FakeStore(),created:string[]=[],drafted:{id:string;text:string}[]=[];let changed=0;
   store.sessionsById.set('source',session('source',project));store.sessionsById.set('other',session('other',other));
@@ -171,7 +171,7 @@ test('M08 older capsules keep their next steps as accepted tasks the user wrote'
 test('M08 forgetting a source message removes the tasks taken from it and scrubs the rest',async t=>{
   const { Store } = await import('../broker/store.ts');
   const { eraseWorkingCopies } = await import('../broker/working-erasure.ts');
-  const dir=await mkdtemp(join(tmpdir(),'cere-task-erasure-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const dir=await mkdtemp(join(tmpdir(),'pal-task-erasure-'));t.after(()=>rm(dir,{recursive:true,force:true}));
   const store=new Store(dir);t.after(()=>store.close());
   const task=(id:string,text:string,state:string,messageId?:string)=>({id,text,state,origin:messageId?'model-suggestion':'user',sources:messageId?[{messageId,sessionId:'s',sourceRole:'model-suggestion'}]:[],files:[],revision:'1',created:1,updated:1});
   store.set('capsule:'+dir,{cwd:dir,revision:'4',updated:1,goal:'Goal',decisions:[],constraints:[],questions:[],nextSteps:['Keep this','Mention the tangerine code'],relevantSessionIds:[],sources:[],

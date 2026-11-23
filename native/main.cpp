@@ -21,7 +21,7 @@
 
 static int signalPipe[2]={-1,-1};
 static void stopSignal(int){if(signalPipe[1]>=0){const char value=1;const auto written=::write(signalPipe[1],&value,1);(void)written;}}
-// Another Cere process asks this interface to show its workspace while the broker is unreachable.
+// Another PAL process asks this interface to show its workspace while the broker is unreachable.
 static void expandSignal(int){if(signalPipe[1]>=0){const char value=2;const auto written=::write(signalPipe[1],&value,1);(void)written;}}
 
 int main(int argc,char **argv) {
@@ -36,9 +36,13 @@ int main(int argc,char **argv) {
         if(received>0&&active)active->showWorkspaceLocally();
     });
     std::signal(SIGTERM,stopSignal);std::signal(SIGINT,stopSignal);std::signal(SIGUSR1,expandSignal);
-    app.setApplicationName("cere"); app.setOrganizationName("Cere");
-    app.setDesktopFileName("cere"); app.setQuitOnLastWindowClosed(false);
-    QCommandLineParser parser; parser.addHelpOption();
+    app.setApplicationName("pal"); app.setApplicationDisplayName("PAL"); app.setOrganizationName("PAL");
+    app.setApplicationVersion(QStringLiteral(PAL_VERSION));
+    app.setDesktopFileName("pal"); app.setQuitOnLastWindowClosed(false);
+    QCommandLineParser parser;
+    parser.setApplicationDescription("PAL — Personal Assistant for Linux");
+    parser.addHelpOption();
+    parser.addVersionOption();
     parser.addOption({"overlay","Run the overlay host"});
     parser.addOption({"show","Open the workspace"});
     parser.addOption({"toggle","Open or close the compact panel"});
@@ -53,11 +57,12 @@ int main(int argc,char **argv) {
         }
         conversationFolder=folder.absoluteFilePath();
     }
-    QString runtime=qEnvironmentVariable("CERE_RUNTIME_DIR");
-    if(runtime.isEmpty()){const QString base=qEnvironmentVariable("XDG_RUNTIME_DIR");runtime=(base.isEmpty()?QDir::tempPath()+"/cere-"+QString::number(::getuid()):base)+"/cere";}
+    QString runtime=qEnvironmentVariable("PAL_RUNTIME_DIR");
+    if(runtime.isEmpty())runtime=qEnvironmentVariable("CERE_RUNTIME_DIR");
+    if(runtime.isEmpty()){const QString base=qEnvironmentVariable("XDG_RUNTIME_DIR");runtime=(base.isEmpty()?QDir::tempPath()+"/pal-"+QString::number(::getuid()):base)+"/pal";}
     QDir().mkpath(runtime);
     // Lock files and the broker socket live here: it must be private to this user.
-    if(!Controller::privateRuntime(runtime)){qCritical("Cere runtime directory %s is not private to this user.",qPrintable(runtime));return 1;}
+    if(!Controller::privateRuntime(runtime)){qCritical("PAL runtime directory %s is not private to this user.",qPrintable(runtime));return 1;}
     QLockFile instance(runtime+(parser.isSet("overlay")?"/overlay.lock":"/ui.lock"));
     instance.setStaleLockTime(0);
     if(!instance.tryLock(0)){
@@ -72,44 +77,45 @@ int main(int argc,char **argv) {
                     while(!response.contains('\n')&&client.waitForReadyRead(3000))response+=client.readAll();
                     const auto reply=QJsonDocument::fromJson(response.split('\n').first()).object();
                     if(!reply.value("result").toBool()){
-                        qCritical("Could not open conversation creation: %s",qPrintable(reply.value("error").toObject().value("message").toString("Cere did not confirm the request.")));return 1;
+                        qCritical("Could not open conversation creation: %s",qPrintable(reply.value("error").toObject().value("message").toString("PAL did not confirm the request.")));return 1;
                     }
                 }
             }
             // Without a broker, the running interface still opens its workspace.
             else {
                 Controller::signalInterface(runtime,SIGUSR1);
-                if(!conversationFolder.isEmpty()){qCritical("Cere is reconnecting. Try opening the folder again once it is connected.");return 1;}
+                if(!conversationFolder.isEmpty()){qCritical("PAL is reconnecting. Try opening the folder again once it is connected.");return 1;}
             }
         }
         return 0;
     }
     QString root=parser.value("root");
+    if(root.isEmpty()) root=qEnvironmentVariable("PAL_ROOT");
     if(root.isEmpty()) root=qEnvironmentVariable("CERE_ROOT");
-    if(root.isEmpty()) root="/usr/share/cere";
-    if(!QFileInfo::exists(root+"/qml/Pet.qml")) root=CERE_SOURCE_DIR;
+    if(root.isEmpty()) root="/usr/share/pal";
+    if(!QFileInfo::exists(root+"/qml/Pet.qml")) root=PAL_SOURCE_DIR;
     QCoreApplication::addLibraryPath(QCoreApplication::applicationDirPath()+"/plugins");
     // Development autostart can launch the binary directly, outside tools/run.sh.
     if(QDir(root+"/.local-deps/usr/lib/qt6/plugins").exists())QCoreApplication::addLibraryPath(root+"/.local-deps/usr/lib/qt6/plugins");
     const auto requireAsset=[&root](const QString &name){
         if(QFileInfo::exists(root+"/assets/"+name))return true;
-        qCritical("Cere artwork is missing or belongs to an older installation (assets/%s). Restore the complete assets directory.",qPrintable(name));
+        qCritical("PAL artwork is missing or belongs to an older installation (assets/%s). Restore the complete assets directory.",qPrintable(name));
         return false;
     };
     const auto loadObject=[&root,&requireAsset](const QString &name,QJsonObject *result){
         if(!requireAsset(name))return false;
         QFile file(root+"/assets/"+name);QJsonParseError error;
-        if(!file.open(QIODevice::ReadOnly)){qCritical("Cere asset metadata cannot be read (assets/%s).",qPrintable(name));return false;}
+        if(!file.open(QIODevice::ReadOnly)){qCritical("PAL asset metadata cannot be read (assets/%s).",qPrintable(name));return false;}
         const auto document=QJsonDocument::fromJson(file.readAll(),&error);
         if(error.error==QJsonParseError::NoError&&document.isObject()){*result=document.object();return true;}
-        qCritical("Cere asset metadata is invalid (assets/%s): %s",qPrintable(name),qPrintable(error.errorString()));
+        qCritical("PAL asset metadata is invalid (assets/%s): %s",qPrintable(name),qPrintable(error.errorString()));
         return false;
     };
     const auto catalog=AvatarCatalog::load(root+"/assets/avatars.json");
-    if(!catalog.error.isEmpty()){qCritical("Cere avatar catalog is invalid: %s",qPrintable(catalog.error));return 1;}
+    if(!catalog.error.isEmpty()){qCritical("PAL avatar catalog is invalid: %s",qPrintable(catalog.error));return 1;}
     QJsonObject motions;
     if(!loadObject("motions.json",&motions))return 1;
-    const QString baseRigName=motions.value("rig").toString("cere-rig.json");
+    const QString baseRigName=motions.value("rig").toString("pal-rig.json");
     QJsonObject baseRig;
     if(baseRigName.isEmpty()||!loadObject(baseRigName,&baseRig))return 1;
     const QString baseTexture=baseRig.value("texture").toString();

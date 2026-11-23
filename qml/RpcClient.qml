@@ -4,6 +4,9 @@ import QtQuick
 // instead of waiting forever, so a pane is never stuck "busy" after a broker restart.
 QtObject {
     id: client
+    // Tests and isolated panes may supply a fixture endpoint. Production leaves this unset and
+    // uses the controller context object as before.
+    property var endpoint: null
     // A pane can bind this to its owner (usually a session, file or artifact). Changing owner
     // forgets its old callbacks, so a late reply can never populate the new owner's UI.
     property var scope: undefined
@@ -11,14 +14,14 @@ QtObject {
     readonly property bool busy: Object.keys(pending).length > 0
     function call(method, params, callback) {
         const callScope = scope
-        const id = App.rpc(method, params || {})
-        if (id < 0) { if (callback) Qt.callLater(() => { if (callScope === scope) callback({ error: "Cere is reconnecting to her session broker.", code: "DISCONNECTED" }) }); return id }
+        const id = (endpoint || App).rpc(method, params || {})
+        if (id < 0) { if (callback) Qt.callLater(() => { if (callScope === scope) callback({ error: "PAL is reconnecting to her session broker.", code: "DISCONNECTED" }) }); return id }
         if (callback) { const next = Object.assign({}, pending); next[id] = { callback: callback, scope: callScope }; pending = next }
         return id
     }
     onScopeChanged: pending = ({})
     property Connections watcher: Connections {
-        target: App
+        target: client.endpoint || App
         function onResult(id, value) {
             const entry = client.pending[id]
             if (!entry) return
@@ -27,7 +30,7 @@ QtObject {
         }
     }
     // App.connected is notified through stateChanged; a bound copy reports the actual change.
-    property bool online: App.connected
+    property bool online: (endpoint || App).connected
     onOnlineChanged: {
         if (online || !Object.keys(pending).length) return
         const waiting = pending; pending = ({})

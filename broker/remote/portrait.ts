@@ -5,7 +5,7 @@ import { bytesDigest } from './crypto.ts';
 import { avatarFor } from '../avatars.ts';
 
 const assets = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'assets');
-/** The expression cells of a portrait sheet (4 columns, 3 rows), in the order qml/CerePortrait.qml uses. */
+/** The expression cells of a portrait sheet (4 columns, 3 rows), in the order qml/PALPortrait.qml uses. */
 export const portraitFrames = { neutral: 0, curious: 1, thinking: 2, happy: 3, cheeky: 4, skeptical: 5, tender: 6, concerned: 7, surprised: 8, focused: 9, sleepy: 10 } as const;
 const cell = 96, reduced = new Map<string, { sha256: string; data: string }>();
 

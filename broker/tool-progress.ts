@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 /**
- * Notices when Cere's own API/Ollama tool loop stops making progress within one turn: the same
+ * Notices when PAL's own API/Ollama tool loop stops making progress within one turn: the same
  * tool called with the same arguments keeps returning the same result, or one tool keeps failing
  * whatever its arguments. It only warns, once per call or failure streak, and never stops, retries or
  * replays a tool; the 24-round limit and Stop stay in charge. A changed result counts as progress,
@@ -32,7 +32,7 @@ export class ToolProgress {
       streak.warned = true;
       const same = this.calls.get(name + '\u0000' + fingerprint(canonical(args)));
       if (same) same.warned = true;
-      return `No progress: ${name} failed ${streak.count} times in a row in this turn. Stop the turn if it looks stuck; Cere does not stop or retry it for you.`;
+      return `No progress: ${name} failed ${streak.count} times in a row in this turn. Stop the turn if it looks stuck; PAL does not stop or retry it for you.`;
     }
     if (pollingTools.has(name)) return;
     const key = name + '\u0000' + fingerprint(canonical(args)), result = fingerprint(serializedResult);
@@ -41,7 +41,7 @@ export class ToolProgress {
     previous.repeats++;
     if (previous.repeats < noProgressRepeats || previous.warned) return;
     previous.warned = true;
-    return `No progress: ${name} returned the same result ${previous.repeats} times with the same arguments in this turn. Stop the turn if it looks stuck; Cere does not stop or retry it for you.`;
+    return `No progress: ${name} returned the same result ${previous.repeats} times with the same arguments in this turn. Stop the turn if it looks stuck; PAL does not stop or retry it for you.`;
   }
   get size() { return this.calls.size; }
 }

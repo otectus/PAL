@@ -35,7 +35,7 @@ CSection {
         property int decimals:2
         property string suffix:""
         property bool signed:false
-        Layout.fillWidth:true;spacing:2
+        Layout.fillWidth:true;spacing:Theme.space1
         function saveValue(value){const patch={};patch[settingKey]=Math.round(value*100)/100;voiceSettings.saveTuning(patch)}
         function save(){saveValue(control.value)}
         RowLayout {
@@ -71,7 +71,7 @@ CSection {
     CText { text:"Speak replies from";font.weight:Font.DemiBold }
     CText { text:"Choose conversation providers for automatic speech, including pinned conversations. Turning one off stops its current and queued speech; message bubbles remain visible. Test voice still works.";font.pixelSize:Theme.secondary;color:Theme.muted }
     Flow {
-        Layout.fillWidth:true;spacing:8
+        Layout.fillWidth:true;spacing:Theme.space2
         Repeater {
             model:[{id:"codex",name:"Codex"},{id:"claude",name:"Claude Code"},{id:"ollama",name:"Ollama"},{id:"antigravity",name:"AntiGravity"},{id:"openai",name:"OpenAI API"},{id:"anthropic",name:"Claude API"},{id:"google",name:"Google AI API"},{id:"compatible",name:"Compatible endpoint"}]
             delegate:CCheckBox {
@@ -110,7 +110,7 @@ CSection {
     }
     CCheckBox { objectName:"speechBrief";text:"Read a brief opening instead of the full response";checked:voiceSettings.settings.speechBrief===true;onClicked:App.rpc("settings.update",{speechBrief:checked}) }
     GridLayout {
-        Layout.fillWidth:true;columns:width>=400?3:1;columnSpacing:8;rowSpacing:8
+        Layout.fillWidth:true;columns:width>=Theme.compactPane?3:1;columnSpacing:Theme.space2;rowSpacing:Theme.space2
         CButton { objectName:"ttsTest";text:"Test voice";Layout.fillWidth:true;enabled:!voiceSettings.savingTuning;onClicked:App.rpc("tts.test",{}) }
         CButton { objectName:"ttsStop";text:"Stop speaking";Layout.fillWidth:true;onClicked:App.rpc("tts.stop",{}) }
         CButton { text:"Refresh voices";Layout.fillWidth:true;onClicked:voiceSettings.refresh() }
@@ -120,10 +120,10 @@ CSection {
         text:voiceSettings.speech.error||voiceSettings.error||(voiceSettings.settings.speechVolume===0?"Voice muted · raise the volume to preview":voiceSettings.speech.state==="preparing"?"Preparing voice…":voiceSettings.speech.state==="speaking"?"Speaking · "+voiceSettings.speech.backend:voiceSettings.speech.backend?"Ready · "+voiceSettings.speech.backend:"Ready to test")
         color:voiceSettings.speech.error||voiceSettings.error?Theme.danger:Theme.accentText
     }
-    CText { visible:!voiceSettings.settings.ttsProvider||voiceSettings.settings.ttsProvider==="local";text:"Add a voice’s .onnx and .onnx.json files to ~/.local/share/piper/voices/ or Cere’s config/voices/ folder, then refresh. Test voice plays even in quiet mode.";color:Theme.muted;font.pixelSize:Theme.secondary }
-    Rectangle { Layout.fillWidth:true;implicitHeight:1;color:Theme.line }
+    CText { visible:!voiceSettings.settings.ttsProvider||voiceSettings.settings.ttsProvider==="local";text:"Add a voice’s .onnx and .onnx.json files to ~/.local/share/piper/voices/ or PAL’s config/voices/ folder, then refresh. Test voice plays even in quiet mode.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    Rectangle { Layout.fillWidth:true;implicitHeight:Theme.hairline;color:Theme.line }
     CText { text:"Local voice input";font.weight:Font.DemiBold }
-    CText { text:"Push-to-talk uses a whisper.cpp executable and model already installed on this computer. Cere never uploads recordings and does not download a model at startup.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
+    CText { text:"Push-to-talk uses a whisper.cpp executable and model already installed on this computer. PAL never uploads recordings and does not download a model at startup.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     CField {
         id:whisperExecutable;objectName:"whisperExecutable";Layout.fillWidth:true
         placeholderText:"Absolute path to whisper-cli";text:voiceSettings.transcriptionSettings.executable||""
@@ -161,7 +161,7 @@ CSection {
     readonly property var inputChoices:deviceChoices(audioDevices.inputs||[],audioChoice.input)
     readonly property var outputChoices:deviceChoices(audioDevices.outputs||[],audioChoice.output)
     GridLayout {
-        Layout.fillWidth:true;columns:width>=520?2:1;columnSpacing:8;rowSpacing:6
+        Layout.fillWidth:true;columns:width>=Theme.toolbarBreakpoint?2:1;columnSpacing:Theme.space2;rowSpacing:Theme.space2
         CText { text:"Microphone";color:Theme.muted;font.pixelSize:Theme.secondary }
         CComboBox {
             id:inputDevice;objectName:"audioInputDevice";Layout.fillWidth:true;model:voiceSettings.inputChoices;textRole:"label";valueRole:"id";Accessible.name:"Microphone"
@@ -178,7 +178,7 @@ CSection {
     RowLayout {
         Layout.fillWidth:true
         CText { objectName:"audioDevicesStatus";Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:Theme.caption;color:voiceSettings.devicesError||voiceSettings.audioDevices.error?Theme.amber:Theme.muted
-            text:voiceSettings.devicesError||voiceSettings.audioDevices.error||(voiceSettings.audioDevices.backend?(voiceSettings.audioDevices.backend==="pipewire"?"Devices from PipeWire":"Devices from ALSA")+" · "+(voiceSettings.audioDevices.inputs||[]).length+" microphones, "+(voiceSettings.audioDevices.outputs||[]).length+" speakers. A chosen speaker plays through Cere’s own player.":"Listing devices…") }
+            text:voiceSettings.devicesError||voiceSettings.audioDevices.error||(voiceSettings.audioDevices.backend?(voiceSettings.audioDevices.backend==="pipewire"?"Devices from PipeWire":"Devices from ALSA")+" · "+(voiceSettings.audioDevices.inputs||[]).length+" microphones, "+(voiceSettings.audioDevices.outputs||[]).length+" speakers. A chosen speaker plays through PAL’s own player.":"Listing devices…") }
         CButton { objectName:"audioDevicesRefresh";text:"Refresh";enabled:voiceSettings.devicesRequest<0;onClicked:voiceSettings.loadDevices() }
     }
     Connections { target:App;function onResult(id,value){if(id!==voiceSettings.devicesRequest)return;voiceSettings.devicesRequest=-1;if(value?.error)voiceSettings.devicesError=String(value.error);else voiceSettings.audioDevices=value} }

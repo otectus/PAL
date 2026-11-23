@@ -7,6 +7,7 @@
  * are kept as artifacts the moment they arrive. A refusal, a missing image and a corrupt image are
  * different outcomes; a request whose answer was lost is `unknown` and is never sent again by itself.
  */
+import { limitedControlled } from '../authority.ts';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -217,8 +218,8 @@ export class MediaService {
   async prepare(sessionId: string, raw: unknown, p: { connectionId?: unknown; workflowId?: string; origin: Operation['origin']; turnId?: string }) {
     const session = this.core.store.session(sessionId);
     if (session.temporary) throw new BackendRefusal('temporary', 'Temporary conversations stay text-only');
-    if (session.remote) throw new BackendRefusal('remote', 'Images are started from the desktop');
-    if (this.core.settings.paused) throw new BackendRefusal('paused', 'Cere actions are paused');
+    if (limitedControlled(session)) throw new BackendRefusal('remote', 'Images are started from the desktop or an owner phone');
+    if (this.core.settings.paused) throw new BackendRefusal('paused', 'PAL actions are paused');
     const connection = this.connection(p.connectionId), backend = await this.backend(connection, p.workflowId), capabilities = backend.describe();
     const request = this.validRequest(raw);
     const { request: validated, adjustments } = backend.validate(request);
@@ -278,7 +279,7 @@ export class MediaService {
         // Authorization is checked again immediately before anything leaves the broker.
         beforeDispatch: () => {
           signal.throwIfAborted();
-          if (this.core.settings.paused) throw new BackendRefusal('paused', 'Cere actions were paused before sending');
+          if (this.core.settings.paused) throw new BackendRefusal('paused', 'PAL actions were paused before sending');
           const current = this.connection(connection.id);
           if (current.revision !== connection.revision) throw new BackendRefusal('connection_changed', 'The image connection changed before sending');
           for (const version of versions) if (!routeAllowed(operation.backend!.route, this.artifacts.version(operation.sessionId, version.artifactId, version.versionId).policy)) throw new BackendRefusal('destination', 'An input’s processing permission changed before sending');
@@ -320,7 +321,7 @@ export class MediaService {
       this.core.emit('notice', { kind: 'complete', sessionId: operation.sessionId, text: results.length === 1 ? 'Image ready' : `${results.length} images ready` });
     } catch (error: any) {
       // Shutting down: nothing is decided here. A dispatched job stays recorded as it was, for reconciliation.
-      if (this.closing) { if (!dispatched && !terminalStates.includes(this.operations.get(operationId).state)) this.operations.transition(operationId, 'interrupted', { recovery: 'Cere closed before this was sent; nothing was sent.' }); return; }
+      if (this.closing) { if (!dispatched && !terminalStates.includes(this.operations.get(operationId).state)) this.operations.transition(operationId, 'interrupted', { recovery: 'PAL closed before this was sent; nothing was sent.' }); return; }
       const current = this.operations.get(operationId);
       const known = error instanceof BackendRefusal || !dispatched;
       const cancelled = signal.aborted;
@@ -353,7 +354,7 @@ export class MediaService {
       this.operations.settle(operation.id, 'released');
       return this.operations.get(operation.id);
     }
-    let result = { confirmed: false, note: 'Cere stopped waiting; the backend may still finish this request, which may be billed.' };
+    let result = { confirmed: false, note: 'PAL stopped waiting; the backend may still finish this request, which may be billed.' };
     try {
       if (operation.remoteId && operation.backend) {
         const backend = await this.backend(this.connection(operation.backend.connectionId), operation.backend.workflow);
@@ -424,7 +425,7 @@ export class MediaService {
     this.selections.set(sessionId, { artifactId: version.artifactId, versionId: version.versionId, purpose: 'selected' });
     return true;
   }
-  cancelAll() { for (const controller of this.controllers.values()) controller.abort(new Error('Cere is closing')); }
+  cancelAll() { for (const controller of this.controllers.values()) controller.abort(new Error('PAL is closing')); }
   /** Stops waiting on every job, leaves dispatched ones recorded for reconciliation, and settles before the store closes. */
   async close(boundMs = 3000) {
     this.closing = true; this.cancelAll();

@@ -66,7 +66,7 @@ test('M12 site rules are enforced on results, the trace shows what was sent, and
   const library: any = vm.createContext({});
   vm.runInContext(readFileSync(new URL('../qml/ContextExplain.js', import.meta.url), 'utf8').replace(/^\.pragma library\s*/, ''), library);
   assert.equal(library.searchDetail(traces[0]), 'only docs.python.org (query operator and result filter)\npast week requested from searxng (time_range=week); result dates are not checked\nSent to SearXNG: Asyncio  timeouts site:docs.python.org · time_range=week');
-  assert.match(library.searchLine(traces[1]), /^SearXNG · 1 result · from Cere’s cache · /);
+  assert.match(library.searchLine(traces[1]), /^SearXNG · 1 result · from PAL’s cache · /);
   // The cache is a bounded LRU that expires entries.
   let now = 0; const cache = new SearchCache<number>(2, 1000, () => now);
   cache.set('a', 1); cache.set('b', 2); cache.get('a'); cache.set('c', 3);
@@ -75,7 +75,7 @@ test('M12 site rules are enforced on results, the trace shows what was sent, and
 });
 
 test('M12 constraints reach the search from a tool call and a composer message, and only with a web search', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-web-plan-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-web-plan-'));
   const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   await core.updateSettings({ webSearch: searxng });

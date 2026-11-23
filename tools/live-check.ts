@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { request } from '../broker/client.ts';
-const root=process.env.CERE_STATE_DIR || '/tmp/cere-live-check';
+const root=process.env.PAL_STATE_DIR || '/tmp/pal-live-check';
 const cwd=join(root,'project');await mkdir(cwd,{recursive:true});
 const broker=spawn(process.execPath,['broker/main.ts'],{stdio:['ignore','ignore','inherit']});
 async function call(method:string,params:any={}){return request(method,params,120000)}
@@ -14,7 +14,7 @@ async function wait(id:string){
     for(const a of state.approvals.filter((a:any)=>a.sessionId===id)){
       console.log(JSON.stringify({approval:a.kind,title:a.title,detail:a.detail,questions:a.questions}));
       if(a.kind==='desktop'&&a.title==='Run saved script'){approvals++;await call('approval.answer',{id:a.id,choice:'allow'});}
-      else if(a.kind==='provider'&&(/smoke/.test(a.detail)||(a.title==='MCP · cere'&&a.detail==='Allow the cere MCP server to run tool "script_run"?'))){await call('approval.answer',{id:a.id,choice:'allow'});}
+      else if(a.kind==='provider'&&(/smoke/.test(a.detail)||(a.title==='MCP · pal'&&a.detail==='Allow the pal MCP server to run tool "script_run"?'))){await call('approval.answer',{id:a.id,choice:'allow'});}
       else if(a.kind==='question'&&JSON.stringify(a.questions).includes('smoke')){
         const answers:any={};for(const q of a.questions)answers[q.id]={answers:[q.options.find((o:any)=>/accept|allow|approve/i.test(o.label))?.label||'Accept']};
         await call('approval.answer',{id:a.id,choice:'answer',answers});
@@ -29,10 +29,10 @@ async function wait(id:string){
 }
 try{
   for(let n=0;n<50;n++){try{await call('state');break}catch{await delay(100)}}
-  await call('settings.update',{onboarding:false,categories:['timers','scripts'],scripts:[{id:'smoke',name:'Integration test',executable:'/usr/bin/printf',args:['CERE_APPROVED'],cwd,timeout:10000}]});
+  await call('settings.update',{onboarding:false,categories:['timers','scripts'],scripts:[{id:'smoke',name:'Integration test',executable:'/usr/bin/printf',args:['PAL_APPROVED'],cwd,timeout:10000}]});
   for(const provider of ['codex','claude']){
     const s=await call('session.create',{provider,cwd,trusted:true,title:provider+' integration check'});
-    await call('session.send',{id:s.id,text:'Integration test. Use ONLY the Cere MCP tool script_run with id "smoke" (it runs printf to print CERE_APPROVED). Request user approval through Cere if needed. Do not use Bash or other tools. Then report its output.'});
+    await call('session.send',{id:s.id,text:'Integration test. Use ONLY the PAL MCP tool script_run with id "smoke" (it runs printf to print PAL_APPROVED). Request user approval through PAL if needed. Do not use Bash or other tools. Then report its output.'});
     const first=await wait(s.id);
     await call('session.send',{id:s.id,text:'Without using any tools, repeat the exact string returned by the script in the previous turn.'});
     const second=await wait(s.id);

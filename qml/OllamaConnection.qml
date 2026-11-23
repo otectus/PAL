@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 ColumnLayout {
     id:connection
-    Layout.fillWidth:true;spacing:10
+    Layout.fillWidth:true;spacing:Theme.space2
     property var settings:App.state.settings?.ollama||({host:"http://127.0.0.1:11434",model:""})
     property var capability:App.state.capabilities?.ollama||({})
     property var choices:[{id:"",displayName:"Choose for each conversation"}].concat(capability.models||[]).concat(settings.model&&!(capability.models||[]).some(m=>m.id===settings.model)?[{id:settings.model,displayName:settings.model+" · unavailable"}]:[])

@@ -1,11 +1,11 @@
 /**
- * W16: checks that an installed Cere tree is complete against the source it was built from: every
+ * W16: checks that an installed PAL tree is complete against the source it was built from: every
  * tracked broker, QML, asset, protocol and shell-hook file, each runtime npm dependency, the native
  * modules, the bundled speech engine, launchers, the desktop entry and the user service unit, and a
  * build identity naming the expected commit. Stage an install without touching the session with
  *
- *   python3 tools/install-user.py --prefix /tmp/cere-stage
- *   node tools/check-install.ts /tmp/cere-stage [expected-commit]
+ *   python3 tools/install-user.py --prefix /tmp/pal-stage
+ *   node tools/check-install.ts /tmp/pal-stage [expected-commit]
  *
  * Exit 1 lists what is missing or different.
  */
@@ -16,7 +16,7 @@ import { join, resolve } from 'node:path';
 
 const [prefixArgument, expectedCommit] = process.argv.slice(2);
 if (!prefixArgument) { console.error('Usage: check-install.ts <prefix> [expected-commit]'); process.exit(2); }
-const prefix = resolve(prefixArgument), root = fileURLToPath(new URL('..', import.meta.url)), share = join(prefix, 'share/cere');
+const prefix = resolve(prefixArgument), root = fileURLToPath(new URL('..', import.meta.url)), share = join(prefix, 'share/pal');
 const tracked = (dir: string) => execFileSync('git', ['-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', dir], { encoding: 'utf8' }).split('\0').filter(file => file && existsSync(join(root, file)));
 const problems: string[] = [];
 const need = (path: string, what: string) => { if (!existsSync(path)) problems.push(`missing ${what}: ${path.slice(prefix.length + 1)}`); };
@@ -25,18 +25,18 @@ const executable = (path: string) => { need(path, 'program'); try { accessSync(p
 for (const dir of ['broker', 'qml', 'assets', 'protocol', 'shell']) for (const file of tracked(dir)) {
   const installed = join(share, file);
   need(installed, dir + ' file');
-  if (existsSync(installed) && (!statSync(installed).isFile() || !readFileSync(installed).equals(readFileSync(join(root, file))))) problems.push(`differs from source: share/cere/${file}`);
+  if (existsSync(installed) && (!statSync(installed).isFile() || !readFileSync(installed).equals(readFileSync(join(root, file))))) problems.push(`differs from source: share/pal/${file}`);
 }
-executable(join(share, 'broker/graph-memory/adapters/fish/cere-memory-emitter.py'));
+executable(join(share, 'broker/graph-memory/adapters/fish/pal-memory-emitter.py'));
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 for (const name of Object.keys(manifest.dependencies || {})) need(join(share, 'node_modules', name, 'package.json'), 'runtime package');
-for (const module of ['cere-peercred.node', 'cere-telemetry.node']) need(join(share, 'native', module), 'native module');
-executable(join(share, 'native', 'cere-workspacefs'));
+for (const module of ['pal-peercred.node', 'pal-telemetry.node']) need(join(share, 'native', module), 'native module');
+executable(join(share, 'native', 'pal-workspacefs'));
 const tts = join(share, 'tts');
-if (!existsSync(tts) || !readdirSync(tts, { recursive: true }).some(entry => String(entry).endsWith('.onnx'))) problems.push('missing speech resources: share/cere/tts has no voice model');
-for (const program of ['bin/cere', 'bin/cere-report', 'bin/cere-run', 'bin/cere-telemetry-hooks', 'lib/cere/cere']) executable(join(prefix, program));
-need(join(prefix, 'share/applications/cere.desktop'), 'desktop entry');
-need(join(prefix, 'lib/systemd/user/cere-broker.service'), 'user service unit');
+if (!existsSync(tts) || !readdirSync(tts, { recursive: true }).some(entry => String(entry).endsWith('.onnx'))) problems.push('missing speech resources: share/pal/tts has no voice model');
+for (const program of ['bin/pal', 'bin/pal-report', 'bin/pal-run', 'bin/pal-telemetry-hooks', 'lib/pal/pal']) executable(join(prefix, program));
+need(join(prefix, 'share/applications/pal.desktop'), 'desktop entry');
+need(join(prefix, 'lib/systemd/user/pal-broker.service'), 'user service unit');
 const buildInfo = join(share, 'build-info.json');
 need(buildInfo, 'build identity');
 if (existsSync(buildInfo)) {

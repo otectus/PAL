@@ -5,7 +5,7 @@ import QtQuick.Layouts
 // message only. The conversation's style wins over its project's, which wins over Settings.
 CDialog {
     id:behavior;objectName:"sessionBehavior"
-    preferredWidth:600
+    preferredWidth:Theme.dialogWide
     property string sessionId:""
     property var styles:[]
     property var postures:[]
@@ -51,7 +51,7 @@ CDialog {
     CComboBox { id:postureCombo;objectName:"sessionPosture";Layout.fillWidth:true;model:behavior.postureOptions;textRole:"label";Accessible.name:"Pinned posture" }
     CText { text:"A pinned posture stays until you change it. Postures can withhold tools; they never add any. Without memory stops recall for its turns, but what you say is still remembered under your memory settings; a temporary conversation leaves nothing behind.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CText { text:"Standing instructions for this conversation";font.weight:Font.DemiBold }
-    CTextArea { id:instructions;objectName:"sessionInstructions";Layout.fillWidth:true;Layout.preferredHeight:80;wrapMode:TextEdit.Wrap;textFormat:TextEdit.PlainText;placeholderText:"Added after the style’s own instructions";Accessible.name:"Standing instructions for this conversation" }
+    CTextArea { id:instructions;objectName:"sessionInstructions";Layout.fillWidth:true;Layout.preferredHeight:Theme.editorShort;wrapMode:TextEdit.Wrap;textFormat:TextEdit.PlainText;placeholderText:"Added after the style’s own instructions";Accessible.name:"Standing instructions for this conversation" }
     CButton {
         objectName:"sessionBehaviorSave";text:behavior.saveRequest>=0?"Saving…":"Save for this conversation";primary:true;Layout.fillWidth:true
         enabled:App.connected&&behavior.saveRequest<0&&!!behavior.sessionId

@@ -1,11 +1,11 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-// M09: models on the user's own Ollama server. Cere lists, downloads one at a time, loads or unloads,
+// M09: models on the user's own Ollama server. PAL lists, downloads one at a time, loads or unloads,
 // and deletes only after confirmation, never a model in use or chosen as a default.
 CDialog {
     id:models;objectName:"localModels"
-    preferredWidth:640
+    preferredWidth:Theme.dialogWide
     property var items:[]
     property string host:""
     property int listRequest:-1
@@ -22,14 +22,14 @@ CDialog {
     function call(method,params,model,done){error="";feedback=done||"";busyModel=model||"";request=App.rpc(method,params)}
     function size(bytes){return bytes>=1e9?(bytes/1e9).toFixed(1)+" GB":Math.max(1,Math.round(bytes/1e6))+" MB"}
     CText { text:"Local models";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
-    CText { text:"Models on your Ollama server"+(models.host?" at "+models.host:"")+". Cere does not start or stop the server.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    CText { text:"Models on your Ollama server"+(models.host?" at "+models.host:"")+". PAL does not start or stop the server.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     RowLayout {
         Layout.fillWidth:true
         CField { id:pullName;objectName:"modelPullName";Layout.fillWidth:true;placeholderText:"Model to download, such as qwen3:8b";maximumLength:200;Accessible.name:"Model to download";onAccepted:if(pullButton.enabled)pullButton.clicked() }
         CButton { id:pullButton;objectName:"modelPull";text:"Download";enabled:App.connected&&!models.pulling&&models.request<0&&pullName.text.trim().length>0;onClicked:models.call("models.pull",{model:pullName.text.trim()}) }
     }
     ColumnLayout {
-        visible:!!models.pull;Layout.fillWidth:true;spacing:6
+        visible:!!models.pull;Layout.fillWidth:true;spacing:Theme.space2
         CText {
             objectName:"modelPullStatus";Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:Theme.secondary
             color:models.pull?.status==="failed"?Theme.danger:models.pull?.status==="success"?Theme.accentText:Theme.text
@@ -37,8 +37,8 @@ CDialog {
                 :models.pull.model+" · "+models.pull.status+(models.pull.total?" · "+models.size(models.pull.completed)+" of "+models.size(models.pull.total):"")
         }
         Rectangle {
-            visible:models.pulling&&(models.pull?.total||0)>0;Layout.fillWidth:true;height:4;radius:2;color:Theme.border
-            Rectangle { width:parent.width*Math.min(1,(models.pull?.completed||0)/Math.max(1,models.pull?.total||1));height:parent.height;radius:2;color:Theme.accentText }
+            visible:models.pulling&&(models.pull?.total||0)>0;Layout.fillWidth:true;Layout.preferredHeight:Theme.indicatorHeight;radius: Theme.radiusChip;color:Theme.border
+            Rectangle { width:parent.width*Math.min(1,(models.pull?.completed||0)/Math.max(1,models.pull?.total||1));height:parent.height;radius: Theme.radiusChip;color:Theme.accentText }
         }
         RowLayout {
             CButton { visible:models.pulling;text:"Cancel download";danger:true;onClicked:App.rpc("models.cancelPull",{}) }
@@ -52,9 +52,9 @@ CDialog {
             id:row
             required property var modelData
             required property int index
-            Layout.fillWidth:true;implicitHeight:rowColumn.implicitHeight+20;radius:Theme.radiusControl;color:Theme.raised;border.color:Theme.border
+            Layout.fillWidth:true;implicitHeight:rowColumn.implicitHeight+Theme.gutter;radius:Theme.radiusControl;color:Theme.raised;border.color:Theme.border
             ColumnLayout {
-                id:rowColumn;anchors.fill:parent;anchors.margins:10;spacing:6
+                id:rowColumn;anchors.fill:parent;anchors.margins:Theme.space2;spacing:Theme.space2
                 RowLayout {
                     Layout.fillWidth:true
                     CText { objectName:"localModelName_"+row.index;Layout.fillWidth:true;text:row.modelData.name;font.weight:Font.DemiBold;elide:Text.ElideRight }
@@ -63,7 +63,7 @@ CDialog {
                 CText { Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.muted;font.pixelSize:Theme.secondary;text:[models.size(row.modelData.size),row.modelData.parameters,row.modelData.quantization,row.modelData.family,row.modelData.remote?"cloud-hosted":""].filter(part=>!!part).join(" · ")+(row.modelData.conversations?" · named by "+row.modelData.conversations+(row.modelData.conversations===1?" conversation":" conversations"):"") }
                 CText { visible:row.modelData.inUse.length>0;Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.amber;font.pixelSize:Theme.caption;text:row.modelData.inUse.join(" ") }
                 Flow {
-                    Layout.fillWidth:true;spacing:8
+                    Layout.fillWidth:true;spacing:Theme.space2
                     CButton { objectName:"localModelLoad_"+row.index;visible:!row.modelData.remote;text:models.request>=0&&models.busyModel===row.modelData.name?"Working…":row.modelData.loaded?"Unload":"Load for 10 minutes";enabled:models.request<0;onClicked:models.call(row.modelData.loaded?"models.unload":"models.load",{model:row.modelData.name},row.modelData.name,row.modelData.loaded?"Unloaded "+row.modelData.name+".":"Loaded "+row.modelData.name+".") }
                     CButton { objectName:"localModelDelete_"+row.index;text:"Delete…";danger:true;enabled:models.request<0&&row.modelData.inUse.length===0;help:row.modelData.inUse.length?row.modelData.inUse.join(" "):"Delete this model from the Ollama server";onClicked:{models.deleteName=row.modelData.name;deleteConfirm.open()} }
                 }

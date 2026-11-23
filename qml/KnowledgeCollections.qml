@@ -6,13 +6,15 @@ import QtQuick.Layouts
 // Cloud models read a collection only when it allows them to.
 CDialog {
     id:library;objectName:"knowledgeCollections"
-    preferredWidth:680
+    preferredWidth:Theme.dialogLarge
     property string sessionId:""
     property var collections:[]
     property int listRequest:-1
     property int request:-1
     property string error:""
     property string feedback:""
+    property string requestKind:""
+    property var pendingPageField:null
     property string deleteId:""
     property string jobKey:""
     readonly property var job:App.state.collectionJob||null
@@ -20,7 +22,8 @@ CDialog {
     readonly property var groundings:[{id:"strict",label:"Only from the documents"},{id:"balanced",label:"Prefer the documents"},{id:"exploratory",label:"Documents as a starting point"}]
     function openFor(id){sessionId=id||"";error="";feedback="";reload();open()}
     function reload(){if(App.connected)listRequest=App.rpc("collections.list",sessionId?{sessionId:sessionId}:{})}
-    function call(method,params,done){error="";feedback=done||"";request=App.rpc(method,params)}
+    function call(method,params,done){error="";feedback=done||"";requestKind=method;request=App.rpc(method,params)}
+    function addPage(collection,field){error="";feedback="Reading page…";requestKind="collections.addUrl";pendingPageField=field;request=App.rpc("collections.addUrl",{id:collection.id,url:field.text.trim()})}
     function indexed(time){return time?"indexed "+new Date(time).toLocaleString(Qt.locale(),Locale.ShortFormat):"not indexed yet"}
     CText { text:"Document collections";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
     CText { text:"Ground answers in your own text and Markdown files. Files are indexed on this computer, answers cite the file they used, and the folders stay the source of truth. Cloud models read a collection only if you allow it.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
@@ -37,9 +40,9 @@ CDialog {
             required property var modelData
             required property int index
             readonly property bool indexing:!!library.job&&library.job.collectionId===modelData.id&&!library.job.done
-            Layout.fillWidth:true;implicitHeight:cardColumn.implicitHeight+24;radius:Theme.radiusControl;color:Theme.raised;border.color:Theme.border
+            Layout.fillWidth:true;implicitHeight:cardColumn.implicitHeight+Theme.space5;radius:Theme.radiusControl;color:Theme.raised;border.color:Theme.border
             ColumnLayout {
-                id:cardColumn;anchors.fill:parent;anchors.margins:12;spacing:8
+                id:cardColumn;anchors.fill:parent;anchors.margins:Theme.space3;spacing:Theme.space2
                 CText { objectName:"collectionTitle_"+card.index;text:card.modelData.name;font.weight:Font.DemiBold;Layout.fillWidth:true;elide:Text.ElideRight }
                 CText {
                     objectName:"collectionStatus_"+card.index;Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.muted;font.pixelSize:Theme.secondary
@@ -48,8 +51,8 @@ CDialog {
                 }
                 Repeater { model:card.modelData.errors.slice(0,3);CText { required property var modelData;Layout.fillWidth:true;elide:Text.ElideMiddle;color:Theme.amber;font.pixelSize:Theme.caption;text:modelData.path.split("/").pop()+": "+modelData.error } }
                 Flow {
-                    visible:!!library.sessionId&&!!card.modelData.bound;Layout.fillWidth:true;spacing:8
-                    CText { text:"Use in";color:Theme.muted;font.pixelSize:Theme.secondary;height:32;verticalAlignment:Text.AlignVCenter }
+                    visible:!!library.sessionId&&!!card.modelData.bound;Layout.fillWidth:true;spacing:Theme.space2
+                    CText { text:"Use in";color:Theme.muted;font.pixelSize:Theme.secondary;height:Theme.compactHeight;verticalAlignment:Text.AlignVCenter }
                     CCheckBox { objectName:"collectionBindSession_"+card.index;text:"this conversation";enabled:library.request<0&&library.session.temporary!==true;checked:!!card.modelData.bound?.session;onToggled:library.call("collections.bind",{id:card.modelData.id,target:"session",sessionId:library.sessionId,bound:checked}) }
                     CCheckBox { text:"this project";enabled:library.request<0&&library.session.temporary!==true;checked:!!card.modelData.bound?.project;onToggled:library.call("collections.bind",{id:card.modelData.id,target:"project",sessionId:library.sessionId,bound:checked}) }
                     CCheckBox { text:"every conversation";enabled:library.request<0;checked:!!card.modelData.bound?.global;onToggled:library.call("collections.bind",{id:card.modelData.id,target:"global",bound:checked}) }
@@ -80,12 +83,20 @@ CDialog {
                 }
                 CText { visible:!!library.job&&library.job.collectionId===card.modelData.id&&library.job.done&&!!library.job.error;text:library.job?.error||"";color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
                 Flow {
-                    Layout.fillWidth:true;spacing:8
+                    Layout.fillWidth:true;spacing:Theme.space2
                     CButton { objectName:"collectionAddFolder_"+card.index;text:"Add folder…";enabled:library.request<0&&!card.indexing;onClicked:{const path=App.chooseFolder();if(path)library.call("collections.addSource",{id:card.modelData.id,expectedRevision:card.modelData.revision,path:path},"Added. Index the collection to use it.")} }
                     CButton { text:"Add file…";enabled:library.request<0&&!card.indexing;onClicked:{const path=App.chooseFile();if(path)library.call("collections.addSource",{id:card.modelData.id,expectedRevision:card.modelData.revision,path:path},"Added. Index the collection to use it.")} }
                     CButton { objectName:"collectionIndex_"+card.index;text:card.modelData.lastIndexed?"Update index":"Index now";primary:card.modelData.sources.length>0&&(!card.modelData.lastIndexed||card.modelData.stale>0);enabled:library.request<0&&card.modelData.sources.length>0&&!(library.job&&!library.job.done);onClicked:library.call("collections.index",{id:card.modelData.id}) }
                     CButton { text:"Delete…";danger:true;enabled:library.request<0&&!card.indexing;onClicked:{library.deleteId=card.modelData.id;deleteConfirm.open()} }
                 }
+                // PAL Everywhere §11.1: a dated snapshot of a web page (read now, kept by PAL), and folders watched for changes.
+                RowLayout {
+                    Layout.fillWidth:true
+                    CField { id:pageUrl;Layout.fillWidth:true;placeholderText:"Add a web page (https://…), read once and kept as a dated snapshot";Accessible.name:"Web page to add" }
+                    CButton { text:library.request>=0&&library.pendingPageField===pageUrl?"Reading page…":"Add page";enabled:library.request<0&&!card.indexing&&/^https?:\/\//.test(pageUrl.text.trim());onClicked:library.addPage(card.modelData,pageUrl) }
+                }
+                CCheckBox { text:"Watch its folders and update the index after changes settle";checked:!!card.modelData.watch;enabled:library.request<0&&card.modelData.sources.some(source=>source.kind==="folder");onToggled:library.call("collections.setWatch",{id:card.modelData.id,watch:checked}) }
+                CText { visible:!card.modelData.sources.some(source=>source.kind==="folder");text:"Watching becomes available after you add a folder source.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
             }
         }
     }
@@ -96,7 +107,7 @@ CDialog {
         id:deleteConfirm
         readonly property var target:library.collections.find(item=>item.id===library.deleteId)||({})
         CText { text:"Delete “"+(deleteConfirm.target.name||"")+"”?";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
-        CText { text:"Its index is erased from Cere’s memory and every conversation stops using it. Your files are not touched.";color:Theme.muted;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        CText { text:"Its index is erased from PAL’s memory and every conversation stops using it. Your files are not touched.";color:Theme.muted;wrapMode:Text.Wrap;Layout.fillWidth:true }
         RowLayout {
             Layout.fillWidth:true
             CButton { text:"Cancel";Layout.fillWidth:true;onClicked:deleteConfirm.close() }
@@ -109,7 +120,13 @@ CDialog {
             if(id===library.listRequest){library.listRequest=-1;if(value?.error)library.error=String(value.error);else library.collections=value.collections||[];return}
             if(id!==library.request)return
             library.request=-1
+            if(library.requestKind==="collections.addUrl"){
+                if(value?.error){library.error="Couldn’t reach this address. Check it and retry.";library.feedback=""}
+                else{if(library.pendingPageField)library.pendingPageField.text="";library.error="";library.feedback="Page read "+new Date().toLocaleString(Qt.locale(),Locale.ShortFormat)+". Index the collection to use it."}
+                library.pendingPageField=null;library.requestKind="";library.reload();return
+            }
             if(value?.error){library.error=String(value.error);library.feedback=""}
+            library.requestKind=""
             library.reload()
         }
         function onStateChanged(){

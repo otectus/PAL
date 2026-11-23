@@ -13,17 +13,17 @@ const exists=(path:string)=>access(path).then(()=>true,()=>false);
 
 /** An isolated profile and broker launcher. `systemd` makes the broker its service's main process. */
 async function fixture(t:any){
-  const directory=await mkdtemp(join(tmpdir(),'cere-restart-')),state=join(directory,'state'),runtime=join(directory,'runtime');
-  const previous={state:process.env.CERE_STATE_DIR,runtime:process.env.CERE_RUNTIME_DIR};
-  process.env.CERE_STATE_DIR=state;process.env.CERE_RUNTIME_DIR=runtime;
-  const env:NodeJS.ProcessEnv={...process.env,CERE_TTS_DISABLED:'1',CERE_CODEX_BIN:'/bin/false',CERE_CLAUDE_BIN:'/bin/false',CERE_ANTIGRAVITY_BIN:'/bin/false',CERE_OLLAMA_HOST:'http://127.0.0.1:9'};
+  const directory=await mkdtemp(join(tmpdir(),'pal-restart-')),state=join(directory,'state'),runtime=join(directory,'runtime');
+  const previous={state:process.env.PAL_STATE_DIR,runtime:process.env.PAL_RUNTIME_DIR};
+  process.env.PAL_STATE_DIR=state;process.env.PAL_RUNTIME_DIR=runtime;
+  const env:NodeJS.ProcessEnv={...process.env,PAL_TTS_DISABLED:'1',PAL_CODEX_BIN:'/bin/false',PAL_CLAUDE_BIN:'/bin/false',PAL_ANTIGRAVITY_BIN:'/bin/false',PAL_OLLAMA_HOST:'http://127.0.0.1:9'};
   delete env.INVOCATION_ID;delete env.SYSTEMD_EXEC_PID;
   const children:ChildProcess[]=[];
   const output={text:''};
   const launch=(systemd=false,extraEnv:NodeJS.ProcessEnv={})=>{
     const launchEnv={...env,...extraEnv};
     const child=systemd
-      ? spawn('bash',['-c','export SYSTEMD_EXEC_PID=$$ INVOCATION_ID=cere-test; exec "$0" broker/main.ts',process.execPath],{cwd:resolve('.'),env:launchEnv,detached:true,stdio:'ignore'})
+      ? spawn('bash',['-c','export SYSTEMD_EXEC_PID=$$ INVOCATION_ID=pal-test; exec "$0" broker/main.ts',process.execPath],{cwd:resolve('.'),env:launchEnv,detached:true,stdio:'ignore'})
       : spawn(process.execPath,['broker/main.ts'],{cwd:resolve('.'),env:launchEnv,detached:true,stdio:['ignore','pipe','pipe']});
     child.stdout?.on('data',chunk=>{output.text+=chunk;});child.stderr?.on('data',chunk=>{output.text+=chunk;});
     children.push(child);return child;
@@ -34,8 +34,8 @@ async function fixture(t:any){
     for(const child of children)if(child.exitCode===null&&!child.signalCode)try{process.kill(-child.pid!,'SIGKILL');}catch{}
     const pid=Number(await readFile(join(runtime,'broker.pid'),'utf8').catch(()=>''));
     if(pid>1)try{process.kill(pid,'SIGKILL');}catch{}
-    if(previous.state===undefined)delete process.env.CERE_STATE_DIR;else process.env.CERE_STATE_DIR=previous.state;
-    if(previous.runtime===undefined)delete process.env.CERE_RUNTIME_DIR;else process.env.CERE_RUNTIME_DIR=previous.runtime;
+    if(previous.state===undefined)delete process.env.PAL_STATE_DIR;else process.env.PAL_STATE_DIR=previous.state;
+    if(previous.runtime===undefined)delete process.env.PAL_RUNTIME_DIR;else process.env.PAL_RUNTIME_DIR=previous.runtime;
     await rm(directory,{recursive:true,force:true});
   });
   return {directory,state,runtime,launch,exited,output};
@@ -85,7 +85,7 @@ test('an unavailable lock helper stops startup before opening the database or so
   const preload=join(directory,'missing-lock.cjs');
   await writeFile(preload,`const load=require.extensions['.node'];
 require.extensions['.node']=(module,path)=>{
-  if(path.endsWith('cere-telemetry.node'))throw new Error('fixture: lock helper unavailable');
+  if(path.endsWith('pal-telemetry.node'))throw new Error('fixture: lock helper unavailable');
   return load(module,path);
 };`);
   const broker=launch(false,{NODE_OPTIONS:'--require='+preload});

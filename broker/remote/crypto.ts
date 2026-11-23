@@ -29,6 +29,6 @@ export function pairingUri(value: unknown) {
   return uri;
 }
 export function parsePairing(uri: string): any {
-  if (typeof uri !== 'string' || Buffer.byteLength(uri)>2000 || !/^cere-pair:\/\/v1\/[A-Za-z0-9_-]+$/.test(uri)) throw remoteError('INVALID_ARGUMENT','Invalid Cere pairing URI');
+  if (typeof uri !== 'string' || Buffer.byteLength(uri)>2000 || !/^cere-pair:\/\/v1\/[A-Za-z0-9_-]+$/.test(uri)) throw remoteError('INVALID_ARGUMENT','Invalid PAL pairing URI');
   return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.from(uri.slice('cere-pair://v1/'.length),'base64url')));
 }

@@ -12,7 +12,7 @@ import { Store } from '../broker/store.ts';
 import { providerIds } from '../broker/provider-catalog.ts';
 
 test('the snapshot names every provider with its traits, in the order the desktop offers them', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-traits-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-traits-'));
   const core = new Core(new Store(directory), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   t.after(async () => { await core.close(); await rm(directory, { recursive: true, force: true }); });
   const snapshot = core.snapshot();

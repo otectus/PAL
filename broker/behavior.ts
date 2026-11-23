@@ -1,7 +1,7 @@
 /**
  * M01 behavior profiles: how one conversation's assistant is asked to behave, resolved in a fixed
  * order and rendered by one function for every provider. A profile is style, not authority: its
- * text and traits shape tone, and its tool ceiling can only withhold Cere tools the conversation
+ * text and traits shape tone, and its tool ceiling can only withhold PAL tools the conversation
  * already has. Nothing here grants a category, a grant, a bypass or a memory scope.
  *
  * Resolution is deterministic: the conversation's own style, else its project's, else the global
@@ -16,7 +16,7 @@ export type TraitName = typeof traitNames[number];
 /** -2…2; 0 or absent is neutral and adds no instruction. */
 export type Traits = Partial<Record<TraitName, number>>;
 /**
- * false withholds that family of Cere tools; absent leaves it as the conversation has it. `recall`
+ * false withholds that family of PAL tools; absent leaves it as the conversation has it. `recall`
  * false also skips automatic memory recall; capture still follows the memory settings.
  */
 export type ToolCeiling = { desktop?: boolean; delegation?: boolean; web?: boolean; memory?: boolean; extensions?: boolean; recall?: boolean;
@@ -128,7 +128,7 @@ export function behaviorInstructions(resolved: ResolvedBehavior, name: string): 
   if (resolved.posture) block += `\nCurrent posture: ${resolved.posture.label}, ${resolved.posture.pinned ? 'pinned to this conversation until the user changes it' : 'for this turn only'}. ${resolved.posture.instructions}\n`;
   block += constraintInstructions(resolved.constraints);
   const withheld = Object.entries(resolved.ceiling).filter(([key, flag]) => flag === false && key !== 'recall').map(([key]) => ({ extensions: 'extension', files: 'file', fileChanges: 'file-change', images: 'image' } as Record<string, string>)[key] || key);
-  if (withheld.length) block += `\nThis style withholds Cere's ${withheld.join(', ')} tools for now; do not ask for them. The user can change the style.\n`;
+  if (withheld.length) block += `\nThis style withholds PAL's ${withheld.join(', ')} tools for now; do not ask for them. The user can change the style.\n`;
   if (resolved.ceiling.recall === false) block += '\nThis style withholds automatic memory recall: no stored memory is supplied, so do not rely on it.\n';
   return block;
 }

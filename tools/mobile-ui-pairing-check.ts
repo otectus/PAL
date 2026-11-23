@@ -47,8 +47,8 @@ function brokerRequest(socketPath: string, method: string, params: any = {}, tim
 }
 type Node = { text: string; desc: string; cls: string; bounds: [number, number, number, number] };
 async function screen(): Promise<Node[]> {
-  await adb(['shell', 'uiautomator', 'dump', '/sdcard/cere-ui.xml'], 30_000, true);
-  const xml = await adb(['exec-out', 'cat', '/sdcard/cere-ui.xml'], 30_000, true);
+  await adb(['shell', 'uiautomator', 'dump', '/sdcard/pal-ui.xml'], 30_000, true);
+  const xml = await adb(['exec-out', 'cat', '/sdcard/pal-ui.xml'], 30_000, true);
   const decode = (value: string) => value.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#10;/g, '\n').replace(/&amp;/g, '&');
   return [...xml.matchAll(/<node [^>]*>/g)].map(match => {
     const attribute = (name: string) => decode(new RegExp(`${name}="([^"]*)"`).exec(match[0])?.[1] ?? '');
@@ -60,14 +60,14 @@ async function tap(node: Node) { const [l, t, r, b] = node.bounds; await adb(['s
 
 const summary: Record<string, unknown> = { started: new Date().toISOString(), serial: serial ?? 'default', package: appPackage };
 let broker: ChildProcess | undefined, ollama: ChildProcess | undefined, brokerLog = '', port = 0, exitCode = 1, reverseAdded = false;
-const work = await mkdtemp(join(tmpdir(), 'cere-ui-pair-'));
+const work = await mkdtemp(join(tmpdir(), 'pal-ui-pair-'));
 const state = join(work, 'state'), runtime = join(work, 'run'), project = join(work, 'project'), home = join(work, 'home'), socketPath = join(runtime, 'broker.sock');
 try {
   await mkdir(evidence, { recursive: true }); await mkdir(project); await mkdir(home);
   ollama = spawn(process.execPath, [join(root, 'tests/fixtures/ui-ollama.mjs')], { stdio: ['ignore', 'pipe', 'inherit'] });
   const ollamaHost = await new Promise<string>((resolvePromise, reject) => { ollama!.stdout!.once('data', chunk => resolvePromise(String(chunk).trim())); ollama!.once('exit', () => reject(new Error('Ollama fixture exited'))); });
-  const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, LANG: 'C.UTF-8', CERE_STATE_DIR: state, CERE_RUNTIME_DIR: runtime, CERE_TTS_DISABLED: '1',
-    CERE_OLLAMA_HOST: ollamaHost, CERE_CODEX_BIN: join(root, 'tests/fixtures/ui-codex.mjs'), CERE_CLAUDE_BIN: join(work, 'absent-claude'), CERE_ANTIGRAVITY_BIN: join(work, 'absent-antigravity') };
+  const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, LANG: 'C.UTF-8', PAL_STATE_DIR: state, PAL_RUNTIME_DIR: runtime, PAL_TTS_DISABLED: '1',
+    PAL_OLLAMA_HOST: ollamaHost, PAL_CODEX_BIN: join(root, 'tests/fixtures/ui-codex.mjs'), PAL_CLAUDE_BIN: join(work, 'absent-claude'), PAL_ANTIGRAVITY_BIN: join(work, 'absent-antigravity') };
   const store = new Store(state); store.set('settings', { memory: { enabled: false } }); store.close();
   broker = spawn(process.execPath, [join(root, 'broker/main.ts')], { cwd: root, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   broker.stdout!.on('data', chunk => { brokerLog += chunk; }); broker.stderr!.on('data', chunk => { brokerLog += chunk; });
@@ -76,9 +76,9 @@ try {
   await adb(['reverse', '--no-rebind', `tcp:${port}`, `tcp:${port}`]); reverseAdded = true;
   await adb(['install', '-r', apk]); await adb(['shell', 'pm', 'clear', appPackage]);
   for (const permission of ['android.permission.POST_NOTIFICATIONS', 'android.permission.ACCESS_LOCAL_NETWORK']) await adb(['shell', 'pm', 'grant', appPackage, permission], 30_000, true);
-  const prepared = await brokerRequest(socketPath, 'remote.preparePair', { addresses: ['127.0.0.1'], port, name: 'Cere UI pairing check', actionAuthentication: 'trusted-device', networkReturn: true });
+  const prepared = await brokerRequest(socketPath, 'remote.preparePair', { addresses: ['127.0.0.1'], port, name: 'PAL UI pairing check', actionAuthentication: 'trusted-device', networkReturn: true });
   await adb(['logcat', '-c'], 30_000, true);
-  await adb(['shell', 'am', 'start', '-W', '-n', `${appPackage}/dev.otectus.cere.mobile.MainActivity`]);
+  await adb(['shell', 'am', 'start', '-W', '-n', `${appPackage}/dev.otectus.pal.mobile.MainActivity`]);
   // Scanning remains the primary first-use action; reveal the text fallback explicitly.
   await tap(await until('manual pairing', async () => (await screen()).find(node => node.text === 'Enter offer instead'), 30_000));
   // The offer goes into the second field (the first names this phone), as pasting it would.
@@ -105,7 +105,7 @@ try {
   summary.finished = new Date().toISOString(); summary.passed = exitCode === 0;
   try {
     const logcat = await adb(['logcat', '-d', '-v', 'threadtime'], 30_000, true).catch(() => '');
-    await writeFile(join(evidence, 'logcat.txt'), logcat.split('\n').filter(line => /Cere|cere|AndroidRuntime/.test(line)).join('\n'));
+    await writeFile(join(evidence, 'logcat.txt'), logcat.split('\n').filter(line => /PAL|pal|AndroidRuntime/.test(line)).join('\n'));
     await writeFile(join(evidence, 'broker.log'), brokerLog); await writeFile(join(evidence, 'summary.json'), JSON.stringify(summary, null, 2) + '\n'); await writeFile(join(evidence, 'harness.log'), log.join('\n') + '\n');
   } catch (error) { console.error('Could not write evidence:', error); exitCode = 1; }
   if (reverseAdded) await adb(['reverse', '--remove', 'tcp:' + port], 30_000, true);

@@ -65,9 +65,9 @@ export function listZip(data: Buffer, limits = zipLimits) {
     const nameLength = data.readUInt16LE(at + 28), extra = data.readUInt16LE(at + 30), comment = data.readUInt16LE(at + 32), offset = data.readUInt32LE(at + 42);
     const name = data.subarray(at + 46, at + 46 + nameLength).toString(flags & 0x0800 ? 'utf8' : 'latin1');
     at += 46 + nameLength + extra + comment;
-    if (flags & 0x0001) throw Object.assign(new Error('The archive is encrypted; Cere does not open encrypted archives'), { code: 'encrypted' });
+    if (flags & 0x0001) throw Object.assign(new Error('The archive is encrypted; PAL does not open encrypted archives'), { code: 'encrypted' });
     if (!safeMemberName(name) || names.has(name)) throw Object.assign(new Error(`The archive contains an unsafe or duplicate name (${name.slice(0, 80)})`), { code: 'unsafe_name' });
-    if (![0, 8].includes(method)) throw Object.assign(new Error('The archive uses a compression method Cere does not read'), { code: 'unsupported' });
+    if (![0, 8].includes(method)) throw Object.assign(new Error('The archive uses a compression method PAL does not read'), { code: 'unsupported' });
     names.add(name); expanded += entrySize;
     if (expanded > limits.expandedBytes) throw Object.assign(new Error(`The archive expands to more than ${limits.expandedBytes / 1024 / 1024} MiB`), { code: 'too_large' });
     if (compressedSize && entrySize / compressedSize > limits.ratio && entrySize > 1024 * 1024) throw Object.assign(new Error('The archive’s compression ratio is suspicious (a possible expansion bomb)'), { code: 'bomb' });
@@ -77,7 +77,7 @@ export function listZip(data: Buffer, limits = zipLimits) {
 }
 /** Inflates one listed member, bounded by its declared size and checked against its CRC. */
 export async function readMember(data: Buffer, entry: ZipEntry, maxBytes = zipLimits.memberBytes) {
-  if (entry.size > maxBytes) throw Object.assign(new Error(`${entry.name} is larger than Cere reads`), { code: 'too_large' });
+  if (entry.size > maxBytes) throw Object.assign(new Error(`${entry.name} is larger than PAL reads`), { code: 'too_large' });
   const at = entry.offset;
   if (at + 30 > data.length || data.readUInt32LE(at) !== 0x04034b50) throw Object.assign(new Error('The archive is damaged'), { code: 'malformed' });
   const start = at + 30 + data.readUInt16LE(at + 26) + data.readUInt16LE(at + 28), body = data.subarray(start, start + entry.compressedSize);

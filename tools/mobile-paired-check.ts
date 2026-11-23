@@ -15,7 +15,7 @@
  *
  * The debug app and its instrumentation APK must already be installed (`:app:installDebug
  * :app:installDebugAndroidTest`). The app's data is cleared first, so run it only on a test emulator
- * or a device whose Cere Mobile pairing may be discarded.
+ * or a device whose PAL Mobile pairing may be discarded.
  */
 import { fileURLToPath } from 'node:url';
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
@@ -105,7 +105,7 @@ function instrument(test: string, extras: Record<string, string>, timeout: numbe
 const results: Instrumented[] = [];
 const summary: Record<string, unknown> = { started: new Date().toISOString(), serial: serial ?? 'default', package: appPackage, pairing: pairingMode };
 let broker: ChildProcess | undefined, ollama: ChildProcess | undefined, brokerLog = '', port = 0;
-const work = await mkdtemp(join(tmpdir(), 'cere-paired-'));
+const work = await mkdtemp(join(tmpdir(), 'pal-paired-'));
 // The Unix socket path must stay under 108 bytes, so the runtime directory is short.
 const state = join(work, 'state'), runtime = join(work, 'run'), project = join(work, 'project'), home = join(work, 'home');
 const socketPath = join(runtime, 'broker.sock');
@@ -128,8 +128,8 @@ try {
   ollama = spawn(process.execPath, [join(root, 'tests/fixtures/ui-ollama.mjs')], { stdio: ['ignore', 'pipe', 'inherit'] });
   const ollamaHost = await new Promise<string>((resolvePromise, reject) => { ollama!.stdout!.once('data', chunk => resolvePromise(String(chunk).trim())); ollama!.once('exit', () => reject(new Error('Ollama fixture exited'))); });
   // No desktop session, bus, display or owner profile reaches the isolated broker.
-  const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, LANG: 'C.UTF-8', CERE_STATE_DIR: state, CERE_RUNTIME_DIR: runtime, CERE_TTS_DISABLED: '1',
-    CERE_OLLAMA_HOST: ollamaHost, CERE_CODEX_BIN: join(root, 'tests/fixtures/ui-codex.mjs'), CERE_CLAUDE_BIN: join(work, 'absent-claude'), CERE_ANTIGRAVITY_BIN: join(work, 'absent-antigravity') };
+  const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, LANG: 'C.UTF-8', PAL_STATE_DIR: state, PAL_RUNTIME_DIR: runtime, PAL_TTS_DISABLED: '1',
+    PAL_OLLAMA_HOST: ollamaHost, PAL_CODEX_BIN: join(root, 'tests/fixtures/ui-codex.mjs'), PAL_CLAUDE_BIN: join(work, 'absent-claude'), PAL_ANTIGRAVITY_BIN: join(work, 'absent-antigravity') };
   // Memory stays off: the gate covers pairing, scoped reads, a signed send and reconnection.
   const store = new Store(state); store.set('settings', { memory: { enabled: false } }); store.close();
   broker = spawn(process.execPath, [join(root, 'broker/main.ts')], { cwd: root, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -146,7 +146,7 @@ try {
   // Instrumentation runs as the app's user; the alert and local-network prompts must not block it.
   for (const permission of ['android.permission.POST_NOTIFICATIONS', 'android.permission.ACCESS_LOCAL_NETWORK'])
     await adb(['shell', 'pm', 'grant', appPackage, permission], { allowFailure: true });
-  const prepared = await brokerRequest(socketPath, 'remote.preparePair', { addresses: ['127.0.0.1'], port, name: 'Cere paired check', actionAuthentication: 'trusted-device', ...(pairingMode === 'network' ? { networkReturn: true } : {}) });
+  const prepared = await brokerRequest(socketPath, 'remote.preparePair', { addresses: ['127.0.0.1'], port, name: 'PAL paired check', actionAuthentication: 'trusted-device', ...(pairingMode === 'network' ? { networkReturn: true } : {}) });
   const offer = parsePairing(prepared.uri) as any;
   summary.desktopId = offer.desktopId;
   note(`Prepared a trusted-device ${pairingMode} offer for wss://127.0.0.1:${port} (desktop ${offer.desktopId})`);
@@ -156,7 +156,7 @@ try {
   }, 120_000);
   let pairing: ReturnType<typeof instrument>, phone: any;
   if (pairingMode === 'network') {
-    pairing = instrument('dev.otectus.cere.mobile.UsbPairingSetupTest#pairByNetworkReturn', { cereNetworkPairingOffer: prepared.uri }, 240_000);
+    pairing = instrument('dev.otectus.pal.mobile.UsbPairingSetupTest#pairByNetworkReturn', { palNetworkPairingOffer: prepared.uri }, 240_000);
     // As the owner would at the desktop: the phone's answer arrives by itself, and its words are compared.
     const received = await until('the phone\'s answer at the desktop', async () => (await brokerRequest(socketPath, 'remote.status', {}, 5000)).pairing?.received, 120_000);
     phone = await readPhone('sas');
@@ -167,7 +167,7 @@ try {
       caps: ['chat.read', 'chat.write', 'approvals.answer', 'providers.execute', 'approvals.provider', 'settings.write', 'desktop.control'], categories: ['timers'], scriptIds: [] });
     note(`SAS matched ("${received.sas}"); desktop confirmed device ${phone.deviceId} by pairing ID; the phone finishes by itself`);
   } else {
-    pairing = instrument('dev.otectus.cere.mobile.UsbPairingSetupTest#pairFromExplicitUsbOffer', { cerePairingOffer: prepared.uri }, 240_000);
+    pairing = instrument('dev.otectus.pal.mobile.UsbPairingSetupTest#pairFromExplicitUsbOffer', { palPairingOffer: prepared.uri }, 240_000);
     phone = await readPhone('response');
     const review = await brokerRequest(socketPath, 'remote.reviewPair', { response: phone.response });
     if (review.sas !== phone.sas) throw new Error(`Six-word comparison differs: desktop "${review.sas}", phone "${phone.sas}"`);
@@ -190,15 +190,15 @@ try {
   results.push(await pairing.done);
   summary.connectedAfterPairing = connectedAfterPairing;
 
-  const session = await brokerRequest(socketPath, 'session.create', { provider: 'ollama', cwd: project, title: `Cere mobile validation ${Date.now()}`, model: 'fixture-chat:latest', tools: false });
+  const session = await brokerRequest(socketPath, 'session.create', { provider: 'ollama', cwd: project, title: `PAL mobile validation ${Date.now()}`, model: 'fixture-chat:latest', tools: false });
   note(`Created synthetic Ollama conversation ${session.id}`);
-  const conversation = instrument('dev.otectus.cere.mobile.ConnectedDesktopTest', { cereExpectedDesktopId: offer.desktopId, cereSmokeSessionId: session.id }, 300_000);
+  const conversation = instrument('dev.otectus.pal.mobile.ConnectedDesktopTest', { palExpectedDesktopId: offer.desktopId, palSmokeSessionId: session.id }, 300_000);
   results.push(await conversation.done);
   // The desktop side of the same send: one user row for the one logical send, and the fixture reply.
   const page = await brokerRequest(socketPath, 'session.messages', { id: session.id });
   const rows = (page.messages ?? []) as { role: string; text: string }[];
-  const prompts = rows.filter(row => row.role === 'user' && row.text.includes('Reply with exactly CERE_MOBILE_OK'));
-  summary.desktopTranscript = { userRowsForTheSend: prompts.length, reply: rows.some(row => row.role === 'assistant' && row.text.includes('CERE_MOBILE_OK')) };
+  const prompts = rows.filter(row => row.role === 'user' && row.text.includes('Reply with exactly PAL_MOBILE_OK'));
+  summary.desktopTranscript = { userRowsForTheSend: prompts.length, reply: rows.some(row => row.role === 'assistant' && row.text.includes('PAL_MOBILE_OK')) };
   const transcriptOk = prompts.length === 1 && (summary.desktopTranscript as any).reply === true;
   const ledger = (await brokerRequest(socketPath, 'remote.status')).devices?.find((entry: any) => entry.id === phone.deviceId);
   summary.deviceRecorded = !!ledger;
@@ -218,7 +218,7 @@ try {
   summary.tests = results.map(({ name, passed, statuses }) => ({ name, passed, statuses }));
   try {
     const logcat = await adb(['logcat', '-d', '-v', 'threadtime'], { allowFailure: true, timeout: 30_000 }).catch(() => '');
-    await writeFile(join(evidence, 'logcat.txt'), logcat.split('\n').filter(line => /Cere|cere|System\.out|AndroidRuntime|TestRunner|StrictMode/.test(line)).join('\n'));
+    await writeFile(join(evidence, 'logcat.txt'), logcat.split('\n').filter(line => /PAL|pal|System\.out|AndroidRuntime|TestRunner|StrictMode/.test(line)).join('\n'));
     for (const result of results) await writeFile(join(evidence, result.name.replace(/[^A-Za-z0-9_.#-]/g, '_') + '.txt'), result.output);
     await writeFile(join(evidence, 'broker.log'), brokerLog);
     await writeFile(join(evidence, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');

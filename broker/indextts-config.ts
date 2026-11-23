@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { existsSync } from 'node:fs';
 
 export type EmotionSource = 'same-as-speaker'|'reference-audio'|'vector'|'synthesis-text'|'text-description';
 export type Emotion = {source:EmotionSource;alpha:number;random:boolean;vector:number[];text:string};
@@ -10,8 +11,9 @@ export const defaultIndexConfig:IndexConfig = {version:'2.5',modelDir:'',runtime
 export const defaultEmotion:Emotion = {source:'same-as-speaker',alpha:1,random:false,vector:[0,0,0,0,0,0,0,0],text:''};
 export const indexCommit = 'd9e41aac89fd00b3d71497fddb287b7f24613712';
 export function indexPaths(config:IndexConfig,env:NodeJS.ProcessEnv=process.env) {
-  const data=join(env.XDG_DATA_HOME||join(homedir(),'.local/share'),'cere');
-  return {modelDir:config.modelDir||join(data,'models/indextts',config.version),runtimeDir:config.runtimeDir||join(data,'runtimes/indextts',indexCommit),voices:join(data,'voices/indextts')};
+  const data=env.XDG_DATA_HOME||join(homedir(),'.local/share'),current=join(data,'pal'),legacy=join(data,'cere');
+  const feature=(path:string)=>{const next=join(current,path),old=join(legacy,path);return existsSync(next)||!existsSync(old)?next:old;};
+  return {modelDir:config.modelDir||feature(join('models/indextts',config.version)),runtimeDir:config.runtimeDir||feature(join('runtimes/indextts',indexCommit)),voices:feature('voices/indextts')};
 }
 export const indexErrors:Record<string,[string,string]> = {
   CANCELLED:['Speech stopped.','Start a new preview or reply.'], BUSY:['IndexTTS is busy.','Wait for the current operation or stop it.'],
@@ -93,5 +95,5 @@ export function indexPrefix(text:string,limit:number):string {
 }
 
 export const previewSamples:Record<string,string> = {
-  en:"Hello, I'm Cere. Let's make something wonderful together.",zh:'你好，我是 Cere。让我们一起创造美好的事物。',ja:'こんにちは、Cereです。一緒に素敵なものを作りましょう。',es:'Hola, soy Cere. Vamos a crear algo maravilloso juntos.',ar:'مرحباً، أنا سيري. لنصنع شيئاً رائعاً معاً.',
+  en:"Hello, I'm PAL. Let's make something wonderful together.",zh:'你好，我是 PAL。让我们一起创造美好的事物。',ja:'こんにちは、PALです。一緒に素敵なものを作りましょう。',es:'Hola, soy PAL. Vamos a crear algo maravilloso juntos.',ar:'مرحباً، أنا سيري. لنصنع شيئاً رائعاً معاً.',
 };

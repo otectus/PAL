@@ -1,6 +1,6 @@
 import QtQuick
 import QtTest
-import "../../qml" as Cere
+import "../../qml" as PAL
 
 Item {
     id: scene
@@ -9,7 +9,7 @@ Item {
     TestCase {
         name: "EmoticonBadge"
         when: windowShown
-        Component { id: component; Cere.EmoticonBadge {} }
+        Component { id: component; PAL.EmoticonBadge {} }
         function make(properties) {
             var badge = createTemporaryObject(component, host, properties || {})
             verify(badge !== null)
@@ -19,26 +19,26 @@ Item {
         function test_avatarPaletteAndMirror() {
             var badge = make({snapshot:state({reducedMotion:true})})
             var mirror = make({mirror:badge})
-            compare(badge.accent, "#49dfff")
+            compare(badge.accent, PAL.Theme.paletteFor(PAL.AvatarCatalog.defaultId).accentText)
             var original = badge.color.toString(), glyph = badge.glyph
-            for (var entry of Cere.AvatarCatalog.entries) {
+            for (var entry of PAL.AvatarCatalog.entries) {
                 var id = entry.id
                 badge.snapshot = state({avatar:id,reducedMotion:true})
-                compare(badge.accent, Cere.Theme.paletteFor(id).accentText)
-                compare(badge.color, Cere.Theme.paletteFor(id).badgeSurface)
+                compare(badge.accent, PAL.Theme.paletteFor(id).accentText)
+                compare(badge.color, PAL.Theme.paletteFor(id).badgeSurface)
                 compare(mirror.accent, badge.accent)
                 compare(mirror.color, badge.color)
                 compare(badge.glyph, glyph)
                 badge.snapshot = {settings:{avatar:id},approvals:[{kind:"cli"}]}
-                compare(badge.accent, Cere.Theme.paletteFor(id).amber)
-                verify(badge.accent !== Cere.Theme.paletteFor(id).accentText)
+                compare(badge.accent, PAL.Theme.paletteFor(id).amber)
+                verify(badge.accent !== PAL.Theme.paletteFor(id).accentText)
             }
             badge.snapshot = state({avatar:"unknown"})
             compare(badge.color, original)
-            compare(badge.accent, "#49dfff")
+            compare(badge.accent, PAL.Theme.paletteFor(PAL.AvatarCatalog.defaultId).accentText)
             badge.snapshot = state({avatar:"cere"})
             compare(badge.color, original)
-            compare(badge.accent, "#49dfff")
+            compare(badge.accent, PAL.Theme.paletteFor(PAL.AvatarCatalog.defaultId).accentText)
         }
         function test_liveToneAndNewTurn() {
             var badge = make({snapshot:state(), selectedId:"a"})

@@ -1,5 +1,5 @@
 /**
- * M07: an optional Markdown notes vault. The folder the user chose stays the source of truth: Cere
+ * M07: an optional Markdown notes vault. The folder the user chose stays the source of truth: PAL
  * reads it on demand, follows external edits by size and modification time, and keeps no copy of
  * note text beyond an in-memory search cache. Notes marked private, notes in hidden folders, linked
  * files and notes whose front matter cannot be read are never indexed: unknown privacy fails closed.
@@ -62,8 +62,8 @@ function fields(block: string): Meta | null {
   return result;
 }
 /**
- * Private by its own front matter, or by privacy metadata Cere does not understand. Keys match in
- * any case. `private` leaves a note public only when it is false, no or off, and `cere` only when it
+ * Private by its own front matter, or by privacy metadata PAL does not understand. Keys match in
+ * any case. `private` leaves a note public only when it is false, no or off, and PAL/legacy Cere
  * is true, yes, on, include or public; any other value of either is private.
  */
 export function privateNote(meta: Record<string, unknown> | null | undefined) {
@@ -72,6 +72,8 @@ export function privateNote(meta: Record<string, unknown> | null | undefined) {
   for (const [name, value] of Object.entries(meta)) {
     const key = name.toLowerCase(), word = typeof value === 'boolean' ? String(value) : typeof value === 'string' ? value.trim().toLowerCase() : '';
     if (key === 'private' && !['false', 'no', 'off'].includes(word)) return true;
+    // A restrictive value under either brand wins, so mixed old/new front matter cannot weaken privacy.
+    if (key === 'pal' && !['true', 'yes', 'on', 'include', 'public'].includes(word)) return true;
     if (key === 'cere' && !['true', 'yes', 'on', 'include', 'public'].includes(word)) return true;
     if (['visibility', 'privacy', 'access'].includes(key) && !['public', 'shared'].includes(String(value).trim().toLowerCase())) return true;
   }
@@ -92,7 +94,7 @@ export class NotesVault {
     if (real === '/' || real === homedir()) throw new Error('Choose the notes folder itself, not the whole home directory or disk');
     if (real.split(sep).some(part => part.startsWith('.'))) throw new Error('Hidden folders cannot be the notes vault');
     const own = await realpath(state);
-    if (real === own || real.startsWith(own + sep) || own.startsWith(real + sep)) throw new Error('Cere’s own state cannot be inside the notes vault');
+    if (real === own || real.startsWith(own + sep) || own.startsWith(real + sep)) throw new Error('PAL’s own state cannot be inside the notes vault');
     return real;
   }
   /** Brings the cache up to date with the folder; unchanged notes are not read again. */

@@ -8,21 +8,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { availableOperations, methods, mutations, needsProof } from '../broker/remote/schemas.ts';
+import { kindLabel, methods, permissionLabel } from '../broker/remote/schemas.ts';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const matrix = readFileSync(join(root, 'docs/FEATURE-MATRIX.md'), 'utf8');
-const always = ['devices.self', 'devices.selfRevoke', 'permissions.pause', 'permissions.reduce', 'commands.status', 'commands.challenge'];
-const caps = ['chat.read', 'chat.write', 'providers.execute', 'approvals.answer', 'attachments.write', 'capture.preview', 'desktop.control', 'settings.write', 'memory.read', 'memory.write'];
 
 test('the operation index lists every phone operation with its permission and kind', () => {
   const index = matrix.slice(matrix.indexOf('## 4. Phone operation index'));
   const rows = new Map([...index.matchAll(/^\| `([a-zA-Z.]+)` \| ([^|]+) \| ([^|]+) \|/gm)].map(match => [match[1], { permission: match[2].trim(), kind: match[3].trim() }]));
   assert.deepEqual([...rows.keys()].sort(), Object.keys(methods).sort(), 'regenerate the index when operations change');
   for (const [name, row] of rows) {
-    const permission = always.includes(name) ? 'any paired phone' : caps.find(cap => availableOperations([cap]).includes(name));
-    const kind = !mutations.has(name) ? 'read' : needsProof(name, name === 'approvals.answer' ? { choice: 'allow' } : {}) ? 'signed mutation' : 'mutation (no proof)';
-    assert.deepEqual(row, { permission, kind }, name);
+    assert.deepEqual(row, { permission: permissionLabel(name), kind: kindLabel(name) }, name);
   }
 });
 

@@ -32,7 +32,7 @@ function environment(t: any, values: Record<string, string>) {
     t.after(() => { if (old === undefined) delete process.env[key]; else process.env[key] = old; });
   }
 }
-async function directory(t: any, prefix = 'cere-review-core-') {
+async function directory(t: any, prefix = 'pal-review-core-') {
   const path = await realpath(await mkdtemp(join(tmpdir(), prefix)));
   t.after(() => rm(path, { recursive: true, force: true }));
   return path;
@@ -97,7 +97,7 @@ test('W10 a saved script changed or stopped after review never runs; the reviewe
 });
 
 test('F-002 private directories reject foreign owners, shared-directory symlinks and writable ancestors', async t => {
-  const dir = await directory(t), created = join(dir, 'a', 'b', 'cere');
+  const dir = await directory(t), created = join(dir, 'a', 'b', 'pal');
   privateDir(created);
   assert.equal((await stat(created)).mode & 0o777, 0o700);
   assert.equal((await stat(join(dir, 'a'))).mode & 0o777, 0o700);
@@ -107,24 +107,24 @@ test('F-002 private directories reject foreign owners, shared-directory symlinks
   const foreign = join(dir, 'foreign'); await mkdir(foreign); await chmod(foreign, 0o755);
   const owner = uid === 0 ? 65534 : uid;
   if (uid === 0) await chown(foreign, owner, owner);
-  assert.throws(() => privateDir(join(foreign, 'cere'), owner + 1), /owned by another user/);
+  assert.throws(() => privateDir(join(foreign, 'pal'), owner + 1), /owned by another user/);
   assert.equal((await stat(foreign)).mode & 0o777, 0o755);
-  assert.ok(!existsSync(join(foreign, 'cere')));
+  assert.ok(!existsSync(join(foreign, 'pal')));
   // A symlinked base inside a shared sticky directory, and a non-sticky shared ancestor.
   const shared = join(dir, 'shared'); await mkdir(shared); await chmod(shared, 0o1777);
-  await mkdir(join(dir, 'target'), { mode: 0o700 }); await symlink(join(dir, 'target'), join(shared, 'cere-base'));
-  assert.throws(() => privateDir(join(shared, 'cere-base', 'cere')), /symbolic link in a shared directory/);
+  await mkdir(join(dir, 'target'), { mode: 0o700 }); await symlink(join(dir, 'target'), join(shared, 'pal-base'));
+  assert.throws(() => privateDir(join(shared, 'pal-base', 'pal')), /symbolic link in a shared directory/);
   const open = join(dir, 'open'); await mkdir(open); await chmod(open, 0o777);
-  assert.throws(() => privateDir(join(open, 'cere')), /writable by other users/);
-  assert.ok(!existsSync(join(open, 'cere')));
+  assert.throws(() => privateDir(join(open, 'pal')), /writable by other users/);
+  assert.ok(!existsSync(join(open, 'pal')));
   // Existing fallback layout: /tmp is sticky and shared, so its child must be ours.
-  privateDir(join(shared, 'cere-owned', 'cere'));
-  assert.equal((await stat(join(shared, 'cere-owned', 'cere'))).mode & 0o777, 0o700);
+  privateDir(join(shared, 'pal-owned', 'pal'));
+  assert.equal((await stat(join(shared, 'pal-owned', 'pal'))).mode & 0o777, 0o700);
 });
 
 test('F-002 clients refuse a broker socket owned by another user before sending anything', async t => {
   const dir = await directory(t), received: string[] = [];
-  environment(t, { CERE_RUNTIME_DIR: dir });
+  environment(t, { PAL_RUNTIME_DIR: dir });
   const server = net.createServer(socket => { socket.on('data', chunk => { received.push(String(chunk)); socket.write('{"id":1,"result":{"forged":true}}\n'); }); });
   await new Promise<void>(resolve => server.listen(join(dir, 'broker.sock'), resolve));
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
@@ -132,6 +132,27 @@ test('F-002 clients refuse a broker socket owned by another user before sending 
   await new Promise(r => setTimeout(r, 50));
   assert.deepEqual(received, [], 'no RPC payload reached the untrusted server');
   assert.deepEqual(await request('state', {}, 2000), { forged: true }, 'the same-user server still works');
+});
+
+test('the stop fallback belongs to its original turn and tolerates a deleted conversation', async t => {
+  const dir = await directory(t);
+  const core = new Core(new Store(dir), (_session, hooks) => ({
+    async send() {}, async interrupt() { hooks.event({type: 'interrupted'}); }, async close() {},
+  }));
+  t.after(() => core.close());
+  const s = await core.create({provider: 'codex', cwd: dir, trusted: true});
+  await core.send({id: s.id, text: 'first'});
+  const first = core.store.session(s.id).turnId!;
+  core.stopDeadlineMs = 120;
+  await core.stop(s.id);
+  await core.send({id: s.id, text: 'second'});
+  core.updateSession(s.id, {status: 'stopping'});
+  await core.forceStop(s.id, first);
+  assert.equal(core.store.session(s.id).status, 'stopping');
+  await core.stop(s.id);
+  await core.deleteSession({id: s.id, confirmed: true});
+  await new Promise(resolve => setTimeout(resolve, 200));
+  assert.equal(core.stopTimers.size, 0);
 });
 
 test('F-007 Stop is bounded when interruption never acknowledges and the session accepts the next turn', async t => {
@@ -160,9 +181,9 @@ test('F-007 Stop is bounded when interruption never acknowledges and the session
 /** Fake desktop tools; the Satty editor stays open until it is killed. */
 async function captureFixture(t: any) {
   const dir = await directory(t);
-  environment(t, { PATH: dir + ':' + process.env.PATH, CERE_STATE_DIR: dir, CERE_DESKTOP_FIXTURE: dir });
+  environment(t, { PATH: dir + ':' + process.env.PATH, PAL_STATE_DIR: dir, PAL_DESKTOP_FIXTURE: dir });
   const script = `#!${process.execPath}
-const fs=require('node:fs'),path=require('node:path'),tool=path.basename(process.argv[1]),a=process.argv.slice(2),dir=process.env.CERE_DESKTOP_FIXTURE;
+const fs=require('node:fs'),path=require('node:path'),tool=path.basename(process.argv[1]),a=process.argv.slice(2),dir=process.env.PAL_DESKTOP_FIXTURE;
 if(tool==='hyprctl')console.log(JSON.stringify([{name:'test-output',focused:true}]));
 else if(tool==='grim')fs.writeFileSync(a.at(-1),'raw');
 else if(tool==='satty'&&!a.includes('--version')){fs.writeFileSync(path.join(dir,'satty.pid'),String(process.pid));setInterval(()=>{},1000);}
@@ -306,7 +327,7 @@ test('F-024 overlapping sweeps deliver each due timer once and never a cancelled
 
 test('F-038 the first explicit submit after a Codex exit resumes the same thread once', async t => {
   const dir = await directory(t), log = join(dir, 'requests.jsonl');
-  environment(t, { CERE_CODEX_BIN: resolve('tests/fixtures/permissions-cli.mjs'), CERE_PERMISSION_TEST_LOG: log });
+  environment(t, { PAL_CODEX_BIN: resolve('tests/fixtures/permissions-cli.mjs'), PAL_PERMISSION_TEST_LOG: log });
   const core = new Core(new Store(join(dir, 'state')));
   t.after(() => core.close());
   await core.updateSettings({ personality: 'Be calm.' });
@@ -359,7 +380,7 @@ test('F-044 the knowledge checker commits both saves before recall and awaits li
   });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   t.after(() => new Promise<void>(r => { server.closeAllConnections(); server.close(() => r()); }));
-  const child = spawn(process.execPath, ['tools/check-knowledge.ts', 'fixture-chat', '--memory-only'], { env: { ...process.env, CERE_OLLAMA_HOST: 'http://127.0.0.1:' + (server.address() as any).port }, stdio: 'pipe' });
+  const child = spawn(process.execPath, ['tools/check-knowledge.ts', 'fixture-chat', '--memory-only'], { env: { ...process.env, PAL_OLLAMA_HOST: 'http://127.0.0.1:' + (server.address() as any).port }, stdio: 'pipe' });
   let output = ''; child.stdout.on('data', c => output += c); child.stderr.on('data', c => output += c);
   assert.equal((await once(child, 'close'))[0], 0, output);
   const report = JSON.parse(await readFile(join(/Evidence: (.*)/.exec(output)![1], 'report.json'), 'utf8'));
@@ -368,10 +389,10 @@ test('F-044 the knowledge checker commits both saves before recall and awaits li
 });
 
 test('F-045 the dependency script signals only a verified Qdrant process', async t => {
-  const home = await directory(t, 'cere-deps-');
+  const home = await directory(t, 'pal-deps-');
   await mkdir(join(home, 'run')); await mkdir(join(home, 'qdrant'));
   await copyFile('/usr/bin/sleep', join(home, 'qdrant', 'qdrant')); await chmod(join(home, 'qdrant', 'qdrant'), 0o755);
-  const stop = async () => { const child = spawn('bash', ['tools/memory-dependencies.sh', 'local-stop'], { env: { ...process.env, CERE_MEMORY_DEPS_HOME: home }, stdio: 'ignore' }); return (await once(child, 'close'))[0]; };
+  const stop = async () => { const child = spawn('bash', ['tools/memory-dependencies.sh', 'local-stop'], { env: { ...process.env, PAL_MEMORY_DEPS_HOME: home }, stdio: 'ignore' }); return (await once(child, 'close'))[0]; };
   const startTime = async (pid: number) => (await readFile(`/proc/${pid}/stat`, 'utf8')).split(') ')[1].split(' ')[19];
   const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
   const unrelated = spawn('sleep', ['60']); t.after(() => unrelated.kill());
@@ -396,7 +417,7 @@ test('F-045 the dependency script signals only a verified Qdrant process', async
 
 test('F-046 history discovery uses the configured Codex executable', async t => {
   const dir = await directory(t);
-  environment(t, { CERE_CODEX_BIN: resolve('tests/fixtures/permissions-cli.mjs'), CERE_PERMISSION_TEST_LOG: join(dir, 'log.jsonl'), PATH: '/usr/bin:/bin' });
+  environment(t, { PAL_CODEX_BIN: resolve('tests/fixtures/permissions-cli.mjs'), PAL_PERMISSION_TEST_LOG: join(dir, 'log.jsonl'), PATH: '/usr/bin:/bin' });
   const core = new Core(new Store(dir));
   t.after(() => core.close());
   const history = await core.history('codex');

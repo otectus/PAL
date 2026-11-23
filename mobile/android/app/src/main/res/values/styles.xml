@@ -1,6 +1,6 @@
 <resources>
-    <style name="Theme.Cere" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@color/cere_window</item>
+    <style name="Theme.PAL" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/pal_window</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>

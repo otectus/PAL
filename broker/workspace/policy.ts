@@ -4,7 +4,7 @@
  *
  * This is deliberately separate from the notes vault's confinedPath(), which refuses every hidden path
  * component. Ordinary project configuration such as .gitignore or .editorconfig is readable here when a
- * root allows hidden files or the file is named exactly; credential files and Cere's own state never are.
+ * root allows hidden files or the file is named exactly; credential files and PAL's own state never are.
  */
 import { homedir } from 'node:os';
 import { join, relative, isAbsolute, sep } from 'node:path';
@@ -36,13 +36,13 @@ export function privateLocations(): string[] {
   const home = homedir(), state = paths();
   return [...registered, state.state, state.config, state.runtime, join(home, '.ssh'), join(home, '.gnupg'), join(home, '.password-store'), join(home, '.local/share/keyrings'),
     join(home, '.mozilla'), join(home, '.config/google-chrome'), join(home, '.config/chromium'), join(home, '.config/BraveSoftware'), join(home, '.aws'), join(home, '.kube'),
-    join(home, '.docker'), join(home, '.config/gh'), join(home, '.codex'), join(home, '.claude'), join(home, '.local/share/cere')];
+    join(home, '.docker'), join(home, '.config/gh'), join(home, '.codex'), join(home, '.claude'), join(home, '.local/share/pal'), join(home, '.local/share/cere')];
 }
 const inside = (parent: string, child: string) => { const rel = relative(parent, child); return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel)); };
 /** Why a folder cannot be a root, or '' when it can. */
 export function forbiddenRoot(path: string) {
   if (path === '/') return 'The whole filesystem cannot be a workspace folder. Choose a project folder.';
-  for (const location of privateLocations()) if (inside(location, path)) return 'This folder holds credentials or Cere’s private state and cannot be a workspace folder.';
+  for (const location of privateLocations()) if (inside(location, path)) return 'This folder holds credentials or PAL’s private state and cannot be a workspace folder.';
   return '';
 }
 /** Private locations inside a root, as root-relative paths for the helper to skip. */
@@ -90,7 +90,7 @@ export async function sessionRoute(session: Session, settings: Settings, signal?
     return declared && declared !== 'unknown' ? { route: declared, evidence: 'Declared for the compatible endpoint in Settings; not verified' } : { route: 'unknown', evidence: 'The compatible endpoint’s processing location was not declared' };
   }
   if (isApiProvider(session.provider)) return { route: 'cloud', evidence: 'Hosted API' };
-  if (session.provider !== 'ollama' || !session.ollama) return { route: 'unknown', evidence: 'Not a Cere-managed conversation' };
+  if (session.provider !== 'ollama' || !session.ollama) return { route: 'unknown', evidence: 'Not a PAL-managed conversation' };
   const host = ollamaHost(session.ollama.host), key = host + '\n' + session.model, cached = routeCache.get(key);
   if (cached && cached.until > Date.now()) return { route: cached.route, evidence: cached.evidence };
   const verified = await modelRoute(host, session.model, signal);

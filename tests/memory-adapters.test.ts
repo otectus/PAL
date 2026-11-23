@@ -163,7 +163,7 @@ test('live workspace rejects out-of-order observations and expires current state
 });
 
 test('repository inspection assigns an opaque stable runtime UUID to verified checkout metadata', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-checkout-')); t.after(() => rm(directory, { recursive: true, force: true }));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-checkout-')); t.after(() => rm(directory, { recursive: true, force: true }));
   await execFileAsync('git', ['init', '--quiet', directory]);
   const first = await inspectGitCheckout(directory), second = await inspectGitCheckout(directory);
   assert.match(first.checkoutId, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u);
@@ -172,13 +172,13 @@ test('repository inspection assigns an opaque stable runtime UUID to verified ch
 });
 
 test('Fish emitter serializes hostile paths without commands and fails quietly when the daemon is absent', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-emitter-')), socketPath = join(directory, 'memory.sock');
+  const directory = await mkdtemp(join(tmpdir(), 'pal-emitter-')), socketPath = join(directory, 'memory.sock');
   t.after(() => rm(directory, { recursive: true, force: true }));
   let received = '';
   const server = createServer(socket => socket.on('data', chunk => { received += chunk; }));
   await new Promise<void>(resolveListen => server.listen(socketPath, resolveListen));
   t.after(() => new Promise<void>(resolveClose => server.close(() => resolveClose())));
-  const emitter = resolve('broker/graph-memory/adapters/fish/cere-memory-emitter.py');
+  const emitter = resolve('broker/graph-memory/adapters/fish/pal-memory-emitter.py');
   const cwd = '/tmp/a, "quote"\nユニコード';
   const child = spawn(emitter, ['--event', 'posterror', '--session-id', '00000000-0000-4000-8000-000000000001', '--sequence', '2', '--cwd', cwd, '--status', '17', '--pipeline-status', '0', '--pipeline-status', '17', '--socket', socketPath]);
   assert.equal((await once(child, 'close'))[0], 0);

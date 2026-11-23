@@ -71,7 +71,7 @@ CDialog {
 
     CText { text:center.accessibleTitle;font.pixelSize:Theme.title;font.weight:Font.DemiBold;Accessible.role:Accessible.Heading }
     CText {
-        text:"Review Cere’s standing desktop permissions and grant short, project-bound power access to an idle managed session. Existing permission requests still need your answer."
+        text:"Review PAL’s standing desktop permissions and grant short, project-bound power access to an idle managed session. Existing permission requests still need your answer."
         color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap
     }
     CText {
@@ -80,7 +80,7 @@ CDialog {
         color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap
     }
     CText {
-        text:"Power access changes Cere and provider permission handling for the selected sessions. It is not operating-system containment and cannot constrain processes outside Cere."
+        text:"Power access changes PAL and provider permission handling for the selected sessions. It is not operating-system containment and cannot constrain processes outside PAL."
         color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap
     }
 
@@ -89,6 +89,7 @@ CDialog {
         text:"Persistent permission skipping: "+[center.inspection.persistent?.cli?"CLI":"",center.inspection.persistent?.computer?"computer":""].filter(value=>value).join(" + ")+". Change these switches in Settings → AI assistance."
         color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap
     }
+    CText { visible:App.connected&&!center.inspectionReady&&center.inspectRequest>=0;text:qsTr("Checking current grants…");color:Theme.muted }
     CText { visible:!App.connected;text:qsTr("Reconnect to review or change access.");color:Theme.amber }
     SectionLabel { text:"SELECTED SESSION";Accessible.role:Accessible.Heading }
     CText {
@@ -109,7 +110,7 @@ CDialog {
     CCheckBox { id:cliAccess;objectName:"powerCliAccess";visible:center.inspectionReady&&!!center.sessionId;text:"CLI full access";checked:false;enabled:!center.selectedAccess.leaseId }
     CText { visible:center.inspectionReady&&!!center.sessionId;text:"Launch this session’s provider without its permission prompts or optional sandbox for the lease duration.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
     CCheckBox { id:computerAccess;objectName:"powerComputerAccess";visible:center.inspectionReady&&!!center.sessionId;text:"Computer control";checked:false;enabled:!center.selectedAccess.leaseId }
-    CText { visible:center.inspectionReady&&!!center.sessionId;text:"Allow Cere desktop tools and captures for this session without category prompts during the lease.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
+    CText { visible:center.inspectionReady&&!!center.sessionId;text:"Allow PAL desktop tools and captures for this session without category prompts during the lease.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
     RowLayout {
         visible:center.inspectionReady&&!!center.sessionId;Layout.fillWidth:true
         CText { text:"Duration";font.pixelSize:Theme.secondary;Layout.fillWidth:true }
@@ -126,12 +127,12 @@ CDialog {
     }
 
     SectionLabel { text:"ACTIVE & RECENT LEASES";Accessible.role:Accessible.Heading;Layout.topMargin:Theme.space1 }
-    CText { visible:!(center.inspection.power||[]).length;text:"No power leases in this broker process.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { visible:center.inspectionReady&&!(center.inspection.power||[]).length;text:"No power leases in this broker process.";color:Theme.muted;font.pixelSize:Theme.secondary }
     Repeater {
         model:center.inspection.power||[]
         ColumnLayout {
             required property var modelData
-            Layout.fillWidth:true;spacing:5
+            Layout.fillWidth:true;spacing:Theme.space1
             CText {
                 text:center.accessLabel(modelData)+" · "+modelData.state+(modelData.state==="active"?" · "+center.remaining(modelData.expiresAt):"")
                 color:modelData.state==="active"?Theme.amber:modelData.state==="unconfirmed"?Theme.danger:Theme.text
@@ -145,15 +146,15 @@ CDialog {
                 danger:true;enabled:App.connected && (modelData.state==="active"||modelData.state==="unconfirmed")&&center.actionRequest<0
                 onClicked:center.call("power.end",{id:modelData.id})
             }
-            Rectangle { Layout.fillWidth:true;implicitHeight:1;color:Theme.line }
+            Rectangle { Layout.fillWidth:true;implicitHeight:Theme.hairline;color:Theme.line }
         }
     }
 
-    SectionLabel { text:"CERE ACTIONS";Accessible.role:Accessible.Heading;Layout.topMargin:Theme.space1 }
+    SectionLabel { text:"PAL ACTIONS";Accessible.role:Accessible.Heading;Layout.topMargin:Theme.space1 }
     CText { text:"Profile: "+(center.inspection.profile||"manual")+" · enabled categories: "+((center.inspection.categories||[]).join(", ")||"none");color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     CButton {
-        objectName:"pauseCereActions";Layout.fillWidth:true
-        text:center.inspection.paused?"Resume Cere actions":"Pause Cere actions"
+        objectName:"pausePALActions";Layout.fillWidth:true
+        text:center.inspection.paused?"Resume PAL actions":"Pause PAL actions"
         onClicked:center.call("settings.update",{paused:!center.inspection.paused})
     }
     CButton {
@@ -164,7 +165,7 @@ CDialog {
 
     CText { text:center.selectedAccess.termination||"";visible:text.length>0;color:Theme.amber;wrapMode:Text.Wrap }
     SectionLabel { text:"STANDING PROJECT GRANTS";Accessible.role:Accessible.Heading;Layout.topMargin:Theme.space1 }
-    CText { visible:!(center.inspection.grants||[]).length;text:"No standing desktop grants.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { visible:center.inspectionReady&&!(center.inspection.grants||[]).length;text:"No standing desktop grants.";color:Theme.muted;font.pixelSize:Theme.secondary }
     Repeater {
         model:center.inspection.grants||[]
         RowLayout {
@@ -189,10 +190,10 @@ CDialog {
     Connections {
         target:App
         function onResult(id,value){
-            if(id===center.inspectRequest){center.inspectRequest=-1;if(value?.error)center.error=value.error;else{center.inspection=value||({});center.inspectionReady=true}return}
+            if(id===center.inspectRequest){center.inspectRequest=-1;if(value?.error){center.inspectionReady=false;center.error=String(value.error.message||value.error)}else{center.inspection=value||({});center.inspectionReady=true}return}
             if(id!==center.actionRequest)return
             center.actionRequest=-1
-            if(value?.error){center.error=value.error;return}
+            if(value?.error){center.error=String(value.error.message||value.error);return}
             if(center.action==="power.start"){cliAccess.checked=false;computerAccess.checked=false}
             center.inspect()
         }

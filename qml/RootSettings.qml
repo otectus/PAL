@@ -29,9 +29,9 @@ CDialog {
         else rpc.call("workspace.updateRoot", { sessionId: sessionId, rootId: root.id, policy: policy(), expectedRevision: root.revision, primary: primary.checked }, done)
     }
     CText { text: dialog.adding ? "Add a workspace folder" : "Folder permissions"; font.pixelSize: Theme.title; font.bold: true }
-    CText { objectName: "rootSettingsPath"; text: dialog.root.path || ""; font.family: "monospace"; font.pixelSize: Theme.secondary; color: Theme.accentText; wrapMode: Text.WrapAnywhere }
-    CText { text: "This conversation can list, search and read files here. Credential files, version-control internals and Cere’s own data are never read for a model."; color: Theme.muted; font.pixelSize: Theme.secondary }
-    SectionLabel { text: "What Cere may do" }
+    CText { objectName: "rootSettingsPath"; text: dialog.root.path || ""; font.family: Theme.mono; font.pixelSize: Theme.secondary; color: Theme.accentText; wrapMode: Text.WrapAnywhere }
+    CText { text: "This conversation can list, search and read files here. Credential files, version-control internals and PAL’s own data are never read for a model."; color: Theme.muted; font.pixelSize: Theme.secondary }
+    SectionLabel { text: "What PAL may do" }
     CCheckBox { id: write; objectName: "rootWrite"; text: "Create and edit text files (you review each change)" }
     CCheckBox { id: organize; objectName: "rootOrganize"; text: "Organize: new folders, copy, move and trash (you review each set)" }
     CCheckBox { id: hidden; objectName: "rootHidden"; text: "Include hidden files in listings and search" }
@@ -43,9 +43,9 @@ CDialog {
     CText { text: "A model whose processing location is not allowed here cannot read this folder, and earlier excerpts are withheld from it."; color: Theme.muted; font.pixelSize: Theme.caption }
     CCheckBox { id: primary; objectName: "rootPrimary"; text: "Primary folder (used when the model names no folder)" }
     ColumnLayout {
-        visible: !dialog.adding && write.checked; Layout.fillWidth: true; spacing: 6
+        visible: !dialog.adding && write.checked; Layout.fillWidth: true; spacing: Theme.space2
         SectionLabel { text: "Edit permission" }
-        CText { text: "Let Cere apply small text edits in this folder without asking each time. Moves, trash and commands are never covered."; color: Theme.muted; font.pixelSize: Theme.secondary }
+        CText { text: "Let PAL apply small text edits in this folder without asking each time. Moves, trash and commands are never covered."; color: Theme.muted; font.pixelSize: Theme.secondary }
         RowLayout {
             Layout.fillWidth: true
             CSpinBox { id: minutes; from: 5; to: 240; stepSize: 5; value: 30; Accessible.name: "Minutes" }
@@ -66,7 +66,7 @@ CDialog {
     }
     CText { visible: !!dialog.error; text: dialog.error; color: Theme.danger; font.pixelSize: Theme.secondary; Accessible.role: Accessible.AlertMessage }
     RowLayout {
-        Layout.fillWidth: true; spacing: 8
+        Layout.fillWidth: true; spacing: Theme.space2
         CButton { objectName: "rootRemove"; visible: !dialog.adding; text: "Remove folder"; danger: true; onClicked: rpc.call("workspace.removeRoot", { sessionId: dialog.sessionId, rootId: dialog.root.id }, value => { if (value.error) dialog.error = value.error; else { dialog.saved(); dialog.close() } }) }
         Item { Layout.fillWidth: true }
         CButton { text: "Cancel"; onClicked: dialog.close() }

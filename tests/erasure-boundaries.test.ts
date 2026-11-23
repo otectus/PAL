@@ -21,7 +21,7 @@ test('erasure text matching preserves unrelated words while finding copied passa
 });
 
 test('working-copy erasure uses source identities and removes actual copied files',async()=>{
-  const directory=await mkdtemp(join(tmpdir(),'cere-erasure-boundaries-'));
+  const directory=await mkdtemp(join(tmpdir(),'pal-erasure-boundaries-'));
   const store=new Store(directory);
   try{
     const phrase='the orchid release phrase',session:Session={id:'session',provider:'codex',nativeId:null,title:'Yesterday plan',cwd:directory,mode:'managed',status:'idle',created:1,updated:1,draft:'Notes: '+phrase,scroll:0,draftAttachments:[],model:''};

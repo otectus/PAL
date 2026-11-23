@@ -28,7 +28,7 @@ test('shared mobile canonical JSON, hash and P-256 signature fixtures conform',a
 });
 async function port() {const server=net.createServer();await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const p=(server.address() as net.AddressInfo).port;await new Promise<void>(r=>server.close(()=>r()));return p;}
 async function fixture(t:any) {
-  const directory=await mkdtemp(join(tmpdir(),'cere-mobile-test-'));let sends=0,sent:{text:string;images:string[]}|undefined;const hooks=new Map<string,Hooks>();
+  const directory=await mkdtemp(join(tmpdir(),'pal-mobile-test-'));let sends=0,sent:{text:string;images:string[]}|undefined;const hooks=new Map<string,Hooks>();
   const core=new Core(new Store(directory),(session,h)=>{hooks.set(session.id,h);return {async send(text,images,options){sends++;sent={text,images:images||[]};h.policy?.(true);options?.beforeAccept?.();options?.onDispatched?.();options?.onAccepted?.();},async interrupt(){h.event({type:'interrupted'});},async close(){}};});
   // One cleanup owner, released in reverse order: client sockets, then every gateway (a replacement
   // included), then Core and its store, then the directory. No gateway callback can outlive the store.
@@ -74,7 +74,7 @@ async function connect(t:any,f:Awaited<ReturnType<typeof fixture>>) {
 test('mobile offline pairing opens no listener before confirmation, scopes snapshots and revokes the last connection',async t=>{
   const f=await fixture(t),client=await connect(t,f);
   const mine=await f.core.create({provider:'codex',cwd:f.directory,trusted:true});
-  const outside=await mkdtemp(join(tmpdir(),'cere-other-'));t.after(()=>rm(outside,{recursive:true,force:true}));
+  const outside=await mkdtemp(join(tmpdir(),'pal-other-'));t.after(()=>rm(outside,{recursive:true,force:true}));
   await f.core.create({provider:'codex',cwd:outside,trusted:true,title:'SECRET OUTSIDE PROJECT'});
   const snapshot=(await client.request('sync.open',{})).result;
   assert.deepEqual(snapshot.sessions.map((s:any)=>s.id),[mine.id]);assert.ok(!JSON.stringify(snapshot).includes('SECRET OUTSIDE PROJECT'));
@@ -238,7 +238,7 @@ test('remote parser rejects extra fields and unsafe IDs; accepted operations bec
   assert.throws(()=>methods['sessions.organize'].parse({sessionId:randomUUID(),expectedRevision:'0',pinned:true,folderId:randomUUID()}));
   assert.deepEqual((methods['sessions.configure'].parse({sessionId:randomUUID(),model:'codex-next',effort:'high',tools:false,expectedConfigRevision:'0'}) as any).effort,'high');
   assert.throws(()=>methods['desktop.execute'].parse({projectId:randomUUID(),action:'script.run',args:{},role:'ui'}));
-  const directory=await mkdtemp(join(tmpdir(),'cere-mobile-ledger-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+  const directory=await mkdtemp(join(tmpdir(),'pal-mobile-ledger-'));t.after(()=>rm(directory,{recursive:true,force:true}));
   const store=new Store(directory),remote=new RemoteStore(store),device=randomUUID(),id=randomUUID();
   remote.accept(device,id,'desktop.execute',{action:'audio.mute'});store.close();
   const reopened=new Store(directory),registry=new RemoteStore(reopened);try{assert.equal(registry.status(device,id).status,'unknown');assert.throws(()=>registry.prior(device,id,'desktop.execute',{action:'other'}),/command ID/);}finally{reopened.close();}
@@ -415,7 +415,7 @@ test('erasure epoch also removes retained command content and memory revision in
 });
 
 test('remote graph work is bounded inside the canonical worker before inspection or erasure',async t=>{
-  const directory=await mkdtemp(join(tmpdir(),'cere-mobile-graph-')),c=new Canonical(directory);t.after(async()=>{c.close();await rm(directory,{recursive:true,force:true});});
+  const directory=await mkdtemp(join(tmpdir(),'pal-mobile-graph-')),c=new Canonical(directory);t.after(async()=>{c.close();await rm(directory,{recursive:true,force:true});});
   const scope=c.registerScope({key:'mobile-test',label:'Fixture'}).id,preview=await c.call('mobile_forget_preview',{scope_id:scope});assert.equal(preview.count,0);
   c.db.exec('BEGIN');for(let n=0;n<2049;n++)c.run('INSERT INTO lineage VALUES (?,?,?,?)','derived-'+n,'root','test',1);c.db.exec('COMMIT');
   await assert.rejects(c.call('mobile_forget_preview',{scope_id:scope}),{code:'LIMIT_EXCEEDED'});await assert.rejects(c.call('mobile_inspect',{scope_id:scope,id:randomUUID()}),{code:'LIMIT_EXCEEDED'});
@@ -468,7 +468,7 @@ test('a transient bind failure retries without poisoning gateway lifecycle',asyn
 // reaches a conversation only when the phone attaches that exact image (by digest) and sends it.
 test('a phone-started capture is previewed, attached by its exact digest, sent, and cancelled or discarded cleanly',async t=>{
   const f=await fixture(t);
-  const bin=await mkdtemp(join(tmpdir(),'cere-capture-bin-')),png=join(bin,'display.png');t.after(()=>rm(bin,{recursive:true,force:true}));
+  const bin=await mkdtemp(join(tmpdir(),'pal-capture-bin-')),png=join(bin,'display.png');t.after(()=>rm(bin,{recursive:true,force:true}));
   await sharp({create:{width:320,height:200,channels:3,background:{r:40,g:90,b:160}}}).png().toFile(png);
   const script=(name:string,body:string)=>writeFile(join(bin,name),'#!/bin/sh\n'+body+'\n',{mode:0o755});
   await script('hyprctl',`echo '[{"name":"FAKE-1","focused":true,"disabled":false}]'`);
@@ -515,7 +515,7 @@ test('the phone reviews a desktop draft\'s attachments, keeps or removes them ex
   const device=f.gateway.registry.live(f.device.id)!,scoped={...f,device},client=await connect(t,scoped),projectId=device.projects[0].id;
   const session=(await client.action('sessions.create',{provider:'codex',projectId,tools:false},scoped)).result;
   // The desktop attaches an image and a text file to the draft.
-  const files=await mkdtemp(join(tmpdir(),'cere-draft-files-'));t.after(()=>rm(files,{recursive:true,force:true}));
+  const files=await mkdtemp(join(tmpdir(),'pal-draft-files-'));t.after(()=>rm(files,{recursive:true,force:true}));
   await sharp({create:{width:64,height:48,channels:3,background:{r:200,g:30,b:30}}}).png().toFile(join(files,'chart.png'));
   await writeFile(join(files,'notes.txt'),'Quarterly notes\n');
   f.core.draft(session.id,'Desktop draft');
@@ -555,7 +555,7 @@ test('the phone reviews a desktop draft\'s attachments, keeps or removes them ex
 test('the phone pins and unpins replies the desktop shows as bookmarks, within its own conversations',async t=>{
   const f=await fixture(t),client=await connect(t,f),projectId=f.device.projects[0].id;
   const session=(await client.action('sessions.create',{provider:'codex',projectId,title:'Pins',tools:false},f)).result;
-  const elsewhere=await mkdtemp(join(tmpdir(),'cere-pins-outside-'));t.after(()=>rm(elsewhere,{recursive:true,force:true}));
+  const elsewhere=await mkdtemp(join(tmpdir(),'pal-pins-outside-'));t.after(()=>rm(elsewhere,{recursive:true,force:true}));
   const outside=await f.core.create({provider:'codex',cwd:elsewhere,trusted:true});
   const reply={id:randomUUID(),sessionId:session.id,role:'assistant',kind:'text',text:'Use Ruff for formatting.',time:Date.now()} as any;
   const hidden={id:randomUUID(),sessionId:outside.id,role:'assistant',kind:'text',text:'Outside reply',time:Date.now()} as any;
@@ -587,11 +587,11 @@ test('the phone reads a conversation\'s style source, results and schedules and 
   const cwd=f.core.store.session(session.id).cwd,now=Date.now();
   f.core.store.set('workflow:results',[{id:session.id+':turn',sessionId:session.id,cwd,time:now,providerOutcome:'completed',verification:'not-run',observed:[]}]);
   const schedule=(id:string,sourceSessionId:string)=>({id,label:'Nightly check',enabled:true,revision:'3',created:now,recipeId:'recipe',recipeVersion:1,recipeRevision:'1',authorizationRevision:'1',inputs:{},sourceSessionId,promptDigest:'digest',envelope:{},when:{kind:'daily',time:'08:00'},timeZone:'UTC',next:now+3600000});
-  const elsewhere=await mkdtemp(join(tmpdir(),'cere-schedules-outside-'));t.after(()=>rm(elsewhere,{recursive:true,force:true}));
+  const elsewhere=await mkdtemp(join(tmpdir(),'pal-schedules-outside-'));t.after(()=>rm(elsewhere,{recursive:true,force:true}));
   const outside=await f.core.create({provider:'codex',cwd:elsewhere,trusted:true});
   f.core.store.set('workflow:schedules',[schedule('mine',session.id),schedule('theirs',outside.id)]);
   const status=(await client.request('workflows.status',{sessionId:session.id})).result;
-  assert.deepEqual(status.results.map((r:any)=>[r.providerOutcome,r.verification,r.gate]),[['completed','not-run','none']],'the provider\'s report and Cere\'s own verification stay distinct');
+  assert.deepEqual(status.results.map((r:any)=>[r.providerOutcome,r.verification,r.gate]),[['completed','not-run','none']],'the provider\'s report and PAL\'s own verification stay distinct');
   assert.match(status.results[0].uncertainty,/verification/i);
   assert.deepEqual(status.schedules.map((x:any)=>[x.id,x.enabled]),[['mine',true]],'only this conversation\'s schedules');
   assert.ok(!JSON.stringify(status).includes(elsewhere),'nothing of the other project is shown');
@@ -608,7 +608,7 @@ test('the phone reads a conversation\'s style source, results and schedules and 
 test('the phone gets the desktop portrait, opens a linked terminal, and reads scoped workspace and memory health',async t=>{
   const f=await fixture(t);
   await f.core.updateSettings({memory:{enabled:true},categories:['windows']});await f.core.memory.ready;
-  const bin=await mkdtemp(join(tmpdir(),'cere-terminal-bin-'));t.after(()=>rm(bin,{recursive:true,force:true}));
+  const bin=await mkdtemp(join(tmpdir(),'pal-terminal-bin-'));t.after(()=>rm(bin,{recursive:true,force:true}));
   const log=join(bin,'calls.log');
   await writeFile(join(bin,'hyprctl'),`#!/bin/sh\necho "$*" >> '${log}'\ncase "$*" in\n  "-j clients") [ -f '${bin}/gone' ] && echo '[]' || echo '[{"address":"0xabc","title":"kitty","class":"kitty","workspace":{"id":1}}]';;\n  eval*) echo 'unsupported';;\n  dispatch*) echo ok;;\nesac\n`,{mode:0o755});
   const path=process.env.PATH;process.env.PATH=bin+':'+path;t.after(()=>{process.env.PATH=path;});
@@ -659,7 +659,7 @@ test('the phone gets the desktop portrait, opens a linked terminal, and reads sc
 test('phone operations without a dedicated test work in scope and are refused outside it',async t=>{
   const f=await fixture(t);
   await f.core.updateSettings({memory:{enabled:true},categories:['apps','windows','timers']});await f.core.memory.ready;
-  const bin=await mkdtemp(join(tmpdir(),'cere-ops-bin-')),elsewhere=await mkdtemp(join(tmpdir(),'cere-ops-outside-'));
+  const bin=await mkdtemp(join(tmpdir(),'pal-ops-bin-')),elsewhere=await mkdtemp(join(tmpdir(),'pal-ops-outside-'));
   t.after(()=>Promise.all([rm(bin,{recursive:true,force:true}),rm(elsewhere,{recursive:true,force:true})]));
   await writeFile(join(bin,'hyprctl'),`#!/bin/sh\necho '[{"address":"0x1","title":"Notes","class":"kitty","workspace":{"id":2},"pid":1}]'\n`,{mode:0o755});
   await mkdir(join(bin,'share','applications'),{recursive:true});
@@ -993,7 +993,7 @@ test('phones clear Unread, receive scoped completion and timer notices, and see 
   await client.request('sync.open',{});
   const read=await client.request('sessions.read',{sessionId:s.id},randomUUID());
   assert.equal(read.result.unread,false);assert.equal(f.core.store.session(s.id).unread,false);
-  const outside=await mkdtemp(join(tmpdir(),'cere-notice-'));t.after(()=>rm(outside,{recursive:true,force:true}));
+  const outside=await mkdtemp(join(tmpdir(),'pal-notice-'));t.after(()=>rm(outside,{recursive:true,force:true}));
   const hidden=await f.core.create({provider:'codex',cwd:outside,trusted:true,title:'Hidden'});
   f.core.emit('notice',{kind:'complete',sessionId:hidden.id,text:'Task complete'});
   f.core.emit('notice',{kind:'error',sessionId:s.id,text:'/home/secret/path failed'});
@@ -1014,8 +1014,8 @@ test('phones clear Unread, receive scoped completion and timer notices, and see 
 });
 test('a shared pairing response file is read only for its response URI',async t=>{
   const f=await fixture(t),file=join(f.directory,'response.txt');
-  await writeFile(file,'Cere pairing response\ncere-pair://v1/abc_DEF-123\ntrailing words');
+  await writeFile(file,'PAL pairing response\ncere-pair://v1/abc_DEF-123\ntrailing words');
   assert.deepEqual(await f.gateway.local('remote.readPairResponse',{path:file}),{response:'cere-pair://v1/abc_DEF-123'});
   await writeFile(file,'no response here');
-  await assert.rejects(f.gateway.local('remote.readPairResponse',{path:file}),/does not contain a Cere pairing response/);
+  await assert.rejects(f.gateway.local('remote.readPairResponse',{path:file}),/does not contain a PAL pairing response/);
 });

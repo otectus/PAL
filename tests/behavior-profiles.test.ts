@@ -13,7 +13,7 @@ import type { BehaviorProfile } from '../broker/behavior.ts';
 const profile = (patch: Partial<BehaviorProfile>): BehaviorProfile => ({ id: 'p', label: 'P', text: 'Be calm.', traits: {}, instructions: '', ceiling: {}, posture: false, revision: '1', created: 0, updated: 0, ...patch });
 
 test('M01 with nothing chosen, the behavior block is the personality block byte for byte', () => {
-  for (const personality of [defaultPersonality, '', 'Be terse.\nNo jokes.']) for (const name of ['Cere', 'Nova', '“Étoile”'])
+  for (const personality of [defaultPersonality, '', 'Be terse.\nNo jokes.']) for (const name of ['PAL', 'Nova', '“Étoile”'])
     assert.equal(behaviorInstructions(resolveBehavior({ personality, profiles: [] }), name), personalityInstructions(personality, name));
 });
 
@@ -38,10 +38,10 @@ test('M01 resolution is deterministic: conversation, then project, then global; 
   const missing = resolveBehavior({ personality: 'Global.', profiles, projectProfileId: 'project', sessionProfileId: 'deleted' });
   assert.equal(missing.source, 'project'); assert.match(missing.warnings[0], /no longer exists/);
   // Rendering names the posture's duration and the withheld tools; neutral traits emit nothing.
-  const block = behaviorInstructions(withPosture, 'Cere');
+  const block = behaviorInstructions(withPosture, 'PAL');
   assert.match(block, /Current posture: Review, pinned to this conversation until the user changes it\./);
-  assert.match(block, /withholds Cere's web, desktop, delegation, extension, file-change, image, analysis tools/);
-  assert.doesNotMatch(behaviorInstructions(resolveBehavior({ personality: 'x', profiles: [profile({ traits: validTraits({ verbosity: 0, humor: 0 }) })], sessionProfileId: 'p' }), 'Cere'), /Conversation preferences/);
+  assert.match(block, /withholds PAL's web, desktop, delegation, extension, file-change, image, analysis tools/);
+  assert.doesNotMatch(behaviorInstructions(resolveBehavior({ personality: 'x', profiles: [profile({ traits: validTraits({ verbosity: 0, humor: 0 }) })], sessionProfileId: 'p' }), 'PAL'), /Conversation preferences/);
   assert.throws(() => validTraits({ verbosity: 3 }), /-2 to 2/);
   assert.throws(() => validTraits({ charm: 1 }), /Traits are/);
 });
@@ -57,7 +57,7 @@ test('M02 output checks annotate prose only and never edit it', () => {
 test('RC-06 emoji are what a reader sees as emoji, and every GFM table shape is a table, outside code', () => {
   const emoji = (text: string) => checkReply(text, ['no-emoji'])[0]?.count ?? 0;
   for (const [text, count] of [['😀', 1], ['👍🏽', 1], ['❤️', 1], ['🇺🇸', 1], ['👨‍👩‍👧', 1], ['✅ done', 1], ['😀 and 🇺🇸 and ❤️', 3]] as const) assert.equal(emoji(text), count, text);
-  for (const text of ['©', '®', '™', '→', '↔', '•', '✓', 'Copyright © 2026, Cere™ ↔ ok ✓']) assert.equal(emoji(text), 0, text);
+  for (const text of ['©', '®', '™', '→', '↔', '•', '✓', 'Copyright © 2026, PAL™ ↔ ok ✓']) assert.equal(emoji(text), 0, text);
   const tables = (text: string) => checkReply(text, ['no-markdown-table'])[0]?.count ?? 0;
   for (const text of ['a | b\n--- | ---\n1 | 2', '| a |\n| --- |\n| 1 |', '| a | b |\n|-|-|\n| 1 | 2 |', 'a | b\n:-- | --:\n1 | 2', '| A | B |\n|---|---|\n| 1 | 2 |'])
     assert.equal(tables(text), 1, JSON.stringify(text));
@@ -67,13 +67,13 @@ test('RC-06 emoji are what a reader sees as emoji, and every GFM table shape is 
 
 const idle = () => ({ async send() {}, async interrupt() {}, async close() {} });
 async function broker(t: any, factory: any = idle) {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-behavior-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-behavior-'));
   const core = new Core(new Store(dir), factory);
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   return { core, dir };
 }
 
-test('M01 a style can withhold Cere tools but never add any, for API/Ollama and CLI conversations alike', async t => {
+test('M01 a style can withhold PAL tools but never add any, for API/Ollama and CLI conversations alike', async t => {
   const { core, dir } = await broker(t);
   core.capabilities.ollama = { available: true, modelsStatus: 'ready', models: [{ id: 'm', displayName: 'm', description: '', efforts: [], defaultEffort: '', isDefault: true, capabilities: ['completion', 'tools'] }] };
   await core.updateSettings({ categories: ['timers', 'apps'], webSearch: { enabled: true } });
@@ -89,7 +89,7 @@ test('M01 a style can withhold Cere tools but never add any, for API/Ollama and 
   await core.rpc('session.behavior', { id: ollama.id, profileId: null });
   await core.updateSettings({ categories: [] });
   assert.ok(!names().some(name => name.startsWith('timer_') || name.startsWith('apps_')));
-  // CLI conversations: Cere's MCP tools follow the same ceiling.
+  // CLI conversations: PAL's MCP tools follow the same ceiling.
   await core.updateSettings({ categories: ['timers'] });
   const codex = await core.create({ provider: 'codex', cwd: dir, trusted: true });
   core.ensureAdapter(core.store.session(codex.id));
@@ -154,9 +154,9 @@ test('M02 checkpoints are immutable, restoring makes a new revision, and checked
   const reply = core.store.messages(session.id).find(message => message.role === 'assistant')!;
   assert.equal(reply.text, 'Shipped 🎉 — done.');
   assert.deepEqual(reply.styleNotes!.map(note => note.constraint), ['no-emoji', 'no-em-dash']);
-  // A catalog from a newer Cere is refused rather than rewritten.
+  // A catalog from a newer PAL is refused rather than rewritten.
   core.store.set('behaviorPresets', { schema: 3, revision: '1', items: [] });
-  await assert.rejects(core.rpc('presets.list', {}), /newer version of Cere/);
+  await assert.rejects(core.rpc('presets.list', {}), /newer version of PAL/);
 });
 
 test('RC-02 a recall limit narrows like any other, renders only when set, and can never turn recall on', () => {
@@ -167,9 +167,9 @@ test('RC-02 a recall limit narrows like any other, renders only when set, and ca
   assert.deepEqual([noMemory.label, noMemory.ceiling, noMemory.posture], ['Without memory', { recall: false, memory: false }, true]);
   const resolved = resolveBehavior({ personality: defaultPersonality, profiles: [profile({ id: 'base' })], sessionProfileId: 'base', postureId: 'posture:no-memory' });
   assert.deepEqual(resolved.ceiling, { recall: false, memory: false });
-  const block = behaviorInstructions(resolved, 'Cere');
-  assert.match(block, /withholds Cere's memory tools/); assert.match(block, /withholds automatic memory recall: no stored memory is supplied/);
-  assert.doesNotMatch(behaviorInstructions(resolveBehavior({ personality: defaultPersonality, profiles: [profile({ id: 'base', ceiling: { memory: false } })], sessionProfileId: 'base' }), 'Cere'), /recall/);
+  const block = behaviorInstructions(resolved, 'PAL');
+  assert.match(block, /withholds PAL's memory tools/); assert.match(block, /withholds automatic memory recall: no stored memory is supplied/);
+  assert.doesNotMatch(behaviorInstructions(resolveBehavior({ personality: defaultPersonality, profiles: [profile({ id: 'base', ceiling: { memory: false } })], sessionProfileId: 'base' }), 'PAL'), /recall/);
 });
 
 test('RC-02 a pinned Without memory posture keeps memory out of a CLI turn, still arms capture, and memory off stays off', async t => {
@@ -184,10 +184,10 @@ test('RC-02 a pinned Without memory posture keeps memory out of a CLI turn, stil
   const send = async (text: string) => { await core.rpc('session.send', { id: session.id, text }); for (let index = 0; index < 400 && core.store.session(session.id).status !== 'idle'; index++) await new Promise(resolve => setTimeout(resolve, 5)); };
   const outcome = () => { const [latest] = core.memory.outcomes(session.id); return [latest.outcome, latest.reason]; };
   await send('When is the orchid launch?');
-  assert.match(sent.at(-1)!, /<cere_memory_data>/); assert.match(sent.at(-1)!, /moved to Friday/);
+  assert.match(sent.at(-1)!, /<pal_memory_data>/); assert.match(sent.at(-1)!, /moved to Friday/);
   await core.rpc('session.behavior', { id: session.id, postureId: 'posture:no-memory' });
   await send('Is the orchid launch still on Friday?');
-  assert.doesNotMatch(sent.at(-1)!, /<cere_memory_data>|moved to Friday/);
+  assert.doesNotMatch(sent.at(-1)!, /<pal_memory_data>|moved to Friday/);
   assert.deepEqual(outcome(), ['disabled', 'style_withheld']);
   assert.deepEqual(armed, [true, true], 'both turns keep their memory capture');
   await core.updateSettings({ memory: { enabled: false } });
@@ -205,8 +205,8 @@ test('RC-07 conflicting traits warn, a posture can create the conflict, and what
   assert.deepEqual(resolveBehavior({ personality: defaultPersonality, profiles: [base], sessionProfileId: 'base' }).conflicts, []);
   const merged = resolveBehavior({ personality: defaultPersonality, profiles: [base], sessionProfileId: 'base', postureId: 'posture:explain' });
   assert.match(merged.conflicts.join(), /Blunt directness/, 'the Explain posture adds warmth to a blunt style');
-  assert.equal(behaviorInstructions(merged, 'Cere'), behaviorInstructions({ ...merged, conflicts: [] }, 'Cere'));
-  assert.doesNotMatch(behaviorInstructions(merged, 'Cere'), /mixed signals/);
+  assert.equal(behaviorInstructions(merged, 'PAL'), behaviorInstructions({ ...merged, conflicts: [] }, 'PAL'));
+  assert.doesNotMatch(behaviorInstructions(merged, 'PAL'), /mixed signals/);
   const { core, dir } = await broker(t);
   const style = await core.rpc('presets.save', { label: 'Blunt friend', text: 'Be yourself.', traits: { directness: 2, warmth: 1 }, expectedRevision: '0' });
   assert.equal(style.label, 'Blunt friend', 'a conflicting style still saves');

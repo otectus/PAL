@@ -60,7 +60,7 @@ def download(url, target, sha, size=0, progress=None):
             return
         partial.unlink()
         offset = 0
-    headers = {"User-Agent": "Cere-IndexTTS/1"}
+    headers = {"User-Agent": "PAL-IndexTTS/1"}
     if offset:
         headers["Range"] = f"bytes={offset}-"
     with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as response:
@@ -231,7 +231,7 @@ def install(args):
     emit("downloading", progress=1, stage="runtime")
     uv = args.uv or shutil.which("uv")
     if not uv:
-        existing = Path(os.environ.get("XDG_DATA_HOME", str(Path.home()/".local/share"))) / "cere/kokoro/bootstrap/uv"
+        existing = data_directory("kokoro") / "bootstrap/uv"
         uv = str(existing) if existing.is_file() else None
     if not uv:
         if sys.platform != "linux" or os.uname().machine != "x86_64":
@@ -258,19 +258,24 @@ def install(args):
     verify(model, runtime, args.version)
 
 
+def data_directory(relative):
+    root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+    current, previous = root / "pal" / relative, root / "cere" / relative
+    return previous if previous.is_dir() and not current.exists() else current
+
+
 def main():
-    data = Path(os.environ.get("XDG_DATA_HOME", str(Path.home()/".local/share"))) / "cere"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", choices=["2.5", "2"], default="2.5")
     parser.add_argument("--model-dir")
-    parser.add_argument("--runtime-dir", default=str(data / "runtimes/indextts" / PIN["upstream"]["commit"]))
+    parser.add_argument("--runtime-dir", default=str(data_directory("runtimes/indextts") / PIN["upstream"]["commit"]))
     parser.add_argument("--uv")
     parser.add_argument("--accept-license", action="store_true")
     parser.add_argument("--emotion", action="store_true")
     parser.add_argument("--deepspeed", action="store_true")
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args()
-    args.model_dir = args.model_dir or str(data / "models/indextts" / args.version)
+    args.model_dir = args.model_dir or str(data_directory("models/indextts") / args.version)
     try:
         install(args)
     except InstallError as e:

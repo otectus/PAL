@@ -36,7 +36,7 @@ export function mobilePage(store:Store,sessionId:string,before?:string,limit=100
   if(before&&!cursor)throw remoteError('INVALID_ARGUMENT','Message page is no longer available.');
   // Page the two surfaces independently: a long tool run must not push every
   // conversational reply out of the first phone page.
-  // A 'delegation' row is Cere's Delegation update: user-role, Cere-authored, part of the conversation.
+  // A 'delegation' row is PAL's Delegation update: user-role, PAL-authored, part of the conversation.
   // A 'workbench' row is a desktop-only result card (see desktopResults): it belongs in the conversation, where it happened.
   const conversation="(json_extract(data,'$.role') IN ('user','assistant') AND COALESCE(json_extract(data,'$.kind'),'text') IN ('text','message','','question','answer','queued','queue-cancelled','delegation') OR json_extract(data,'$.role')='workbench')";
   const filter=`AND ${activity?`NOT (${conversation})`:`(${conversation})`}`;

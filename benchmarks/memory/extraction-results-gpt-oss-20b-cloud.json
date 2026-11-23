@@ -9,7 +9,7 @@
  "model": "gpt-oss:20b-cloud",
  "modelDigest": "9a01793d9ef8de5309f157c06dbcbadfb598001b4a6f13cbc699cdff5042eaae",
  "endpointClass": "ollama_cloud",
- "promptVersion": "cere-extraction-v2",
+ "promptVersion": "pal-extraction-v2",
  "parserVersion": "zod-4-v2",
  "fixture": {
   "path": "tests/fixtures/memory/extraction-cases.json",

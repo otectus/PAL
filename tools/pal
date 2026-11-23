@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+prefix="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+root="$prefix/share/pal"
+case "${1:-}" in
+  remote|tts-test|tts-stop|tts.status|tts.voices)
+    exec node "$root/broker/cli.ts" "$@"
+    ;;
+  memory)
+    shift
+    exec node "$root/broker/memory-cli.ts" "$@"
+    ;;
+  terminal)
+    shift
+    exec node "$root/broker/terminal.ts" "$@"
+    ;;
+  toggle|show)
+    if node "$root/broker/cli.ts" "${1}"; then exit 0; fi
+    # Start the interface when it is not running: toggle opens the compact panel, show the workspace.
+    exec "$prefix/lib/pal/pal" --root "$root" "--${1}"
+    ;;
+  *) exec "$prefix/lib/pal/pal" --root "$root" "$@" ;;
+esac

@@ -33,7 +33,7 @@ test('M14 occurrences are deterministic across days, weekdays and daylight-savin
 });
 
 async function broker(t: any, dir?: string) {
-  dir ||= await mkdtemp(join(tmpdir(), 'cere-schedules-'));
+  dir ||= await mkdtemp(join(tmpdir(), 'pal-schedules-'));
   const sent: string[] = [];
   let hooks: any, finish = true;
   const core = new Core(new Store(join(dir, 'state')), (_session, h) => { hooks = h; return { async send(text: string) { sent.push(text); if (finish) setTimeout(() => h.event({ type: 'message', id: 'reply', text: 'Checked.' }), 5), setTimeout(() => h.event({ type: 'complete' }), 10); }, async interrupt() { hooks.event({ type: 'interrupted' }); }, async close() {} }; });
@@ -47,7 +47,7 @@ const prepared = async (core: Core, dir: string) => {
 };
 
 test('M14 a due schedule runs its reviewed prompt once, even across a restart, and its result reaches the inbox', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-schedules-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-schedules-')); t.after(() => rm(dir, { recursive: true, force: true }));
   const { core, sent } = await broker(t, dir);
   const { preview } = await prepared(core, dir);
   await assert.rejects(core.rpc('schedules.create', { previewToken: preview.token, label: 'Plan check', when: { kind: 'daily', time: '08:00' } }), /may run while you are away/);
@@ -72,7 +72,7 @@ test('M14 a due schedule runs its reviewed prompt once, even across a restart, a
 });
 
 test('M14 missed, overlapping and changed occurrences are reported and not run; a change pauses until reviewed again', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-schedules-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-schedules-')); t.after(() => rm(dir, { recursive: true, force: true }));
   const { core, sent, hold } = await broker(t, dir);
   const notices: any[] = []; core.on('notice', notice => notices.push(notice));
   let { preview } = await prepared(core, dir);

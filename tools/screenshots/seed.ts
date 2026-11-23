@@ -11,9 +11,9 @@ import type { Message, Session, SessionFolder } from '../../broker/types.ts';
 const home = process.argv[2];
 if (!home) throw new Error('Usage: seed.ts <demo home>');
 const projects = `${home}/Projects`, ollamaHost = 'http://127.0.0.1:11434';
-const directory = privateDir(resolve(home, '.local/state/cere'));
+const directory = privateDir(resolve(home, '.local/state/pal'));
 // Claim a new database before Store opens it. A concurrent seeder or an existing profile wins.
-closeSync(openSync(resolve(directory, 'cere.sqlite'), 'wx', 0o600));
+closeSync(openSync(resolve(directory, 'pal.sqlite'), 'wx', 0o600));
 const store = new Store(directory);
 const now = Date.now(), minutes = (n: number) => now - n * 60_000, hours = (n: number) => minutes(n * 60), days = (n: number) => hours(n * 24);
 

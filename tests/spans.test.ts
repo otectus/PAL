@@ -30,7 +30,7 @@ test('M16 spans are off by default, bounded when on, and forget everything when 
 });
 
 test('M16 a measured turn records its duration, first text and Stop latency; nothing private reaches the summary or the export', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-spans-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-spans-'));
   let hooks: any, hold = false;
   const core = new Core(new Store(dir), (_session, h) => { hooks = h; return {
     async send() { setTimeout(() => { hooks.event({ type: 'delta', id: 'reply', text: 'The tangerine-secret answer' }); if (!hold) setTimeout(() => hooks.event({ type: 'complete' }), 20); }, 15); },

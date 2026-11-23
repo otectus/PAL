@@ -410,8 +410,8 @@ QImage synchronizedGrab(QQuickWindow &window)
     // Offscreen OpenGL on this NVIDIA stack can keep a new window's first
     // surface size and read back only part of each frame until the window is
     // resized; settle it once with a one-pixel resize.
-    if (!window.property("cereSettled").toBool()) {
-        window.setProperty("cereSettled", true);
+    if (!window.property("palSettled").toBool()) {
+        window.setProperty("palSettled", true);
         const QSize size = window.size();
         window.resize(size + QSize(1, 1));
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
@@ -564,7 +564,7 @@ bool productionDefinitionChecks(const QString &root, QVariantMap *definition,
                                 QUrl *source, const QString &overrideFile = {})
 {
     bool ok = true;
-    QFile rigFile(root + QStringLiteral("/assets/cere-rig.json"));
+    QFile rigFile(root + QStringLiteral("/assets/pal-rig.json"));
     if (!check(rigFile.open(QIODevice::ReadOnly),
                QStringLiteral("production rig could not be opened at %1")
                        .arg(rigFile.fileName())))
@@ -643,6 +643,7 @@ bool productionDefinitionChecks(const QString &root, QVariantMap *definition,
     const QVariantList bones = definition->value(QStringLiteral("bones")).toList();
     const QVariantList parts = definition->value(QStringLiteral("parts")).toList();
     const QVariantMap poses = definition->value(QStringLiteral("poses")).toMap();
+    const bool staticReference = definition->value(QStringLiteral("static")).toBool();
     ok &= check(!bones.isEmpty() && !parts.isEmpty() && poses.size() == 32,
                 "production rig must contain bones, cutouts, and all 32 poses");
 
@@ -729,9 +730,17 @@ bool productionDefinitionChecks(const QString &root, QVariantMap *definition,
                         "connected surface artwork must provide an in-atlas matching blink frame");
         }
     }
-    ok &= check(surfacePartCount == 1 && parts.size() == 1,
-                "every selectable avatar must use one connected full-body surface");
-    if (surfacePartCount == 1 && parts.size() == 1) {
+    if (staticReference) {
+        ok &= check(surfacePartCount == 0 && parts.size() == 1
+                            && definition->value(QStringLiteral("presentation")).toString()
+                                == QStringLiteral("reference")
+                            && definition->value(QStringLiteral("surfaceSequences")).toMap().isEmpty(),
+                    "a static reference avatar must use one rigid full-body image without surface routes");
+    } else {
+        ok &= check(surfacePartCount == 1 && parts.size() == 1,
+                    "every animated selectable avatar must use one connected full-body surface");
+    }
+    if (!staticReference && surfacePartCount == 1 && parts.size() == 1) {
         ok &= check(definition->value(QStringLiteral("presentation")).toString()
                             == QStringLiteral("reference"),
                     "connected avatar artwork must use reference presentation");
@@ -831,7 +840,7 @@ bool productionDefinitionChecks(const QString &root, QVariantMap *definition,
     }
     puppet.setPose({});
 
-    if (surfacePartCount == 0) {
+    if (surfacePartCount == 0 && !staticReference) {
     // Joint pivots need painted overlap on both adjoining pieces. A valid
     // rectangle alone can still put the knee/elbow in transparent atlas space.
     QMap<QString, QVariantMap> partByName, boneByName;
@@ -1013,11 +1022,15 @@ bool productionRenderChecks(QQuickWindow &window, AvatarPuppet &puppet,
 
     puppet.setPose(namedPose(definition, QStringLiteral("thinking")));
     const QImage thinking = synchronizedGrab(window);
-    ok &= check(!thinking.isNull() && thinking != wave,
-                "production thinking pose must repaint differently from wave");
+    const bool staticReference = definition.value(QStringLiteral("static")).toBool();
+    ok &= check(!thinking.isNull() && (staticReference ? thinking == wave : thinking != wave),
+                staticReference
+                    ? "static reference poses must preserve the supplied neutral artwork"
+                    : "production thinking pose must repaint differently from wave");
 
     if (definition.value(QStringLiteral("presentation")).toString()
-            == QStringLiteral("reference")) {
+            == QStringLiteral("reference")
+            && !definition.value(QStringLiteral("static")).toBool()) {
         puppet.setPose({});
         puppet.setSurfaceFrame(0);
         const QImage neutral = synchronizedGrab(window);
@@ -1071,11 +1084,11 @@ bool productionRenderChecks(QQuickWindow &window, AvatarPuppet &puppet,
                             .arg(routeName));
         }
         routePainter.end();
-        QDir().mkpath("/tmp/cere-motion-evidence");
+        QDir().mkpath("/tmp/pal-motion-evidence");
         const auto avatar = definition.value("texture").toString().section('-', 0, 0);
         const auto backend = window.rendererInterface()->graphicsApi()
                 == QSGRendererInterface::Software ? "software" : "opengl";
-        ok &= check(routeSheet.save(QString("/tmp/cere-motion-evidence/routes-%1-%2.png")
+        ok &= check(routeSheet.save(QString("/tmp/pal-motion-evidence/routes-%1-%2.png")
                                             .arg(avatar, backend)),
                     "connected route contact sheet must save");
         puppet.setSurfaceFrame(0);
@@ -1100,8 +1113,8 @@ bool productionRenderChecks(QQuickWindow &window, AvatarPuppet &puppet,
         ok &= check(!frame.isNull() && painted > 3000,
                     QStringLiteral("production pose %1 must remain visible").arg(pose.value("name").toString()));
         if (clipped && index == 0) {
-            QDir().mkpath("/tmp/cere-motion-evidence");
-            frame.save("/tmp/cere-motion-evidence/clipped-raw.png");
+            QDir().mkpath("/tmp/pal-motion-evidence");
+            frame.save("/tmp/pal-motion-evidence/clipped-raw.png");
             std::cerr << "clipping capture " << frame.width() << 'x' << frame.height()
                       << " window " << window.width() << 'x' << window.height()
                       << " DPR " << window.devicePixelRatio() << '\n';
@@ -1114,10 +1127,10 @@ bool productionRenderChecks(QQuickWindow &window, AvatarPuppet &puppet,
         painter.drawImage(x, y + 24, frame);
     }
     painter.end();
-    QDir().mkpath("/tmp/cere-motion-evidence");
+    QDir().mkpath("/tmp/pal-motion-evidence");
     const auto avatar = definition.value("texture").toString().section('-', 0, 0);
     const auto backend = window.rendererInterface()->graphicsApi() == QSGRendererInterface::Software ? "software" : "opengl";
-    ok &= check(sheet.save(QString("/tmp/cere-motion-evidence/poses-%1-%2.png").arg(avatar, backend)),
+    ok &= check(sheet.save(QString("/tmp/pal-motion-evidence/poses-%1-%2.png").arg(avatar, backend)),
                 "production pose contact sheet must save");
     // Render at a second aspect ratio to catch accidental stretching and foot
     // drift in preview cards; the same fit is used by the desktop pet.
@@ -1147,7 +1160,7 @@ bool productionRenderChecks(QQuickWindow &window, AvatarPuppet &puppet,
                 QStringLiteral("wider cards must preserve silhouette and ground: expected %1,%2 %3x%4, got %5,%6 %7x%8")
                     .arg(expected.x()).arg(expected.y()).arg(expected.width()).arg(expected.height())
                     .arg(actual.x()).arg(actual.y()).arg(actual.width()).arg(actual.height()));
-    ok &= check(rest.save(QString("/tmp/cere-motion-evidence/rest-%1-%2.png").arg(avatar, backend)),
+    ok &= check(rest.save(QString("/tmp/pal-motion-evidence/rest-%1-%2.png").arg(avatar, backend)),
                 "enlarged rest render must save");
     return ok;
 }
@@ -1208,7 +1221,7 @@ bool scaledBlinkChecks(QQuickWindow &window, AvatarPuppet &puppet,
             painter.drawImage(i * width, row + 24, closed);
         }
         painter.end();
-        ok &= check(sheet.save(QString("/tmp/cere-motion-evidence/blinks-%1-%2-%3.png")
+        ok &= check(sheet.save(QString("/tmp/pal-motion-evidence/blinks-%1-%2-%3.png")
                                        .arg(avatar, backend).arg(scale * 100)),
                     "scaled blink contact sheet must save");
     }
@@ -1327,10 +1340,10 @@ bool winkChecks(QQuickWindow &window, AvatarPuppet &puppet,
                     avatar + ": returning selection to neutral must discard every wink cache at "
                         + QString::number(scale * 100) + "%");
         winkPainter.end();
-        QDir().mkpath("/tmp/cere-motion-evidence");
+        QDir().mkpath("/tmp/pal-motion-evidence");
         const auto backend = window.rendererInterface()->graphicsApi()
                 == QSGRendererInterface::Software ? "software" : "opengl";
-        ok &= check(winkSheet.save(QString("/tmp/cere-motion-evidence/winks-%1-%2-%3.png")
+        ok &= check(winkSheet.save(QString("/tmp/pal-motion-evidence/winks-%1-%2-%3.png")
                                       .arg(avatar, backend).arg(scale * 100)),
                     "open/wink/blink comparison must save for visual eye-ownership review");
     }
@@ -1374,10 +1387,10 @@ bool motionRenderChecks(QQuickWindow &window, AvatarPuppet &puppet,
         }
         ++row;
     }
-    painter.end();QDir().mkpath("/tmp/cere-motion-evidence");
+    painter.end();QDir().mkpath("/tmp/pal-motion-evidence");
     const auto backend=window.rendererInterface()->graphicsApi()==QSGRendererInterface::Software?"software":"opengl";
     const auto avatar=definition.value("texture").toString().section('-',0,0);
-    ok &= check(sheet.save(QString("/tmp/cere-motion-evidence/clips-%1-%2.png").arg(avatar,backend)),"new clip contact sheet must save");
+    ok &= check(sheet.save(QString("/tmp/pal-motion-evidence/clips-%1-%2.png").arg(avatar,backend)),"new clip contact sheet must save");
     puppet.setY(0);return ok;
 }
 
@@ -1410,7 +1423,7 @@ bool waistRenderChecks(QQuickWindow &window, AvatarPuppet &puppet,
     painter.end();
     const auto avatar = definition.value("texture").toString().section('-', 0, 0);
     const auto backend = window.rendererInterface()->graphicsApi() == QSGRendererInterface::Software ? "software" : "opengl";
-    ok &= check(sheet.save(QString("/tmp/cere-motion-evidence/waist-%1-%2.png").arg(avatar, backend)),
+    ok &= check(sheet.save(QString("/tmp/pal-motion-evidence/waist-%1-%2.png").arg(avatar, backend)),
                 "waist motion contact sheet must save");
     puppet.setPosition({0, 0});
     return ok;
@@ -1750,6 +1763,49 @@ bool surfaceRenderChecks(const QUrl &firstSource, const QUrl &secondSource)
     return ok;
 }
 
+bool asynchronousPreparationChecks(const QUrl &source, const QUrl &replacementSource)
+{
+    bool ok = true;
+    AvatarPuppet puppet;
+    AvatarPuppet mirror;
+    puppet.setAsynchronous(true);
+    mirror.setAsynchronous(true);
+    puppet.setSource(source);
+    mirror.setSource(source);
+    puppet.setDefinition(surfaceDefinition());
+    mirror.setDefinition(surfaceDefinition());
+    // Exercise an input update that lands while the atlas worker is active.
+    puppet.setSurfaceFrame(1);
+    mirror.setSurfaceFrame(2);
+    ok &= check(!puppet.ready() && !mirror.ready()
+                        && puppet.error().isEmpty() && mirror.error().isEmpty(),
+                "asynchronous puppet preparation must not claim readiness on the caller thread");
+    QElapsedTimer timeout;
+    timeout.start();
+    while ((!puppet.ready() || !mirror.ready())
+            && puppet.error().isEmpty() && mirror.error().isEmpty()
+            && timeout.elapsed() < 5000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(1);
+    }
+    ok &= check(puppet.ready() && puppet.error().isEmpty()
+                        && mirror.ready() && mirror.error().isEmpty()
+                        && puppet.surfaceFrame() == 1 && mirror.surfaceFrame() == 2,
+                "same-atlas async subscribers must receive their independently selected frames");
+
+    puppet.setSource(replacementSource);
+    ok &= check(!puppet.ready(),
+                "an asynchronous source swap must retire the previous ready image");
+    timeout.restart();
+    while (!puppet.ready() && puppet.error().isEmpty() && timeout.elapsed() < 5000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(1);
+    }
+    ok &= check(puppet.ready() && puppet.source() == replacementSource,
+                "asynchronous source churn must publish only the current atlas");
+    return ok;
+}
+
 } // namespace
 
 // W13: the application checks its catalog from each atlas's header. That check must accept what
@@ -1807,13 +1863,13 @@ bool validationOnlyChecks(const QUrl &source, const QString &directory)
 
 int main(int argc, char **argv)
 {
-    if (qEnvironmentVariableIsSet("CERE_PUPPET_TEST_SOFTWARE"))
+    if (qEnvironmentVariableIsSet("PAL_PUPPET_TEST_SOFTWARE"))
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
     else
         QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QGuiApplication application(argc, argv);
 
-    QTemporaryDir directory(QStringLiteral("/tmp/cere-avatarpuppet-XXXXXX"));
+    QTemporaryDir directory(QStringLiteral("/tmp/pal-avatarpuppet-XXXXXX"));
     if (!check(directory.isValid(), "temporary fixture directory must be created"))
         return 1;
     const QString atlasPath = directory.filePath(QStringLiteral("atlas.png"));
@@ -1836,6 +1892,8 @@ int main(int argc, char **argv)
             && skeletonChecks(puppet)
             && malformedChecks(source)
             && renderChecks(source)
+            && asynchronousPreparationChecks(QUrl::fromLocalFile(surfaceAtlasPath),
+                                              QUrl::fromLocalFile(secondSurfaceAtlasPath))
             && surfaceRenderChecks(QUrl::fromLocalFile(surfaceAtlasPath),
                                    QUrl::fromLocalFile(secondSurfaceAtlasPath))
             && validationOnlyChecks(source, directory.path());
@@ -1856,12 +1914,14 @@ int main(int argc, char **argv)
         const bool productionOk = productionDefinitionChecks(
                 root, &productionDefinition, &productionSource, entry["rig"].toString());
         ok &= productionOk;
-        if (productionOk)
-            ok &= productionRenderChecks(productionWindow, productionPuppet, productionSource, productionDefinition)
-                && scaledBlinkChecks(productionWindow, productionPuppet, productionSource, productionDefinition)
-                && winkChecks(productionWindow, productionPuppet, productionSource, productionDefinition)
-                && motionRenderChecks(productionWindow, productionPuppet,root,productionSource,productionDefinition)
-                && waistRenderChecks(productionWindow, productionPuppet, productionSource, productionDefinition);
+        if (productionOk) {
+            ok &= productionRenderChecks(productionWindow, productionPuppet, productionSource, productionDefinition);
+            if (!productionDefinition.value(QStringLiteral("static")).toBool())
+                ok &= scaledBlinkChecks(productionWindow, productionPuppet, productionSource, productionDefinition)
+                    && winkChecks(productionWindow, productionPuppet, productionSource, productionDefinition)
+                    && motionRenderChecks(productionWindow, productionPuppet,root,productionSource,productionDefinition)
+                    && waistRenderChecks(productionWindow, productionPuppet, productionSource, productionDefinition);
+        }
         std::cout << "checked avatar " << entry["id"].toString().toStdString() << '\n';
     }
     return ok ? 0 : 1;

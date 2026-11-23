@@ -7,5 +7,5 @@ Text {
     font.family: Theme.font
     font.pixelSize: Theme.caption
     font.weight: Font.DemiBold
-    font.letterSpacing: 1.4
+    font.letterSpacing: Theme.labelTracking
 }

@@ -10,7 +10,7 @@ import { writeFileSync } from 'node:fs';
 
 const idle = () => ({ async send() {}, async interrupt() {}, async close() {} });
 async function broker(t: any) {
-  const root = await mkdtemp(join(tmpdir(), 'cere-shutdown-'));
+  const root = await mkdtemp(join(tmpdir(), 'pal-shutdown-'));
   const core = new Core(new Store(join(root, 'state')), idle);
   t.after(async () => { await core.close(); await rm(root, { recursive: true, force: true }); });
   return { root, core };

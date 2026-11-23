@@ -1,5 +1,65 @@
 # Memory evaluation and benchmark results
 
+## Desktop 0.1.6 curation
+
+The release starts with curation Off. No model has a shipped qualification for unattended semantic acceptance. A capability probe verifies response format, references and abstention on a synthetic example. An independent held-out evaluation can qualify an exact assessor/adjudicator pair for specific categories. The gate requires at least 300 accepted decisions, observed precision of at least 99%, a 95% Wilson lower bound of at least 97%, hard-category coverage and category-specific precision checks.
+
+### Local model and recall measurements
+
+The synthetic held-out run used the installed Ollama model `hf.co/empero-ai/Qwen3.8-4B-Distill-GGUF:Q8_0`, digest `2f028bd499903c94579b0d0f4db80d12ca81b6d28ce7978867980248d51404e4`, on a disposable profile with cloud access disabled. The run used an 8,000-token input cap, a 2,000-token output cap, a 60-second per-request deadline and a 24-request daily allowance. It consumed 11 requests, 4,912 input tokens and 2,326 output tokens in 138.4 seconds. Price metadata was unavailable. Seven cases received a “supported” verdict. Four of those were correct, giving 57.1% precision and a 95% Wilson interval of 25.0–84.2%. The assessor classified 7 of 11 overall correctly. One invalid citation counted as an incorrect response. Four of six passages labeled durable crossed the value threshold. Those labels measure support and proposed preservation. They do not measure precision of committed semantic acceptance.
+
+The three false support judgments involved an assistant claiming tests passed, a document asserting verification and an indirect report of a release. All three illustrate why source authority is checked independently of model scores. In an earlier run of the same 11 cases the assessor correctly classified seven, returned three invalid citations and exceeded its output budget once. The broker discarded those invalid responses. These source-group-separated smoke cases were reused during development. They are separate from independent release qualification.
+
+A second test ran the real queue, router, SQLite decision writer, expiry pass and erasure registry together. The four sources were a user preference, a project decision, a plan and an assistant report. Automatic mode preserved the plan and the assistant report as candidates. Invalid citations blocked the preference and decision. No claim was accepted, even with experimental acceptance authorized in that disposable profile. Six requests used 4,377 input and 1,533 output tokens. After forcing both the plan and its source past their deadlines, the original passage had zero bytes and its exact 56-byte quoted excerpt was still recallable. Explicitly forgetting the source removed its recall hits, live payload, evidence, statement, assessment, FTS entry and hold. Projection purge was pending with the fixture services offline. Per-request latency is recorded in the report. Cold model-load latency was not isolated on this shared host.
+
+A separate four-fixture ablation reused the same local model for assessment, adjudication and optional reranking. The deterministic simulation retained 36 bytes, and preservation retained 131 bytes by including a SQLite decision and a tentative migration as uncertain. The simulated experimental acceptance pass accepted the formatter preference and SQLite decision. Both substantive passes left a planned migration and an assistant-reported outcome uncertain. The formatter passage ranked first throughout. The SQLite passage went from absent to first with preservation. The value prior and reranker produced no further improvement on those two questions. Reranking took 688 ms and 649 ms, exceeding the default foreground allowance. The checked-in report identifies the simulated policy, the actual model calls and their timings.
+
+The same extraction-free lexical benchmark ran against starting commit `67e54613646efc17575096dafff4552e89b786b0` and the updated canonical store. LongMemEval measured the first 20 oracle questions. LoCoMo measured the first five questions of the first four conversations. Each query was isolated by scope. Recall counts at least one labeled source among the first five canonical results. No answer generation, network inference or relevance tuning was involved.
+
+| Data | Questions | Starting recall@5 / MRR@5 | Updated recall@5 / MRR@5 |
+| --- | ---: | ---: | ---: |
+| LongMemEval | 20 | 0.90 / 0.552 | 0.90 / 0.552 |
+| LoCoMo | 20 | 0.40 / 0.333 | 0.40 / 0.333 |
+
+The versioned report includes SHA-256 digests of the upstream inputs. The source data remain under their respective licenses, MIT for the cleaned LongMemEval distribution and CC BY-NC 4.0 for LoCoMo. [LongMemEval data revision](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/tree/98d7416c24c778c2fee6e6f3006e7a073259d48f) · [LoCoMo data revision and license](https://github.com/snap-research/locomo/tree/3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376)
+
+### Backlog measurements
+
+A disposable canonical database contained 100,000 searchable artifacts and 10,000 unresolved evidence-backed statements on an Intel Core i7-13700HX with Node 26.13.1. The following timings use the application's SQLite entry points. The fixture used synthetic assessment responses. No provider or projection latency is included.
+
+| Operation | Samples | p50 | p95 |
+| --- | ---: | ---: | ---: |
+| Forecast with 25 displayed records | 5 | 148.3 ms | 200.3 ms |
+| Queue 25 candidates | 10 | 5.9 ms | 7.0 ms |
+| Claim and build one assessment bundle | 20 | 7.4 ms | 20.5 ms |
+| Validate and commit an assessment | 20 | 8.2 ms | 9.0 ms |
+| List 25 review rows | 10 | 1.8 ms | 2.5 ms |
+
+The checkpointed database used 208,437,248 bytes. Queueing 250 items and assessing 20 added 262,144 bytes. Process RSS at completion was 177,192,960 bytes. These are single-machine measurements.
+
+### Reproduction and independent qualification
+
+```sh
+node benchmarks/memory/evaluate-curation.ts --local-model "$MODEL" 11
+node benchmarks/memory/evaluate-lifecycle.ts --local-model "$MODEL" --output "$REPORT"
+node benchmarks/memory/evaluate-canonical-curation.ts "$CANONICAL_REPORT"
+node benchmarks/memory/curation-scale.ts
+node benchmarks/memory/evaluate-long-recall.ts longmemeval "$LONGMEMEVAL_JSON"
+node benchmarks/memory/evaluate-long-recall.ts locomo "$LOCOMO_JSON"
+```
+
+For independent calibration, supply a JSON request to `pal memory models evaluate --file request.json` with `max_cases` and `corpus`. The corpus schema in `broker/graph-memory/calibration.ts` requires a version, reviewer identifier and labeled cases. Each case supplies a distinct source, project/conversation group, tuning or held-out split, speaker, exact quote, claim or statement, challenge category, expected support and expected action. Local-only is the default. The evaluator rejects overlapping groups, repeated source passages and incomplete held-out selections. It applies the production semantic gates in a temporary database and records aggregate metrics. Enable a route only after checking who labeled the corpus, its category coverage and its measured errors. No independently human-reviewed release corpus was supplied. Native and compatible cloud transports received fixture validation. Their live factual precision remains unmeasured.
+
+### Release verification
+
+The checkout used Node 26.13.1 with SQLite 3.54.1. `npm run typecheck`, `./node_modules/.bin/tsc -p tsconfig.mobile.json --noEmit`, `node tools/mobile-contract.ts --check` and `npm run build` passed. `npm test` passed 998 of 1,004 tests. Five compositor/media fixture tests and the opt-in IndexTTS test skipped. The production-service tests exercised lease cancellation, correction and temporal inspection, user confirmation, invalid reference rejection, cloud denial, source erasure, stale results and restoring a pre-forget backup.
+
+`ctest --test-dir build --output-on-failure` passed 6 of 6. The offscreen Qt desktop run passed 5 checks including setup and teardown, exercising manual model selection, persisted settings and the memory pin/timeline inspector. Run it with `QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic ./build/pal-ui-check configureMemoryReviewWithoutChangingChat memoryCurationPinsAndTimeline settingsSectionNavigation`. Qt lint exited successfully with warnings. A staged installation passed `python3 tools/check-memory-install.py --root build/memory-0.1.6/stage/share/pal`, including cross-provider recall and erasure with projection backends offline.
+
+[Versioned measurements](../../benchmarks/memory/curation-results-v1.json) · [Operator procedure](operations.md#desktop-016-rollout-and-backlog-preservation)
+
+## Earlier benchmark results
+
 Validation date: 2026-09-29. The checked-in reports contain synthetic identifiers and aggregate measurements only.
 
 ## Reproduction
@@ -16,7 +76,7 @@ node benchmarks/memory/canonical-run.ts
 node --test tests/review-benchmark.test.ts
 ```
 
-`run.ts` is a disposable SQL microbenchmark and writes `benchmarks/memory/results.json`. Its workload is rebuilt at `/tmp/cere-memory-benchmark` by default. Set `CERE_MEMORY_BENCH_DIR` to use another private location. Bulk generation uses SQLite `synchronous=NORMAL`; measured correction commits switch to `FULL`. The generated database is not a Cere canonical database.
+`run.ts` is a disposable SQL microbenchmark and writes `benchmarks/memory/results.json`. Its workload is rebuilt at `/tmp/pal-memory-benchmark` by default. Set `PAL_MEMORY_BENCH_DIR` to use another private location. Bulk generation uses SQLite `synchronous=NORMAL`; measured correction commits switch to `FULL`. The generated database is not a PAL canonical database.
 
 `canonical-run.ts` is the release check for the memory engine itself and writes `benchmarks/memory/canonical-results.json`. It loads the corpus into a temporary canonical store and evaluates it with `Canonical.retrieve`. Neither runner calls a model or any network service. The regression test replaces `fetch` and fails if either runner calls it.
 
@@ -25,7 +85,7 @@ The corpus in `tests/fixtures/memory/retrieval-cases.json` (schema version 2) co
 Run the separately authorized real extraction evaluation for one model with:
 
 ```sh
-CERE_ALLOW_CLOUD_EVAL=1 node benchmarks/memory/evaluate-extraction.ts --approve MODEL [--model MODEL] [--digest SHA256]
+PAL_ALLOW_CLOUD_EVAL=1 node benchmarks/memory/evaluate-extraction.ts --approve MODEL [--model MODEL] [--digest SHA256]
 ```
 
 It sends the 50 synthetic statements of `tests/fixtures/memory/extraction-cases.json`, and nothing else, to that model through the local Ollama server, then submits the proposals through `Canonical.remember` in a temporary store. Without `--model` it evaluates the running broker's configured extraction model; `--approve` must name the model, so every cloud model is approved explicitly, and the environment flag prevents accidental cloud execution. Results go to `benchmarks/memory/extraction-results-<model>.json`; the preserved `extraction-results.json` runs are never written. `node --test tests/extraction-eval.test.ts` checks the corpus, the scoring and the canonical pass offline, under the same `fetch` guard.
@@ -101,7 +161,7 @@ The sample is too small to estimate production-domain quality. The evaluator did
 
 ## Extraction through canonical memory (EV-01)
 
-Measured on 2026-10-16 against the three models the next-stage plan named: `glm-5.3-flash:cloud` (configured on the evaluation machine), `nemotron-3-super` (the code default, which the adapter resolves to `nemotron-3-super:cloud`) and `gpt-oss:20b-cloud` (the model of the preserved runs, pinned to their digest). Each run used prompt `cere-extraction-v2` and parser `zod-4-v2`, the production adapter, and the corpus file with SHA-256 `582d3fb61df8a563…`. Results are in `benchmarks/memory/extraction-results-<model>.json`; only the synthetic corpus left the machine.
+Measured on 2026-10-16 against the three models the next-stage plan named: `glm-5.3-flash:cloud` (configured on the evaluation machine), `nemotron-3-super` (the code default, which the adapter resolves to `nemotron-3-super:cloud`) and `gpt-oss:20b-cloud` (the model of the preserved runs, pinned to their digest). Each run used prompt `pal-extraction-v2` and parser `zod-4-v2`, the production adapter, and the corpus file with SHA-256 `582d3fb61df8a563…`. Results are in `benchmarks/memory/extraction-results-<model>.json`; only the synthetic corpus left the machine.
 
 The corpus `tests/fixtures/memory/extraction-cases.json` holds 50 held-out statements: the five of the preserved runs, at least three for each of the eleven registered predicates (40 statements that hold something to remember, including tool and assistant sources), and 10 that hold nothing (questions, a hypothetical, small talk, an instruction-shaped request, a tool error). Proposals are mapped to claims by `broker/graph-memory/proposals.ts`, the same function the memory worker uses, and submitted through `Canonical.remember` as model proposals in a temporary store, one scope per statement.
 
@@ -137,7 +197,7 @@ Recommendation for the default model: do not keep `nemotron-3-super` as the code
 
 ## Undated statements and the new default (EV-01 follow-up)
 
-On 2026-10-16 the owner decided the two questions above: a grounded statement that names no time may be accepted, and the code default moves to `glm-5.3-flash:cloud`. When the model marks a time uncertain without stating one, as the prompt asks for an unknown date, extraction now records unknown validity and unknown precision, with no bounds, instead of an approximate time. Only a time that was stated but not resolved is approximate, and that still holds a proposal for review (F-034). The grounding, source, modality and epistemic rules are unchanged, and `Canonical.holdReasons` is now the one rule that `remember`, re-adjudication and this harness apply. Recall shows an accepted claim of unknown validity as an uncertain claim, never as a settled fact or at a historical time. The prompt (`cere-extraction-v2`) and parser (`zod-4-v2`) are unchanged.
+On 2026-10-16 the owner decided the two questions above: a grounded statement that names no time may be accepted, and the code default moves to `glm-5.3-flash:cloud`. When the model marks a time uncertain without stating one, as the prompt asks for an unknown date, extraction now records unknown validity and unknown precision, with no bounds, instead of an approximate time. Only a time that was stated but not resolved is approximate, and that still holds a proposal for review (F-034). The grounding, source, modality and epistemic rules are unchanged, and `Canonical.holdReasons` is now the one rule that `remember`, re-adjudication and this harness apply. Recall shows an accepted claim of unknown validity as an uncertain claim, never as a settled fact or at a historical time. The prompt (`pal-extraction-v2`) and parser (`zod-4-v2`) are unchanged.
 
 `glm-5.3-flash:cloud` was then run again at the same digest on the same corpus, with owner approval; only the synthetic statements left the machine. The rerun replaced `extraction-results-glm-5-3-flash-cloud.json`; the first run's file is in commit `fa1e763`.
 
@@ -159,4 +219,4 @@ The model still marked every time uncertain (45 of 45), as the prompt asks, and 
 
 ### Pending live candidates
 
-A `VACUUM INTO` copy of the live store taken on 2026-10-16 (deleted afterwards) had 35 pending extraction candidates, all from `glm-5.3-flash:cloud`, all stored as approximate times with no stated time. A dry run of the re-adjudication that `cere memory readjudicate` performs (`Canonical.readjudicate`) on the copy accepted none and rejected all 35, none for its date: every one is ungrounded. Thirty-four are `HAS_STATE` claims proposed from Cere's own action-event records; their quoted fragment lacks the subject (27) or the value (1), or their sentence contains quotation marks (6). The other is a user's instruction proposed as an inferred `WORKS_ON`, whose quotation lacks the subject. Three of the 35 are also not actual (inferred, reported and planned). A full run on a second copy made the same decisions and passed SQLite's integrity check. The live store has not been re-adjudicated: that needs the new broker installed, and [VALIDATION.md](../../VALIDATION.md) records the steps.
+A `VACUUM INTO` copy of the live store taken on 2026-10-16 (deleted afterwards) had 35 pending extraction candidates, all from `glm-5.3-flash:cloud`, all stored as approximate times with no stated time. A dry run of the re-adjudication that `pal memory readjudicate` performs (`Canonical.readjudicate`) on the copy accepted none and rejected all 35, none for its date: every one is ungrounded. Thirty-four are `HAS_STATE` claims proposed from PAL's own action-event records; their quoted fragment lacks the subject (27) or the value (1), or their sentence contains quotation marks (6). The other is a user's instruction proposed as an inferred `WORKS_ON`, whose quotation lacks the subject. Three of the 35 are also not actual (inferred, reported and planned). A full run on a second copy made the same decisions and passed SQLite's integrity check. The live store has not been re-adjudicated: that needs the new broker installed, and [VALIDATION.md](../../VALIDATION.md) records the steps.

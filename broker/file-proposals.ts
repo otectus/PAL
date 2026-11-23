@@ -25,7 +25,7 @@ const proposalDigest = (proposal: Pick<FileProposal, 'root' | 'path' | 'display'
 }));
 const staleBase = () => Object.assign(new Error('The file changed since this edit was proposed. Nothing was written; review a new proposal.'), { code: 'STALE_BASE' });
 
-// Cere-owned commits for one target are serialized. External editors do not take this lock, so apply
+// PAL-owned commits for one target are serialized. External editors do not take this lock, so apply
 // also rechecks immediately before replacement and reports conflicts rather than claiming portable CAS.
 const targetLocks = new Map<string, Promise<void>>();
 async function withTargetLock<T>(path: string, task: () => Promise<T>): Promise<T> {
@@ -113,7 +113,7 @@ export async function apply(proposal: FileProposal, backups: string, validate: (
     catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
     if ((current === null ? null : sha256(current)) !== proposal.baseSha256) throw staleBase();
     if (current === null) await mkdir(dirname(confined.path), { recursive: true });
-    const temporary = join(dirname(confined.path), `.${basename(confined.path)}.cere-${randomUUID().slice(0, 8)}`);
+    const temporary = join(dirname(confined.path), `.${basename(confined.path)}.pal-${randomUUID().slice(0, 8)}`);
     let backup = '', committed = false;
     try {
       const handle = await open(temporary, 'wx', mode);

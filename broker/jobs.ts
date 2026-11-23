@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import type { Core } from './core.ts';
 import { abortableDelay } from './abortable.ts';
 
-export type JobKind = 'model-pull' | 'collection-index' | 'transcription' | 'image' | 'codelab' | 'extraction';
+export type JobKind = 'model-pull' | 'collection-index' | 'transcription' | 'image' | 'codelab' | 'extraction' | 'specialist';
 type Job = { id: string; kind: JobKind; label: string; started: number; cancel: () => void; progress?: () => { done: number; total: number } | undefined };
 export const jobLimits = { foregroundWaitMs: 120_000, pollMs: 250 };
 

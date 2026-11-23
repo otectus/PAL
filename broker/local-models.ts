@@ -1,5 +1,5 @@
 /**
- * M09: managing models on the user's own Ollama server. Cere does not own the server process: it
+ * M09: managing models on the user's own Ollama server. PAL does not own the server process: it
  * lists models, pulls one at a time with progress and cancellation, loads or unloads a model, and
  * deletes one only after an explicit confirmation, never while a conversation is using it or while
  * it is the default chat, embedding or extraction model.

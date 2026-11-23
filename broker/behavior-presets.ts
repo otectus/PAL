@@ -41,8 +41,8 @@ export class BehaviorPresets {
   catalog(): BehaviorPresetCatalog {
     const value = this.store.get<any>(presetStoreKey, null);
     if (value === null) return emptyCatalog();
-    // A newer Cere may have extended the catalog; refuse rather than rewrite what it saved.
-    if (!value || ![1, 2].includes(value.schema) || !Array.isArray(value.items)) throw new Error('These saved styles were written by a newer version of Cere. Update Cere before editing them.');
+    // A newer PAL may have extended the catalog; refuse rather than rewrite what it saved.
+    if (!value || ![1, 2].includes(value.schema) || !Array.isArray(value.items)) throw new Error('These saved styles were written by a newer version of PAL. Update PAL before editing them.');
     return { schema: 2, revision: value.revision, items: value.items.map(upgraded) };
   }
   /** What every state snapshot carries: enough for clients to know when to reload the list. */

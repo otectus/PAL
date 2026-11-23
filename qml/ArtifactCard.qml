@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-// A file Cere produced or kept, resolved through the broker by its artifact and version IDs. A link
+// A file PAL produced or kept, resolved through the broker by its artifact and version IDs. A link
 // written in a reply is never shown this way; only broker-issued references are.
 Rectangle {
     id: card
@@ -12,10 +12,10 @@ Rectangle {
     property string thumbnail: ""
     property string error: ""
     property string notice: ""
-    readonly property bool compact: width < 440
+    readonly property bool compact: width < Theme.formBreakpoint
     readonly property var version: info ? (info.versions || []).find(v => v.versionId === reference.versionId) || null : null
     readonly property bool image: !!version && (version.kind === "image" || version.kind === "plot")
-    implicitHeight: row.implicitHeight + 20
+    implicitHeight: row.implicitHeight + Theme.gutter
     radius: Theme.radiusCard; color: Theme.input; border.color: card.error ? Theme.dangerBorder : Theme.border
     Accessible.role: Accessible.Grouping; Accessible.name: version ? "File " + version.name : "File"
     RpcClient { id: rpc; scope: card.sessionId + ":" + (card.reference.artifactId || "") + ":" + (card.reference.versionId || "") }
@@ -33,6 +33,16 @@ Rectangle {
     }
     function openIt() {
         if (image) { WorkbenchState.selectImage(sessionId, reference.artifactId, reference.versionId); App.selectedId = sessionId; WorkbenchState.show("images"); App.rpc("images.select", { sessionId: sessionId, ref: { artifactId: reference.artifactId, versionId: reference.versionId } }); return }
+        if (reference.purpose === "research-report") {
+            const openResearch = runId => { WorkbenchState.selectResearch(sessionId, runId, reference.versionId); App.selectedId = sessionId; WorkbenchState.show("research") }
+            rpc.call("research.byArtifact", { sessionId: sessionId, artifactId: reference.artifactId }, value => {
+                if (value.error) { error = value.error; return }
+                const runId = value.runId || value.id
+                if (!runId) { error = "This older report is no longer linked to a research run."; return }
+                openResearch(runId)
+            })
+            return
+        }
         rpc.call("artifacts.file", { sessionId: sessionId, artifactId: reference.artifactId, versionId: reference.versionId }, value => { if (value.error) error = value.error; else App.openPath(value.path) })
     }
     function saveAs() {
@@ -44,9 +54,9 @@ Rectangle {
     onReferenceChanged: { notice = ""; initialLoad.restart() }
     onSessionIdChanged: { notice = ""; initialLoad.restart() }
     RowLayout {
-        id: row; anchors.fill: parent; anchors.margins: 10; spacing: Theme.space3
+        id: row; anchors.fill: parent; anchors.margins: Theme.space2; spacing: Theme.space3
         Rectangle {
-            visible: card.image; Layout.preferredWidth: card.compact ? 64 : 96; Layout.preferredHeight: card.compact ? 64 : 72; radius: Theme.radiusChip; color: Theme.codeSurface; clip: true
+            visible: card.image; Layout.preferredWidth: card.compact ? Theme.thumbCompact : Theme.thumbWidth; Layout.preferredHeight: card.compact ? Theme.thumbCompact : Theme.thumbHeight; radius: Theme.radiusChip; color: Theme.codeSurface; clip: true
             Image { anchors.fill: parent; source: card.thumbnail; fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true
                 Accessible.role: Accessible.Graphic; Accessible.name: card.version ? "Thumbnail of " + card.version.name : "Thumbnail" }
             CText { anchors.centerIn: parent; visible: !card.thumbnail; text: card.error ? "Missing" : "…"; color: Theme.muted; font.pixelSize: Theme.caption; horizontalAlignment: Text.AlignHCenter }
@@ -61,11 +71,11 @@ Rectangle {
             CText { visible: !!card.notice; text: card.notice; color: Theme.muted; font.pixelSize: Theme.caption }
             Flow {
                 Layout.fillWidth: true; spacing: Theme.space1; visible: !!card.version && !card.error
-                CButton { objectName: "artifactOpen"; text: card.image ? "View" : "Open"; implicitHeight: 28; quiet: true; onClicked: card.openIt() }
-                CButton { objectName: "artifactSaveAs"; text: "Save as…"; implicitHeight: 28; quiet: true; onClicked: card.saveAs() }
-                CButton { objectName: "artifactUse"; text: "Use in next message"; implicitHeight: 28; quiet: true; visible: card.image || (card.version && card.version.mime.startsWith("text/"))
+                CButton { objectName: "artifactOpen"; text: card.image ? "View" : card.reference.purpose === "research-report" ? "Read" : "Open"; implicitHeight: Theme.compactHeight; quiet: true; onClicked: card.openIt() }
+                CButton { objectName: "artifactSaveAs"; text: "Save as…"; implicitHeight: Theme.compactHeight; quiet: true; onClicked: card.saveAs() }
+                CButton { objectName: "artifactUse"; text: "Use in next message"; implicitHeight: Theme.compactHeight; quiet: true; visible: card.image || (card.version && card.version.mime.startsWith("text/"))
                     onClicked: rpc.call("artifacts.useInDraft", { sessionId: card.sessionId, artifactId: card.reference.artifactId, versionId: card.reference.versionId }, value => { card.notice = value.error ? "" : "Attached to your draft"; card.error = value.error || "" }) }
-                CButton { objectName: "artifactRevealExport"; visible: !!card.version && (card.version.exports || []).length > 0; text: "Show saved copy"; implicitHeight: 28; quiet: true
+                CButton { objectName: "artifactRevealExport"; visible: !!card.version && (card.version.exports || []).length > 0; text: "Show saved copy"; implicitHeight: Theme.compactHeight; quiet: true
                     onClicked: { const path = card.version.exports[0].destination; App.openPath(path.slice(0, path.lastIndexOf("/"))) } }
             }
         }
