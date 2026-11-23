@@ -4,7 +4,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -23,6 +22,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.input.ImeAction
@@ -39,12 +39,23 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.delay
 
+private object ConversationTokens {
+    val messageGap = 22.dp
+    val transcriptVerticalPadding = 18.dp
+}
+
 internal fun restoredScrollIndex(position: SessionScrollPosition?, messages: List<Message>, hasOlder: Boolean): Int {
     if (position == null || position.following) return 0
     val conversation = messages.filter(Message::isConversationMessage)
     val anchored = position.anchorMessageId?.let { id -> conversation.indexOfFirst { it.id == id }.takeIf { it >= 0 } }
     val raw = anchored?.plus(if (hasOlder) 1 else 0) ?: position.itemIndex
     return raw.coerceIn(0, conversation.size + if (hasOlder) 1 else 0)
+}
+
+internal fun newConversationMessageCount(messages: List<Message>, seenTailId: String?): Int {
+    if (seenTailId == null) return 0
+    val seen = messages.indexOfLast { it.id == seenTailId }
+    return if (seen < 0) 0 else (messages.lastIndex - seen).coerceAtLeast(0)
 }
 
 @Composable
@@ -58,12 +69,12 @@ internal fun ConversationTimeline(
 ) {
     val conversation = remember(messages) { messages.filter(Message::isConversationMessage) }
     val tail = conversation.lastOrNull()
-    val list = remember(sessionId) {
+    val list = rememberSaveable(sessionId, saver = LazyListState.Saver) {
         LazyListState(restoredScrollIndex(restoredPosition, conversation, hasOlder), restoredPosition?.offset?.coerceAtLeast(0) ?: 0)
     }
-    var follow by remember(sessionId) { mutableStateOf(restoredPosition?.following ?: true) }
+    var follow by rememberSaveable(sessionId) { mutableStateOf(restoredPosition?.following ?: true) }
     var seenTailId by remember(sessionId) { mutableStateOf(tail?.id) }
-    var seenText by remember(sessionId) { mutableStateOf(tail?.text) }
+    var seenRevision by remember(sessionId) { mutableStateOf(tail?.revision) }
     var tailHeight by remember { mutableIntStateOf(0) }
     // Only user scrolling changes follow mode; a new streaming row may briefly
     // make canScrollForward true before the automatic scroll catches up.
@@ -79,9 +90,10 @@ internal fun ConversationTimeline(
             snapshotFlow { list.layoutInfo.totalItemsCount }.first { it == expectedItems }
             list.scrollToItem(expectedItems - 1)
             seenTailId = tail?.id
-            seenText = tail?.text
+            seenRevision = tail?.revision
         }
     }
+    val conversationIds = remember(conversation) { conversation.mapTo(HashSet(), Message::id) }
     LaunchedEffect(sessionId, list, conversation) {
         snapshotFlow {
             if (list.isScrollInProgress) null else Triple(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset, follow)
@@ -91,7 +103,7 @@ internal fun ConversationTimeline(
             val visibleKey = list.layoutInfo.visibleItemsInfo.firstOrNull()?.key as? String
             onPositionChanged(SessionScrollPosition(
                 sessionId = sessionId,
-                anchorMessageId = visibleKey?.takeIf { key -> conversation.any { it.id == key } },
+                anchorMessageId = visibleKey?.takeIf(conversationIds::contains),
                 itemIndex = position.first,
                 offset = position.second,
                 following = position.third,
@@ -100,30 +112,35 @@ internal fun ConversationTimeline(
     }
     // Count only rows appended after the last-seen tail. Loading older history prepends rows and
     // must not be announced as a new reply.
-    val seenTailIndex = seenTailId?.let { id -> conversation.indexOfLast { it.id == id } } ?: -1
-    val newMessages = if (seenTailIndex >= 0) conversation.lastIndex - seenTailIndex else 0
+    val newMessages = newConversationMessageCount(conversation, seenTailId)
     Box(modifier.fillMaxWidth()) {
         LazyColumn(Modifier.fillMaxSize().testTag("conversationTimeline"), state = list,
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            if (hasOlder) item(key = "history") { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            contentPadding = PaddingValues(horizontal = PALLayout.gutter, vertical = ConversationTokens.transcriptVerticalPadding),
+            verticalArrangement = Arrangement.spacedBy(ConversationTokens.messageGap)) {
+            if (hasOlder) item(key = "history", contentType = "history") { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 OutlinedButton({ follow = false; onLoadOlder() }, enabled = !loadingOlder,
-                    modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth().heightIn(min = 48.dp)) {
+                    modifier = Modifier.widthIn(max = PALLayout.readingWidth).fillMaxWidth().heightIn(min = PALLayout.target)) {
                     Text(stringResource(if (loadingOlder) R.string.transcript_loading_earlier else R.string.transcript_load_earlier))
                 }
             } }
-            if (conversation.isEmpty()) item(key = "empty") {
-                Column(Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.transcript_empty_title), modifier = Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineSmall)
-                    Text(stringResource(R.string.transcript_empty_body), color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyLarge)
+            if (conversation.isEmpty()) item(key = "empty", contentType = "empty") {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Column(Modifier.widthIn(max = PALLayout.readingWidth).fillMaxWidth().padding(vertical = PALLayout.spacious),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                        Text(stringResource(R.string.transcript_empty_title), modifier = Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineSmall)
+                        Text(stringResource(R.string.transcript_empty_body), color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyLarge)
+                    }
                 }
             }
-            items(conversation, key = { it.id }, contentType = { "conversationMessage" }) { message ->
+            items(conversation, key = { it.id }, contentType = { it.kind.ifBlank { "message" } }) { message ->
                 val measureTail = if (message.id == tail?.id) Modifier.onSizeChanged { tailHeight = it.height } else Modifier
-                Box(measureTail) { messageContent(message) }
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Box(measureTail.widthIn(max = PALLayout.readingWidth).fillMaxWidth()) { messageContent(message) }
+                }
             }
-            item(key = "status") {
+            item(key = "status", contentType = "status") {
                 // "Your input" only when a request is on screen (the caller passes it as statusText).
                 val displayedStatus = statusText ?: when (status) {
                     "waiting" -> stringResource(R.string.transcript_waiting)
@@ -131,22 +148,27 @@ internal fun ConversationTimeline(
                     "stopping" -> stringResource(R.string.transcript_stopping)
                     else -> stringResource(R.string.transcript_working)
                 }
-                if (busy) Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).semantics {
-                    liveRegion = LiveRegionMode.Polite
-                }, verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (status == "waiting") Icon(Icons.Default.Info, null, Modifier.size(18.dp))
-                    else CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Text(displayedStatus, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+                if (busy) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Row(Modifier.widthIn(max = PALLayout.readingWidth).fillMaxWidth().padding(vertical = PALLayout.tight).semantics {
+                        liveRegion = LiveRegionMode.Polite
+                        stateDescription = displayedStatus
+                    }, verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (status == "waiting") Icon(Icons.Default.Info, null, Modifier.size(18.dp))
+                        else CircularProgressIndicator(Modifier.size(PALLayout.iconSmall), strokeWidth = 2.dp)
+                        Text(displayedStatus, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
                 else Spacer(Modifier.height(1.dp))
             }
         }
-        if (!follow) FilledTonalButton(onClick = { follow = true }, modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp).testTag("latestMessages"),
+        if (!follow) FilledTonalButton(onClick = { follow = true }, modifier = Modifier.align(Alignment.BottomCenter).padding(PALLayout.groupGap).testTag("latestMessages").semantics {
+            liveRegion = LiveRegionMode.Polite
+        },
             elevation = ButtonDefaults.filledTonalButtonElevation(defaultElevation = 4.dp)) {
             Text((when {
                 newMessages > 0 -> pluralStringResource(R.plurals.transcript_new_messages, newMessages, newMessages)
-                tail != null && tail.id == seenTailId && tail.text != seenText -> stringResource(R.string.transcript_updated)
+                tail != null && tail.id == seenTailId && tail.revision != seenRevision -> stringResource(R.string.transcript_updated)
                 else -> stringResource(R.string.transcript_latest)
             }) + " ↓")
         }
@@ -166,35 +188,37 @@ internal fun ConversationComposer(
     leadingContent: (@Composable () -> Unit)? = null,
     sendFromKeyboard: Boolean = false,
 ) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        tonalElevation = 2.dp,
-        shadowElevation = 3.dp,
-    ) {
-        OutlinedTextField(
+    Surface(modifier = modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(PALLayout.hairline, MaterialTheme.colorScheme.outlineVariant)) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
             enabled = enabled,
             placeholder = { Text(placeholder, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             minLines = 1,
-            maxLines = 6,
-            shape = RoundedCornerShape(24.dp),
+            maxLines = 8,
+            shape = MaterialTheme.shapes.extraLarge,
             leadingIcon = leadingContent,
             trailingIcon = {
-                FilledIconButton(onClick = onSend, enabled = canSend, modifier = Modifier.size(48.dp)) {
+                FilledIconButton(onClick = onSend, enabled = canSend, modifier = Modifier.size(PALLayout.target)) {
                     Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.transcript_send))
                 }
             },
             keyboardOptions = KeyboardOptions(imeAction = if (sendFromKeyboard) ImeAction.Send else ImeAction.Default),
             keyboardActions = KeyboardActions(onSend = { if (canSend) onSend() }),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).onPreviewKeyEvent { event ->
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            ),
+            modifier = Modifier.widthIn(max = PALLayout.readingWidth).fillMaxWidth()
+                .padding(horizontal = PALLayout.gutter, vertical = PALLayout.small).onPreviewKeyEvent { event ->
                 if (event.isCtrlPressed && event.key == Key.Enter) {
                     if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0 && canSend) onSend()
                     true
                 } else false
-            }.testTag("messageComposer"),
-        )
+            }.semantics { contentDescription = placeholder }.testTag("messageComposer"),
+        ) }
     }
 }
 

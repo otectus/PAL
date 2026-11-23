@@ -7,6 +7,7 @@
     <string name="transcript_waiting">Waiting for a decision on the desktop…</string>
     <string name="transcript_starting">Starting the provider…</string>
     <string name="transcript_stopping">Stopping…</string>
+    <string name="transcript_stop">Stop</string>
     <string name="transcript_working">Working on it…</string>
     <string name="transcript_updated">Updated reply</string>
     <string name="transcript_latest">Latest messages</string>
@@ -15,15 +16,39 @@
         <item quantity="other">%1$d new messages</item>
     </plurals>
     <string name="transcript_send">Send message</string>
+    <string name="transcript_queued_message">Queued message</string>
+    <string name="transcript_cancelled_message">Message not sent</string>
+    <plurals name="transcript_preview">
+        <item quantity="one">Message preview · %1$d character</item>
+        <item quantity="other">Message preview · %1$d characters</item>
+    </plurals>
+    <string name="transcript_load_full_message">Load full message</string>
+    <string name="transcript_loading_full_message">Loading…</string>
+    <string name="transcript_message_error">%1$s. Open the full message on the desktop.</string>
+    <string name="transcript_link_open_failed">No app could open this link.</string>
     <string name="transcript_sources">Sources</string>
     <string name="transcript_open_source">Open source %1$s</string>
     <string name="transcript_unavailable_source">%1$s · this address is not opened on the phone</string>
 
     <string name="markdown_code">Code</string>
+    <string name="markdown_code_description">%1$s code block</string>
     <string name="markdown_copy_code">Copy code</string>
     <string name="markdown_code_copied">Code copied</string>
     <string name="markdown_image">Image: %1$s</string>
     <string name="markdown_image_without_description">Image without a description</string>
     <string name="markdown_open_image">Open image</string>
     <string name="markdown_table_description">Table. Rows, %1$d. Columns, %2$d.</string>
+
+    <string name="transcript_image_details">%1$d×%2$d · %3$d KiB</string>
+    <string name="transcript_image_optimized"> · private copy optimized</string>
+    <string name="transcript_upload_percent">%1$d%% received by desktop</string>
+    <string name="transcript_upload_expired">The desktop discarded this upload. Upload it again.</string>
+    <string name="transcript_review_attachment">Review</string>
+    <string name="transcript_attachment_ready">Ready</string>
+    <string name="transcript_resume_upload">Resume</string>
+    <string name="transcript_upload">Upload</string>
+    <string name="transcript_remove_image">Remove image</string>
+    <string name="transcript_desktop_image_details">Image · %1$d KiB</string>
+    <string name="transcript_desktop_file_details">Text file · %1$d KiB</string>
+    <string name="transcript_remove_desktop_attachment">Remove %1$s from the draft</string>
 </resources>
