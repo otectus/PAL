@@ -4,7 +4,7 @@ import QtQuick.Layouts
 ColumnLayout {
     id:card
     property var reply:({})
-    spacing:10
+    spacing:Theme.space2
     CText {
         objectName:"companionRequester"
         Layout.fillWidth:true

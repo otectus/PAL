@@ -3,8 +3,8 @@
  * API reference as checked on 2026-11-20 (developers.openai.com/api/reference/resources/images); they are
  * declared, not verified against an account. A model ID typed by the user gets only the common subset.
  *
- * The mask Cere sends follows OpenAI's convention: same size as the first image, transparent where it may
- * change. OpenAI documents masking as prompt guidance, so Cere labels it a guide, not an exact boundary.
+ * The mask PAL sends follows OpenAI's convention: same size as the first image, transparent where it may
+ * change. OpenAI documents masking as prompt guidance, so PAL labels it a guide, not an exact boundary.
  */
 import { consumeSse } from '../../api-providers.ts';
 import { capability } from '../../tools/contracts.ts';
@@ -30,7 +30,7 @@ export function openaiCapabilities(model: string): ImageCapabilities {
     qualities: premium ? ['auto', 'low', 'medium', 'high', 'xhigh', 'max'] : ['auto', 'low', 'medium', 'high'],
     maxCount: 4, partials: capability(state, documented, 'Up to three provisional previews while one image is made'),
     seed: capability('unsupported', documented), negativePrompt: capability('unsupported', documented), usage: capability('declared', documented),
-    cancel: capability('unsupported', documented, 'Stopping ends Cere’s wait; a request OpenAI already received may still complete and be billed'),
+    cancel: capability('unsupported', documented, 'Stopping ends PAL’s wait; a request OpenAI already received may still complete and be billed'),
     query: capability('unsupported', documented),
     notes: ['Requests are billed to your OpenAI account.', ...(family2 ? ['Sizes above 2560×1440 are experimental.'] : []), ...(retired ? ['This model was retired by OpenAI.'] : [])], billed: true,
   };
@@ -120,7 +120,7 @@ export class OpenAiImages implements ImageBackend {
       return;
     }
     let text = '', size = 0;
-    for await (const chunk of response.body as any as AsyncIterable<Uint8Array>) { size += chunk.length; if (size > 200 * 1024 * 1024) throw new Error('The OpenAI response was larger than Cere accepts'); text += Buffer.from(chunk).toString('utf8'); }
+    for await (const chunk of response.body as any as AsyncIterable<Uint8Array>) { size += chunk.length; if (size > 200 * 1024 * 1024) throw new Error('The OpenAI response was larger than PAL accepts'); text += Buffer.from(chunk).toString('utf8'); }
     let value: any;
     try { value = JSON.parse(text); } catch { throw Object.assign(new Error('OpenAI returned an unreadable response; the images may have been made and billed'), { code: 'malformed' }); }
     const images = Array.isArray(value?.data) ? value.data : [];

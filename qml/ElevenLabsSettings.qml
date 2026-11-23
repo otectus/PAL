@@ -4,7 +4,7 @@ import QtQuick.Layouts
 ColumnLayout {
     id:panel
     objectName:"elevenLabsSettings"
-    Layout.fillWidth:true;spacing:8
+    Layout.fillWidth:true;spacing:Theme.space2
     property var config:App.state.settings?.elevenlabs||({})
     property var status:App.state.elevenlabs||({})
     property var credential:status.credential||({})
@@ -18,7 +18,7 @@ ColumnLayout {
     CText { text:panel.credential.configured?(panel.credential.source==="environment"?"Using ELEVENLABS_API_KEY":"API key saved privately"):"Add an ElevenLabs API key";color:Theme.accentText;font.pixelSize:Theme.secondary }
     CField { id:key;objectName:"elevenApiKey";Layout.fillWidth:true;placeholderText:"ElevenLabs API key";echoMode:TextInput.Password;maximumLength:8192;Accessible.name:"ElevenLabs API key" }
     Flow {
-        Layout.fillWidth:true;spacing:8
+        Layout.fillWidth:true;spacing:Theme.space2
         CButton { text:"Save key";enabled:key.text.trim().length>0;onClicked:{panel.call("elevenlabs.credentials",{key:key.text.trim()});key.clear()} }
         CButton { text:"Remove saved key";visible:panel.credential.source==="saved";onClicked:panel.call("elevenlabs.credentials",{key:""}) }
         CButton { objectName:"elevenRefresh";text:panel.status.loading?"Connecting…":"Refresh voices and models";enabled:panel.credential.configured===true&&!panel.status.loading;onClicked:panel.call("elevenlabs.refresh") }
@@ -29,7 +29,7 @@ ColumnLayout {
     CText { text:"Model";font.weight:Font.DemiBold }
     CComboBox { objectName:"elevenModel";Layout.fillWidth:true;model:panel.status.models||[];textRole:"name";currentIndex:model.findIndex(v=>v.id===panel.config.modelId);displayText:(model.find(v=>v.id===panel.config.modelId)||{}).name||panel.config.modelId||"Choose a model";Accessible.name:"ElevenLabs model";onActivated:panel.save({modelId:model[currentIndex].id}) }
     CField { objectName:"elevenModelId";Layout.fillWidth:true;placeholderText:"Model ID";text:panel.config.modelId||"";maximumLength:128;Accessible.name:"ElevenLabs model ID";onEditingFinished:if(text!==panel.config.modelId)panel.save({modelId:text.trim()}) }
-    CText { text:"Flash v2.5 is the default. Account voices, including existing clones, appear after refreshing. To clone CERE, create the voice in your ElevenLabs account, then select its voice ID here.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { text:"Flash v2.5 is the default. Account voices, including existing clones, appear after refreshing. To clone PAL, create the voice in your ElevenLabs account, then select its voice ID here.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CButton { text:"Open ElevenLabs";onClicked:Qt.openUrlExternally("https://elevenlabs.io/app/voice-lab") }
     CText { visible:!!panel.error||!!panel.status.error;text:panel.error||panel.status.error||"";color:Theme.danger;font.pixelSize:Theme.secondary }
     Connections { target:App;function onResult(id,value){if(panel.requests[id]){const next=Object.assign({},panel.requests);delete next[id];panel.requests=next;if(value?.error)panel.error=value.error}} }

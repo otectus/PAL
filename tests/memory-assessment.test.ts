@@ -4,11 +4,11 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {Canonical} from '../broker/graph-memory/canonical.ts';
-import {createStatement} from '../broker/graph-memory/statements.ts';
+import {createStatement,statementSupport} from '../broker/graph-memory/statements.ts';
 import {extractionChunk,relocateWitness} from '../broker/graph-memory/extraction-chunks.ts';
 const binding={connectionRef:'default:ollama',modelId:'synthetic',fallbackBindingRefs:[]};
 function fixture(t:any,mode:string,options:Record<string,any>={}){
-  const dir=mkdtempSync(join(tmpdir(),'cere-review-'));let store=new Canonical(dir);
+  const dir=mkdtempSync(join(tmpdir(),'pal-review-'));let store=new Canonical(dir);
   t.after(()=>{store.close();rmSync(dir,{recursive:true,force:true})});
   const scope=store.registerScope({key:'project-1',label:'Test'}).id;
   const scope2=store.registerScope({key:'project-2',label:'Other'}).id;
@@ -90,6 +90,60 @@ test('leases, budget reservations, cancellation and revision fences survive rest
   assert.throws(()=>f.c.curation.finish(outcome(second)),/lease expired/);
   assert.equal(f.c.curation.usage().uncertain,1);
 });
+test('an erasure elsewhere, such as routine expiry, leaves previewed, queued, leased and pending review work valid',t=>{
+  const f=fixture(t,'assisted'),{v}=make(f.c,f.scope);
+  let n=0;
+  const elsewhere=()=>{
+    const epoch=f.c.epoch('erasure'),o=f.c.observeText({scope_id:f.scope2,role:'user',text:`Unrelated passage ${++n}.`});
+    f.c.forget({scope_id:f.scope2,id:o.id});
+    assert.equal(f.c.epoch('erasure'),epoch+1);
+  };
+  const preview=f.c.curation.call('curation_preview',{scope_id:f.scope});
+  elsewhere();
+  assert.equal(f.c.curation.enqueue({scope_id:f.scope,selection:preview.selection}).queued,1,'a preview survives an unrelated erasure');
+  elsewhere();
+  const lease=f.c.curation.claim()!;
+  assert.equal(lease?.bundle.version_id,v.id,'a job queued before an erasure is still claimed');
+  elsewhere();
+  assert.equal((f.c.curation.finish(outcome(lease)) as any).applied,false,'a result computed across an erasure is kept');
+  elsewhere();
+  const [row]=f.c.curation.list({scope_id:f.scope}).rows;
+  assert.ok(row && 'state' in row && 'id' in row && 'assessment_id' in row, 'the review row identifies its job and assessment');
+  assert.deepEqual([row.state,row.recommended_action],['review_needed','accept']);
+  const applied=f.c.curation.apply({scope_id:f.scope,job_id:row.id,assessment_id:row.assessment_id,expected_revision:row.revision,action:'accept'}) as any;
+  assert.equal(applied.applied,true);
+  assert.equal(f.c.inspect({scope_id:f.scope,id:v.logical_id}).record.status,'accepted');
+  assert.equal(f.c.curation.call('curation_preview',{scope_id:f.scope}).count,0,'nothing is queued again');
+});
+test('synthesis publishes across an unrelated erasure, but not over evidence other than what the model read',t=>{
+  const f=fixture(t,'automatic',{consolidation:true});
+  f.c.observeText({scope_id:f.scope,role:'user',text:'The orchid manual uses violet headings.',session_id:'synthetic'});
+  f.c.consolidate({scope_id:f.scope,id:f.c.one('SELECT id FROM episodes WHERE thread_id=?','synthetic').id});
+  const request=f.c.curation.nextSummary()!;
+  const other=f.c.observeText({scope_id:f.scope2,role:'user',text:'An unrelated passage.'});
+  f.c.forget({scope_id:f.scope2,id:other.id});
+  const input={...request,revision:f.c.curation.revision(),producer:{modelId:'synthetic'},sentences:[{text:'The manual has violet headings.',evidenceIds:[request.evidence[0].id]}]};
+  assert.throws(()=>f.c.curation.publishSummary({...input,evidence:[{...request.evidence[0],quote:'Something the source never said.'}]}),/changed during synthesis/);
+  assert.throws(()=>f.c.curation.publishSummary({...input,evidence:undefined}),/changed during synthesis/);
+  assert.ok(f.c.curation.publishSummary(input).id);
+});
+test('restating a statement attaches the new witness to it instead of creating a second statement',t=>{
+  const f=fixture(t,'assisted');
+  const current=()=>f.c.all('SELECT * FROM memory_statement_versions WHERE scope_id=? AND known_to_revision IS NULL AND erased=0 ORDER BY known_from_revision',f.scope);
+  const first=make(f.c,f.scope,'I prefer short answers.'),before=current()[0];
+  const again=make(f.c,f.scope,'i prefer  short answers');
+  assert.deepEqual([(again.v as any).restated,again.v.logical_id,again.v.status],[true,first.v.logical_id,'candidate']);
+  const [after]=current();
+  assert.equal(current().length,1,'one statement, not two');
+  assert.equal(after.text,'I prefer short answers.','the wording first recorded stays');
+  assert.deepEqual(statementSupport(f.c,after.version_id).map(e=>e.observation_id).sort(),[first.obs.id,again.obs.id].sort());
+  assert.ok(after.expires_at_us>before.expires_at_us,'a new independent source restarts the pending deadline');
+  assert.equal(f.c.curation.call('curation_preview',{scope_id:f.scope}).count,1,'one review, with both sources');
+  // The same words from another source authority, category or modality are a different statement.
+  make(f.c,f.scope,'I prefer short answers.','assistant');
+  make(f.c,f.scope,'I prefer short answers.','user','planned');
+  assert.equal(current().length,3);
+});
 test('chunk locators count overlapping repetitions and Unicode code points',()=>{
   const text='🫖あaaa\naaa é';const chunk=extractionChunk(text,6,80);
   assert.equal(chunk.text,'aaa é');
@@ -114,7 +168,7 @@ test('statement corrections preserve knowledge time, scope, pin evidence and res
   f.c.policyUpdate({policy:{allow_cloud_memory:true}});
   assert.throws(()=>f.c.inspect({scope_id:f.scope,id:next.id,model_route:'cloud'}),/Local/);
   assert.equal(f.c.retrieve({scope_id:f.scope,text:'detailed',model_route:'cloud'}).items.length,0);
-  const workspace=mkdtempSync(join(tmpdir(),'cere-review-backup-'));
+  const workspace=mkdtempSync(join(tmpdir(),'pal-review-backup-'));
   t.after(()=>rmSync(workspace,{recursive:true,force:true}));
   const backup=await f.c.backup({output:join(workspace,'prior.sqlite')});
   f.c.forget({scope_id:f.scope,id:v.logical_id});
@@ -137,7 +191,7 @@ test('held-out qualification requires adequate decisions and correct hard-catego
 
 test('service runs scoped review through a saved model, validates ordered IDs and aborts a cancelled dispatch',async t=>{
   const {MemoryService}=await import('../broker/graph-memory/service.ts');
-  const directory=mkdtempSync(join(tmpdir(),'cere-review-service-'));
+  const directory=mkdtempSync(join(tmpdir(),'pal-review-service-'));
   const seed=new Canonical(join(directory,'graph-memory')),scope=seed.registerScope({key:'test',label:'Review service'}).id;
   seed.policyUpdate({policy:{enabled:true}});
   const {v}=make(seed,scope);

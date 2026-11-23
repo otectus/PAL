@@ -1,5 +1,5 @@
 /**
- * Artifacts: immutable files Cere owns. Bytes live privately outside SQLite, named by their SHA-256;
+ * Artifacts: immutable files PAL owns. Bytes live privately outside SQLite, named by their SHA-256;
  * metadata, ownership and derivations live in SQLite. A version is visible only after both are
  * committed. Possessing a hash or an ID grants nothing: every read resolves through a reference owned
  * by the asking conversation (or a project it belongs to, once the user shared the artifact there).
@@ -195,7 +195,7 @@ export class ArtifactStore {
   }
   /**
    * Removing an artifact from a conversation drops that reference. The artifact and its bytes go only
-   * when nothing references them anymore; exported copies outside Cere are never touched.
+   * when nothing references them anymore; exported copies outside PAL are never touched.
    */
   async removeFromSession(sessionId: string, artifactId: unknown, scope: unknown = 'artifact') {
     const artifact = this.artifact(artifactId);
@@ -247,7 +247,7 @@ export class ArtifactStore {
     this.store.db.prepare("DELETE FROM artifact_refs WHERE owner_kind='session' AND owner_id=?").run(sessionId);
     await this.collect(ids);
   }
-  /** Records a write of a version outside Cere, so its card can reveal the exported copy. */
+  /** Records a write of a version outside PAL, so its card can reveal the exported copy. */
   recordExport(version: ArtifactVersion, destination: string) {
     this.store.db.prepare('INSERT INTO artifact_derivations VALUES (?,?,?,?,?,?)').run(randomUUID(), version.versionId, null, 'export', Date.now(), JSON.stringify({ destination, sha256: version.sha256 }));
   }

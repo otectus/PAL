@@ -3,10 +3,10 @@ import QtQuick.Controls
 // Context and overflow menus use the panels' palette, type and focus style.
 Menu {
     id: menu
-    padding: 4
+    padding: Theme.space1
     delegate: CMenuItem {}
     background: Rectangle {
-        implicitWidth: 220
+        implicitWidth: Theme.menuWidth
         color: Theme.raised; radius: Theme.radiusControl
         border.color: Theme.borderStrong
     }

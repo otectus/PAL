@@ -75,7 +75,7 @@ export async function calibrate(review:ReviewInference,input:unknown,maxCases:un
   if(!Number.isSafeInteger(maxCases)||Number(maxCases)<cases.length||!cases.length)fail('INVALID_ARGUMENT','Set max_cases to cover the held-out split');
   const pf=settings.profile,assessor=pf.reviewModel;
   if(!assessor)fail('INVALID_ARGUMENT','Select the assessment route');
-  const dir=await mkdtemp(join(tmpdir(),'cere-calibration-')),results:Verdict[]=[];
+  const dir=await mkdtemp(join(tmpdir(),'pal-calibration-')),results:Verdict[]=[];
   const c=new Canonical(dir);
   let assessorIdentity:Identity|undefined,adjudicatorIdentity:Identity|undefined,assessorRoute:ResolvedTaskRoute|undefined,adjudicatorRoute:ResolvedTaskRoute|undefined;
   try{

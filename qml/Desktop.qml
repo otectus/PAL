@@ -35,9 +35,15 @@ ColumnLayout {
     property bool showWindows: (category===0||category===3) && (!query || matches("workspace windows") || filteredWindows.length>0)
     property bool showApps: (category===0||category===2) && (!query || filteredApps.length>0)
     property bool showScripts: controls && (!query || filteredScripts.length>0)
-    spacing: 14
+    spacing: Theme.space4
     function matches(text) { return !query || String(text).toLowerCase().indexOf(query)>=0 }
     function focusSearch() { search.forceActiveFocus() }
+    function showSearch(value) {
+        category = 0
+        search.text = value
+        focusSearch()
+        search.selectAll()
+    }
     function pending(name) { return Object.values(requests).some(r=>r.name===name) }
     function action(name,args,label) {
         const id=App.rpc("action.run",{name:name,args:args||{},expectedScript:name==="script.run"?scriptConfirm.script:undefined})
@@ -57,80 +63,61 @@ ColumnLayout {
     onQueryChanged: { appLimit=12;desktopScroll.contentY=0 }
     onCategoryChanged: desktopScroll.contentY=0
     Component.onCompleted: if(visible)refresh()
-    Rectangle {
-        Layout.fillWidth:true;implicitHeight:desktopHeader.implicitHeight+28
-        color:Theme.surface;radius:Theme.radius;border.color:Theme.line
-        RowLayout {
-            id:desktopHeader;x:16;y:14;width:parent.width-32;spacing:12
-            Rectangle {
-                visible:desktop.width>=500
-                Layout.preferredWidth:42;Layout.preferredHeight:42;radius:Theme.radiusCard
-                color:Theme.selected
-                Text { anchors.centerIn:parent;text:"⌁";color:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.page;font.weight:Font.DemiBold }
-            }
-            // Title and status share one line; actions wrap below so narrow panels never clip them.
-            ColumnLayout {
-                Layout.fillWidth:true;Layout.minimumWidth:0;spacing:6
-                RowLayout {
-                    Layout.fillWidth:true;spacing:6
-                    CText { text:"Desktop";font.pixelSize:Theme.page;font.weight:Font.DemiBold }
-                    Item { Layout.fillWidth:true }
-                    Rectangle { Layout.preferredWidth:8;Layout.preferredHeight:8;radius:4;color:App.connected?Theme.success:Theme.muted }
-                    CText { text:App.connected?"Ready":"Offline";color:App.connected?Theme.success:Theme.muted;font.pixelSize:Theme.caption }
-                }
-                CText { Layout.fillWidth:true;wrapMode:Text.Wrap;text:desktop.width>=500?"Your apps, windows, sound, and everyday actions.":"Your everyday controls.";color:Theme.muted;font.pixelSize:Theme.secondary }
-                Flow {
-                    Layout.fillWidth:true;spacing:6
-                    CButton { objectName:"desktopOfflineTools";text:"Offline tools";onClicked:utilityShelf.open() }
-                    CButton { objectName:"desktopRefresh";text:desktop.loading?"Loading…":"Refresh";help:"Refresh applications, windows and volume";onClicked:desktop.refresh();enabled:App.connected&&!desktop.loading }
-                }
-            }
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: Theme.space2
+        CText { text: "Desktop"; font.pixelSize: Theme.page; font.weight: Font.DemiBold; Accessible.role: Accessible.Heading }
+        CButton { objectName: "desktopOfflineTools"; text: "Offline tools"; enabled: App.connected; onClicked: utilityShelf.open() }
+        CButton {
+            objectName: "desktopRefresh"; iconName: "refresh"; quiet: true
+            text: desktop.width >= Theme.wideToolbar ? (desktop.loading ? "Loading…" : "Refresh") : ""
+            help: "Refresh apps, windows and sound"; Accessible.name: help
+            enabled: App.connected && !desktop.loading; onClicked: desktop.refresh()
         }
     }
     RowLayout {
-        Layout.fillWidth:true;spacing:8
+        Layout.fillWidth:true;spacing:Theme.space2
         CField { id:search;objectName:"desktopSearch";Layout.fillWidth:true;placeholderText:"Search actions, apps, or open windows";Accessible.name:"Search desktop actions" }
         CButton { visible:search.text.length>0;text:"Clear";onClicked:search.clear() }
     }
     RowLayout {
-        Layout.fillWidth:true;spacing:5
+        Layout.fillWidth:true;spacing:Theme.space1
         Repeater {
             model:["All","Controls","Apps","Windows"]
-            CButton { required property string modelData;required property int index;objectName:"desktopFilter_"+index;Layout.fillWidth:true;Layout.preferredWidth:1;leftPadding:8;rightPadding:8;text:modelData;primary:desktop.category===index;onClicked:desktop.category=index }
+            CButton { required property string modelData;required property int index;objectName:"desktopFilter_"+index;Layout.fillWidth:true;Layout.preferredWidth:1;leftPadding:Theme.space2;rightPadding:Theme.space2;text:modelData;quiet:true;primary:desktop.category===index;Accessible.role:Accessible.PageTab; Accessible.onPressAction: if (enabled) click();Accessible.selected:primary;onClicked:desktop.category=index }
         }
     }
     CText {
         Layout.fillWidth:true
-        text:desktop.query
-            ? "Results for “"+search.text.trim()+"”"
-            : ["All desktop tools and recent activity","Quick actions, sound, timers, and scripts","Installed applications","Open windows and workspaces"][desktop.category]
+        visible: !!desktop.query || !App.connected
+        text: App.connected ? "Results for “"+search.text.trim()+"”" : "Reconnecting to desktop controls…"
         color:desktop.query?Theme.accentText:Theme.muted;font.pixelSize:Theme.caption
     }
     Rectangle {
         visible:desktop.feedback.length>0||desktop.catalogError.length>0
-        Layout.fillWidth:true;implicitHeight:feedbackRow.implicitHeight+20
+        Layout.fillWidth:true;implicitHeight:feedbackRow.implicitHeight+Theme.gutter
         color:desktop.failed||desktop.catalogError ? Theme.dangerSurface : Theme.selected;radius:Theme.radiusControl
         RowLayout {
-            id:feedbackRow;x:10;y:10;width:parent.width-20
+            id:feedbackRow;x: Theme.space2;y: Theme.space2;width:parent.width-Theme.gutter
             CText { text:desktop.feedback||desktop.catalogError;color:desktop.failed||desktop.catalogError?Theme.danger:Theme.text;font.pixelSize:Theme.secondary }
-            CButton { text:"Dismiss";implicitHeight:30;onClicked:{desktop.feedback="";desktop.catalogError=""} }
+            CButton { text:"Dismiss";implicitHeight:Theme.compactHeight;onClicked:{desktop.feedback="";desktop.catalogError=""} }
         }
     }
     PageScroll {
         id:desktopScroll;objectName:"desktopScroll"
-        maximumContentWidth:1040
-        Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumHeight:80
+        maximumContentWidth:Theme.dashboardWidth
+        Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumHeight:Theme.editorShort
         GridLayout {
             id:sections;Layout.fillWidth:true;Layout.minimumWidth:0
-            columns:desktopScroll.bodyWidth>=740?2:1
-            rowSpacing:14;columnSpacing:14
+            columns:desktopScroll.bodyWidth>=Theme.twoColumnBreakpoint?2:1
+            rowSpacing:Theme.space4;columnSpacing:Theme.space4
             CSection {
                 title:"Quick actions";visible:desktop.showQuick;Layout.columnSpan:sections.columns
                 GridLayout {
-                    Layout.fillWidth:true;columns:width>=560?3:1;columnSpacing:8;rowSpacing:8
+                    Layout.fillWidth:true;columns:width>=Theme.wideToolbar?3:1;columnSpacing:Theme.space2;rowSpacing:Theme.space2
                     CButton { objectName:"captureRegion";Layout.fillWidth:true;Layout.preferredWidth:1;text:desktop.pending("screenshot.capture")?"Editing in Satty…":"Capture in Satty";help:"Open the focused display in Satty to crop and annotate";enabled:App.connected&&!desktop.pending("screenshot.capture");onClicked:{if(desktop.action("screenshot.capture",{},"Capture saved")>=0)App.closePanel()} }
-                    CButton { Layout.fillWidth:true;Layout.preferredWidth:1;text:"Open folder";onClicked:{const p=App.chooseFolder();if(p)desktop.action("files.open",{path:p},"Folder opened")} }
-                    CButton { Layout.fillWidth:true;Layout.preferredWidth:1;text:"Open file";onClicked:{const p=App.chooseFile();if(p)desktop.action("files.open",{path:p},"File opened")} }
+                    CButton { Layout.fillWidth:true;Layout.preferredWidth:1;text:"Open folder";enabled:App.connected;onClicked:{const p=App.chooseFolder();if(p)desktop.action("files.open",{path:p},"Folder opened")} }
+                    CButton { Layout.fillWidth:true;Layout.preferredWidth:1;text:"Open file";enabled:App.connected;onClicked:{const p=App.chooseFile();if(p)desktop.action("files.open",{path:p},"File opened")} }
                 }
                 CText { text:"Crop or annotate in Satty. Enter saves; Escape cancels.";color:Theme.muted;font.pixelSize:Theme.caption }
             }
@@ -139,18 +126,18 @@ ColumnLayout {
                 RowLayout {
                     Layout.fillWidth:true
                     CText { text:"Output volume";font.pixelSize:Theme.secondary;color:Theme.muted }
-                    Text { text:desktop.audio.available?(desktop.audio.muted?"Muted · ":"")+Math.round(volume.value)+"%":"Unavailable";color:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.secondary }
+                    Text { text:desktop.audioRequest>=0&&!desktop.audio.available?"Checking…":desktop.audio.available?(desktop.audio.muted?"Muted · ":"")+Math.round(volume.value)+"%":"Unavailable";color:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.secondary }
                 }
                 RowLayout {
                     Layout.fillWidth:true
-                    CSlider { id:volume;objectName:"desktopVolume";Layout.fillWidth:true;Layout.minimumWidth:0;from:0;to:100;stepSize:1;enabled:desktop.audio.available;Accessible.name:"Output volume";onMoved:volumeDebounce.restart() }
-                    CButton { text:desktop.audio.muted?"Unmute":"Mute";enabled:desktop.audio.available&&!desktop.pending("audio.mute");onClicked:desktop.action("audio.mute",{},"Output updated") }
+                    CSlider { id:volume;objectName:"desktopVolume";Layout.fillWidth:true;Layout.minimumWidth:0;from:0;to:100;stepSize:1;enabled:App.connected&&desktop.audio.available;Accessible.name:"Output volume";onMoved:volumeDebounce.restart() }
+                    CButton { text:desktop.audio.muted?"Unmute":"Mute";enabled:App.connected&&desktop.audio.available&&!desktop.pending("audio.mute");onClicked:desktop.action("audio.mute",{},"Output updated") }
                 }
-                CText { visible:!desktop.audio.available;text:"No audio output is available. Refresh after connecting a device.";font.pixelSize:Theme.caption;color:Theme.muted }
-                Rectangle { Layout.fillWidth:true;implicitHeight:1;color:Theme.line }
+                CText { visible:App.connected&&desktop.audioRequest<0&&!desktop.audio.available;text:"No audio output is available. Refresh after connecting a device.";font.pixelSize:Theme.caption;color:Theme.muted }
+                Rectangle { Layout.fillWidth:true;implicitHeight:Theme.hairline;color:Theme.line }
                 CText { objectName:"mediaStatus";text:desktop.media.available?desktop.media.name+" · "+desktop.media.status:desktop.mediaError|| (desktop.mediaRequest>=0?"Checking media players…":"Open Spotify or another media player to use playback controls.");font.pixelSize:Theme.secondary;color:desktop.media.available?Theme.accentText:Theme.muted }
                 GridLayout {
-                    Layout.fillWidth:true;columns:2;columnSpacing:8;rowSpacing:8
+                    Layout.fillWidth:true;columns:2;columnSpacing:Theme.space2;rowSpacing:Theme.space2
                     Repeater {
                         model:[{text:"Previous",command:"Previous",capability:"canPrevious"},{text:desktop.media.status==="Playing"?"Pause":"Play",command:"PlayPause",capability:"canPlayPause"},{text:"Next",command:"Next",capability:"canNext"},{text:"Stop",command:"Stop",capability:"canStop"}]
                         CButton { required property var modelData;objectName:"media_"+modelData.command;Layout.fillWidth:true;Layout.preferredWidth:1;text:modelData.text;help:desktop.media.available?modelData.text+" · "+desktop.media.name:"No media player is available";enabled:App.connected&&desktop.media.available&&desktop.media[modelData.capability]&&!desktop.pending("media.control");onClicked:desktop.action("media.control",{command:modelData.command,player:desktop.media.player},"Playback updated") }
@@ -174,7 +161,7 @@ ColumnLayout {
                         required property var modelData
                         id:timerRow;Layout.fillWidth:true
                         ColumnLayout {
-                            Layout.fillWidth:true;Layout.minimumWidth:0;spacing:3
+                            Layout.fillWidth:true;Layout.minimumWidth:0;spacing:Theme.space1
                             CText { text:timerRow.modelData.label;font.pixelSize:Theme.secondary }
                             CText { text:"Ends "+new Date(timerRow.modelData.due).toLocaleTimeString(Qt.locale(),"h:mm AP");color:Theme.muted;font.pixelSize:Theme.caption }
                         }
@@ -195,30 +182,30 @@ ColumnLayout {
                     model:desktop.filteredWindows
                     RowLayout {
                         required property var modelData
-                        id:windowRow;Layout.fillWidth:true;spacing:8
-                        CActionRow { objectName:"desktopWindow";Layout.fillWidth:true;text:windowRow.modelData.title||windowRow.modelData.class||"Untitled window";detail:windowRow.modelData.class+" · Workspace "+(windowRow.modelData.workspace?.name||windowRow.modelData.workspace?.id||"—");mark:"▣";onClicked:desktop.action("windows.focus",{address:windowRow.modelData.address},"Window focused") }
-                        CButton { text:"Move";help:"Move this window to workspace "+workspace.value;onClicked:desktop.action("windows.move",{address:windowRow.modelData.address,workspace:workspace.value},"Window moved to workspace "+workspace.value) }
+                        id:windowRow;Layout.fillWidth:true;spacing:Theme.space2
+                        CActionRow { objectName:"desktopWindow";enabled:App.connected;Layout.fillWidth:true;text:windowRow.modelData.title||windowRow.modelData.class||"Untitled window";detail:windowRow.modelData.class+" · Workspace "+(windowRow.modelData.workspace?.name||windowRow.modelData.workspace?.id||"—");onClicked:desktop.action("windows.focus",{address:windowRow.modelData.address},"Window focused") }
+                        CButton { text:"Move";enabled:App.connected;help:"Move this window to workspace "+workspace.value;onClicked:desktop.action("windows.move",{address:windowRow.modelData.address,workspace:workspace.value},"Window moved to workspace "+workspace.value) }
                     }
                 }
-                CText { visible:!desktop.filteredWindows.length;text:desktop.windowsRequest>=0?"Loading open windows…":desktop.query?"No windows match your search.":"No application windows are open.";color:Theme.muted;font.pixelSize:Theme.secondary }
+                CText { visible:App.connected&&!desktop.catalogError&&!desktop.filteredWindows.length;text:desktop.windowsRequest>=0?"Loading open windows…":desktop.query?"No windows match your search.":"No application windows are open.";color:Theme.muted;font.pixelSize:Theme.secondary }
             }
             CSection {
                 title:"Applications";visible:desktop.showApps;hint:desktop.filteredApps.length+" available";Layout.columnSpan:sections.columns
                 GridLayout {
-                    Layout.fillWidth:true;columns:width>=600?2:1;columnSpacing:8;rowSpacing:8
+                    Layout.fillWidth:true;columns:width>=Theme.wideToolbar?2:1;columnSpacing:Theme.space2;rowSpacing:Theme.space2
                     Repeater {
                         model:desktop.filteredApps.slice(0,desktop.appLimit)
-                        CActionRow { required property var modelData;objectName:"desktopApplication";Layout.fillWidth:true;Layout.preferredWidth:1;text:modelData.name;detail:"Open application";onClicked:desktop.action("apps.launch",{desktopId:modelData.id},modelData.name+" opened") }
+                        CActionRow { required property var modelData;objectName:"desktopApplication";enabled:App.connected;Layout.fillWidth:true;Layout.preferredWidth:1;text:modelData.name;help:"Open "+modelData.name;onClicked:desktop.action("apps.launch",{desktopId:modelData.id},modelData.name+" opened") }
                     }
                 }
                 CButton { visible:desktop.filteredApps.length>desktop.appLimit;Layout.fillWidth:true;text:"Show more applications ("+(desktop.filteredApps.length-desktop.appLimit)+" remaining)";onClicked:desktop.appLimit+=12 }
-                CText { visible:!desktop.filteredApps.length;text:desktop.appsRequest>=0?"Loading applications…":"No applications found. Refresh to check again.";color:Theme.muted;font.pixelSize:Theme.secondary }
+                CText { visible:App.connected&&!desktop.catalogError&&!desktop.filteredApps.length;text:desktop.appsRequest>=0?"Loading applications…":"No applications found. Refresh to check again.";color:Theme.muted;font.pixelSize:Theme.secondary }
             }
             CSection {
                 title:"Saved scripts";visible:desktop.showScripts;Layout.preferredWidth:1
                 Repeater {
                     model:desktop.filteredScripts
-                    CActionRow { required property var modelData;Layout.fillWidth:true;text:modelData.name;detail:"Review and run";mark:"›_";onClicked:{scriptConfirm.script=modelData;scriptConfirm.open()} }
+                    CActionRow { required property var modelData;Layout.fillWidth:true;text:modelData.name;detail:"Review and run";onClicked:{scriptConfirm.script=modelData;scriptConfirm.open()} }
                 }
                 CText { visible:!desktop.filteredScripts.length;text:"Keep frequently used commands here. Add an executable and its arguments in Settings.";color:Theme.muted;font.pixelSize:Theme.secondary }
                 CButton { objectName:"manageScripts";text:"Manage scripts";onClicked:desktop.settingsRequested("scripts") }
@@ -249,13 +236,13 @@ ColumnLayout {
     Connections {
         target:App
         function onStateChanged() {
-            if(!App.connected){desktop.catalogLoaded=false;desktop.appsRequest=-1;desktop.windowsRequest=-1;desktop.mediaRequest=-1;desktop.requests={}}
+            if(!App.connected){desktop.catalogLoaded=false;desktop.appsRequest=-1;desktop.windowsRequest=-1;desktop.mediaRequest=-1;desktop.audioRequest=-1;desktop.audio={available:false};desktop.media={available:false};desktop.requests={}}
             else if(desktop.visible&&!desktop.catalogLoaded)desktop.refresh()
         }
         function onResult(id,value) {
             if(id===desktop.appsRequest){desktop.appsRequest=-1;if(value?.error)desktop.catalogError=value.error;else desktop.apps=value}
             if(id===desktop.windowsRequest){desktop.windowsRequest=-1;if(value?.error)desktop.catalogError=value.error;else desktop.windows=value}
-            if(id===desktop.audioRequest&&!value?.error){desktop.audio=value;if(value.available&&!volume.pressed)volume.value=Math.min(100,value.percent)}
+            if(id===desktop.audioRequest){desktop.audioRequest=-1;desktop.audio=value?.error?({available:false}):value;if(desktop.audio.available&&!volume.pressed)volume.value=Math.min(100,value.percent)}
             if(id===desktop.mediaRequest){desktop.mediaRequest=-1;desktop.mediaError=value?.error||"";desktop.media=value?.error?({available:false}):value}
             const request=desktop.requests[id]
             if(!request)return
@@ -273,11 +260,11 @@ ColumnLayout {
     CDialog {
         id:capturePreview;objectName:"capturePreview"
         CText { text:"Your capture";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
-        Image { source:desktop.capturePath?"file://"+desktop.capturePath:"";Layout.fillWidth:true;Layout.preferredHeight:Math.min(240,desktop.height*.4);fillMode:Image.PreserveAspectFit }
+        Image { source:desktop.capturePath?"file://"+desktop.capturePath:"";Layout.fillWidth:true;Layout.preferredHeight:Math.min(Theme.previewHeight,desktop.height*.4);fillMode:Image.PreserveAspectFit }
         CText { text:"Saved locally. Attach it to a conversation when you’re ready.";color:Theme.muted }
         GridLayout {
-            Layout.fillWidth:true;columns:width>=380?3:1;columnSpacing:8;rowSpacing:8
-            CButton { Layout.fillWidth:true;text:"Open file";onClicked:App.openPath(desktop.capturePath) }
+            Layout.fillWidth:true;columns:width>=Theme.compactPane?3:1;columnSpacing:Theme.space2;rowSpacing:Theme.space2
+            CButton { Layout.fillWidth:true;text:"Open file";enabled:App.connected;onClicked:App.openPath(desktop.capturePath) }
             CButton { Layout.fillWidth:true;text:"Attach to chat";primary:true;enabled:!!App.session.id;onClicked:{App.attachImage(desktop.capturePath);capturePreview.close();App.notify("Image attached to the current chat draft")} }
             CButton { Layout.fillWidth:true;text:"Done";onClicked:capturePreview.close() }
         }
@@ -285,7 +272,7 @@ ColumnLayout {
     CDialog {
         id:scriptConfirm;property var script:({})
         CText { text:"Run "+(scriptConfirm.script.name||"script")+"?";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
-        CText { text:(scriptConfirm.script.executable||"")+"\n"+JSON.stringify(scriptConfirm.script.args||[])+"\n\n"+(scriptConfirm.script.cwd||"");color:Theme.muted;font.family:"monospace";font.pixelSize:Theme.secondary }
+        CText { text:(scriptConfirm.script.executable||"")+"\n"+JSON.stringify(scriptConfirm.script.args||[])+"\n\n"+(scriptConfirm.script.cwd||"");color:Theme.muted;font.family:Theme.mono;font.pixelSize:Theme.secondary }
         RowLayout {
             Layout.fillWidth:true
             CButton { Layout.fillWidth:true;text:"Cancel";onClicked:scriptConfirm.close() }

@@ -3,7 +3,7 @@ import { fail } from './contracts.ts';
 import { bindingSchema } from './task-models.ts';
 
 export const rubricVersion = 'memory-value-1';
-export const contractVersion = 'cere-assessment-2';
+export const contractVersion = 'pal-assessment-2';
 export const categories = ['preference','decision','constraint','goal','relationship','biographical','project_convention','episode'] as const;
 const integer = (min: number, max: number) => z.number().int().min(min).max(max);
 const id = z.string().min(1).max(128);

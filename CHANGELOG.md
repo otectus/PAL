@@ -1,8 +1,21 @@
 # Changelog
 
-Notable changes to Cere, the desktop application and its broker, and to Cere Mobile, its Android companion. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The desktop version is set in `package.json` and the phone's in `mobile/android/app/build.gradle.kts`. Development phone builds use `mobile-dev-vX.Y.Z` tags and stable builds use `mobile-vX.Y.Z` tags, whose GitHub release notes come from [docs/mobile/RELEASE-NOTES.md](docs/mobile/RELEASE-NOTES.md); [docs/mobile/RELEASES.md](docs/mobile/RELEASES.md) describes that process.
+Notable changes to PAL, the desktop application and its broker, and to PAL Mobile, its Android companion. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The desktop version is set in `package.json` and the phone's in `mobile/android/app/build.gradle.kts`. Development phone builds use `mobile-dev-vX.Y.Z` tags and stable builds use `mobile-vX.Y.Z` tags, whose GitHub release notes come from [docs/mobile/RELEASE-NOTES.md](docs/mobile/RELEASE-NOTES.md); [docs/mobile/RELEASES.md](docs/mobile/RELEASES.md) describes that process.
 
 ## [Unreleased]
+
+## [2.0.0] - 2026-11-22
+
+### Added
+
+- **Research in the Workbench.** Plan an answer, comparison, fact-check, or literature review using web sources, project files, or both. Edit the plan, set time and source limits, and inspect the cited passages behind each finding. Pause or steer a run, finish it from the evidence already collected, or export the report as Markdown, CSV, BibTeX, or JSON. Full-access phone owners can manage these same runs from the Work tab. Research runs on the desktop.
+- **A more useful Activity Log.** The desktop Timeline can be searched and filtered by event type or agent. The Subagents view shows which agents are active, finished, or need attention. Inspect an event and jump back to the latest update. On mobile, expand activity cards, copy their contents, fetch full output for a truncated entry, and load older activity.
+
+### Changed
+
+- **Cere is now PAL, Personal Assistant for Linux.** Desktop and Android share the 2.0.0 version and the cyan-eyed speech-bubble icon in the Linux tray and Android launcher. Desktop upgrades keep existing profiles. An Android update signed with the same key keeps its pairing and encrypted data.
+- **Companion artwork.** The white robot is the new default. The previous outfit is available as **PAL (Classic)** among the 24 avatar choices.
+- **Mobile header.** The number beneath **PAL** now comes from the installed Android app. Pairing with a desktop still named “Cere” no longer puts that name in the header.
 
 ## [0.1.6] - 2026-11-21
 
@@ -12,16 +25,16 @@ Notable changes to Cere, the desktop application and its broker, and to Cere Mob
 
 ## [0.1.5] - 2026-11-20
 
-This desktop release includes the Cere Mobile compatibility work first published in the 0.1.4 development snapshot, plus the redesigned 0.1.5 Android interface and cross-device draft reconciliation. The phone side is published through the separate `mobile-dev-v0.1.5` development channel and updates existing `.debug` development installs. Stable mobile signing and publication remain separate and require the permanent release key and the evidence in [docs/mobile/TESTING.md](docs/mobile/TESTING.md).
+This desktop release includes the PAL Mobile compatibility work first published in the 0.1.4 development snapshot, plus the redesigned 0.1.5 Android interface and cross-device draft reconciliation. The phone side is published through the separate `mobile-dev-v0.1.5` development channel and updates existing `.debug` development installs. Stable mobile signing and publication remain separate and require the permanent release key and the evidence in [docs/mobile/TESTING.md](docs/mobile/TESTING.md).
 
 ### Added
 
-- **Pairing without copying.** Desktop Settings → Cere Mobile lists this computer's Tailscale and local-network addresses and the projects Cere knows, offers grant presets, and shows the pairing QR. The phone sends its signed answer back to the PC by itself, the PC shows the six words, and confirming there finishes the phone. For the QR's five minutes the gateway listens and accepts only that offer's answer; two different answers cancel it. Copying or sharing the answer remains as a fallback.
+- **Pairing without copying.** Desktop Settings → PAL Mobile lists this computer's Tailscale and local-network addresses and the projects PAL knows, offers grant presets, and shows the pairing QR. The phone sends its signed answer back to the PC by itself, the PC shows the six words, and confirming there finishes the phone. For the QR's five minutes the gateway listens and accepts only that offer's answer; two different answers cancel it. Copying or sharing the answer remains as a fallback.
 - **Connection details** on the phone: the connected or last-seen desktop build, protocol, app version and channel, last synchronization, and a copyable summary without keys, addresses, IDs or messages.
 - **Typed API model IDs** on the phone, for new conversations, settings and handoffs; an endpoint without a model list is shown as such.
 - `tools/mobile-upgrade-check.ts` (in-place update from a previous development snapshot) and `tools/mobile-ui-pairing-check.ts` (an R8 build paired through its own screen); `tools/mobile-paired-check.ts --pairing network`; `tools/mobile-release.ts` accepts `mobile-dev-vX.Y.Z` and writes `mobile-development.json`.
 - **Responsive Android navigation and screens.** Phone destinations use a bottom bar or navigation rail as space allows. Chat, sessions, pairing, approvals, Desktop controls, settings and supporting sheets share the desktop palette, grouped surfaces, reachable actions and clearer loading, empty, success and error states. Short landscape windows, the keyboard and large fonts scroll instead of hiding required controls.
-- **Adaptive launcher artwork.** Android uses the reviewed cyan Cere “C” and cream diamond as its adaptive foreground, on a navy background, with themed-icon support on Android 13 and later. The launcher treatment was checked on Android 11 and Android 15.
+- **Adaptive launcher artwork.** Android uses the reviewed cyan PAL “C” and cream diamond as its adaptive foreground, on a navy background, with themed-icon support on Android 13 and later. The launcher treatment was checked on Android 11 and Android 15.
 
 ### Changed
 
@@ -41,7 +54,7 @@ This desktop release includes the Cere Mobile compatibility work first published
 
 ## [0.1.1] - 2026-11-20
 
-The Workbench: files, images and analysis for Ollama and API conversations, built from `Cere_Workbench_Files_Images_and_API_Expansion_Handoff.md`. The user guide is [docs/WORKBENCH.md](docs/WORKBENCH.md), and [VALIDATION.md](VALIDATION.md) records its checks. This release also carries the work listed below, which was previously unreleased.
+The Workbench: files, images and analysis for Ollama and API conversations, built from `PAL_Workbench_Files_Images_and_API_Expansion_Handoff.md`. The user guide is [docs/WORKBENCH.md](docs/WORKBENCH.md), and [VALIDATION.md](VALIDATION.md) records its checks. This release also carries the work listed below, which was previously unreleased.
 
 Repository remediation adds revision-safe policy commits, cancellable turn preparation, consent-bound private context, journaled collection ingestion, complete bounded operation review, process-group cleanup, byte-bounded desktop hydration, and Android stale-response fencing. Zod is pinned to 4.6.7. See [implementation and remaining gates](docs/remediation-2026-11-17.md); exhaustive audit and release validation are not complete.
 
@@ -50,7 +63,7 @@ The desktop and mobile review, implemented in October 2026 as work packages W01�
 ### Added
 
 - **Workbench.** Files, Preview, Changes, Images, Runs and Shelf tabs beside the conversation (**Ctrl+Shift+W**). In the compact panel they appear as one sheet. **Files**, **Images** and **Analysis** switches decide what the model is offered; you can always use the Workbench yourself. Temporary and phone-controlled conversations stay text-only.
-- **Workspace folders and reviewed changes.** Each conversation can have up to 8 folders with their own permissions and processing destinations. A confined helper (`cere-workspacefs`) refuses `..`, symlinks and paths outside the folder. Browse, search, preview and edit files. Changes are applied only after review, with per-operation results, version checks, a private trash, and an undo that never overwrites a newer edit. Edit permissions can be granted for a set time.
+- **Workspace folders and reviewed changes.** Each conversation can have up to 8 folders with their own permissions and processing destinations. A confined helper (`pal-workspacefs`) refuses `..`, symlinks and paths outside the folder. Browse, search, preview and edit files. Changes are applied only after review, with per-operation results, version checks, a private trash, and an undo that never overwrites a newer edit. Edit permissions can be granted for a set time.
 - **Conversation files.** Imports, images, extractions and run outputs are kept as immutable, hashed versions with provenance, thumbnails, pins, project sharing and reviewed exports. Documents are extracted with locations: PDF pages, DOCX paragraphs and tables, XLSX cells, CSV, JSON, XML and HTML. Macros never run and links are never fetched. Recordings transcribed from a file also keep a timestamped WebVTT transcript.
 - **Images.** Generation and edits through OpenAI, Google and your own ComfyUI server, as durable jobs. Billing must be acknowledged, and daily budgets apply. A job whose outcome is unknown is never resubmitted. An editor offers crop, annotations, masks, comparison, resize, format conversion, and versions that never change the original. A vision helper, local OCR with Tesseract, and a review helper for narrow document, change-set and research reviews are also available.
 - **Code Lab, commands and Git.** Python runs isolated with bubblewrap, without network, on read-only inputs; its outputs become conversation files. Commands in a folder always ask. Git inspection is read-only. The Runs tab shows which limits are enforced on this computer.
@@ -64,15 +77,15 @@ The desktop and mobile review, implemented in October 2026 as work packages W01�
 - **Desktop draft attachments on the phone.** An open conversation lists its desktop draft's attachments by name, kind, size and digest, never a path. The phone previews a text file's opening or a reduced image, keeps or removes each attachment explicitly and sends them exactly as reviewed; an attachment that changed or was not reviewed is refused.
 - **Memory for every provider on the phone (F09).** Project memory follows the conversation's project on its granted memory server for Codex, Claude Code, Ollama and API conversations alike, as on the desktop. The phone adds assertion history, corrections, conflict resolution, identity decisions and episode freezing, each revision-bound and witnessed by your own statement, and a memory health line that says when recall may be incomplete while chat keeps working.
 - **Pinned replies.** Star a reply on the phone to pin it. Pins are the desktop's bookmarks, and **Pinned replies** lists them across the conversations the phone can see.
-- **Style and results views.** A conversation's settings on the phone show which style it uses and whether that is set for the conversation, its project or everywhere, and list its results and schedules, keeping the provider's report apart from Cere's own verification. The phone can pause a schedule, nothing more.
+- **Style and results views.** A conversation's settings on the phone show which style it uses and whether that is set for the conversation, its project or everywhere, and list its results and schedules, keeping the provider's report apart from PAL's own verification. The phone can pause a schedule, nothing more.
 - **Status portrait.** The phone's header shows the desktop avatar's still portrait with the expression for the conversation's state, such as thinking, waiting for you, interrupted or reconnecting. **Settings → On this phone → Show the assistant's portrait** turns it off on that phone.
 - **Workspace card and missing desktop programs.** The phone's Desktop tab shows whether the desktop is working in this project right now, from fresh workspace observations while workspace telemetry and memory are on. An **Unavailable on the desktop** panel names the desktop programs that are missing for the controls the phone may use.
 - **Open on desktop.** A linked terminal conversation offers **Open on desktop**, which brings its terminal window forward on the desktop (Desktop control with the windows category).
 - **Claude Code history import from the phone.** **Import desktop history** offers stopped Claude Code conversations as well as Codex ones; an imported Claude conversation continues in Claude's restricted mode.
-- **Hosted APIs from the phone (F10).** OpenAI API, Claude API, Google AI API and the compatible endpoint run from a phone that holds `providers.api` and that provider's grant (desktop **Settings → Cere Mobile**). Requests use the desktop's keys and may be billed. A compatible endpoint is granted by its origin, so changing it needs a new grant. AntiGravity turns still start only on the desktop, and the phone says why.
+- **Hosted APIs from the phone (F10).** OpenAI API, Claude API, Google AI API and the compatible endpoint run from a phone that holds `providers.api` and that provider's grant (desktop **Settings → PAL Mobile**). Requests use the desktop's keys and may be billed. A compatible endpoint is granted by its origin, so changing it needs a new grant. AntiGravity turns still start only on the desktop, and the phone says why.
 - **Feature matrix.** [docs/FEATURE-MATRIX.md](docs/FEATURE-MATRIX.md) lists every desktop surface and the mobile plan's rows F01–F98 with the phone's status and the reason for anything that stays on the desktop, plus an operation index generated from the gateway. `tests/feature-matrix.test.ts` keeps it in step with the code.
 - **Conversation states and the services gate.** [docs/CONVERSATION-STATES.md](docs/CONVERSATION-STATES.md) defines the states, outcomes and activity words both clients use, and [docs/SERVICES-GATE.md](docs/SERVICES-GATE.md) lists the check behind each secondary desktop service.
-- **Health additions.** Health names missing desktop programs and the feature each one affects (**Unavailable until installed**), and says when the previous stop could not confirm that everything Cere was running had finished.
+- **Health additions.** Health names missing desktop programs and the feature each one affects (**Unavailable until installed**), and says when the previous stop could not confirm that everything PAL was running had finished.
 - **Checks for installs and providers.** `node tools/check-install.ts DIR [commit]` checks a staged install against its source. `node tools/check-codex-protocol.ts` and `node tools/check-claude-protocol.ts` check the installed CLIs' methods, flags and handshake without a billed turn. `node tools/mobile-paired-check.ts` pairs an emulator or device with an isolated broker and fails unless every paired test passes.
 
 ### Changed
@@ -100,7 +113,7 @@ The desktop and mobile review, implemented in October 2026 as work packages W01�
 - **F02:** test cleanup could close Core before a replacement phone gateway. Gateway close is now idempotent and lets its running operations settle before Core closes, and Core keeps its database open until running changes finish.
 - **F03:** delivery to slow desktop interface clients could exceed its memory budget. It is now bounded per client and overall; a client that falls behind receives one `resync` event, or is closed, instead of an unbounded queue.
 - **F04:** background indexing left an abort listener behind after each wait for foreground work.
-- **F05:** a broker that stayed connected but stopped answering left controls pending indefinitely. The interface now pings the broker every 5 seconds and shows **Cere is not responding** after 15 seconds without an answer: pending requests end once with an explanation and are never resent, drafts stay, and the interface recovers when the broker answers again. Every request also has a 30-minute deadline.
+- **F05:** a broker that stayed connected but stopped answering left controls pending indefinitely. The interface now pings the broker every 5 seconds and shows **PAL is not responding** after 15 seconds without an answer: pending requests end once with an explanation and are never resent, drafts stay, and the interface recovers when the broker answers again. Every request also has a 30-minute deadline.
 - A Hyprland window action reported "window not found" as success; dispatch now requires Hyprland's `ok`.
 - A pinned conversation read replies to phone-started turns aloud on the desktop.
 - Restoring a backup could wait 30 seconds for an asynchronous SQLite backup under load; restore staging now uses `VACUUM INTO`.

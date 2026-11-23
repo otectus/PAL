@@ -20,12 +20,22 @@ def main():
     if address.startswith('unix:'):
         address = 'unix_socket:' + address[len('unix:'):]
     if not address.startswith('unix_socket:'):
-        raise RuntimeError('Cere requires a local Speech Dispatcher socket')
-    client = speechd.SSIPClient('cere', component='response', address=address)
+        raise RuntimeError('PAL requires a local Speech Dispatcher socket')
+    client = speechd.SSIPClient('pal', component='response', address=address)
     try:
         # Explicitly select our local module: never silently speak with a system
-        # default that might use a network service or an unrelated screen reader.
-        client.set_output_module('cere-piper')
+        # default that might use a network service or an unrelated screen reader. A
+        # legacy local module is used only when the dispatcher explicitly advertises
+        # it and does not advertise PAL's module.
+        listed = getattr(client, 'list_output_modules', None)
+        modules = set()
+        if callable(listed):
+            for module in listed():
+                modules.add(str(module[0] if isinstance(module, (tuple, list)) else module))
+        output = 'pal-piper' if not modules or 'pal-piper' in modules else 'cere-piper' if 'cere-piper' in modules else None
+        if output is None:
+            raise RuntimeError('PAL Piper is not registered with Speech Dispatcher')
+        client.set_output_module(output)
         if request['voice'] not in [voice[0] for voice in client.list_synthesis_voices()]:
             raise RuntimeError('Selected Piper voice is not registered')
         client.set_synthesis_voice(request['voice'])

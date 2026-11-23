@@ -8,7 +8,7 @@ import {datasetVersion} from '../../broker/graph-memory/evaluation.ts';
 // projection credentials or cloud consent. Never select the user's chat model.
 const [option,model,count]=process.argv.slice(2);
 if(option!=='--local-model'||!model||!/^([1-9]|10|11)$/.test(count||''))throw new Error('Usage: node benchmarks/memory/evaluate-curation.ts --local-model MODEL CASES (1–11)');
-const dir=await mkdtemp(join(tmpdir(),'cere-curation-eval-'));
+const dir=await mkdtemp(join(tmpdir(),'pal-curation-eval-'));
 const service=new MemoryService(dir);clearInterval(service.timer);
 try{
   const scope=await service.canonical.call('scope',{key:'synthetic-evaluation',label:'Synthetic evaluation'});

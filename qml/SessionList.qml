@@ -1,12 +1,12 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "Labels.js" as Labels
 
 ColumnLayout {
     id:list
     property bool compact:false
-    // Narrow windows keep each row to one line of actions: the context menu (or its ⋯ button).
-    property bool rowActions:true
+    property bool managingFolders: false
     property bool activeOnly:false
     property bool historyExpanded:false
     property string selectedFilter:"all"
@@ -24,6 +24,10 @@ ColumnLayout {
     property var history:[]
     property int historyRequest:-1
     property string error:""
+    property string catalogError:""
+    property bool retryAppend:false
+    readonly property bool brokerOnline:App.connected
+    onBrokerOnlineChanged:if(brokerOnline && visible)catalogRefresh.restart()
     property string contextSessionId:""
     property string folderSessionId:""
     readonly property var contextSession:sessionById(contextSessionId)
@@ -100,6 +104,7 @@ ColumnLayout {
     function refresh(reset) {
         if(!App.connected)return
         if(reset===undefined)reset=true
+        catalogError=""
         if(reset){nextPage=null;loadingMore=false}
         else if(!nextPage||listRequest>=0)return
         const request=App.rpc("sessions.list",requestParams(reset?null:nextPage))
@@ -136,34 +141,38 @@ ColumnLayout {
         }
     }
 
-    spacing:compact?10:14
+    spacing:compact ? Theme.space2 : Theme.space3
     RowLayout {
         Layout.fillWidth:true
-        CText { text:list.compact?"RECENT SESSIONS":"Sessions";color:list.compact?Theme.muted:Theme.text;font.pixelSize:list.compact?Theme.caption:Theme.page;font.letterSpacing:list.compact?1.4:0;font.weight:Font.DemiBold }
+        CText { text:list.compact?"Recent sessions":"Sessions";Accessible.role:Accessible.Heading;color:list.compact?Theme.muted:Theme.text;font.pixelSize:list.compact?Theme.secondary:Theme.page;font.weight:Font.DemiBold }
         Text { visible:list.compact;text:list.totalSessions;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
         CButton { visible:!list.compact;objectName:"newSession";text:"New session";iconName:"plus";primary:true;onClicked:list.createRequested() }
     }
-    CText { visible:!list.compact&&list.height>=420;text:"Pick up where you left off, or organize conversations by project and folder.";color:Theme.muted }
     CField {
         id:filter;objectName:list.compact?"sidebarSessionSearch":"sessionSearch"
-        placeholderText:"Find a session…";Layout.fillWidth:true;Accessible.name:"Find a session"
+        implicitHeight:list.compact ? Theme.compactHeight : Theme.controlHeight; placeholderText:"Find a session…";Layout.fillWidth:true;Accessible.name:"Find a session"
         onTextChanged:searchDelay.restart()
         onAccepted:if(list.filtered.length)list.activate(list.filtered[0])
         Keys.onDownPressed:event=>{sessionViewport.currentIndex=Math.max(0,sessionViewport.currentIndex);sessionViewport.forceActiveFocus();event.accepted=true}
     }
     Timer { id:searchDelay;interval:220;onTriggered:list.refresh(true) }
     RowLayout {
-        visible:!list.compact;Layout.fillWidth:true;spacing:8
+        visible:!list.compact;Layout.fillWidth:true;spacing:Theme.space2
         CComboBox {
             id:filterPicker;objectName:"sessionFilter";Layout.fillWidth:true
             model:list.filterOptions;textRole:"label";Accessible.name:"Filter sessions"
             currentIndex:Math.max(0,list.filterOptions.findIndex(option=>option.id===list.selectedFilter))
             onActivated:if(currentIndex>=0)list.setFilter(list.filterOptions[currentIndex].id)
         }
+        CButton {
+            visible:list.folders.length>0;objectName:"manageFolders";iconName:"settings";text:"";quiet:true;primary:list.managingFolders
+            help:"Manage folders";Accessible.name:"Manage folders";Accessible.expanded:list.managingFolders
+            onClicked:list.managingFolders=!list.managingFolders
+        }
         CButton { objectName:"createFolder";text:"New folder";iconName:"plus";onClicked:folderDialog.createFolder() }
     }
     RowLayout {
-        visible:!list.compact&&list.folders.length>0;Layout.fillWidth:true;spacing:8
+        visible:!list.compact&&list.managingFolders&&list.folders.length>0;Layout.fillWidth:true;spacing:Theme.space2
         CComboBox { id:folderPicker;objectName:"folderPicker";Layout.fillWidth:true;model:list.folders;textRole:"name";Accessible.name:"Folder to manage" }
         CButton { text:"Rename";enabled:folderPicker.currentIndex>=0;onClicked:folderDialog.renameFolder(list.folders[folderPicker.currentIndex]) }
         CButton { text:"Delete";danger:true;enabled:folderPicker.currentIndex>=0;onClicked:folderDialog.deleteFolder(list.folders[folderPicker.currentIndex]) }
@@ -172,32 +181,42 @@ ColumnLayout {
     ListView {
         id:sessionViewport
         objectName:list.compact?"sidebarSessionList":"sessionList"
-        Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumHeight:48
-        clip:true;spacing:6;boundsBehavior:Flickable.StopAtBounds
+        Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumHeight:Theme.rowDetailHeight
+        clip:true;spacing:Theme.space2;boundsBehavior:Flickable.StopAtBounds
         activeFocusOnTab:true;keyNavigationEnabled:true
         Accessible.role:Accessible.List;Accessible.name:"Sessions"
+        Accessible.description:"Use Up and Down to choose a session, Enter to open it, or Right Arrow for its actions."
         ScrollBar.vertical:CScrollBar{}
         model:sessionRows
         Keys.onUpPressed:event=>{currentIndex=Math.max(0,currentIndex-1);positionViewAtIndex(currentIndex,ListView.Contain);event.accepted=true}
         Keys.onDownPressed:event=>{currentIndex=Math.min(count-1,currentIndex+1);positionViewAtIndex(currentIndex,ListView.Contain);event.accepted=true}
         Keys.onReturnPressed:event=>{if(currentIndex>=0)list.activate(list.filtered[currentIndex]);event.accepted=true}
         Keys.onEnterPressed:event=>{if(currentIndex>=0)list.activate(list.filtered[currentIndex]);event.accepted=true}
+        Keys.onRightPressed:event=>{if(currentItem){currentItem.focusActions();event.accepted=true}}
         Keys.onPressed:event=>{if(currentItem)list.contextKey(event,currentItem.modelData,currentItem)}
         delegate:Item {
             id:sessionDelegate
             required property var entry
             property var modelData:entry
             required property int index
-            width:sessionViewport.width-10;height:list.compact?72:list.rowActions?116:80
+            property bool actionsRevealed:false
+            function focusActions(){actionsRevealed=true;Qt.callLater(()=>sessionMore.forceActiveFocus(Qt.TabFocusReason))}
+            function moveActions(step){
+                sessionViewport.currentIndex=Math.max(0,Math.min(sessionViewport.count-1,index+step))
+                sessionViewport.positionViewAtIndex(sessionViewport.currentIndex,ListView.Contain)
+                Qt.callLater(()=>{if(sessionViewport.currentItem)sessionViewport.currentItem.focusActions()})
+            }
+            width:sessionViewport.width-(sessionViewport.contentHeight>sessionViewport.height?Theme.minimumTarget:0);height:list.compact?Theme.rowDetailHeight:Theme.sessionRowHeight
             CButton {
                 id:sessionRow
                 objectName:"session_"+sessionDelegate.modelData.id
                 anchors.left:parent.left;anchors.right:parent.right;anchors.top:parent.top
-                height:list.compact?72:76
+                height:sessionDelegate.height
+                activeFocusOnTab:false;focusPolicy:Qt.NoFocus
                 text:sessionDelegate.modelData.title||"Untitled session";quiet:true
-                primary:App.selectedId===sessionDelegate.modelData.id
-                help:(sessionDelegate.modelData.title||"Untitled session")+"\n"+sessionDelegate.modelData.provider+" · "+list.statusLabel(sessionDelegate.modelData)+"\n"+(sessionDelegate.modelData.cwd||"")
-                Accessible.name:(sessionDelegate.modelData.title||"Untitled session")+", "+sessionDelegate.modelData.provider+", "+list.statusLabel(sessionDelegate.modelData)
+                primary:App.selectedId===sessionDelegate.modelData.id || (sessionViewport.activeFocus && sessionViewport.currentIndex===sessionDelegate.index)
+                help:(sessionDelegate.modelData.title||"Untitled session")+"\n"+Labels.provider(sessionDelegate.modelData.provider)+" · "+list.statusLabel(sessionDelegate.modelData)+"\n"+(sessionDelegate.modelData.cwd||"")
+                Accessible.name:(sessionDelegate.modelData.title||"Untitled session")+", "+Labels.provider(sessionDelegate.modelData.provider)+", "+list.statusLabel(sessionDelegate.modelData)
                 Accessible.selected:App.selectedId===sessionDelegate.modelData.id
                 onClicked:{sessionViewport.currentIndex=sessionDelegate.index;list.activate(sessionDelegate.modelData)}
                 Keys.onPressed:event=>list.contextKey(event,sessionDelegate.modelData,sessionRow)
@@ -206,56 +225,71 @@ ColumnLayout {
                     onClicked:mouse=>list.openSessionMenu(sessionDelegate.modelData,sessionRow,mouse.x,mouse.y)
                 }
                 contentItem:ColumnLayout {
-                    spacing:5
+                    spacing:list.compact ? 0 : Theme.space1
                     RowLayout {
-                        Layout.fillWidth:true;spacing:8
-                        Text { visible:sessionDelegate.modelData.pinned===true;text:"★";color:Theme.amber;font.pixelSize:Theme.body;Accessible.ignored:true }
-                        Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:(sessionDelegate.modelData.unread?"● ":"")+(sessionDelegate.modelData.title||"Untitled session");maximumLineCount:1;elide:Text.ElideRight;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.body;font.weight:Font.Medium;textFormat:Text.PlainText }
-                        Rectangle { width:6;height:6;radius:3;color:list.pendingInputCount(sessionDelegate.modelData)>0?Theme.amber:["starting","working","stopping"].indexOf(sessionDelegate.modelData.status)>=0?Theme.accentText:Theme.line }
-                        CButton {
-                            visible:!list.compact&&!list.rowActions;objectName:"sessionMore_"+sessionDelegate.modelData.id
-                            implicitWidth:32;implicitHeight:28;leftPadding:6;rightPadding:6;quiet:true
-                            help:"Rename, organize or delete";Accessible.name:"Actions for "+(sessionDelegate.modelData.title||"Untitled session")
-                            contentItem:CIcon { name:"more";color:Theme.text }
-                            onClicked:{const corner=mapToItem(sessionRow,0,height);list.openSessionMenu(sessionDelegate.modelData,sessionRow,corner.x,corner.y)}
+                        Layout.fillWidth:true;spacing:Theme.space2
+                        Text { objectName:"sessionPin_"+sessionDelegate.modelData.id;visible:sessionDelegate.modelData.pinned===true;text:"★";color:Theme.amber;font.pixelSize:Theme.body;Accessible.ignored:true }
+                        Text { objectName:"sessionTitle_"+sessionDelegate.modelData.id;Layout.fillWidth:true;Layout.minimumWidth:0;text:(sessionDelegate.modelData.unread?"● ":"")+(sessionDelegate.modelData.title||"Untitled session");maximumLineCount:1;elide:Text.ElideRight;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.body;font.weight:Font.Medium;textFormat:Text.PlainText }
+
+                        Item {
+                            // Keep the action's layout slot even while its compact presentation is hidden.
+                            // Otherwise hover changes both the title width and this row's implicit height.
+                            Layout.preferredWidth:Theme.compactHeight
+                            Layout.preferredHeight:list.compact?Theme.minimumTarget:Theme.compactHeight
+                            CButton {
+                                id:sessionMore
+                                anchors.fill:parent
+                                visible:!list.compact || sessionDelegate.actionsRevealed || sessionRow.hovered || sessionRow.activeFocus || activeFocus;objectName:"sessionMore_"+sessionDelegate.modelData.id
+                                activeFocusOnTab:false
+                                leftPadding:Theme.space2;rightPadding:Theme.space2;quiet:true
+                                help:"Rename, organize or delete";Accessible.name:"Actions for "+(sessionDelegate.modelData.title||"Untitled session")
+                                contentItem:CIcon { name:"more";color:Theme.text }
+                                onActiveFocusChanged:if(!activeFocus)sessionDelegate.actionsRevealed=false
+                                onClicked:{const corner=mapToItem(sessionRow,0,height);list.openSessionMenu(sessionDelegate.modelData,sessionRow,corner.x,corner.y)}
+                                Keys.onLeftPressed:event=>{sessionViewport.forceActiveFocus(Qt.BacktabFocusReason);event.accepted=true}
+                                Keys.onEscapePressed:event=>{sessionViewport.forceActiveFocus(Qt.BacktabFocusReason);event.accepted=true}
+                                Keys.onUpPressed:event=>{sessionDelegate.moveActions(-1);event.accepted=true}
+                                Keys.onDownPressed:event=>{sessionDelegate.moveActions(1);event.accepted=true}
+                            }
                         }
                     }
-                    Text { Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideRight;text:sessionDelegate.modelData.provider.charAt(0).toUpperCase()+sessionDelegate.modelData.provider.slice(1)+" · "+list.statusLabel(sessionDelegate.modelData);color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
-                    Text { visible:!list.compact;Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideMiddle;text:sessionDelegate.modelData.cwd||"";color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption;textFormat:Text.PlainText }
+                    Text { objectName:"sessionStatus_"+sessionDelegate.modelData.id;Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideRight;text:Labels.provider(sessionDelegate.modelData.provider)+" · "+list.statusLabel(sessionDelegate.modelData);color:list.pendingInputCount(sessionDelegate.modelData)>0?Theme.amber:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
+                    Text { objectName:"sessionPath_"+sessionDelegate.modelData.id;visible:!list.compact;Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideMiddle;text:sessionDelegate.modelData.cwd||"";color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption;textFormat:Text.PlainText }
                 }
             }
-            RowLayout {
-                visible:!list.compact&&list.rowActions;anchors.left:parent.left;anchors.right:parent.right;anchors.bottom:parent.bottom;height:36;spacing:6
-                CButton { objectName:"pinSession_"+sessionDelegate.modelData.id;text:sessionDelegate.modelData.pinned?"Unpin":"Pin";help:"Pinned replies appear beside "+App.assistantName+" and are read aloud when voice is enabled.";quiet:true;implicitHeight:32;onClicked:list.organize(sessionDelegate.modelData,{pinned:!sessionDelegate.modelData.pinned}) }
-                CComboBox {
-                    objectName:"moveSession_"+sessionDelegate.modelData.id;Layout.fillWidth:true;implicitHeight:32
-                    model:[{id:"",name:"Unfiled"}].concat(list.folders);textRole:"name";valueRole:"id"
-                    Accessible.name:"Move "+(sessionDelegate.modelData.title||"session")+" to folder"
-                    currentIndex:Math.max(0,model.findIndex(folder=>folder.id===(sessionDelegate.modelData.folderId||"")))
-                    onActivated:list.organize(sessionDelegate.modelData,{folderId:currentValue||null})
-                }
-                CButton { objectName:"archiveSession_"+sessionDelegate.modelData.id;text:sessionDelegate.modelData.archived?"Unarchive":"Archive";quiet:true;implicitHeight:32;onClicked:list.organize(sessionDelegate.modelData,{archived:!sessionDelegate.modelData.archived}) }
-            }
+
         }
         CText {
-            visible:!list.filtered.length&&list.listRequest<0;width:parent.width-12;anchors.top:parent.top;anchors.topMargin:12
+            visible:!list.filtered.length&&list.listRequest<0;width:parent.width-Theme.space3;anchors.top:parent.top;anchors.topMargin:Theme.space3
             text:filter.text?"No sessions match your search.":list.selectedFilter==="working"?"All caught up. No sessions are working.":"No sessions in this view."
             color:Theme.muted;font.pixelSize:Theme.secondary
         }
-        footer:CButton { visible:list.nextPage!==null;width:sessionViewport.width-10;text:list.loadingMore?"Loading…":"Load more";enabled:!list.loadingMore;onClicked:list.refresh(false) }
+        footer:CButton { visible:list.nextPage!==null;height:visible?implicitHeight:0;width:sessionViewport.width-Theme.minimumTarget;text:list.loadingMore?"Loading…":"Load more";enabled:!list.loadingMore;onClicked:list.refresh(false) }
     }
     CText { visible:list.listRequest>=0&&list.filtered.length===0;text:"Loading sessions…";color:Theme.muted;font.pixelSize:Theme.secondary }
+    RowLayout {
+        visible: list.catalogError.length > 0
+        Layout.fillWidth: true
+        CText {
+            Layout.fillWidth: true
+            text: list.catalogError
+            color: Theme.muted
+            font.pixelSize: Theme.secondary
+            Accessible.role: Accessible.AlertMessage
+        }
+        CButton { text:qsTr("Retry");quiet:true;enabled:App.connected && list.listRequest<0;onClicked:list.refresh(!list.retryAppend) }
+    }
     CText { visible:list.error.length>0;text:list.error;color:Theme.danger;font.pixelSize:Theme.secondary }
-    CButton { Layout.fillWidth:true;quiet:true;alignLeft:true;iconName:"sessions";text:list.historyExpanded?"Hide terminal history":"Import terminal session";help:"Continue a completed Codex or Claude conversation";onClicked:list.historyExpanded=!list.historyExpanded }
+    CButton { Layout.fillWidth:true;quiet:true;alignLeft:true;iconName:"sessions";implicitHeight:list.compact?Theme.compactHeight:Theme.controlHeight;text:list.historyExpanded?"Hide terminal history":"Import terminal session";help:"Continue a completed Codex or Claude conversation";onClicked:list.historyExpanded=!list.historyExpanded }
     ColumnLayout {
-        visible:list.historyExpanded;Layout.fillWidth:true;spacing:8
+        visible:list.historyExpanded;Layout.fillWidth:true;spacing:Theme.space2
         CText { text:list.historyRequest>=0?"Loading history…":"Continue a completed conversation.";color:Theme.muted;font.pixelSize:Theme.caption }
         RowLayout {
-            Layout.fillWidth:true;spacing:6
+            Layout.fillWidth:true;spacing:Theme.space2
             CButton { text:"Codex";Layout.fillWidth:true;enabled:list.historyRequest<0&&App.connected;onClicked:{list.error="";list.historyRequest=App.rpc("session.history",{provider:"codex"})} }
             CButton { text:"Claude";Layout.fillWidth:true;enabled:list.historyRequest<0&&App.connected;onClicked:{list.error="";list.historyRequest=App.rpc("session.history",{provider:"claude"})} }
         }
-        PageScroll { visible:list.history.length>0;Layout.fillWidth:true;Layout.preferredHeight:Math.min(220,list.height*.35);Repeater { model:list.history;CActionRow { required property var modelData;Layout.fillWidth:true;text:modelData.title;detail:modelData.cwd||"Continue this conversation";onClicked:{importSession.imported=modelData;importSession.open()} } } }
+        PageScroll { visible:list.history.length>0;Layout.fillWidth:true;Layout.preferredHeight:Math.min(Theme.editorTall,list.height*.35);Repeater { model:list.history;CActionRow { required property var modelData;Layout.fillWidth:true;text:modelData.title;detail:modelData.cwd||"Continue this conversation";onClicked:{importSession.imported=modelData;importSession.open()} } } }
     }
     CMenu {
         id:sessionMenu;objectName:"sessionContextMenu";parent:list;focus:true
@@ -297,7 +331,7 @@ ColumnLayout {
         CText { text:deleteSession.session.temporary?"Discard conversation":"Delete conversation";font.pixelSize:Theme.page;font.weight:Font.DemiBold }
         CText {
             Layout.fillWidth:true;wrapMode:Text.Wrap
-            text:"“"+(deleteSession.session.title||"Untitled session")+"” and its transcript, draft, attachments and result cards are removed from Cere. This cannot be undone."
+            text:"“"+(deleteSession.session.title||"Untitled session")+"” and its transcript, draft, attachments and result cards are removed from PAL. This cannot be undone."
                 +(deleteSession.session.temporary?"":" Memory saved from it stays until you forget it in Memory, and the provider’s own history is unchanged.")
         }
         CText { visible:deleteSession.error.length>0;text:deleteSession.error;color:Theme.danger;wrapMode:Text.Wrap;Layout.fillWidth:true }
@@ -360,7 +394,12 @@ ColumnLayout {
             if(id===list.listRequest){
                 const append=list.loadingMore
                 list.listRequest=-1;list.loadingMore=false
-                if(value?.error){list.error=value.error;return}
+                if(value?.error){
+                    list.retryAppend=append
+                    list.catalogError=append ? qsTr("Couldn’t load more sessions.") : qsTr("Couldn’t refresh sessions.")
+                    return
+                }
+                list.catalogError=""
                 const rows=value?.sessions||value||[]
                 list.remoteSessions=append?list.remoteSessions.concat(rows):rows
                 list.remoteLoaded=true;list.catalogSeen=list.catalogRequested;list.nextPage=value?.next||null

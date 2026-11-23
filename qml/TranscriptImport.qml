@@ -35,7 +35,7 @@ CDialog {
     }
     CText { visible:!!importer.resultSession&&importer.resultSession!==App.selectedId;text:"This transcript belongs to another conversation. Return to it before inserting.";color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CTextArea {
-        id:transcript;objectName:"transcriptImportText";visible:!importer.running&&!!importer.resultSession;Layout.fillWidth:true;Layout.preferredHeight:200
+        id:transcript;objectName:"transcriptImportText";visible:!importer.running&&!!importer.resultSession;Layout.fillWidth:true;Layout.preferredHeight:Theme.editorTall
         wrapMode:TextEdit.Wrap;textFormat:TextEdit.PlainText;selectByMouse:true;Accessible.name:"Editable transcript"
     }
     CText { objectName:"transcriptImportError";visible:!!importer.error;text:importer.error;color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }

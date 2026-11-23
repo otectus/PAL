@@ -14,6 +14,8 @@
     <string name="session_pinned">Pinned</string>
     <string name="appearance_alerts">Appearance &amp; alerts</string>
     <string name="desktop_access">Desktop access</string>
+    <string name="owner_settings">This computer</string>
+    <string name="owner_hint">Full access, working profile, devices, keys and power</string>
     <string name="assistant_memory">Assistant &amp; memory</string>
     <string name="connection_settings">Connection</string>
     <string name="pairing_maintenance">Pairing &amp; maintenance</string>

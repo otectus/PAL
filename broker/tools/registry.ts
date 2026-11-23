@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto';
 /**
  * The typed registry for Workbench tools. Each definition carries its model-facing name, a strict input
  * schema (validated at execution whatever the provider claims about schema enforcement), its family and
- * effects as Cere declares them, and an availability check. Advertising a tool is not authorization:
+ * effects as PAL declares them, and an availability check. Advertising a tool is not authorization:
  * availability is checked again when a call is accepted, and each service re-checks before it reads,
  * releases, dispatches or commits.
  *
- * Small models get a focused set: each enabled family contributes its core tools, and `cere_tools`
+ * Small models get a focused set: each enabled family contributes its core tools, and `pal_tools`
  * lists the rest so the model can add one for the remainder of the turn. Selecting a tool never widens
  * authority; it only changes which already-authorized schemas the next request carries.
  *
@@ -22,11 +22,11 @@ export type ToolEffects = { read?: boolean; write?: boolean; execute?: boolean; 
 export type ToolContext = { sessionId: string; session: Session; signal: AbortSignal; turnId: string };
 export type ToolSpec<Input extends z.ZodType = z.ZodType> = {
   name: string;
-  family: WorkbenchFamily | 'operations' | 'knowledge';
+  family: WorkbenchFamily | 'operations' | 'knowledge' | 'skills';
   description: string;
   input: Input;
   effects: ToolEffects;
-  /** Part of the focused default set for its family; others are reached through cere_tools. */
+  /** Part of the focused default set for its family; others are reached through pal_tools. */
   core?: boolean;
   /** '' when the tool may be offered to this conversation now; otherwise the reason it is not. */
   available(session: Session): string;
@@ -47,10 +47,10 @@ export class ToolRegistry {
   private refused = new Map<string, string>();
   private invalid = new Map<string, number>();
   register<Input extends z.ZodType>(spec: ToolSpec<Input>) {
-    if (!/^[a-z][a-z0-9_]{2,63}$/.test(spec.name) || this.specs.has(spec.name) || spec.name === 'cere_tools') throw new Error('Invalid or duplicate tool name ' + spec.name);
+    if (!/^[a-z][a-z0-9_]{2,63}$/.test(spec.name) || this.specs.has(spec.name) || ['pal_tools', 'cere_tools'].includes(spec.name)) throw new Error('Invalid or duplicate tool name ' + spec.name);
     this.specs.set(spec.name, spec);
   }
-  has(name: string) { return name === 'cere_tools' || this.specs.has(name); }
+  has(name: string) { return name === 'pal_tools' || name === 'cere_tools' || this.specs.has(name); }
   spec(name: string) { return this.specs.get(name); }
   /** Every registered tool this conversation could use now, with the reason for each that it cannot. */
   availability(session: Session, families: Set<string>) {
@@ -75,14 +75,14 @@ export class ToolRegistry {
     const chosen = this.selection(session).names;
     const offered = usable.filter(spec => spec.core || chosen.has(spec.name));
     const tools = offered.map(spec => ({ type: 'function' as const, function: { name: spec.name, description: spec.description, parameters: providerSchema(spec.input) } }));
-    if (offered.length < usable.length) tools.push({ type: 'function', function: { name: 'cere_tools', description: 'List more Workbench tools available in this conversation, or add some of them to your next request. Adding a tool grants nothing new; it only makes an already-permitted tool callable.',
+    if (offered.length < usable.length) tools.push({ type: 'function', function: { name: 'pal_tools', description: 'List more Workbench tools available in this conversation, or add some of them to your next request. Adding a tool grants nothing new; it only makes an already-permitted tool callable.',
       parameters: providerSchema(z.strictObject({ add: z.array(z.string().max(64)).max(8).optional().describe('Names of listed tools to make callable in your next request') })) } });
     return tools;
   }
   /** Runs one Workbench tool after validating its arguments and re-checking that it is still available. */
   async call(session: Session, families: Set<string>, name: string, args: unknown, signal: AbortSignal): Promise<ToolResultV1> {
     const turnId = session.turnId || '';
-    if (name === 'cere_tools') return this.catalog(session, families, args);
+    if (name === 'pal_tools' || name === 'cere_tools') return this.catalog(session, families, args);
     const spec = this.specs.get(name);
     if (!spec || !families.has(spec.family)) return failed('not_offered', 'This tool is not available in this conversation.', 'never');
     const reason = spec.available(session);
@@ -108,7 +108,7 @@ export class ToolRegistry {
   }
   private catalog(session: Session, families: Set<string>, args: unknown): ToolResultV1 {
     const parsed = z.strictObject({ add: z.array(z.string().max(64)).max(8).optional() }).safeParse(args ?? {});
-    if (!parsed.success) return failed('invalid_arguments', 'cere_tools takes an optional "add" list of tool names', 'explicit');
+    if (!parsed.success) return failed('invalid_arguments', 'pal_tools takes an optional "add" list of tool names', 'explicit');
     const { usable, unavailable } = this.availability(session, families), chosen = this.selection(session).names;
     const added: string[] = [], unknown: string[] = [];
     for (const name of parsed.data.add || []) { if (usable.some(spec => spec.name === name && !spec.core)) { chosen.add(name); added.push(name); } else unknown.push(name); }

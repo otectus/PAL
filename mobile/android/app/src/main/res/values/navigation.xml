@@ -1,6 +1,7 @@
 <resources>
     <string name="nav_chats">Chats</string>
     <string name="nav_inbox">Inbox</string>
+    <string name="nav_work">Work</string>
     <string name="nav_desktop">Desktop</string>
     <string name="nav_settings">Settings</string>
     <string name="go_back">Back</string>

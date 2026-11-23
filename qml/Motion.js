@@ -1,7 +1,7 @@
 .pragma library
 
 // The clock animates semantic joint channels. Artwork, bind pivots, limits and
-// spring tuning live in cere-rig.json; no body part is inferred from pixels.
+// spring tuning live in pal-rig.json; no body part is inferred from pixels.
 function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)) }
 function smooth(t) { t = clamp(t, 0, 1); return t * t * (3 - 2 * t) }
 function ease(t) { t = clamp(t, 0, 1); return t*t*t*(t*(t*6-15)+10) }

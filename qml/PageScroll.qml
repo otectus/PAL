@@ -5,28 +5,28 @@ import QtQuick.Window
 Flickable {
     id: scroll
     default property alias body: column.data
-    property real maximumContentWidth: 1120
+    property real maximumContentWidth: Theme.pageWidth
     readonly property real bodyWidth: column.width
     clip: true
     contentWidth: width
-    contentHeight: column.implicitHeight + 8
+    contentHeight: column.implicitHeight + Theme.space2
     boundsBehavior: Flickable.StopAtBounds
     flickableDirection: Flickable.VerticalFlick
     ScrollBar.vertical: CScrollBar {}
     ColumnLayout {
         id: column
-        width: Math.max(0, Math.min(scroll.width - 16, scroll.maximumContentWidth))
-        x: Math.max(0, (scroll.width - 16 - width) / 2)
-        spacing: 14
+        width: Math.max(0, Math.min(scroll.width - Theme.minimumTarget, scroll.maximumContentWidth))
+        x: Math.max(0, (scroll.width - Theme.minimumTarget - width) / 2)
+        spacing: Theme.space4
     }
     function reveal(item) {
         let ancestor = item
         while (ancestor && ancestor !== column) ancestor = ancestor.parent
         if (!ancestor || !item) return
         const point = item.mapToItem(column, 0, 0)
-        if (point.y < contentY) contentY = Math.max(0, point.y - 8)
+        if (point.y < contentY) contentY = Math.max(0, point.y - Theme.space2)
         else if (point.y + item.height > contentY + height)
-            contentY = Math.min(Math.max(0, contentHeight-height), point.y + item.height-height+8)
+            contentY = Math.min(Math.max(0, contentHeight-height), point.y + item.height-height+Theme.space2)
     }
     Connections {
         target: scroll.Window.window

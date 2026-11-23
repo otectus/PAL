@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "dev.otectus.cere.mobile.data"
+    namespace = "dev.otectus.pal.mobile.data"
     compileSdk = 37
     defaultConfig { minSdk = 30 }
     compileOptions {

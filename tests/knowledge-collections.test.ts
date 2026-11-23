@@ -17,7 +17,7 @@ test('M06 chunks keep their heading, overlap, and respect the size', () => {
 });
 
 async function fixture(t: any, realProviders = false) {
-  const root = await mkdtemp(join(tmpdir(), 'cere-collections-')), docs = join(root, 'docs'), state = join(root, 'state');
+  const root = await mkdtemp(join(tmpdir(), 'pal-collections-')), docs = join(root, 'docs'), state = join(root, 'state');
   await mkdir(join(docs, '.hidden'), { recursive: true }); await mkdir(join(docs, 'node_modules'), { recursive: true }); await mkdir(join(docs, 'sub'), { recursive: true });
   await writeFile(join(docs, 'guide.md'), '# Orchid CLI\n\n## Install\n\nInstall the orchid CLI with `pipx install orchid-cli`. The zircon flag enables offline mode.\n\n## Usage\n\nRun orchid sync daily.');
   await writeFile(join(docs, 'sub', 'notes.txt'), 'Release cadence: every second Tuesday. The heliotrope build runs nightly.');
@@ -40,7 +40,7 @@ test('M06 a collection indexes only the files it may, reindexes changes with era
   const { root, docs, state, core } = await fixture(t);
   let collection = await core.rpc('collections.create', { name: 'Project docs', grounding: 'strict' });
   await assert.rejects(core.rpc('collections.addSource', { id: collection.id, expectedRevision: collection.revision, path: join(docs, '.hidden') }), /Hidden files/);
-  await assert.rejects(core.rpc('collections.addSource', { id: collection.id, expectedRevision: collection.revision, path: state }), /Cere’s own state/);
+  await assert.rejects(core.rpc('collections.addSource', { id: collection.id, expectedRevision: collection.revision, path: state }), /PAL’s own state/);
   await assert.rejects(core.rpc('collections.addSource', { id: collection.id, expectedRevision: collection.revision, path: join(docs, 'binary.md').replace('.md', '.exe') }), /no such file|ENOENT/);
   collection = await core.rpc('collections.addSource', { id: collection.id, expectedRevision: collection.revision, path: docs });
   const job = await indexed(core, collection.id);
@@ -53,7 +53,7 @@ test('M06 a collection indexes only the files it may, reindexes changes with era
   assert.equal((await excerpt('zircon offline mode')).text, '', 'an unbound collection is never used');
   await core.rpc('collections.bind', { id: collection.id, target: 'session', sessionId: session.id, bound: true });
   const found = await excerpt('How does the zircon flag work?');
-  assert.match(found.text, /^<cere_document_data>\n/);
+  assert.match(found.text, /^<pal_document_data>\n/);
   assert.match(found.text, /zircon flag enables offline mode/); assert.match(found.text, /"source":"guide\.md"/);
   assert.match(found.text, /Answer only from these excerpts/);
   for (const hidden of ['marmalade', 'quokka', 'walrus']) assert.equal((await excerpt(hidden)).text, '', `${hidden} must not be indexed`);
@@ -313,7 +313,7 @@ test('AUD-006 delete fences ingestion and erases a chunk accepted before cancell
 });
 
 test('AUD-006 restart reconciliation erases an accepted chunk whose manifest was never committed', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'cere-collections-restart-')), state = join(root, 'state'), path = join(root, 'orphan.md');
+  const root = await mkdtemp(join(tmpdir(), 'pal-collections-restart-')), state = join(root, 'state'), path = join(root, 'orphan.md');
   await writeFile(path, 'restart boundary amber document');
   const firstCore = new Core(new Store(state), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   await firstCore.memory.ready;
@@ -352,7 +352,7 @@ test('M06 a bound collection reaches an Ollama request as reference data and its
   for (let index = 0; index < 300 && core.store.session(session.id).status !== 'idle'; index++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.ok(requests.length, `no request was sent: ${core.store.session(session.id).status} ${core.store.session(session.id).error || ''}`);
   const sent = JSON.stringify(requests.at(-1).messages);
-  assert.match(sent, /<cere_document_data>/); assert.match(sent, /pipx install orchid-cli/);
+  assert.match(sent, /<pal_document_data>/); assert.match(sent, /pipx install orchid-cli/);
   const plan = (await core.rpc('session.context', { id: session.id })).lastPlan;
   const layer = plan.layers.find((item: any) => item.id === 'documents');
   assert.equal(layer.included, true); assert.deepEqual(layer.detail.sources, ['guide.md']); assert.deepEqual(layer.detail.collections, ['Docs']);

@@ -6,8 +6,8 @@ import { privateDir } from '../paths.ts';
 import { sameUserPeer } from '../peercred.ts';
 import { linuxNative, type LinuxNative } from './native.ts';
 import { validate, HOOK_VERSION, type Event, type TelemetryConfig } from './protocol.ts';
-const debug=debuglog('cere-telemetry');
-export function telemetryDirectory(){return process.env.XDG_RUNTIME_DIR?join(process.env.XDG_RUNTIME_DIR,'cere'):`/tmp/cere-${process.getuid!()}`;}
+const debug=debuglog('pal-telemetry');
+export function telemetryDirectory(){return process.env.XDG_RUNTIME_DIR?join(process.env.XDG_RUNTIME_DIR,'pal'):`/tmp/pal-${process.getuid!()}`;}
 export class Listener {
   server?:net.Server; clients=new Set<net.Socket>(); socket:string; inode?:number; native:LinuxNative; directory:string;
   state='stopped';events=0;drops=0;invalid=0;outdated=false;lastError='';

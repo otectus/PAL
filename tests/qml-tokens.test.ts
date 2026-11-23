@@ -6,7 +6,7 @@ import { avatarCatalog } from '../broker/avatars.ts';
 // All avatar palettes must cover the same controls and keep their text readable.
 const qml = new URL('../qml/', import.meta.url);
 const files = readdirSync(qml).filter(name => name.endsWith('.qml'));
-const artwork = new Set(['Theme.qml', 'CerePortrait.qml', 'EmoticonBadge.qml', 'MotionStage.qml', 'GesturePlayer.qml']);
+const artwork = new Set(['Theme.qml', 'PALPortrait.qml', 'EmoticonBadge.qml', 'MotionStage.qml', 'GesturePlayer.qml']);
 const source = (name: string) => readFileSync(new URL(name, qml), 'utf8');
 const theme = source('Theme.qml');
 const palettes: Record<string, Record<string, string>> = Object.fromEntries(avatarCatalog.map(entry => [entry.id, entry.palette]));
@@ -40,13 +40,29 @@ test('every avatar has a complete palette, with no unknown or malformed tokens',
   }
 });
 
-test('no text is set below the 11 px floor of the Theme type scale', () => {
+test('no text is set below the 12 px floor of the Theme type scale', () => {
   const small = files.filter(name => !artwork.has(name)).flatMap(name => [...source(name).matchAll(/pixelSize\s*:[^;\n}]*/g)]
-    .flatMap(match => [...match[0].matchAll(/(?<![\w.])(\d+)(?![\w.])/g)].map(number => Number(number[1])).filter(size => size < 11).map(size => `${name}: ${size} in "${match[0].trim()}"`)));
+    .flatMap(match => [...match[0].matchAll(/(?<![\w.])(\d+)(?![\w.])/g)].map(number => Number(number[1])).filter(size => size < 12).map(size => `${name}: ${size} in "${match[0].trim()}"`)));
   assert.deepEqual(small, []);
   const scale = [...theme.matchAll(/property int (caption|secondary|body|message|section|title|page|display|wordmark|glyph): (\d+)/g)];
-  assert.equal(scale.length, 10);
-  for (const [, name, size] of scale) assert.ok(Number(size) >= 11, `Theme.${name} is ${size} px`);
+  assert.equal(scale.length, 6);
+  for (const [, name, size] of scale) assert.ok(Number(size) >= 12, `Theme.${name} is ${size} px`);
+});
+
+test('control spacing, typography, corners and animation use shared roles', () => {
+  const directValue = /\b(?:spacing|padding|radius|duration|font\.pixelSize|(?:left|right|top|bottom)(?:Padding|Margin))\s*:\s*([1-9]\d*(?:\.\d+)?)\s*(?=[;}\n])/g;
+  const overrides = files.filter(name => name !== 'Theme.qml').flatMap(name =>
+    [...source(name).matchAll(directValue)].map(match => `${name}: ${match[0]}`));
+  assert.deepEqual(overrides, []);
+});
+
+test('fixed interface dimensions use the shared scale', () => {
+  // A one-pixel size is also used as an equal stretch weight by Qt layouts.
+  // Match QML declarations so image dimensions in RPC arguments remain content.
+  const size = /(?:^|[;{])\s*(?:Layout\.)?(?:width|height|(?:implicit|preferred|minimum|maximum)(?:Width|Height))\s*:\s*(\d+(?:\.\d+)?)\s*(?=[;}\n])/gm;
+  const fixed = files.filter(name => name !== 'Theme.qml').flatMap(name =>
+    [...source(name).matchAll(size)].filter(match => Number(match[1]) > 1).map(match => `${name}: ${match[0].trim()}`));
+  assert.deepEqual(fixed, []);
 });
 
 for (const [id, palette] of Object.entries(palettes)) test(`${id} colours meet WCAG 2.2 AA on every surface they sit on (4.5:1 text, 3:1 boundaries)`, () => {
@@ -54,6 +70,8 @@ for (const [id, palette] of Object.entries(palettes)) test(`${id} colours meet W
   const ratio = (a: string, b: string) => contrast(palette, a, b);
   for (const text of ['text', 'muted', 'accentText', 'success', 'danger', 'amber', 'accent'])
     for (const surface of [...surfaces, 'selected']) assert.ok(ratio(text, surface) >= 4.5, `${text} on ${surface}: ${ratio(text, surface).toFixed(2)}`);
+  for (const fill of ['accent', 'accentText', 'text'])
+    assert.ok(ratio('background', fill) >= 4.5, `primary button or selection on ${fill}`);
   for (const boundary of ['border', 'borderHover', 'borderStrong', 'primaryBorder', 'dangerBorder', 'warningBorder', 'approvalBorder', 'scrollThumb', 'accentText'])
     for (const surface of surfaces) assert.ok(ratio(boundary, surface) >= 3, `${boundary} on ${surface}: ${ratio(boundary, surface).toFixed(2)}`);
   for (const [boundary, fill] of [['approvalBorder', 'approvalSurface'], ['warningBorder', 'warningSurface'], ['dangerBorder', 'dangerSurface'], ['border', 'questionSurface']])

@@ -27,7 +27,7 @@ test('IndexTTS chunks CJK sentences and keeps annotations atomic',()=>{
   assert.ok(chunks.some(c=>c.includes('。')));
   assert.deepEqual(indexChunks('   ',20),[]);
   assert.deepEqual(indexChunks('one two three four five six',12),['one two','three four','five six']);
-  assert.equal(indexPrefix('Hello <Cere|S IH R>!',12),'Hello ');
+  assert.equal(indexPrefix('Hello <PAL|S IH R>!',12),'Hello ');
   assert.throws(()=>indexChunks('a',0),IndexError);
 });
 test('version, precision, emotion and numeric ranges fail closed',()=>{
@@ -73,16 +73,16 @@ test('worker crashes, malformed IPC and OOM have stable error codes',async t=>{
   }
 });
 test('provider configuration survives SQLite reopen with nested defaults',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'cere-index-settings-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const dir=await mkdtemp(join(tmpdir(),'pal-index-settings-'));t.after(()=>rm(dir,{recursive:true,force:true}));
   let store=new Store(dir);store.set('settings',{ttsProvider:'indextts',indextts:{version:'2',device:'cpu'}});store.close();store=new Store(dir);t.after(()=>store.close());
   const s=store.settings();assert.equal(s.ttsProvider,'indextts');assert.equal(s.indextts.version,'2');assert.equal(s.indextts.idleMinutes,10);
 });
 test('existing speech queue preserves IndexTTS annotations and cancellation',async t=>{
-  const settings={...defaultSettings,ttsProvider:'indextts' as const};const speech=new Speech(()=>settings,()=>{},{...process.env,CERE_TTS_DISABLED:'0'});t.after(()=>speech.close());
+  const settings={...defaultSettings,ttsProvider:'indextts' as const};const speech=new Speech(()=>settings,()=>{},{...process.env,PAL_TTS_DISABLED:'0'});t.after(()=>speech.close());
   const spoken:string[]=[];
   speech.indextts={play:async(text:string,signal:AbortSignal)=>{spoken.push(text);await new Promise<void>(done=>signal.addEventListener('abort',()=>done(),{once:true}));}} as any;
-  speech.speak('Say <Cere|S IH R> today.');speech.speak('pending');await new Promise(r=>setTimeout(r,20));speech.stop();await speech.idle();
-  assert.deepEqual(spoken,['Say <Cere|S IH R> today.']);assert.equal(speech.snapshot().queued,0);
+  speech.speak('Say <PAL|S IH R> today.');speech.speak('pending');await new Promise(r=>setTimeout(r,20));speech.stop();await speech.idle();
+  assert.deepEqual(spoken,['Say <PAL|S IH R> today.']);assert.equal(speech.snapshot().queued,0);
 });
 test('reference validation and emotion mapping use no models or GPU',async()=>{
   const result=await promisify(execFile)('python3',['-B','tests/indextts-worker-test.py']);assert.match(result.stdout,/passed/);
@@ -91,7 +91,7 @@ test('Kokoro interrupted setup preserves its verified target and cleans temporar
   const result=await promisify(execFile)('python3',['-B','tests/kokoro-setup-test.py']);assert.match(result.stdout,/preserves target/);
 });
 test('voice profiles copy private originals, persist edits, and delete all files',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'cere-index-voices-')),store=new Store(join(dir,'state'));
+  const dir=await mkdtemp(join(tmpdir(),'pal-index-voices-')),store=new Store(join(dir,'state'));
   const service=new IndexTTS(store,()=>defaultIndexConfig,()=>{},{...process.env,XDG_DATA_HOME:dir});service.engine=engine(t);
   t.after(async()=>{await service.close();store.close();await rm(dir,{recursive:true,force:true});});
   const input=join(dir,'recording.wav');await writeFile(input,'synthetic fixture bytes');
@@ -103,9 +103,9 @@ test('voice profiles copy private originals, persist edits, and delete all files
   assert.equal(service.profiles()[0].name,'Renamed');await service.deleteProfile(profile.id);assert.deepEqual(service.profiles(),[]);await assert.rejects(access(profile.reference));await assert.rejects(access(profile.original));
 });
 test('switching provider during inference clears pending replies and exits the worker',async t=>{
-  const directory=await mkdtemp(join(tmpdir(),'cere-index-switch-')),store=new Store(directory);
+  const directory=await mkdtemp(join(tmpdir(),'pal-index-switch-')),store=new Store(directory);
   const core=new Core(store);await core.speech.close();
-  const env={...process.env,CERE_TTS_DISABLED:'0',CERE_FAKE_INDEX_HOLD:'1',CERE_APLAY_BIN:resolve('tests/fixtures/audio-sink.mjs'),XDG_DATA_HOME:directory};
+  const env={...process.env,PAL_TTS_DISABLED:'0',PAL_FAKE_INDEX_HOLD:'1',PAL_APLAY_BIN:resolve('tests/fixtures/audio-sink.mjs'),XDG_DATA_HOME:directory};
   core.indextts=new IndexTTS(store,()=>core.settings.indextts,()=>{},env);
   const e=engine(t);e.env=env;core.indextts.engine=e;
   core.speech=new Speech(()=>core.settings,()=>{},env);core.speech.indextts=core.indextts;

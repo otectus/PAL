@@ -44,7 +44,7 @@ export const MutationProposalBatchSchema = z.object({
   }
 });
 export const EXTRACTION_SCHEMA_VERSION = 1;
-export const EXTRACTION_PROMPT_VERSION = 'cere-extraction-v2';
+export const EXTRACTION_PROMPT_VERSION = 'pal-extraction-v2';
 export const EXTRACTION_PARSER_VERSION = 'zod-4-v2';
 export const MUTATION_PROPOSAL_JSON_SCHEMA = z.toJSONSchema(MutationProposalBatchSchema);
 

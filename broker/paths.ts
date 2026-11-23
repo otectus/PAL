@@ -1,14 +1,36 @@
 import { homedir, tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
-import { mkdirSync, chmodSync, lstatSync, readlinkSync } from 'node:fs';
+import { mkdirSync, chmodSync, lstatSync, readlinkSync, existsSync } from 'node:fs';
+/** PAL_* is canonical; CERE_* remains a read-only upgrade alias. */
+export function palEnv(name: string, env: NodeJS.ProcessEnv = process.env) {
+  return env[`PAL_${name}`] ?? env[`CERE_${name}`];
+}
+function persistentRoot(parent: string, name: string) {
+  const current = join(parent, name), legacy = join(parent, 'cere');
+  return existsSync(current) || !existsSync(legacy) ? current : legacy;
+}
 export function paths() {
-  const base = process.env.CERE_STATE_DIR;
+  const base = palEnv('STATE_DIR');
+  const stateParent = process.env.XDG_STATE_HOME || join(homedir(), '.local/state');
+  const configParent = process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
+  const runtime = palEnv('RUNTIME_DIR');
   return {
-    state: base ? resolve(base) : join(process.env.XDG_STATE_HOME || join(homedir(), '.local/state'), 'cere'),
-    config: base ? join(resolve(base), 'config') : join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'cere'),
-    runtime: process.env.CERE_RUNTIME_DIR ? resolve(process.env.CERE_RUNTIME_DIR)
-      : join(process.env.XDG_RUNTIME_DIR || join(tmpdir(), `cere-${process.getuid?.()}`), 'cere'),
+    state: base ? resolve(base) : persistentRoot(stateParent, 'pal'),
+    config: base ? join(resolve(base), 'config') : persistentRoot(configParent, 'pal'),
+    runtime: runtime ? resolve(runtime)
+      : join(process.env.XDG_RUNTIME_DIR || join(tmpdir(), `pal-${process.getuid?.()}`), 'pal'),
   };
+}
+/** Previous default locations, used only for safe in-place upgrade detection. */
+export function legacyPaths() {
+  return {
+    state: join(process.env.XDG_STATE_HOME || join(homedir(), '.local/state'), 'cere'),
+    config: join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'cere'),
+    runtime: join(process.env.XDG_RUNTIME_DIR || join(tmpdir(), `cere-${process.getuid?.()}`), 'cere'),
+  };
+}
+export function hasExplicitPalPaths() {
+  return ['PAL_STATE_DIR', 'CERE_STATE_DIR', 'PAL_RUNTIME_DIR', 'CERE_RUNTIME_DIR'].some(name => process.env[name] !== undefined);
 }
 /** Where the Codex and Claude Code installers put their launchers, then the standard system directories. */
 export function userBinDirectories() { return [join(homedir(), '.local/bin'), '/usr/local/bin', '/usr/bin']; }
@@ -21,7 +43,7 @@ export function ensureUserPath(env: NodeJS.ProcessEnv = process.env) {
   env.PATH = [...(entries.includes(local) ? [] : [local]), ...entries, ...system.filter(directory => !entries.includes(directory))].join(delimiter);
   return env.PATH;
 }
-function unsafe(path: string, reason: string): never { throw new Error(`Unsafe Cere directory (${reason}): ${path}`); }
+function unsafe(path: string, reason: string): never { throw new Error(`Unsafe PAL directory (${reason}): ${path}`); }
 /**
  * Resolves an existing absolute path component by component. Every component must be
  * owned by root or the expected user, and every directory that others can write must

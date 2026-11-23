@@ -35,6 +35,24 @@ CSection {
     property string feedback: ""
     property string fingerprint: ""
     property var catalog: []
+    property string catalogRef: ""
+    property int catalogRequest: 0
+    property bool catalogLoading: false
+    property string catalogMessage: ""
+    readonly property string connectionRef: routes[route.currentIndex]?.ref || ""
+    // null selects manual entry. An empty string leaves the task binding unset.
+    property var selectedId: ""
+    readonly property string modelId: selectedId === null ? customModel.text.trim() : selectedId
+    readonly property var modelChoices: {
+        const choices = [{id:"", displayName:task === "review" ? "Choose a model" : "Use the default model"}].concat(catalog)
+        const saved = bindings[task]
+        for (const id of [saved?.connectionRef === connectionRef ? saved.modelId : "", selectedId]) {
+            if (id && !choices.some(choice => choice.id === id))
+                choices.push({id:id, displayName:id})
+        }
+        choices.push({id:null, displayName:"Enter a model ID…"})
+        return choices
+    }
     readonly property var tasks: ["review", "extract", "adjudicate", "consolidate", "rerank"]
     readonly property string task: tasks[overrideTask.currentIndex] || "review"
     RpcClient { id: rpc }
@@ -49,21 +67,54 @@ CSection {
     }
     function setFields() {
         const b = bindings[task] || {}
-        route.currentIndex = routes.findIndex(r => r.ref === b.connectionRef)
-        modelName.text = b.modelId || ""
+        const ref = b.connectionRef || bindings.review?.connectionRef || "default:ollama"
+        route.currentIndex = routes.findIndex(r => r.ref === ref)
+        selectedId = b.modelId || ""
+        customModel.text = ""
         fallbacks.text = b.fallbackBindings?.length ? JSON.stringify(b.fallbackBindings) : ""
-        catalog = []
         fingerprint = ""
+        refreshModels()
     }
-    function load() {
-        if (!App.connected) return
-        loadChange()
+    function refreshModels(force = false) {
+        const ref = connectionRef
+        if (!force && catalogRef === ref) return
+        const request = ++catalogRequest
+        catalog = []
+        catalogMessage = ""
+        catalogLoading = visible && online && revision >= 0 && !!ref
+        catalogRef = catalogLoading ? ref : ""
+        if (!catalogLoading) return
+        const named = ref.startsWith("connection:")
+        rpc.call(named ? "connections.models" : "provider.models",
+                 named ? {id:ref.slice(11)} : {provider:ref === "default:ollama" ? "ollama" : ref.slice(7)}, result => {
+            if (request !== catalogRequest) return
+            catalogLoading = false
+            if (result.error) {
+                catalogMessage = "Couldn’t load models. " + (result.error.message || result.error)
+                return
+            }
+            catalog = named ? result.models : result
+            if (!catalog.length) catalogMessage = "This connection didn’t list any models. You can enter a model ID."
+        })
+    }
+    function loadConnections() {
+        if (!online || !visible) return
         rpc.call("connections.list", {}, rows => {
-            if (rows.error) return
+            if (rows.error) { feedback = String(rows.error); return }
+            const previous = connectionRef
             routes = [{ref:"default:ollama",label:"Default Ollama server",destination:"Determined from saved host and model"}].concat(rows.map(r => ({ref:"connection:"+r.id, label:r.name, destination:r.task?.processing || r.endpoint?.processing || (r.host && /localhost|127\.0\.0\.1/.test(r.host) ? "local" : "unknown")})))
                 .concat(["openai","anthropic","google"].map(k=>({ref:"native:"+k,label:k==="openai"?"OpenAI API":k==="anthropic"?"Anthropic API":"Google API",destination:"cloud"})))
-            setFields()
+            const index = routes.findIndex(r => r.ref === previous)
+            if (index >= 0 && revision >= 0) {
+                route.currentIndex = index
+                refreshModels(true)
+            } else if (revision >= 0) setFields()
         })
+    }
+    function load() {
+        if (!online) return
+        Qt.callLater(loadConnections)
+        loadChange()
         rpc.call("memory.curation.settings", {}, result => {
             if (result.error) { feedback = String(result.error); return }
             applySettings(result)
@@ -93,16 +144,17 @@ CSection {
         setFields()
     }
     function draftBinding() {
-        if (!modelName.text.trim()) return null
+        if (!modelId) return null
         if (route.currentIndex < 0) return null
         let chain
         try {chain=JSON.parse(fallbacks.text.trim() || "[]")} catch(e) {return null}
         if(!Array.isArray(chain))return null
-        return Object.assign({},bindings[task]||{}, {connectionRef:routes[route.currentIndex].ref, modelId:modelName.text.trim(),fallbackBindings:chain})
+        return Object.assign({},bindings[task]||{}, {connectionRef:connectionRef, modelId:modelId,fallbackBindings:chain})
     }
     function save() {
         const b = draftBinding()
-        if (modelName.text.trim() && !b) { feedback = "Choose the connection for this model."; return }
+        if (selectedId === null && !modelId) { feedback = "Enter a model ID."; return }
+        if (modelId && !b) { feedback = "Check the model connection and fallback bindings."; return }
         const overrides = Object.assign({},bindings)
         delete overrides.review
         if (task !== "review") { if (b) overrides[task] = b; else delete overrides[task] }
@@ -121,27 +173,57 @@ CSection {
         }
         send("memory.curation.configure",{expected_revision:revision,profile:patch},r=>{applySettings(r);feedback="Memory review settings saved."})
     }
-    Component.onCompleted: load()
+    Component.onCompleted: Qt.callLater(load)
     readonly property bool online: App.connected
-    onOnlineChanged: { if(online)Qt.callLater(load);else revision=-1 }
+    onOnlineChanged: {
+        if (online) Qt.callLater(load)
+        else { revision = -1; refreshModels(true) }
+    }
+    onVisibleChanged: if (visible) Qt.callLater(loadConnections)
     ColumnLayout {
         Layout.fillWidth: true
         enabled: root.revision>=0 && !root.busy
         CComboBox { id:mode; objectName:"memoryCurationMode"; Layout.fillWidth:true; model:["Off","Preview recommendations","Assisted review","Automatic"]; Accessible.name:"Memory curation mode" }
-        CText { Layout.fillWidth:true; wrapMode:Text.Wrap; color:Theme.muted; text:["Existing capture and retention continue.","The model assesses memories and records recommendations. Assisted review is a good starting point when you are ready to apply them.","Review each recommendation before applying it. Review grace can protect evidence while you decide.","Cere can preserve useful claims. Automatic acceptance requires separate authorization."][mode.currentIndex]||"" }
+        CText { Layout.fillWidth:true; wrapMode:Text.Wrap; color:Theme.muted; text:["Existing capture and retention continue.","The model assesses memories and records recommendations. Assisted review is a good starting point when you are ready to apply them.","Review each recommendation before applying it. Review grace can protect evidence while you decide.","PAL can preserve useful claims. Automatic acceptance requires separate authorization."][mode.currentIndex]||"" }
         CComboBox { id:overrideTask; visible:root.advanced; Layout.fillWidth:true; model:["Memory review model","Extraction override","Adjudication override","Episode summary override","Reranking override"]; Accessible.name:"Memory task"; onActivated:root.setFields() }
-        CComboBox { id:route; objectName:"memoryReviewConnection"; Layout.fillWidth:true; model:root.routes; textRole:"label"; displayText:currentIndex<0?"Choose a connection":currentText; Accessible.name:"Memory model connection"; onActivated:{root.catalog=[];root.fingerprint=""} }
+        CComboBox {
+            id:route; objectName:"memoryReviewConnection"; Layout.fillWidth:true
+            model:root.routes; textRole:"label"; valueRole:"ref"; displayText:currentIndex<0?"Choose a connection":currentText
+            Accessible.name:"Memory model connection"
+            onActivated: {
+                if (currentValue === root.catalogRef) return
+                const saved = root.bindings[root.task]
+                root.selectedId = saved?.connectionRef === currentValue ? saved.modelId : ""
+                customModel.text = ""
+                root.fingerprint = ""
+                root.refreshModels()
+            }
+        }
         CText { visible:route.currentIndex>=0; color:Theme.muted; text:"Processing destination · "+(root.routes[route.currentIndex]?.destination||"unknown") }
-        CField { id:modelName; objectName:"memoryReviewModel"; Layout.fillWidth:true; placeholderText:root.task==="review"?"Memory review model ID":"Leave empty to use the default"; Accessible.name:"Model ID"; maximumLength:512; onTextEdited:root.fingerprint="" }
+        CComboBox {
+            objectName:"memoryReviewModel"; Layout.fillWidth:true
+            enabled:!!root.connectionRef; Accessible.name:"Memory model"
+            model:root.modelChoices; textRole:"displayName"; valueRole:"id"
+            currentIndex:root.modelChoices.findIndex(choice => choice.id === root.selectedId)
+            onActivated: index => {
+                root.selectedId = root.modelChoices[index].id
+                root.fingerprint = ""
+                if (root.selectedId === null) customModel.forceActiveFocus()
+            }
+        }
+        CField {
+            id:customModel; objectName:"memoryReviewCustomModel"; visible:root.selectedId === null; Layout.fillWidth:true
+            placeholderText:"Model ID"; Accessible.name:"Custom memory model ID"; maximumLength:512
+            onTextEdited:root.fingerprint=""
+        }
+        CText {
+            Layout.fillWidth:true; wrapMode:Text.Wrap; color:Theme.muted
+            text:root.catalogLoading ? "Loading models…" : root.catalogMessage; visible:!!text
+        }
         CField { id:fallbacks; visible:root.advanced;Layout.fillWidth:true;placeholderText:"Ordered fallback bindings (optional JSON array)";Accessible.name:"Ordered fallback model bindings"; onTextEdited:root.fingerprint="" }
-        CComboBox { visible:root.catalog.length>0; Layout.fillWidth:true; model:root.catalog; textRole:"id"; Accessible.name:"Discovered models"; onActivated:modelName.text=currentText }
         Flow {
-            Layout.fillWidth:true; spacing:6
-            CButton { text:"Refresh models"; enabled:route.currentIndex>=0; onClicked:{
-                const ref=root.routes[route.currentIndex].ref
-                if(ref.startsWith("connection:"))root.send("connections.models",{id:ref.slice(11)},r=>root.catalog=r.models||[])
-                else root.send("provider.models",{provider:ref==="default:ollama"?"ollama":ref.slice(7)},r=>root.catalog=Array.isArray(r)?r:[])
-            } }
+            Layout.fillWidth:true; spacing:Theme.space2
+            CButton { objectName:"refreshMemoryReviewModels"; text:"Refresh models"; enabled:!!root.connectionRef && !root.catalogLoading; onClicked:root.refreshModels(true) }
             CButton { text:"Test model"; enabled:!!root.draftBinding(); onClicked:root.send("memory.models.probe",{binding:root.draftBinding()},r=>{
                 root.fingerprint=r.route.fingerprint;root.feedback="Validated structured output, abstention and evidence IDs using "+r.model+". Factual precision is unmeasured."
             }) }
@@ -154,12 +236,12 @@ CSection {
             Layout.fillWidth:true; visible:root.advanced
             CCheckBox { id:autoAccept; text:"Automatically accept supported claims on qualified routes" }
             CText { text:"Categories eligible for automatic acceptance";visible:autoAccept.checked }
-            Flow { Layout.fillWidth:true;visible:autoAccept.checked;spacing:6
+            Flow { Layout.fillWidth:true;visible:autoAccept.checked;spacing:Theme.space2
                 Repeater { id:categories;model:["assertion","preference","decision","constraint","goal","relationship","biographical","project_convention","episode"]
                     CCheckBox { required property string modelData;text:modelData.replace(/_/g," ");checked:(root.profile.acceptCategories||[]).includes(modelData) }
                 }
             }
-            RowLayout { CText {Layout.fillWidth:true;text:"Minimum assessed value for protection"} CField {id:threshold;Layout.preferredWidth:85;Accessible.name:"Preservation threshold";text:String(root.profile.threshold??0.65);validator:RegularExpressionValidator {regularExpression:/0(\.[0-9]+)?|1(\.0+)?/} } }
+            RowLayout { CText {Layout.fillWidth:true;text:"Minimum assessed value for protection"} CField {id:threshold;Layout.preferredWidth:Theme.fieldShort;Accessible.name:"Preservation threshold";text:String(root.profile.threshold??0.65);validator:RegularExpressionValidator {regularExpression:/0(\.[0-9]+)?|1(\.0+)?/} } }
             CCheckBox { id:experimental; text:"Allow experimental acceptance on this tested, unmeasured route"; enabled:autoAccept.checked&&(!!root.fingerprint||!!root.profile.unmeasuredFingerprint) }
             CCheckBox { id:prior; text:"Use assessed value as a small recall preference" }
             CCheckBox { id:ranking; text:"Rerank eligible search results" }
@@ -172,7 +254,7 @@ CSection {
                     property alias editor:limitField
                     Layout.fillWidth:true
                     CText { Layout.fillWidth:true; wrapMode:Text.Wrap; text:modelData.label; color:Theme.muted }
-                    CField { id:limitField; Layout.preferredWidth:100; text:String(root.profile[modelData.key]??""); Accessible.name:modelData.label; validator:RegularExpressionValidator {regularExpression:/[0-9]{0,10}/} }
+                    CField { id:limitField; Layout.preferredWidth:Theme.fieldShort; text:String(root.profile[modelData.key]??""); Accessible.name:modelData.label; validator:RegularExpressionValidator {regularExpression:/[0-9]{0,10}/} }
                 }
             }
         }

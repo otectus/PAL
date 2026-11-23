@@ -3,13 +3,13 @@ import QtQuick.Controls
 MenuItem {
     id: item
     // A hidden entry takes no room, so menus can list optional actions.
-    implicitHeight: visible ? 34 : 0
-    implicitWidth: 220
-    leftPadding: 12; rightPadding: 12
+    implicitHeight: visible ? Theme.compactHeight : 0
+    implicitWidth: Theme.menuWidth
+    leftPadding: Theme.space3; rightPadding: Theme.space3
     font.family: Theme.font; font.pixelSize: Theme.body
     contentItem: Text {
-        leftPadding: item.checkable ? item.indicator.width + 8 : 0
-        rightPadding: item.subMenu ? 18 : 0
+        leftPadding: item.checkable ? item.indicator.width + Theme.space2 : 0
+        rightPadding: item.subMenu ? Theme.iconSize : 0
         text: item.text; font: item.font; textFormat: Text.PlainText
         color: item.enabled ? Theme.text : Theme.muted
         elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter
@@ -17,20 +17,20 @@ MenuItem {
     indicator: Rectangle {
         visible: item.checkable
         x: item.leftPadding; y: (item.height - height) / 2
-        width: 16; height: 16; radius: 4
+        width: Theme.iconSmall; height: Theme.iconSmall; radius: Theme.radiusChip
         color: item.checked ? Theme.accentText : Theme.input
         border.color: item.checked ? Theme.accentText : Theme.border
-        Text { anchors.centerIn: parent; visible: item.checked; text: "✓"; color: Theme.background; font.family: Theme.font; font.pixelSize: Theme.caption; font.bold: true }
+        CIcon { anchors.fill: parent; visible: item.checked; name: "check"; color: Theme.background }
     }
-    arrow: Text {
+    arrow: CIcon {
         visible: !!item.subMenu
         x: item.width - width - item.rightPadding; y: (item.height - height) / 2
-        text: "›"; color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.section
+        name: "chevron"; color: Theme.muted; width: Theme.iconSmall; height: width
     }
     background: Rectangle {
         radius: Theme.radiusChip
-        color: item.highlighted ? Theme.selected : "transparent"
-        border.color: item.visualFocus ? Theme.focus : "transparent"
+        color: item.highlighted ? Theme.selected : Theme.transparent
+        border.color: item.visualFocus ? Theme.focus : Theme.transparent
         border.width: Theme.focusWidth
     }
 }

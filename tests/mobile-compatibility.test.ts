@@ -1,5 +1,5 @@
 /**
- * Regressions for the Cere Mobile compatibility audit (MOB-001, MOB-003, MOB-004, MOB-005) and the
+ * Regressions for the PAL Mobile compatibility audit (MOB-001, MOB-003, MOB-004, MOB-005) and the
  * network-return pairing flow, exercised through the signed gateway like a phone would.
  */
 import test from 'node:test';
@@ -26,7 +26,7 @@ async function freePort() {const server=net.createServer();await new Promise<voi
 type Fixture=Awaited<ReturnType<typeof setup>>;
 /** real: the desktop's own provider adapters (they reach the fixture endpoints); otherwise a recording fake. */
 async function setup(t:any,{real=false}={}) {
-  const directory=await mkdtemp(join(tmpdir(),'cere-mobile-compat-'));
+  const directory=await mkdtemp(join(tmpdir(),'pal-mobile-compat-'));
   const sends:{sessionId:string;text:string}[]=[];
   const core=real?new Core(new Store(directory)):new Core(new Store(directory),(session,h)=>({async send(text,_images,options){h.policy?.(true);options?.beforeAccept?.();sends.push({sessionId:session.id,text});options?.onDispatched?.();options?.onAccepted?.();setImmediate(()=>h.event({type:'complete'}));},async interrupt(){h.event({type:'interrupted'});},async close(){}}));
   const resources:(()=>unknown)[]=[];const own=(release:()=>unknown)=>{resources.push(release);};
@@ -243,7 +243,7 @@ test('taking over a Workbench conversation from the phone is explicit, revision-
   assert.deepEqual(card.desktopOnly,{kind:'changes',label:'Proposed file changes'});assert.ok(!JSON.stringify(snapshot.messages).includes('secret-path'));
   // An older phone (no acknowledgement) and a stale acknowledgement are refused; nothing changes.
   const old=await client.action('sessions.send',sendParams(dto),phone);
-  assert.equal(old.error.code,'PROVIDER_POLICY_UNSAFE');assert.match(old.error.message,/Update Cere Mobile to continue it here without them/);
+  assert.equal(old.error.code,'PROVIDER_POLICY_UNSAFE');assert.match(old.error.message,/Update PAL Mobile to continue it here without them/);
   assert.equal((await client.action('sessions.send',sendParams(dto,{workbenchAcknowledged:['files']}),phone)).error.code,'REVISION_CONFLICT');
   assert.equal(f.core.store.session(desktop.id).remote,undefined);assert.equal(f.sends.length,0);
   // The acknowledged takeover runs without the families; their stored selection is kept.

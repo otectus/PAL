@@ -147,7 +147,7 @@ export class TaskModelRouter {
 
   async probe(binding: TaskModelBinding, sourcePolicy: 'local_only' | 'cloud_allowed', allowCloud: boolean, signal: AbortSignal,
     beforeDispatch?: StructuredTaskRequest<unknown>['beforeDispatch']): Promise<TaskProbeResult> {
-    const request = { task: 'assess' as const, sourcePolicy, allowCloud, schemaName: 'cere_memory_probe_v1', schema: probeSchema, jsonSchema: probeJsonSchema,
+    const request = { task: 'assess' as const, sourcePolicy, allowCloud, schemaName: 'pal_memory_probe_v1', schema: probeSchema, jsonSchema: probeJsonSchema,
       system: 'This is a synthetic capability test. Return the requested abstention object and cite only the supplied synthetic evidence ID.',
       input: 'Target synthetic-target has no factual content. Abstain with evidence ID synthetic-evidence.', maxOutputTokens: 256, beforeDispatch };
     const initial = await this.prepared(binding, signal);

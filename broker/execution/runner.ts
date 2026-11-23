@@ -2,7 +2,7 @@
  * The execution boundary for Code Lab and command runs: Bubblewrap on Linux, chosen as the one primary
  * isolation profile. A run gets new user, mount, PID, IPC, UTS and network namespaces; the system's /usr
  * read-only; selected inputs read-only; a size-limited private output folder; an empty /tmp; no home
- * folder, no Cere data, no credentials, no session bus, no display sockets and no inherited environment.
+ * folder, no PAL data, no credentials, no session bus, no display sockets and no inherited environment.
  * Network stays off unless a command run explicitly asks for it.
  *
  * Limits are reported as enforced only when they are. Wall-clock time, displayed output, output files and
@@ -62,16 +62,17 @@ export async function sandboxed(p: { argv: string[]; binds: Bind[]; cwd: string;
   const limits = { ...defaultLimits, ...p.limits };
   const env = { PATH: '/usr/bin', LANG: 'C.UTF-8', HOME: '/work/home', TMPDIR: '/tmp', MPLBACKEND: 'Agg', MPLCONFIGDIR: '/tmp/matplotlib', PYTHONDONTWRITEBYTECODE: '1', OPENBLAS_NUM_THREADS: '2', OMP_NUM_THREADS: '2', ...(p.env || {}) };
   const args = [...systemBinds(), '--unshare-all', '--unshare-user', ...(p.network ? ['--share-net', '--ro-bind-try', '/etc/resolv.conf', '/etc/resolv.conf', '--ro-bind-try', '/etc/hosts', '/etc/hosts'] : []),
-    '--die-with-parent', '--new-session', '--disable-userns', '--hostname', 'cere-lab', '--size', String(256 * 1024 * 1024), '--tmpfs', '/tmp', '--dir', '/work', '--size', String(32 * 1024 * 1024), '--tmpfs', '/work/home',
+    '--die-with-parent', '--new-session', '--disable-userns', '--hostname', 'pal-lab', '--size', String(256 * 1024 * 1024), '--tmpfs', '/tmp', '--dir', '/work', '--size', String(32 * 1024 * 1024), '--tmpfs', '/work/home',
     ...(p.collectOutput !== false ? ['--size', String(limits.outputBytes), '--tmpfs', '/work/output'] : []),
     ...p.binds.flatMap(bind => [bind.writable ? '--bind' : '--ro-bind', bind.source, bind.target]), '--chdir', p.cwd, '--clearenv', ...Object.entries(env).flatMap(([key, value]) => ['--setenv', key, value]), '--'];
   // After the program ends, the output folder is packed onto descriptor 3 (bounded and parsed here, untrusted).
-  const inner = p.collectOutput !== false ? ['/usr/bin/sh', '-c', '"$@"; status=$?; cd /work/output && /usr/bin/tar -cf - --format=ustar . >&3 2>/dev/null; exit $status', 'cere-run', ...p.argv] : p.argv;
+  const inner = p.collectOutput !== false ? ['/usr/bin/sh', '-c', '"$@"; status=$?; cd /work/output && /usr/bin/tar -cf - --format=ustar . >&3 2>/dev/null; exit $status', 'pal-run', ...p.argv] : p.argv;
   let command = '/usr/bin/bwrap', commandArgs = [...args, ...inner];
   if (status.cgroup) { commandArgs = ['--user', '--scope', '--quiet', '--collect', '-p', `TasksMax=${limits.processes}`, '-p', `MemoryMax=${limits.memoryBytes}`, '-p', 'MemorySwapMax=0', command, ...commandArgs]; command = 'systemd-run'; }
   else if (status.prlimit) { commandArgs = [`--as=${limits.memoryBytes + 1024 ** 3}`, `--fsize=${limits.outputBytes}`, '--core=0', '--', command, ...commandArgs]; command = '/usr/bin/prlimit'; }
   const started = Date.now();
   return new Promise<SandboxResult>((resolve, reject) => {
+    p.signal.throwIfAborted();
     const child = spawn(command, commandArgs, { detached: true, stdio: ['ignore', 'pipe', 'pipe', 'pipe'], env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', ...(status.cgroup ? { XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || '', DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || '' } : {}) } });
     let stdout = '', stderr = '', truncated = false, timedOut = false, cancelled = false, archive: Buffer[] = [], archiveBytes = 0, archiveOverflow = false;
     const take = (stream: 'stdout' | 'stderr', chunk: Buffer) => {

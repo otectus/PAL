@@ -4,9 +4,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Canonical } from "../broker/graph-memory/canonical.ts";
+import { restatedSupport } from "../broker/graph-memory/retention.ts";
 
 function memory(t: TestContext) {
-  const directory = mkdtempSync(join(tmpdir(), "cere-retention-"));
+  const directory = mkdtempSync(join(tmpdir(), "pal-retention-"));
   const canonical = new Canonical(directory);
   t.after(() => { canonical.close(); rmSync(directory, { recursive: true, force: true }); });
   return { canonical, scope: canonical.registerScope({ key: directory, label: "Retention" }).id };
@@ -48,20 +49,33 @@ test("retention planner keeps a pinned candidate recallable with exact evidence 
   assert.equal(canonical.one("SELECT erased FROM assertion_versions WHERE version_id=?", record.assertion.id).erased, 1);
 });
 
-test("a passage pin overlays payload and artifact deadlines, including the exact boundary", (t) => {
+test("a passage pin overlays payload and artifact deadlines in recall and expiry, including the exact boundary", (t) => {
   const { canonical, scope } = memory(t);
   const source = canonical.observeText({ scope_id: scope, text: "The deploy key rotates quarterly.", role: "user", session_id: "retention" });
-  const baseline = Date.now() * 1000 + 10_000_000;
-  canonical.run("UPDATE payloads SET expires_us=? WHERE id=(SELECT payload_id FROM observations WHERE id=?)", baseline, source.id);
-  const atBoundary = canonical.retentionForecast({ scope_id: scope, id: source.id, now_us: baseline });
-  assert.equal(atBoundary.recallAllowedByRetention, false, "expiry equality is not eligible");
+  const artifact = canonical.one("SELECT id FROM artifacts WHERE record_id=? AND kind='conversation'", source.id).id;
+  // The deadline has already passed, so every check below also holds at the real clock.
+  const deadline = Date.now() * 1000 - 1_000_000;
+  canonical.run("UPDATE payloads SET expires_us=? WHERE id=(SELECT payload_id FROM observations WHERE id=?)", deadline, source.id);
+  const recalled = (atUs?: number) => !!canonical.hydrateArtifact(artifact, scope, canonical.revision, undefined, "local", atUs);
+  const allowed = (atUs: number) => canonical.retentionForecast({ scope_id: scope, id: source.id, now_us: atUs }).recallAllowedByRetention;
+  const erased = () => canonical.one("SELECT erased FROM observations WHERE id=?", source.id).erased;
 
-  canonical.pin({ scope_id: scope, id: source.id });
-  canonical.run("UPDATE artifacts SET expires_us=? WHERE record_id=? AND kind='conversation'", baseline, source.id);
-  const held = canonical.retentionForecast({ scope_id: scope, id: source.id, now_us: baseline });
-  assert.equal(held.recallAllowedByRetention, true);
-  const artifact = canonical.one("SELECT id FROM artifacts WHERE record_id=? AND kind='conversation'", source.id);
-  assert.ok(canonical.hydrateArtifact(artifact.id, scope, canonical.revision, undefined, "local"));
+  // Unpinned: recallable until its deadline, and not at it.
+  assert.deepEqual([recalled(deadline - 1), allowed(deadline - 1)], [true, true]);
+  assert.deepEqual([recalled(deadline), allowed(deadline)], [false, false], "expiry equality is not eligible");
+  assert.equal(recalled(), false, "past its raw deadline a passage is not recalled, even before expiry removes it");
+
+  const pin = canonical.pin({ scope_id: scope, id: source.id });
+  assert.deepEqual([recalled(deadline), allowed(deadline), recalled()], [true, true, true], "the pin overlays the raw deadline");
+  canonical.run("UPDATE artifacts SET expires_us=? WHERE id=?", deadline, artifact);
+  assert.equal(recalled(), true, "and the recall copy's own deadline");
+  canonical.expire();
+  assert.deepEqual([erased(), recalled()], [0, true], "expiry keeps the pinned passage and its recall copy");
+
+  canonical.unpin({ scope_id: scope, pin_id: pin.id });
+  assert.deepEqual([recalled(deadline), recalled()], [false, false], "without its pin both deadlines apply again");
+  assert.equal(canonical.expire().expired, 1);
+  assert.equal(erased(), 1);
 });
 
 test("forecast distinguishes first evidence loss from final independent support loss", (t) => {
@@ -193,6 +207,56 @@ test("protected expired candidates cannot starve an unprotected expiry batch", (
   assert.equal(canonical.expire().expired, 1);
   assert.equal(canonical.one("SELECT erased FROM assertion_versions WHERE version_id=?", record.assertion.id).erased, 1);
   assert.equal(canonical.one("SELECT COUNT(*) AS n FROM assertion_versions WHERE version_id LIKE 'protected-%' AND erased=1").n, 0);
+});
+
+test("expiry defers to the shared planner, and what the planner keeps cannot starve the records behind it", (t) => {
+  const { canonical, scope } = memory(t), record = candidate(canonical, scope, "orchid plans to use zig for builds.", "zig");
+  const base = canonical.one("SELECT * FROM assertion_versions WHERE version_id=?", record.assertion.id);
+  const support = canonical.one("SELECT * FROM assertion_evidence WHERE version_id=?", record.assertion.id);
+  canonical.run("UPDATE assertion_versions SET expires_at_us=1 WHERE version_id=?", record.assertion.id);
+  // 110 expired candidates with no hold, ordered before the ordinary one ("0-" sorts before any UUID).
+  canonical.db.exec("BEGIN IMMEDIATE");
+  try {
+    for (let index = 0; index < 110; index++) {
+      const suffix = String(index).padStart(3, "0");
+      canonical.insert("assertion_versions", { ...base, version_id: `0-kept-${suffix}`, logical_id: `kept-logical-${suffix}`, expires_at_us: 1 });
+      canonical.insert("assertion_evidence", { ...support, version_id: `0-kept-${suffix}` });
+    }
+    canonical.db.exec("COMMIT");
+  } catch (error) { canonical.db.exec("ROLLBACK"); throw error; }
+  const passage = canonical.observeText({ scope_id: scope, text: "The orchid changelog is kept for audits.", role: "user", session_id: "retention" });
+  canonical.run("UPDATE payloads SET expires_us=1 WHERE id=(SELECT payload_id FROM observations WHERE id=?)", passage.id);
+  // Only the planner knows these are protected: no hold names them, so the old SQL check would expire them.
+  const planner = canonical.retentionDecision.bind(canonical);
+  const keep = (ids: (id: string) => boolean) => {
+    canonical.retentionDecision = (target, atUs) => ids(target.id) ? { ...planner(target, atUs), storageAllowed: true, recallAllowedByRetention: true } : planner(target, atUs);
+  };
+  t.after(() => { canonical.retentionDecision = planner; });
+  keep((id) => id.startsWith("0-kept-") || id === passage.id);
+  assert.equal(canonical.expire().expired, 1);
+  assert.equal(canonical.one("SELECT erased FROM assertion_versions WHERE version_id=?", record.assertion.id).erased, 1, "the record behind them still expires");
+  assert.equal(canonical.one("SELECT COUNT(*) AS n FROM assertion_versions WHERE version_id LIKE '0-kept-%' AND erased=1").n, 0);
+  assert.equal(canonical.one("SELECT erased FROM observations WHERE id=?", passage.id).erased, 0);
+  keep((id) => id.startsWith("0-kept-"));
+  assert.equal(canonical.expire().expired, 1);
+  assert.equal(canonical.one("SELECT erased FROM observations WHERE id=?", passage.id).erased, 1, "once the planner lets it go, it goes");
+});
+
+test("a much-restated candidate keeps what its hold protects and its latest witnesses, and stays reviewable", (t) => {
+  const rows = [1, 2, 3, 4, 5, 6].map((n) => ({ id: `e${n}`, revision: n }));
+  assert.deepEqual(restatedSupport(rows, new Set(["e1", "e6"])).map((row) => row.id), ["e1", "e4", "e5", "e6"]);
+  assert.deepEqual(restatedSupport(rows, new Set(["e1", "e2", "e3", "e4", "e6"])).map((row) => row.id), ["e1", "e2", "e3", "e4", "e6"], "what must stay, stays");
+  const { canonical, scope } = memory(t);
+  const text = (n: number) => `orchid plans to use pnpm for installs, note ${n}.`;
+  const first = candidate(canonical, scope, text(0));
+  canonical.pin({ scope_id: scope, id: first.assertion.id, note: "keep the first source" });
+  let latest = first;
+  for (let n = 1; n <= 6; n++) latest = candidate(canonical, scope, text(n));
+  const logical = canonical.one("SELECT logical_id FROM assertion_versions WHERE version_id=?", first.assertion.id).logical_id;
+  assert.equal(canonical.one("SELECT COUNT(*) AS n FROM assertion_versions WHERE logical_id=? AND known_to_revision IS NULL AND erased=0", logical).n, 1, "one record throughout");
+  assert.deepEqual(canonical.support(latest.assertion.id).map((e: any) => e.witness).sort(), [0, 4, 5, 6].map(text).sort(), "the pinned source and the three latest");
+  assert.equal(canonical.curation.bundle({ kind: "assertion", scope_id: scope, version_id: latest.assertion.id }).evidence.length, 4);
+  assert.deepEqual(canonical.retentionForecast({ scope_id: scope, id: latest.assertion.id }).protectionReasons, ["manual_pin"]);
 });
 
 test("forgetting one required passage releases its all-required preservation bundle", (t) => {

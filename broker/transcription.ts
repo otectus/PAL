@@ -22,7 +22,7 @@ export type TranscriptionStatus = {
 /** Where an imported transcript came from; a microphone transcript has no source file. */
 export type TranscriptSource = { name: string; size: number; sha256: string; durationSeconds: number | null; truncated: boolean };
 export type TranscriptionResult = { sessionId: string; revision: number; text: string; source?: TranscriptSource;
-  /** File imports: the same transcript with segment timestamps (WebVTT), kept by Cere as a transcript artifact. */
+  /** File imports: the same transcript with segment timestamps (WebVTT), kept by PAL as a transcript artifact. */
   vtt?: string };
 export type RecorderCommand = { command: string; args: string[] };
 export type TranscriptionOptions = {

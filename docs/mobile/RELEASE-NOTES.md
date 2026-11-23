@@ -1,19 +1,13 @@
-# Cere Mobile 0.1.5
+# PAL Mobile 2.0.0
 
-[Download the Android APK](https://github.com/otectus/Cere/releases/download/mobile-dev-v0.1.5/cere-mobile-v0.1.5-dev.apk) for Android 11 or later. If you already use the development app, open the APK and choose **Update** to keep your pairing, encrypted conversations, and drafts. Update your PC to Cere desktop 0.1.5 for the matching broker.
+PAL Mobile is now the Android companion for **PAL (Personal Assistant for Linux)**. Update the desktop to PAL 2.0.0 for the matching broker. This release keeps the established Android package identity, so a correctly signed update can retain its existing local pairing and encrypted data.
 
 ## What changed
 
-- Chats, Inbox, Desktop, and Settings share light and dark themes, readable layouts at large font sizes, and navigation that adapts to landscape and tablets.
-- Pairing starts with scanning the desktop QR code. You can also enter the offer manually. The phone shows the six verification words and what to do if camera access or the connection fails.
-- Long conversations keep your reading position when new text arrives. Replies support selectable Markdown, copyable code, and scrollable tables. The composer supports multiline text, an explicit Send action, and image review before upload.
-- The phone recognizes its own delayed autosaves and changes to desktop attachments. It keeps your typing, and asks which version to keep when the text really differs across devices.
-- The launcher icon uses a cyan C and a cream diamond on navy. Android 13 and later can display it in your themed-icon colors.
+- **App identity.** The number under **PAL** in the top-left corner shows the installed app version, including when the paired computer has an older name. The new launcher and notification icons use PAL’s cyan-eyed robot face.
+- **Research in Work.** Full-access owners can choose web or project sources, edit the plan, set limits and start research on the paired desktop. Inspect the passages behind a finding, pause or steer the run, and export the report as Markdown, CSV, BibTeX, or JSON.
+- **Activity Log.** Expand a conversation’s activity cards to inspect and copy an event. Request the full output when the initial preview is truncated, or load older events from the desktop.
 
-## Compatibility and verification
+## Compatibility
 
-This is the optimized development package `dev.otectus.cere.mobile.debug`, version code `1005`. It uses the same signing certificate as 0.1.4 and speaks mobile protocol 1. Older compatible desktops expose their supported features through negotiation. The desktop must be awake and reachable over your LAN or VPN.
-
-The published 0.1.4 APK upgraded in place on Android 11. The same phone identity signed in, the selected chat and its unsent draft survived, and sending the draft produced exactly one message. The 0.1.5 release APK also paired through its own screen on Android 15. The companion debug build passed 20 standalone instrumentation tests there, with five fixture-dependent cases skipped, and passed all five paired-broker checkpoints in a separate run.
-
-The APK SHA-256 is `72874f29f9aad347a570d3e3e1024f0312773b8296c00227a07670fdb2da8acc`. The release includes the checksum, signing certificate fingerprint, build provenance, and test summary. Validation used emulators. Physical-device camera, biometrics, Doze, and Wi-Fi/cellular roaming remain unverified for these bytes.
+PAL Mobile requires Android 11 or later. Research requires a full-access owner connection and a supported saved conversation on the paired desktop. Older compatible desktops continue to advertise the controls they support.

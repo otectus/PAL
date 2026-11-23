@@ -49,6 +49,7 @@ function describe(outcome, now) {
     else title = reasonText[outcome.outcome + "/" + outcome.reason] || ("Recall outcome: " + outcome.outcome + (outcome.reason ? " · " + outcome.reason : "") + ".")
     var details = []
     if (outcome.outcome === "included" && outcome.held) details.push(plural(outcome.held, "match was", "matches were") + " already supplied earlier")
+    if (outcome.withheld) details.push(plural(outcome.withheld, "unreviewed memory was", "unreviewed memories were") + " left out; a memory search still finds " + (outcome.withheld === 1 ? "it" : "them"))
     var gaps = coverage(outcome.coverage)
     if (gaps) details.push("Coverage: " + gaps)
     if (outcome.memoryState && outcome.memoryState !== "ready" && outcome.memoryState !== "idle") details.push("Memory was " + outcome.memoryState + " then")
@@ -70,7 +71,7 @@ function providerName(id) { return providerNames[id] || String(id || "") }
 function seconds(ms) { return ms < 1000 ? Math.max(0, Math.round(ms)) + " ms" : (ms / 1000).toFixed(1) + " s" }
 function searchLine(trace) {
     if (!trace) return ""
-    var head = trace.outcome === "ok" ? providerName(trace.provider) + " · " + plural(trace.results || 0, "result", "results") + (trace.cached ? " · from Cere’s cache" : "")
+    var head = trace.outcome === "ok" ? providerName(trace.provider) + " · " + plural(trace.results || 0, "result", "results") + (trace.cached ? " · from PAL’s cache" : "")
         : trace.outcome === "cancelled" ? "Search stopped before it finished" : "No provider returned results"
     return head + " · " + seconds(trace.durationMs || 0) + (trace.query ? " · “" + trace.query + "”" : "")
 }
@@ -111,7 +112,7 @@ function planSummary(plan) {
     var total = 0
     for (var index = 0; index < plan.layers.length; index++) if (plan.layers[index].included && plan.layers[index].tokens) total += plan.layers[index].tokens
     var parts = [(plan.provider || "") + (plan.model ? " · " + plan.model : "")]
-    parts.push(plan.contextSize ? tokens(total) + " of " + Number(plan.contextSize).toLocaleString(Qt.locale(), "f", 0) + " in the window" : tokens(total) + " supplied by Cere")
+    parts.push(plan.contextSize ? tokens(total) + " of " + Number(plan.contextSize).toLocaleString(Qt.locale(), "f", 0) + " in the window" : tokens(total) + " supplied by PAL")
     if (plan.rounds > 1) parts.push(plan.rounds + " tool rounds")
     // A library script has no QML Locale type, so the time uses an explicit short format.
     if (plan.time) parts.push(new Date(plan.time).toLocaleTimeString(Qt.locale(), "hh:mm"))

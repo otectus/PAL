@@ -1,15 +1,14 @@
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
-import { chmodSync } from 'node:fs';
+import { chmodSync, existsSync } from 'node:fs';
 import { paths, privateDir } from './paths.ts';
 import { defaultSettings } from './types.ts';
-import { assistantIdentity } from './personality.ts';
+import { assistantIdentity, defaultAssistantName, defaultPersonality, legacyDefaultPersonality } from './personality.ts';
 import type { Session, Message, Settings, SessionFolder, AgentActivity } from './types.ts';
 const activeAgent=(agent:AgentActivity)=>['starting','running','waiting'].includes(agent.status);
 function withoutRetiredAvatarAppearance(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const { avatarRenderer: _avatarRenderer, avatarModel: _avatarModel, avatarQuality: _avatarQuality, ...settings } = value as Record<string, unknown>;
-  if (settings.avatar === 'cere') settings.avatar = 'cere_default';
   return settings;
 }
 /**
@@ -45,7 +44,8 @@ export class Store {
       CREATE TABLE messages(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,data TEXT NOT NULL);
       CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);`);
     privateDir(directory);
-    const file = join(directory, 'cere.sqlite');
+    const current = join(directory, 'pal.sqlite'), legacy = join(directory, 'cere.sqlite');
+    const file = existsSync(current) || !existsSync(legacy) ? current : legacy;
     this.db = new DatabaseSync(file); chmodSync(file, 0o600);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -81,7 +81,7 @@ export class Store {
    */
   private migrateWorkbench() {
     const current = Number(this.get<string | number>('workbenchSchema', 0));
-    if (current > 1) throw new Error('This Cere state was written by a newer version (Workbench schema ' + current + ')');
+    if (current > 1) throw new Error('This PAL state was written by a newer version (Workbench schema ' + current + ')');
     if (current === 1) return;
     this.transaction(() => {
       const before = this.db.prepare("SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name").all();
@@ -150,15 +150,25 @@ export class Store {
   settings(): Settings {
     const raw = this.get<Omit<Partial<Settings>, 'avatar'> & { avatar?: Settings['avatar'] | 'cere' }>('settings', {});
     const saved = withoutRetiredAvatarAppearance(raw) as Partial<Settings>;
+    // Name and personality were independently configurable. Migrate each former stock value exactly once,
+    // then preserve an intentional future choice of "Cere" (or the old persona text) like any other custom value.
+    if (this.get<number>('pal.identityMigration', 0) < 1) {
+      let changed = false;
+      if (saved.assistantName === 'Cere') { saved.assistantName = defaultAssistantName; changed = true; }
+      if (saved.personality === legacyDefaultPersonality) { saved.personality = defaultPersonality; changed = true; }
+      if (changed) this.set('settings', saved);
+      this.set('pal.identityMigration', 1);
+    }
     // Rewrite the old public avatar id once it is read so subsequent clients and
     // snapshots see only the canonical catalog id.
-    if (raw.avatar === 'cere') this.set('settings', saved);
-    return { ...structuredClone(defaultSettings), ...saved, ...assistantIdentity(saved),
+    const identity = assistantIdentity(saved);
+    if (typeof raw.avatar === 'string' && raw.avatar !== identity.avatar) this.set('settings', { ...saved, avatar: identity.avatar });
+    return { ...structuredClone(defaultSettings), ...saved, ...identity,
       speechProviders: { ...defaultSettings.speechProviders, ...saved.speechProviders },
       indextts: { ...defaultSettings.indextts, ...saved.indextts },
       elevenlabs: { ...defaultSettings.elevenlabs, ...saved.elevenlabs },
       telemetry: { ...defaultSettings.telemetry, ...saved.telemetry },
-      ollama: { ...defaultSettings.ollama, host: process.env.CERE_OLLAMA_HOST || process.env.OLLAMA_HOST || defaultSettings.ollama.host, ...saved.ollama },
+      ollama: { ...defaultSettings.ollama, host: process.env.PAL_OLLAMA_HOST || process.env.CERE_OLLAMA_HOST || process.env.OLLAMA_HOST || defaultSettings.ollama.host, ...saved.ollama },
       webSearch: { ...defaultSettings.webSearch, ...saved.webSearch },
       notesVault: { ...defaultSettings.notesVault, ...saved.notesVault },
       compatible: { ...defaultSettings.compatible, ...saved.compatible },
@@ -219,9 +229,14 @@ export class Store {
     try { const result=work();this.db.exec('COMMIT');return result; }
     catch(error) {this.db.exec('ROLLBACK');throw error;}
   }
-  session(id: string): Session {
+  findSession(id: string): Session | undefined {
     const row = this.sessionDatabase(id).prepare('SELECT data FROM sessions WHERE id=?').get(id);
-    if (!row) throw new Error('Session no longer exists'); return JSON.parse(row.data as string);
+    return row ? JSON.parse(row.data as string) : undefined;
+  }
+  session(id: string): Session {
+    const session = this.findSession(id);
+    if (!session) throw new Error('Session no longer exists');
+    return session;
   }
   saveSession(s: Session) {
     this.sessionsRevision++;
@@ -234,7 +249,7 @@ export class Store {
     s.draftRevision = String(BigInt(previous?.draftRevision || '0') + (previous && (previous.draft !== s.draft || JSON.stringify(previous.draftAttachments||[])!==JSON.stringify(s.draftAttachments||[])) ? 1n : 0n));
     const config = (v: Session) => JSON.stringify([v.title,v.model,v.effort,v.ollama,v.api,v.mode,v.remote,v.connectionId]);
     s.configRevision = String(BigInt(previous?.configRevision || '0') + (previous && config(previous) !== config(s) ? 1n : 0n));
-    db.prepare('INSERT OR REPLACE INTO sessions VALUES (?,?)').run(s.id, JSON.stringify(s));
+    db.prepare('INSERT INTO sessions(id,data) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(s.id, JSON.stringify(s));
   }
   messages(id: string): Message[] { return this.sessionDatabase(id).prepare('SELECT data FROM messages WHERE session_id=? ORDER BY rowid').all(id).map(r => JSON.parse(r.data as string)); }
   messageById(id: string): Message | undefined { const row=this.volatile.prepare('SELECT data FROM messages WHERE id=?').get(id)||this.db.prepare('SELECT data FROM messages WHERE id=?').get(id);return row?JSON.parse(row.data as string):undefined; }

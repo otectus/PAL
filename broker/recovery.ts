@@ -122,8 +122,25 @@ type Review={id:string;directory:string;manifest:any;digest:string;registryDiges
 export class Recovery {
   core:Core;reviews=new Map<string,Review>();pending=false;staging=false;warning='';restartTimer?:NodeJS.Timeout;
   constructor(core:Core){this.core=core;try{this.warning=JSON.parse(readFileSync(join(core.store.directory,'recovery-warning.json'),'utf8')).message||'';}catch{}}
+  private async lastBackupTime() {
+    const recorded = this.core.store.get<number>('recovery.lastBackupAt', 0);
+    if (recorded) return recorded;
+    // Existing installations predate the last-backup marker. Read only completed local manifests.
+    const root = join(this.core.store.directory, 'backups');
+    let latest = 0;
+    for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+      if (!entry.isDirectory() || !uuidPattern.test(entry.name)) continue;
+      try {
+        const path = join(root, entry.name, 'manifest.json');
+        privateFile(path);
+        const manifest = JSON.parse(await readFile(path, 'utf8'));
+        if (manifest.version === 1 && Number.isSafeInteger(manifest.created)) latest = Math.max(latest, manifest.created);
+      } catch { /* An incomplete or unreadable directory is not a completed backup. */ }
+    }
+    return latest || null;
+  }
   async dispatch(method:string,p:any):Promise<any>{
-    if(method==='recovery.status')return{pending:this.pending,activationWarning:this.warning,defaultExclusions:['provider credentials','device keys and pairing','active grants and power sessions','saved executable actions','temporary conversations','workspace folder access, pending file changes and image or analysis runs'],warning:'Conversation and memory content may contain secrets you typed. Backups are private files, not encrypted archives.'};
+    if(method==='recovery.status')return{lastBackupAt:await this.lastBackupTime(),pending:this.pending,activationWarning:this.warning,defaultExclusions:['provider credentials','device keys and pairing','active grants and power sessions','saved executable actions','temporary conversations','workspace folder access, pending file changes and image or analysis runs'],warning:'Conversation and memory content may contain secrets you typed. Backups are private files, not encrypted archives.'};
     if(method==='recovery.dismissWarning'){this.warning='';if(existsSync(join(this.core.store.directory,'recovery-warning.json')))unlinkSync(join(this.core.store.directory,'recovery-warning.json'));this.core.changed();return true;}
     if(method==='recovery.backup'){
       await this.core.memory.ready;
@@ -147,6 +164,7 @@ export class Recovery {
       const manifest={version:1,created:data.created,includeContent,profileDigest:digest(text),registryDigest:digest(forgetting),...(includeContent?{memoryDigest:digest(await readFile(join(directory,'memory.sqlite')))}:{}),sessions:sessions.length,messages:messages.length,attachments:data.attachments.length,...(data.artifacts?{artifacts:data.artifacts.rows.artifact_versions.length,artifactBytes:data.artifacts.withBytes,artifactBytesMissing:data.artifacts.missingAtBackup}:{})};
       await writeFile(join(directory,'manifest.json'),JSON.stringify(manifest),{mode:0o600,flag:'wx'});
       if(digest(registry(this.core.store.directory))!==registryDigest)throw new Error('Forgetting records changed during backup. No backup was retained; retry.');
+      this.core.store.set('recovery.lastBackupAt', Math.max(manifest.created, this.core.store.get<number>('recovery.lastBackupAt', 0)));
       return{directory,manifest,exclusions:(await this.dispatch('recovery.status',{})).defaultExclusions};
       }catch(error){await rm(directory,{recursive:true,force:true});throw error;}
     }

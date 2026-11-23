@@ -41,7 +41,7 @@ test('Q05 a search trace records the real attempts, timings and sanitized reason
 });
 
 test('Q05 traces are bounded per conversation, shown read-only in Context, never exported, and dropped with the conversation', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-web-trace-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-web-trace-'));
   const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   let loads = 0;

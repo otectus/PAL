@@ -12,7 +12,7 @@ const session = (id: string, cwd: string, patch: Partial<Session> = {}): Session
 });
 
 async function fixture(t: test.TestContext) {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-power-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-power-'));
   const one = join(directory, 'one'), two = join(directory, 'two');
   await mkdir(one); await mkdir(two);
   t.after(() => rm(directory, { recursive: true, force: true }));

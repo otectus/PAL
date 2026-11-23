@@ -35,9 +35,9 @@ test('@ references resolve at send: a live file with a version check, a folder m
   const referenced = messages[at - 1];
   assert.equal(referenced.role, 'user');
   assert.match(referenced.content, /not instructions/);
-  assert.match(referenced.content, /<cere_reference kind="file" source="[^"]+\/src\/app.ts" version="sha256:[0-9a-f]+" lines="1-2 of 2">\n1\| const a = 2;/);
+  assert.match(referenced.content, /<pal_reference kind="file" source="[^"]+\/src\/app.ts" version="sha256:[0-9a-f]+" lines="1-2 of 2">\n1\| const a = 2;/);
   assert.match(referenced.content, /changed after you picked it; the current version was used/);
-  assert.match(referenced.content, /<cere_reference kind="folder"[^>]*>\napp.ts {2}\(\d+ bytes\)\nb.ts/);
+  assert.match(referenced.content, /<pal_reference kind="folder"[^>]*>\napp.ts {2}\(\d+ bytes\)\nb.ts/);
   assert.doesNotMatch(referenced.content, /export const b = 2/, 'a folder reference is a manifest, not contents');
   assert.match(referenced.content, /We agreed the release is on Friday/);
   assert.equal(referenced.images.length, 1, 'chat:latest has vision, so the image goes with the references');

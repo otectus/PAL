@@ -1,10 +1,11 @@
 import { z } from 'zod';
+import { ownerOperations, ownerFeatures } from './owner-schemas.ts';
 
 export const uuid=z.uuid(), revision=z.string().regex(/^(0|[1-9][0-9]{0,18})$/), hash=z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 // A conversation's route as the session DTO names it: 'connection:<id>:<revision>', 'default:<digest>' or 'missing:<id>'.
 const routeRevision=z.string().max(200).regex(/^[A-Za-z0-9:_-]*$/);
 // A phone names any provider it may run; whether it may run it is decided by the device's grants.
-const str=z.string().max(4096),sessionId=uuid,projectId=uuid,provider=z.enum(['codex','claude','ollama','openai','anthropic','google','compatible']),empty=z.strictObject({});
+const str=z.string().max(4096),sessionId=uuid,projectId=uuid,provider=z.enum(['codex','claude','ollama','openai','anthropic','google','compatible','antigravity']),empty=z.strictObject({});
 const memoryRevision=z.string().regex(/^(0|[1-9][0-9]{0,15})$/).refine(value=>BigInt(value)<=BigInt(Number.MAX_SAFE_INTEGER),'Memory revision exceeds exact integer range');
 export const helloSchema=z.strictObject({v:z.literal(1),type:z.literal('hello'),protocolMin:z.number().int().min(0),protocolMax:z.number().int().min(0),desktopId:uuid,deviceId:uuid,keyVersion:z.literal(1),clientNonce:hash,appVersion:z.string().max(32)});
 /**
@@ -18,7 +19,10 @@ export const methods:Record<string,z.ZodType>={
   'sync.open':z.strictObject({resumeCursor:str.optional(),selectedSessionId:sessionId.optional()}),'sync.ack':z.strictObject({cursor:str}),
   'sessions.list':z.strictObject({filter:z.string().max(200).optional(),offset:z.number().int().min(0).default(0),withIds:z.boolean().default(false)}),'sessions.get':z.strictObject({sessionId}),
   'sessions.batch':z.strictObject({sessionIds:z.array(sessionId).min(1).max(50)}),
-  'projects.list':empty,'sessions.create':z.strictObject({provider,projectId,title:z.string().max(100).optional(),model:z.string().max(512).optional(),effort:z.string().max(32).optional(),tools:z.boolean().default(false)}),
+  // Owner phones (owner.policy.v1) may also name any desktop folder (cwd instead of projectId), Workbench
+  // families and a saved connection, exactly as the desktop's New conversation does.
+  'projects.list':empty,'sessions.create':z.strictObject({provider,projectId:projectId.optional(),cwd:z.string().min(1).max(4096).startsWith('/').optional(),title:z.string().max(100).optional(),model:z.string().max(512).optional(),effort:z.string().max(32).optional(),tools:z.boolean().default(false),
+    capabilities:z.strictObject({files:z.boolean().optional(),images:z.boolean().optional(),analysis:z.boolean().optional(),host:z.boolean().optional()}).optional(),connectionId:z.string().min(1).max(200).optional()}).refine(p=>!!p.projectId!==!!p.cwd,'Choose a project or a folder'),
   'sessions.messages':z.strictObject({sessionId,before:str.optional(),limit:z.number().int().min(1).max(100).default(100)}),
   'sessions.messagePart':z.strictObject({sessionId,messageId:z.string().min(1).max(256),revision,part:z.number().int().min(0).max(100000)}),
   'sessions.handoffPreview':z.strictObject({sessionId}),
@@ -28,7 +32,8 @@ export const methods:Record<string,z.ZodType>={
   // desktopAttachments: the desktop draft's own attachments, as the phone reviewed them (W10).
   // expectedRouteRevision: the connection the phone reviewed (sessions.routeRevision); workbenchAcknowledged:
   // the Files/Images/Analysis selection the phone showed would pause on taking over (workbench.takeover).
-  'sessions.send':z.strictObject({sessionId,text:z.string().min(1).max(100000),attachments:z.array(uuid).max(4).default([]),desktopAttachments:z.array(z.strictObject({id:uuid,sha256:z.string().regex(/^[a-f0-9]{64}$/)})).max(8).optional(),webSearch:z.boolean().default(false),expectedDraftRevision:revision,expectedConfigRevision:revision,expectedRouteRevision:routeRevision.optional(),workbenchAcknowledged:z.array(z.enum(['files','images','analysis'])).max(3).optional()}),
+  'sessions.send':z.strictObject({sessionId,text:z.string().min(1).max(100000),attachments:z.array(uuid).max(4).default([]),desktopAttachments:z.array(z.strictObject({id:uuid,sha256:z.string().regex(/^[a-f0-9]{64}$/)})).max(8).optional(),webSearch:z.boolean().default(false),expectedDraftRevision:revision,expectedConfigRevision:revision,expectedRouteRevision:routeRevision.optional(),workbenchAcknowledged:z.array(z.enum(['files','images','analysis'])).max(3).optional(),
+    references:z.array(z.record(z.string(),z.unknown()).refine(value=>JSON.stringify(value).length<=4000,'Reference too large')).max(20).optional()}),
   'sessions.stop':z.strictObject({sessionId}),'sessions.disconnect':z.strictObject({sessionId}),'sessions.read':z.strictObject({sessionId}),
   'sessions.rename':z.strictObject({sessionId,title:z.string().min(1).max(100),expectedRevision:revision}),
   'sessions.organize':z.strictObject({sessionId,expectedRevision:revision,pinned:z.boolean().optional(),archived:z.boolean().optional()}).refine(p=>p.pinned!==undefined||p.archived!==undefined,'Choose a session organization change'),
@@ -89,17 +94,56 @@ export const methods:Record<string,z.ZodType>={
   'memory.identity':z.strictObject({sessionId,leftId:uuid,rightId:uuid,decision:z.enum(['same','not_same','possible']),statement:z.string().min(1).max(2000)}),
   'memory.freezeEpisode':z.strictObject({sessionId,id:uuid}),
 };
+for(const [name,entry] of Object.entries(ownerOperations)){if(methods[name])throw new Error('Duplicate mobile operation '+name);methods[name]=entry.schema;}
 /**
  * Behaviour a client can rely on beyond the operation list, named in welcome. A client checks for a
  * feature before using it and keeps its older behaviour otherwise; an absent feature is never an error.
  */
-export const protocolFeatures=['activity.page','sessions.batch','search.ids','message.sources','citations.display','agent.refs','captures','drafts.desktopAttachments','messages.bookmarks','workflows.status','sessions.behavior','desktop.portrait','desktop.workspace','memory.health','sessions.focusTerminal','history.claude','sessions.toolsState','sessions.routeRevision','models.listing','workbench.takeover'] as const;
+export const protocolFeatures=['activity.page','sessions.batch','search.ids','message.sources','citations.display','agent.refs','captures','drafts.desktopAttachments','messages.bookmarks','workflows.status','sessions.behavior','desktop.portrait','desktop.workspace','memory.health','sessions.focusTerminal','history.claude','sessions.toolsState','sessions.routeRevision','models.listing','workbench.takeover',...ownerFeatures] as const;
 export const mutations=new Set(['sessions.focusTerminal','workflows.pauseSchedule','messages.bookmark','captures.start','captures.discard','captures.attach','memory.correct','memory.resolveConflict','memory.identity','memory.freezeEpisode','sessions.create','sessions.send','sessions.stop','sessions.disconnect','sessions.read','sessions.rename','sessions.organize','drafts.put','sessions.configure','sessions.handoffCreate','sessions.import','approvals.answer','permissions.pause','permissions.reduce','devices.selfRevoke','desktop.execute','timers.cancel','settings.patch','memory.save','memory.forget','memory.clear','attachments.begin','attachments.commit','attachments.abort']);
+for(const [name,entry] of Object.entries(ownerOperations))if(entry.kind==='mutation'||entry.kind==='signed')mutations.add(name);
 const defensive=new Set(['workflows.pauseSchedule','messages.bookmark','captures.discard','sessions.stop','sessions.disconnect','sessions.read','sessions.rename','sessions.organize','drafts.put','permissions.pause','permissions.reduce','devices.selfRevoke','attachments.abort']);
+for(const [name,entry] of Object.entries(ownerOperations))if(entry.kind==='mutation')defensive.add(name);
 export function needsProof(method:string,params:any) { return mutations.has(method) && !defensive.has(method) && !(method==='approvals.answer'&&['deny','cancel'].includes(params.choice)); }
-export function availableOperations(caps:string[]) {
-  return Object.keys(methods).filter(method=>{
-    const cap=method==='attachments.read'||method==='captures.preview'?'capture.preview':method==='captures.attach'||method.startsWith('attachments.')?'attachments.write':method==='approvals.preview'?'capture.preview':method.startsWith('captures.')?'desktop.control':method.startsWith('approvals.')?'approvals.answer':method==='desktop.portrait'?'chat.read':method.startsWith('desktop.')||method.startsWith('timers.')||method==='sessions.focusTerminal'?'desktop.control':['memory.save','memory.forget','memory.clear','memory.forgetPreview','memory.correct','memory.resolveConflict','memory.identity','memory.freezeEpisode'].includes(method)?'memory.write':method.startsWith('memory.')?'memory.read':method==='settings.patch'?'settings.write':method==='sessions.history'?'providers.execute':['sessions.create','sessions.send','sessions.configure','sessions.rename','sessions.organize','sessions.disconnect','sessions.handoffCreate','sessions.import','drafts.put','messages.bookmark','workflows.pauseSchedule'].includes(method)?'chat.write':'chat.read';
-    return ['devices.self','devices.selfRevoke','permissions.pause','permissions.reduce','commands.status','commands.challenge'].includes(method)||caps.includes(cap);
-  });
+type Role='observer'|'limited'|'owner';
+/** The permission every operation that existed before device roles needs, as the gateway always mapped it. */
+function legacyPermission(method:string) {
+  return method==='attachments.read'||method==='captures.preview'?'capture.preview':method==='captures.attach'||method.startsWith('attachments.')?'attachments.write':method==='approvals.preview'?'capture.preview':method.startsWith('captures.')?'desktop.control':method.startsWith('approvals.')?'approvals.answer':method==='desktop.portrait'?'chat.read':method.startsWith('desktop.')||method.startsWith('timers.')||method==='sessions.focusTerminal'?'desktop.control':['memory.save','memory.forget','memory.clear','memory.forgetPreview','memory.correct','memory.resolveConflict','memory.identity','memory.freezeEpisode'].includes(method)?'memory.write':method.startsWith('memory.')?'memory.read':method==='settings.patch'?'settings.write':method==='sessions.history'?'providers.execute':['sessions.create','sessions.send','sessions.configure','sessions.rename','sessions.organize','sessions.disconnect','sessions.handoffCreate','sessions.import','drafts.put','messages.bookmark','workflows.pauseSchedule'].includes(method)?'chat.write':'chat.read';
+}
+/** Operations any paired phone may call, whatever it was granted: identity, its own access and command status. */
+const anyPhone=new Set(['devices.self','devices.selfRevoke','devices.setSelfRole','permissions.pause','permissions.reduce','commands.status','commands.challenge','client.features']);
+/** What an observer may change: Stop, read markers, Deny (approvals.answer refuses Allow for observers) and its own access. */
+const observerMutations=new Set(['sessions.stop','sessions.read','approvals.answer','permissions.pause','permissions.reduce','devices.selfRevoke','devices.setSelfRole']);
+export type OperationDescriptor={permission:string;roles:readonly Role[];kind:'read'|'mutation'|'signed'|'stream';feature?:string;sensitive?:string[]};
+/**
+ * One descriptor per operation, shared by welcome's advertisement and the gateway's enforcement (handoff
+ * §9.2): the grant it needs ('any' for every paired phone), the roles that may call it, its kind and, for
+ * operations added with device roles, the negotiated feature. Owner operations need the owner role, which a
+ * connection holds only after its client declared owner policy.
+ */
+export const operationDescriptors:Record<string,OperationDescriptor>=Object.fromEntries(Object.keys(methods).map(method=>{
+  const owner=ownerOperations[method];
+  if(owner)return [method,{permission:'any',roles:method==='client.features'||method==='devices.setSelfRole'?['observer','limited','owner'] as const:['owner'] as const,kind:owner.kind,feature:owner.feature,...(owner.sensitive?{sensitive:owner.sensitive}:{})}];
+  const kind=!mutations.has(method)?'read':needsProof(method,{})?'signed':'mutation';
+  const roles=!mutations.has(method)||observerMutations.has(method)?['observer','limited','owner'] as const:['limited','owner'] as const;
+  return [method,{permission:anyPhone.has(method)?'any':legacyPermission(method),roles,kind}];
+}));
+/** Whether this role and grant set may call the operation (advertised in welcome, enforced per request). */
+export function operationAllowed(method:string,caps:string[],role:Role='limited',features?:ReadonlySet<string>) {
+  const descriptor=operationDescriptors[method];
+  return !!descriptor&&(!features||!descriptor.feature||anyPhone.has(method)||features.has(descriptor.feature))&&descriptor.roles.includes(role)&&(descriptor.permission==='any'||caps.includes(descriptor.permission));
+}
+export function availableOperations(caps:string[],role:Role='limited',features?:ReadonlySet<string>) {
+  return Object.keys(methods).filter(method=>operationAllowed(method,caps,role,features));
+}
+/** The feature matrix's permission column: a grant, any paired phone, or the owner role (owner operations). */
+export function permissionLabel(method:string) {
+  const descriptor=operationDescriptors[method];if(!descriptor)return '';
+  if(descriptor.roles.length===1&&descriptor.roles[0]==='owner')return 'owner phone';
+  return descriptor.permission==='any'?'any paired phone':descriptor.permission;
+}
+/** The feature matrix's kind column. Terminal input is a stream bound to a control lease, outside the command ledger. */
+export function kindLabel(method:string) {
+  const descriptor=operationDescriptors[method];
+  return descriptor?.kind==='stream'?'stream (control lease)':!mutations.has(method)?'read':needsProof(method,method==='approvals.answer'?{choice:'allow'}:{})?'signed mutation':'mutation (no proof)';
 }

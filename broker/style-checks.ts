@@ -3,7 +3,7 @@ import { proseLines } from './markdown-prose.ts';
  * M02 deterministic output checks. A style can ask for a few checkable formatting constraints; the
  * instruction asks the model to follow them, and a finished reply is checked afterwards. A failed
  * check is a visible note on that reply. Nothing here edits, strips, hides or re-requests a reply:
- * the text the user saw and the text Cere stored stay identical. Code is never checked.
+ * the text the user saw and the text PAL stored stay identical. Code is never checked.
  */
 export const styleConstraints = {
   'no-emoji': { label: 'No emoji', instruction: 'Do not use emoji.' },

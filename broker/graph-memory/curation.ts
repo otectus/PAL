@@ -7,6 +7,10 @@ import { amendStatement, createStatement, statementSupport } from './statements.
 type Row = Record<string,any>;
 const now = () => Date.now()*1000;
 const hash = (x:unknown)=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
+/** A synthesis input's evidence as the model read it, independent of the order a query returned it in. */
+const evidenceDigest = (rows:unknown)=>Array.isArray(rows)
+  ?hash(rows.map((e:Row)=>[String(e?.id),String(e?.role),String(e?.quote)]).sort((a,b)=>a[0].localeCompare(b[0])))
+  :null;
 const pageSize = (value:unknown, fallback=25) => Math.max(1,Math.min(200,Number.isSafeInteger(value)?Number(value):fallback));
 const sources = { assertion:'assertion_versions',statement:'memory_statement_versions' } as const;
 const dueStates = "('queued','retryable')";
@@ -89,7 +93,9 @@ export class Curation {
     if(!internal)c.scope(p.scope_id);
     if(p.ids!==undefined&&(!Array.isArray(p.ids)||p.ids.length>200||p.ids.some((s:unknown)=>typeof s!=='string')))fail('INVALID_ARGUMENT','Select up to 200 current versions');
     const rows=this.candidates(p.scope_id,pageSize(p.limit,internal?8:50),p.ids);
-    const selection=hash([rows,p.scope_id,this.revision(),c.epoch('policy'),c.epoch('erasure')]);
+    // The rows themselves show any erasure that touched this selection; an unrelated one, such as
+    // routine expiry, must not void a preview the person is still reading.
+    const selection=hash([rows,p.scope_id,this.revision(),c.epoch('policy')]);
     if(preview||p.dry_run)return {rows,selection,count:rows.length};
     if(!c.policy.enabled||pf.mode==='off')return {queued:0,reason:'CURATION_OFF'};
     if(!internal && p.selection!==selection)fail('REVISION_CONFLICT','Preview this selection again');
@@ -121,9 +127,16 @@ export class Curation {
       }
     });
   }
+  /**
+   * Whether a job's settings still hold. Its sources are fenced separately and exactly: claim, finish
+   * and apply rebuild the bundle and compare its digest with the one the reviewer saw, and erasing an
+   * input deletes or stales the job (eraseInput). The global erasure epoch is not compared: every
+   * routine expiry advances it, so comparing it discarded review results made across any unrelated
+   * expiry, re-queued them, and could keep a busy store from finishing a review at all.
+   */
   live(job:Row){
     const c=this.store;
-    if(!c.policy.enabled||this.profile().mode==='off'||job.config_revision!==this.revision()||job.policy_epoch!==c.epoch('policy')||job.erasure_epoch!==c.epoch('erasure'))fail('SOURCE_CHANGED','Review settings or sources changed');
+    if(!c.policy.enabled||this.profile().mode==='off'||job.config_revision!==this.revision()||job.policy_epoch!==c.epoch('policy'))fail('SOURCE_CHANGED','Review settings or sources changed');
   }
   lease(p:Row){
     const job=this.store.one("SELECT * FROM memory_curation_jobs WHERE id=? AND state='leased' AND lease_token=? AND lease_until_us>?",p.id,p.token,now());
@@ -408,7 +421,7 @@ export class Curation {
     const a=c.hydrateArtifact(ep.summary_id,ep.scope_id,c.revision,undefined,'local');
     if(!a||a.evidence.length>16)return null;
     return {id:ep.id,scope:ep.scope_id,generation:ep.source_generation,artifact:ep.summary_id,
-      policy_epoch:c.epoch('policy'),erasure_epoch:c.epoch('erasure'),sensitivity:[a,...a.evidence].some(e=>e.sensitivity==='local_only')?'local_only':'cloud_allowed',
+      policy_epoch:c.epoch('policy'),sensitivity:[a,...a.evidence].some(e=>e.sensitivity==='local_only')?'local_only':'cloud_allowed',
       evidence:a.evidence.map((e:Row)=>({id:e.id,role:e.trust,quote:e.witness}))};
   }
   nextSummary(){
@@ -425,7 +438,9 @@ export class Curation {
   publishSummary(p:Row){
     const c=this.store,ep=c.one('SELECT * FROM episodes WHERE id=? AND erased=0',p.id),b=this.summaryBundle(ep);
     const pf=this.profile();
-    if(!b||!c.policy.enabled||pf.mode!=='automatic'||!pf.consolidation||p.revision!==this.revision()||b.artifact!==p.artifact||p.generation!==b.generation||p.policy_epoch!==b.policy_epoch||p.erasure_epoch!==b.erasure_epoch)fail('SOURCE_CHANGED','Episode changed during synthesis');
+    // The model saw exactly the request's evidence. Publishing needs that same evidence now: any of it
+    // forgotten or changed meanwhile rejects the summary, while an erasure elsewhere does not.
+    if(!b||!c.policy.enabled||pf.mode!=='automatic'||!pf.consolidation||p.revision!==this.revision()||b.artifact!==p.artifact||p.generation!==b.generation||p.policy_epoch!==b.policy_epoch||evidenceDigest(p.evidence)!==evidenceDigest(b.evidence))fail('SOURCE_CHANGED','Episode changed during synthesis');
     const sentences=parse(synthesisSchema,{sentences:p.sentences}).sentences;
     for(const sentence of sentences)allowedIds(sentence.evidenceIds,b.evidence.map((e:Row)=>e.id));
     return c.tx(()=>{

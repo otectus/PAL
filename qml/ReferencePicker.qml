@@ -15,7 +15,7 @@ Popup {
     property string error: ""
     property bool loading: false
     signal chosen(var candidate)
-    padding: 4
+    padding: Theme.space1
     focus: false
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
     background: Rectangle { color: Theme.raised; border.color: Theme.borderStrong; radius: Theme.radiusControl }
@@ -36,7 +36,7 @@ Popup {
     function iconFor(kind) { return kind === "folder" ? "projects" : kind === "artifact" ? "image" : kind === "collection" ? "memory" : kind === "conversation" ? "chat" : "file" }
     function kindLabel(kind) { return ({ file: "File", folder: "Folder", artifact: "Conversation file", collection: "Collection", conversation: "Conversation" })[kind] || kind }
     contentItem: ColumnLayout {
-        spacing: 2
+        spacing: Theme.space1
         CText {
             objectName: "referencePickerStatus"
             visible: !picker.candidates.length
@@ -46,7 +46,7 @@ Popup {
         }
         ListView {
             id: list; objectName: "referenceCandidates"
-            Layout.fillWidth: true; Layout.preferredHeight: Math.min(contentHeight, 264); clip: true
+            Layout.fillWidth: true; Layout.preferredHeight: Math.min(contentHeight, Theme.menuMaxHeight); clip: true
             visible: picker.candidates.length > 0
             model: picker.candidates; currentIndex: picker.current
             boundsBehavior: Flickable.StopAtBounds
@@ -55,13 +55,13 @@ Popup {
             delegate: ItemDelegate {
                 required property var modelData; required property int index
                 objectName: "referenceCandidate_" + index
-                width: list.width; height: 44; highlighted: index === picker.current
-                Accessible.role: Accessible.ListItem; Accessible.name: picker.kindLabel(modelData.kind) + " " + modelData.label + ", " + modelData.detail
-                background: Rectangle { radius: Theme.radiusChip; color: parent.highlighted || parent.hovered ? Theme.selected : "transparent" }
+                width: list.width; height: Theme.controlHeight; highlighted: index === picker.current
+                Accessible.role: Accessible.ListItem; Accessible.onPressAction: if (enabled) click(); Accessible.name: picker.kindLabel(modelData.kind) + " " + modelData.label + ", " + modelData.detail
+                background: Rectangle { radius: Theme.radiusChip; color: parent.highlighted || parent.hovered ? Theme.selected : Theme.transparent }
                 onClicked: { picker.current = index; picker.accept() }
                 contentItem: RowLayout {
-                    spacing: 8
-                    CIcon { name: picker.iconFor(modelData.kind); Layout.preferredWidth: 18; Layout.preferredHeight: 18 }
+                    spacing: Theme.space2
+                    CIcon { name: picker.iconFor(modelData.kind); Layout.preferredWidth: Theme.iconSize; Layout.preferredHeight: Theme.iconSize }
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 0
                         CText { text: modelData.label; elide: Text.ElideMiddle; wrapMode: Text.NoWrap; font.pixelSize: Theme.secondary }

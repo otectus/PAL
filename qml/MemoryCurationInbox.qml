@@ -51,7 +51,7 @@ ColumnLayout {
     CText { Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.muted
         text:root.summary.profile ? ("Mode · "+root.summary.profile.mode+"    "+(root.summary.queue||[]).map(g=>g.count+" "+g.state.replace(/_/g," ")).join(" · ")+"\nToday · "+root.summary.usage.requests+" requests, "+root.summary.usage.input_tokens+" input and "+root.summary.usage.output_tokens+" output tokens used or reserved. "+(root.summary.usage.cost_micros===null?"Cost unknown.":"Estimated cost "+(root.summary.usage.cost_micros/1000000).toFixed(6)+" at configured prices.")) : "" }
     Flow {
-        Layout.fillWidth:true;spacing:6
+        Layout.fillWidth:true;spacing:Theme.space2
         CButton { text:"Refresh review";enabled:!root.busy;onClicked:root.reload() }
         CButton { text:"Review existing memory";enabled:!root.busy;onClicked:root.send("memory.curation.preview",{limit:25},r=>root.preview=r) }
         CButton { text:"Expiring memories";enabled:!root.busy;onClicked:root.previewRetention("") }
@@ -76,7 +76,7 @@ ColumnLayout {
         }
         CField { id:backup;Layout.fillWidth:true;placeholderText:"New backup file path";Accessible.name:"Backlog backup file" }
         Flow {
-            Layout.fillWidth:true;spacing:6
+            Layout.fillWidth:true;spacing:Theme.space2
             CButton { text:"Back up and protect this page";enabled:!root.busy&&backup.text.trim().length>0&&root.forecast?.counts.eligible>0&&root.summary.profile?.reviewGrace===true;onClicked:root.send("memory.retention.protect",{selection:root.forecast.selection,expected_revision:root.forecast.revision,reason:"review_grace",output:backup.text.trim()},r=>{root.held=r.hold_ids||[];root.feedback="Protected "+r.protected+" memories. Backup saved to "+r.backup;root.previewRetention(root.cursor)}) }
             CButton { text:"Next forecast page";enabled:!!root.forecast?.next_cursor;onClicked:root.previewRetention(root.forecast.next_cursor) }
         }
@@ -103,7 +103,7 @@ ColumnLayout {
             CText { required property var modelData;Layout.fillWidth:true;wrapMode:Text.Wrap;text:modelData.trust+" · “"+modelData.quote+"”";color:Theme.muted }
         }
         Flow {
-            Layout.fillWidth:true;spacing:6;enabled:!root.busy
+            Layout.fillWidth:true;spacing:Theme.space2;enabled:!root.busy
             CButton { text:"Inspect / correct / forget";onClicked:root.inspectRequested(root.selected?.after_id||root.selected.version_id) }
             CButton { text:"Confirm as my note…";onClicked:{noteEditor.text=root.selected.text;noteEditor.visible=true;noteEditor.forceActiveFocus()} }
             CButton { text:"Keep";onClicked:root.send("memory.graph",{method:"pin",params:{id:root.selected.version_id}},root.changed) }

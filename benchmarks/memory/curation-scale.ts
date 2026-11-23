@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {Canonical} from '../../broker/graph-memory/canonical.ts';
 import {createStatement} from '../../broker/graph-memory/statements.ts';
 
-const dir=mkdtempSync(join(tmpdir(),'cere-scale-')),c=new Canonical(dir);
+const dir=mkdtempSync(join(tmpdir(),'pal-scale-')),c=new Canonical(dir);
 try{
   const scope=c.registerScope({key:'scale',label:'Disposable scale benchmark'}).id;
   c.policyUpdate({policy:{enabled:true}});

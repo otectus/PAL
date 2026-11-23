@@ -35,7 +35,7 @@ function events(provider:ApiProvider, tools=false):any[] {
   return [{candidates:[{content:{role:'model',parts:tools?[{functionCall:{id:'call-1',name:'check',args:{value:'yes'}},thoughtSignature:'keep-this-signature'}]:[{text:'Hello 🌙'}]},finishReason:'STOP'}]}];
 }
 async function fixture(t:any,provider:ApiProvider,fetcher?:typeof fetch){
-  const directory=await mkdtemp(join(tmpdir(),'cere-api-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+  const directory=await mkdtemp(join(tmpdir(),'pal-api-'));t.after(()=>rm(directory,{recursive:true,force:true}));
   const output:any[]=[],requests:{url:string;init:any;body:any}[]=[],calls:any[]=[];let history:OllamaMessage[]=[];
   const adapter=new ApiAdapter(session(provider),{token:'test',native(){},event:e=>output.push(e),approve:async()=>({choice:'deny'}),personality:()=> 'Helpful'}, {
     load:()=>structuredClone(history),save:messages=>{history=structuredClone(messages);},tools:()=>[tool],call:async(name,args)=>{calls.push({name,args});return {ok:true};},
@@ -49,8 +49,8 @@ for(const provider of apiProviders)test(`${provider}: assistant name refreshes b
   const system = (body: any): string => body.instructions || body.system || body.systemInstruction?.parts[0].text || body.messages.find((m: any) => m.role === 'system').content;
   for (const request of f.requests) assert.match(system(request.body), /"Daemona"/);
   assert.ok(f.history().every(message => message.role !== 'system'));
-  name = 'Cere'; await f.adapter.send('Hello again'); await f.adapter.task;
-  assert.match(system(f.requests.at(-1)!.body), /"Cere"/);
+  name = 'PAL'; await f.adapter.send('Hello again'); await f.adapter.task;
+  assert.match(system(f.requests.at(-1)!.body), /"PAL"/);
   assert.doesNotMatch(system(f.requests.at(-1)!.body), /"Daemona"/);
 });
 
@@ -186,7 +186,7 @@ test('API catalogs paginate, filter non-chat Google models and do not leak keys 
   }});assert.deepEqual(models.map(m=>m.id),['gemini-chat','gemini-next']);assert.equal(requests,2);
 });
 test('credentials are private, replaceable, removable, and absent from broker snapshots and SQLite',async t=>{
-  const directory=await mkdtemp(join(tmpdir(),'cere-api-core-'));const core=new Core(new Store(directory));
+  const directory=await mkdtemp(join(tmpdir(),'pal-api-core-'));const core=new Core(new Store(directory));
   t.after(async()=>{await core.close();await rm(directory,{recursive:true,force:true});});
   await core.rpc('provider.credentials',{provider:'openai',key:'fixture-super-secret'});
   const file=join(directory,'credentials/provider-credentials.json');assert.equal((await stat(file)).mode&0o777,0o600);
@@ -197,20 +197,20 @@ test('credentials are private, replaceable, removable, and absent from broker sn
   core.settings.memory.enabled=true;core.memory.active=()=>true;
   assert.ok(!core.toolsFor(created.id).some(t=>t.function.name.startsWith('memory_')));
   core.settings.memory.allowCloudMemory=true;assert.ok(core.toolsFor(created.id).some(t=>t.function.name==='memory_search'));
-  await assert.rejects(()=>core.create({provider:'openai',model:'custom-model',nativeId:'cli-history',handoffConfirmed:true}),/stored by Cere/);
+  await assert.rejects(()=>core.create({provider:'openai',model:'custom-model',nativeId:'cli-history',handoffConfirmed:true}),/stored by PAL/);
   core.store.set('api:'+created.id,[{role:'user',content:'erase this'}]);eraseWorkingCopies(core.store,created,text=>text.includes('erase this'));
   assert.ok(!JSON.stringify(core.store.get('api:'+created.id,[])).includes('erase this'));
   await core.rpc('provider.credentials',{provider:'openai',key:''});assert.ok(!(await readFile(file,'utf8')).includes('fixture-super-secret'));assert.equal(core.store.session(created.id).status,'idle');
 });
 test('credentials honor standard environment variables and reject invalid keys',async t=>{
-  const directory=await mkdtemp(join(tmpdir(),'cere-keys-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+  const directory=await mkdtemp(join(tmpdir(),'pal-keys-'));t.after(()=>rm(directory,{recursive:true,force:true}));
   const previous=process.env.GEMINI_API_KEY;process.env.GEMINI_API_KEY='environment-key';t.after(()=>{if(previous===undefined)delete process.env.GEMINI_API_KEY;else process.env.GEMINI_API_KEY=previous;});
   const credentials=new ProviderCredentials(directory);assert.equal(credentials.key('google'),'environment-key');
   credentials.update('google','saved-key');assert.equal(credentials.key('google'),'saved-key');credentials.update('google','');assert.equal(credentials.key('google'),'environment-key');
   assert.throws(()=>credentials.update('google','bad\nkey'),/whitespace/);
 });
 test('Core dispatches all API providers and resumes saved history after disconnect without CLI state',async t=>{
-  const directory=await mkdtemp(join(tmpdir(),'cere-api-dispatch-')), core=new Core(new Store(directory));
+  const directory=await mkdtemp(join(tmpdir(),'pal-api-dispatch-')), core=new Core(new Store(directory));
   const original=globalThis.fetch,requests:any[]=[];
   globalThis.fetch=async(url,init)=>{
     const target=String(url),provider=target.includes('api.openai.com')?'openai':target.includes('api.anthropic.com')?'anthropic':target.startsWith('https://llm.example/')?'compatible':'google';
@@ -230,7 +230,7 @@ test('Core dispatches all API providers and resumes saved history after disconne
   assert.equal(requests.length,2*apiProviders.length);
 });
 test('switching API models continues the same conversation with portable history and no tool replay',async t=>{
-  const directory=await mkdtemp(join(tmpdir(),'cere-api-switch-')),core=new Core(new Store(directory));
+  const directory=await mkdtemp(join(tmpdir(),'pal-api-switch-')),core=new Core(new Store(directory));
   const original=globalThis.fetch,requests:any[]=[];let attempt=0,calls=0;
   globalThis.fetch=async(url,init)=>{
     const target=String(url),provider=target.includes('api.openai.com')?'openai':target.includes('api.anthropic.com')?'anthropic':target.startsWith('https://llm.example/')?'compatible':'google';
@@ -256,7 +256,7 @@ test('switching API models continues the same conversation with portable history
 });
 
 test('Claude API accepts another message while Claude Code runs and reports its result after that reply', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-api-delegation-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-api-delegation-'));
   const core = new Core(new Store(directory)), factory = core.factory, original = globalThis.fetch;
   const requests: any[] = [];
   let release!: () => void;

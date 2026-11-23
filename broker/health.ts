@@ -20,7 +20,9 @@ export function healthReport(core:Core) {
   let previousShutdown:{at:number;confirmed:boolean;problems:string[]}|null=null;
   try{const value=JSON.parse(readFileSync(join(core.store.directory,'last-shutdown.json'),'utf8'));previousShutdown={at:Number(value.at)||0,confirmed:value.confirmed===true,problems:(Array.isArray(value.problems)?value.problems:[]).map(String).slice(0,5)};}catch{}
   return {schema:1,time:new Date().toISOString(),node:process.version,build:buildIdentity(),providers,
-    memory:{enabled:core.settings.memory.enabled,state:core.memory.status.state,pending:core.memory.status.pending,coverage:core.memory.status.warning?'degraded':'not-measured',error:core.memory.status.error,backups:core.memory.status.backups},
+    memory:{enabled:core.settings.memory.enabled,state:core.memory.status.state,pending:core.memory.status.pending,coverage:core.memory.status.warning?'degraded':'not-measured',error:core.memory.status.error,backups:core.memory.status.backups,
+      // How often automatic recall put memory into a turn over the last week: counts and sizes only.
+      recall:core.memory.injectionMetrics()},
     speech:{enabled:core.settings.speechEnabled,state:speech.state,backend:speech.backend,problem:speech.error?'speech':null},
     sessions:{count:core.store.sessionCount(),active:core.store.sessions().filter(s=>['starting','working','waiting','stopping'].includes(s.status)).length},
     permissions:{paused:core.settings.paused,activePowerSessions:core.power.snapshot().filter(p=>p.state==='active').length},
@@ -40,7 +42,7 @@ export class Diagnostics {
   }
   async export(id:string,digest:string){
     const preview=this.previews.get(id);if(!preview||preview.digest!==digest||preview.expires<Date.now())throw new Error('Review a fresh diagnostic export');
-    this.previews.delete(id);const directory=privateDir(join(this.core.store.directory,'diagnostics')),path=join(directory,'cere-'+id+'.json');
+    this.previews.delete(id);const directory=privateDir(join(this.core.store.directory,'diagnostics')),path=join(directory,'pal-'+id+'.json');
     await writeFile(path,preview.text,{mode:0o600,flag:'wx'});return{path};
   }
 }

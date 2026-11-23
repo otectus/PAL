@@ -21,7 +21,7 @@ parentPort.on('message', m => {
 });
 `;
 async function harness(t: TestContext, options: GraphMemoryOptions = {}) {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-memory-worker-')), file = join(directory, 'stub-worker.mjs');
+  const directory = await mkdtemp(join(tmpdir(), 'pal-memory-worker-')), file = join(directory, 'stub-worker.mjs');
   await writeFile(file, stub);
   const events: any[] = [];
   const memory = new GraphMemory(directory, event => events.push(event), { workerUrl: pathToFileURL(file), watchdogMs: 20, ...options });

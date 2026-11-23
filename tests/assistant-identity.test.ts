@@ -1,22 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import sharp from 'sharp';
+import { DatabaseSync } from 'node:sqlite';
+import { paths } from '../broker/paths.ts';
 import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
 import { avatarIds, defaultPersonality, personalityInstructions, validateAssistantName } from '../broker/personality.ts';
 import { voiceTestLine } from '../broker/tts.ts';
 
 test('identity migrates old profiles, persists independently, and rejects invalid changes atomically', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-identity-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-identity-'));
   const store = new Store(directory);
   store.set('settings', { personality: 'Keep my voice', quiet: true });
   const core = new Core(store);
   t.after(async () => { await core.close(); await rm(directory, { recursive: true, force: true }); });
-  assert.equal(core.settings.assistantName, 'Cere');
-  assert.equal(core.settings.avatar, 'cere_default');
+  assert.equal(core.settings.assistantName, 'PAL');
+  assert.equal(core.settings.avatar, 'pal');
   const before = structuredClone(core.settings);
   await core.updateSettings({ avatar: 'daemona' });
   assert.deepEqual(core.settings, { ...before, avatar: 'daemona' });
@@ -32,47 +34,86 @@ test('identity migrates old profiles, persists independently, and rejects invali
   assert.equal(core.settings.avatar, 'daemona');
   const saved = structuredClone(core.settings), revision = core.store.get('settingsRevision', '0');
   for (const assistantName of [12, false, {}, [], 'a'.repeat(65), 'bad\nname', '\tName', '\0Name', 'Name\u202e', 'Name\u200b', '\ud800']) {
-    await assert.rejects(core.updateSettings({ assistantName, personality: 'Must not save', avatar: 'cere_default' }), /name/);
+    await assert.rejects(core.updateSettings({ assistantName, personality: 'Must not save', avatar: 'pal' }), /name/);
     assert.deepEqual(core.settings, saved);
     assert.equal(core.store.get('settingsRevision', '0'), revision);
   }
-  for (const avatar of ['missing', '', '../reference/daemona.png', 0, false, {}, []]) {
+  for (const avatar of ['alia', 'missing', '', '../reference/daemona.png', 0, false, {}, []]) {
     await assert.rejects(core.updateSettings({ avatar, assistantName: 'Must not save' }), /avatar/);
     assert.deepEqual(core.settings, saved);
   }
-  await assert.rejects(core.updateSettings({ avatar: 'cere_default', assistantName: 'Lost update', expectedRevision: '0' }), /changed on another client/);
+  await assert.rejects(core.updateSettings({ avatar: 'pal', assistantName: 'Lost update', expectedRevision: '0' }), /changed on another client/);
   const reopened = new Store(directory);
   try { assert.deepEqual(reopened.settings(), saved); } finally { reopened.close(); }
   await core.updateSettings({ assistantName: '   ' });
-  assert.equal(core.settings.assistantName, 'Cere');
+  assert.equal(core.settings.assistantName, 'PAL');
   assert.equal(core.settings.avatar, 'daemona');
   await core.updateSettings({ assistantName: null, avatar: null });
-  assert.equal(core.settings.avatar, 'cere_default');
+  assert.equal(core.settings.avatar, 'pal');
   assert.equal(core.settings.personality, 'Keep my voice');
+  store.set('settings', { ...saved, avatar: 'alia' });
+  assert.deepEqual(store.settings(), { ...saved, avatar: 'pal' });
+  assert.equal(store.get('settings', saved).avatar, 'pal');
   store.set('settings', { ...saved, avatar: 'unavailable', assistantName: 'bad\nname' });
-  assert.equal(store.settings().avatar, 'cere_default');
-  assert.equal(store.settings().assistantName, 'Cere');
+  assert.equal(store.settings().avatar, 'pal');
+  assert.equal(store.settings().assistantName, 'PAL');
 });
 
-test('legacy Cere avatar ids are normalized before persistence and identity conflict checks', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-avatar-migration-'));
+test('an upgrade opens the previous database and preserves its conversation and customizations', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'pal-upgrade-'));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  const legacy = join(base, 'cere');
+  await mkdir(legacy);
+  const old = new DatabaseSync(join(legacy, 'cere.sqlite'));
+  old.exec(`CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE messages(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL)`);
+  old.prepare('INSERT INTO messages VALUES (?,?,?)').run('reply', 'session', JSON.stringify({ text: 'My previous conversation with Cere' }));
+  old.prepare('INSERT INTO meta VALUES (?,?)').run('settings', JSON.stringify({
+    assistantName: 'Cere', avatar: 'cere_gothic', personality: 'Keep this wording about Cere.', quiet: true,
+  }));
+  old.close();
+  const previous = { ...process.env };
+  try {
+    delete process.env.PAL_STATE_DIR;
+    delete process.env.CERE_STATE_DIR;
+    process.env.XDG_STATE_HOME = base;
+    assert.equal(paths().state, legacy);
+    const store = new Store();
+    try {
+      assert.equal(store.messages('session')[0].text, 'My previous conversation with Cere');
+      const settings = store.settings();
+      assert.equal(settings.assistantName, 'PAL');
+      assert.equal(settings.avatar, 'pal_gothic');
+      assert.equal(settings.personality, 'Keep this wording about Cere.');
+      assert.equal(settings.quiet, true);
+    } finally { store.close(); }
+  } finally {
+    for (const key of ['XDG_STATE_HOME', 'PAL_STATE_DIR', 'CERE_STATE_DIR']) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+  }
+});
+
+test('legacy avatar ids are normalized before persistence and identity conflict checks', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'pal-avatar-migration-'));
   const store = new Store(directory);
   store.db.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('settings', JSON.stringify({
-    avatar: 'cere', assistantName: 'Independent name', personality: 'Independent personality', voice: 'en_US-lessac-medium', quiet: true,
+    avatar: 'cere_default', assistantName: 'Independent name', personality: 'Independent personality', voice: 'en_US-lessac-medium', quiet: true,
   }));
   const core = new Core(store);
   t.after(async () => { await core.close(); await rm(directory, {recursive:true, force:true}); });
-  assert.equal(core.settings.avatar, 'cere_default');
+  assert.equal(core.settings.avatar, 'pal');
   assert.equal(core.settings.assistantName, 'Independent name');
   assert.equal(core.settings.personality, 'Independent personality');
   assert.equal(core.settings.voice, 'en_US-lessac-medium');
-  assert.equal(store.get<any>('settings', {}).avatar, 'cere_default');
+  assert.equal(store.get<any>('settings', {}).avatar, 'pal');
 
-  await core.updateSettings({ avatar: 'cere', expectedIdentity: {
-    avatar: 'cere', assistantName: core.settings.assistantName, personality: core.settings.personality,
+  await core.updateSettings({ avatar: 'cere_default', expectedIdentity: {
+    avatar: 'cere_default', assistantName: core.settings.assistantName, personality: core.settings.personality,
   }});
-  assert.equal(core.settings.avatar, 'cere_default');
-  assert.equal(store.get<any>('settings', {}).avatar, 'cere_default');
+  assert.equal(core.settings.avatar, 'pal');
+  assert.equal(store.get<any>('settings', {}).avatar, 'pal');
 });
 
 test('names remain literal data in instructions and voice previews without rewriting custom personality', () => {
@@ -82,22 +123,22 @@ test('names remain literal data in instructions and voice previews without rewri
     const instructions = personalityInstructions(defaultPersonality, name);
     assert.ok(instructions.includes(`You are ${name},`));
     assert.ok(instructions.includes(JSON.stringify(name)));
-    assert.ok(!instructions.includes('You are Cere,'));
+    assert.ok(!instructions.includes('You are PAL,'));
     assert.ok(voiceTestLine(name).startsWith(`Hello, I'm ${name}.`));
   }
-  const custom = 'You are Cere. Keep the Cere project well documented.';
+  const custom = 'You are PAL. Keep the PAL project well documented.';
   assert.ok(personalityInstructions(custom, 'Daemona').includes(custom));
   assert.match(personalityInstructions(custom, 'Daemona'), /supersedes any earlier self-name/);
   assert.match(personalityInstructions('', 'Daemona'), /neutral voice/);
   assert.match(personalityInstructions('', 'Daemona'), /"Daemona"/);
-  assert.match(personalityInstructions('', 'Cere'), /"Cere"/);
+  assert.match(personalityInstructions('', 'PAL'), /"PAL"/);
 });
 
 test('identity saves tolerate unrelated snapshot lag but reject stale identity and mixed settings patches', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-identity-race-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-identity-race-'));
   const core = new Core(new Store(directory));
   t.after(async () => { await core.close(); await rm(directory, {recursive:true, force:true}); });
-  const expectedIdentity = {personality:core.settings.personality, assistantName:'Cere', avatar:'cere'};
+  const expectedIdentity = {personality:core.settings.personality, assistantName:'PAL', avatar:'pal'};
   const expectedRevision = core.store.get('settingsRevision', '0');
   await core.updateSettings({quiet:true});
   await core.updateSettings({assistantName:'Daemona', avatar:'daemona', expectedIdentity, expectedRevision});
@@ -113,7 +154,7 @@ test('identity saves tolerate unrelated snapshot lag but reject stale identity a
 
 test('every selectable avatar ships transparent artwork, usable cutouts, and a complete portrait grid', async () => {
   const entries = JSON.parse(await readFile('assets/avatars.json', 'utf8'));
-  const base = JSON.parse(await readFile('assets/cere-rig.json', 'utf8'));
+  const base = JSON.parse(await readFile('assets/pal-rig.json', 'utf8'));
   assert.deepEqual(entries.map((entry: any) => entry.id), [...avatarIds]);
   assert.equal(new Set(entries.map((entry: any) => entry.label)).size, entries.length, 'every avatar has a distinct label');
   for (const entry of entries) {
@@ -142,17 +183,17 @@ test('every selectable avatar ships transparent artwork, usable cutouts, and a c
         if (alpha > 12 && (y === 0 || x === 0 || x === size - 1)) clipped++;
       }
       assert.ok(visible > size * size * .3 && transparent > size * size * .03, `${entry.id}: portrait ${face} has artwork and transparency`);
-      if (['cynthia', 'genga', 'kippy', 'pomni', 'rem', 'sarah', 'sylva', 'witty', 'alia'].includes(entry.id))
+      if (['cynthia', 'genga', 'kippy', 'pomni', 'rem', 'sarah', 'sylva', 'witty'].includes(entry.id))
         assert.equal(clipped, 0, `${entry.id}: portrait ${face} preserves the head silhouette without gutter bleed`);
     }
   }
 });
 
-test('Cere punk preserves the former masked Cere source pixels and neutral blink registration', async () => {
-  const source = await sharp('reference/cere_punk.png').extract({ left: 0, top: 170, width: 430, height: 760 }).ensureAlpha().raw().toBuffer();
-  const rig = JSON.parse(await readFile('assets/cere_punk-surface-rig.json', 'utf8'));
+test('PAL punk preserves the former masked PAL source pixels and neutral blink registration', async () => {
+  const source = await sharp('reference/pal_punk.png').extract({ left: 0, top: 170, width: 430, height: 760 }).ensureAlpha().raw().toBuffer();
+  const rig = JSON.parse(await readFile('assets/pal_punk-surface-rig.json', 'utf8'));
   const part = rig.parts.find((candidate: any) => candidate.surfaceMotion);
-  assert.ok(part, 'Cere has a connected surface part');
+  assert.ok(part, 'PAL has a connected surface part');
   const [openX, openY, width, height] = part.sourceRect;
   const [closedX, closedY, closedWidth, closedHeight] = part.blinkSourceRect;
   assert.equal(height, 840);
@@ -160,7 +201,7 @@ test('Cere punk preserves the former masked Cere source pixels and neutral blink
   assert.deepEqual([closedWidth, closedHeight], [width, height]);
   assert.ok(width >= 430 && (width - 430) % 2 === 0, 'neutral surface symmetrically pads the original reference crop');
   const inset = (width - 430) / 2;
-  const { data, info } = await sharp('assets/cere_punk-surface.png').raw().toBuffer({ resolveWithObject: true });
+  const { data, info } = await sharp('assets/pal_punk-surface.png').raw().toBuffer({ resolveWithObject: true });
   assert.equal(info.channels, 4);
   assert.ok(openX >= 0 && openY >= 0 && openX + width <= info.width && openY + height <= info.height);
   assert.ok(closedX >= 0 && closedY >= 0 && closedX + width <= info.width && closedY + height <= info.height);

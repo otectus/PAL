@@ -1,3 +1,4 @@
+import { deviceRole, lapsed, ownerControlled } from './authority.ts';
 import { transportMessage } from './transcript.ts';
 import { randomUUID } from 'node:crypto';
 import { realpath, stat } from 'node:fs/promises';
@@ -30,8 +31,10 @@ export class SendQueue {
         if(p.expectedDraftRevision!==undefined&&p.expectedDraftRevision!==(s.draftRevision||'0'))throw remoteError('REVISION_CONFLICT','Draft changed. Review before sending.');
         if(execution) {
           if((s.configRevision||'0')!==p.expectedConfigRevision)throw remoteError('REVISION_CONFLICT','Conversation settings changed.');
-          if(!s.remote && busy(s))throw remoteError('SESSION_BUSY','This desktop turn must finish before mobile can take ownership. Your draft is retained.');
-          if(!this.core.remoteAuthority?.(execution,s)||execution.expiresAt<=Date.now()||!execution.caps.includes('chat.write')||s.remote&&s.remote.deviceId!==execution.deviceId)throw remoteError('AUTH_REVOKED','Device access changed before queueing.');
+          // An owner phone queues behind a desktop turn like the desktop does; a limited phone waits to take ownership.
+          const owner=deviceRole(execution.role)==='owner';
+          if(!s.remote && busy(s) && !owner)throw remoteError('SESSION_BUSY','This desktop turn must finish before mobile can take ownership. Your draft is retained.');
+          if(!this.core.remoteAuthority?.(execution,s)||lapsed(execution)||!execution.caps.includes('chat.write')||s.remote&&s.remote.deviceId!==execution.deviceId&&!(owner&&ownerControlled(s)))throw remoteError('AUTH_REVOKED','Device access changed before queueing.');
           if(s.draftAttachments?.length)throw remoteError('REVISION_CONFLICT','Review the desktop draft attachments first.');
         }
         if(typeof p.text!=='string'||!p.text.trim()||p.text.length>100000)throw new Error('Enter a message of up to 100,000 characters');
@@ -78,7 +81,7 @@ export class SendQueue {
       this.core.store.set('sendQueueDispatch:'+id,null);
       this.core.updateSession(id,{queuedCount:this.entries(id).length});
     }
-    this.cancel(id,'Cere restarted; copy this message to send it again');
+    this.cancel(id,'PAL restarted; copy this message to send it again');
     if(this.core.store.session(id).queuedCount)this.core.updateSession(id,{queuedCount:0});
   }
   cancel(id:string, reason:string) {
@@ -111,7 +114,7 @@ export class SendQueue {
       const current=core.store.session(id);core.settingsFor(id);
       if((current.configRevision||'0')!==entry.configRevision)throw new Error('Conversation settings changed before sending');
       if(!entry.execution&&JSON.stringify(current.remote)!==JSON.stringify(entry.provenance))throw new Error('Conversation authority changed before sending');
-      if(entry.execution&&(!core.remoteAuthority?.(entry.execution,current)||entry.execution.expiresAt<=Date.now()))throw new Error('Device access expired before sending');
+      if(entry.execution&&(!core.remoteAuthority?.(entry.execution,current)||lapsed(entry.execution)))throw new Error('Device access expired before sending');
     };
     this.draining.add(id);
     try {

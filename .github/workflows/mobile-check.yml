@@ -1,4 +1,4 @@
-name: Cere Mobile checks
+name: PAL Mobile checks
 on:
   pull_request:
     paths: ['mobile/**', 'broker/**', 'protocol/**', 'tests/**', 'tools/mobile-*', 'tools/ci-*', 'tools/build-node-addons.sh', 'package*.json', 'tsconfig*.json', '.github/workflows/mobile-*.yml']
@@ -29,7 +29,7 @@ jobs:
         run: tools/build-node-addons.sh
       - name: Broker and gateway tests (JUnit report)
         # Node's JUnit reporter does not create its destination folder.
-        run: mkdir -p reports && CERE_TTS_DISABLED=1 node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/mobile-contract.xml tests/remote.test.ts tests/remote-rate-limits.test.ts tests/remote-process.test.ts tests/mobile-transcript.test.ts tests/mobile-conformance.test.ts tests/mobile-compatibility.test.ts tests/mobile-release-evidence.test.ts tests/fanout.test.ts tests/send-queue.test.ts tests/core.test.ts tests/providers.test.ts tests/ollama.test.ts tests/desktop.test.ts tests/memory.test.ts
+        run: mkdir -p reports && PAL_TTS_DISABLED=1 node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/mobile-contract.xml tests/remote.test.ts tests/remote-rate-limits.test.ts tests/remote-process.test.ts tests/mobile-transcript.test.ts tests/mobile-conformance.test.ts tests/mobile-compatibility.test.ts tests/mobile-release-evidence.test.ts tests/fanout.test.ts tests/send-queue.test.ts tests/core.test.ts tests/providers.test.ts tests/ollama.test.ts tests/desktop.test.ts tests/memory.test.ts
       - name: Test report
         if: ${{ !cancelled() }}
         run: node tools/ci-test-report.mjs reports >> "$GITHUB_STEP_SUMMARY"
@@ -39,7 +39,7 @@ jobs:
           name: mobile-contract-reports
           path: |
             reports/
-            /tmp/cere-mobile-process.log
+            /tmp/pal-mobile-process.log
           if-no-files-found: warn
           retention-days: 14
   android:
@@ -82,7 +82,7 @@ jobs:
           retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: cere-mobile-unsigned
+          name: pal-mobile-unsigned
           if-no-files-found: error
           path: |
             mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk
@@ -124,7 +124,7 @@ jobs:
           script: |
             ./gradlew --no-daemon :app:connectedDebugAndroidTest :app:assembleDev
             adb install -r app/build/outputs/apk/dev/app-dev.apk
-            adb shell am start -W -n dev.otectus.cere.mobile.debug/dev.otectus.cere.mobile.MainActivity
+            adb shell am start -W -n dev.otectus.cere.mobile.debug/dev.otectus.pal.mobile.MainActivity
             sleep 5
             adb shell pidof dev.otectus.cere.mobile.debug
       - name: Test report
@@ -205,7 +205,7 @@ jobs:
           retention-days: 14
   mobile:
     # The single required result: every mobile gate above must have succeeded.
-    name: Cere Mobile checks
+    name: PAL Mobile checks
     if: ${{ always() }}
     needs: [contract, android, emulator, paired]
     runs-on: ubuntu-24.04

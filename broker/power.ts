@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { limitedControlled } from './authority.ts';
 import { realpath, stat } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import type { Session } from './types.ts';
@@ -31,8 +32,8 @@ const maximumMinutes = 120;
  * Process-local, project-bound permission leases. Nothing in this class is
  * persisted: a broker restart always invalidates every lease.
  *
- * This controls authority granted through Cere and its provider launch flags.
- * It is not operating-system containment for processes outside Cere.
+ * This controls authority granted through PAL and its provider launch flags.
+ * It is not operating-system containment for processes outside PAL.
  */
 export class PowerSessions {
   readonly hooks: PowerHooks;
@@ -47,7 +48,7 @@ export class PowerSessions {
   startUnavailableReason(session: Session): string {
     if (session.mode !== 'managed') return 'Power mode only supports managed sessions';
     if (session.temporary) return 'Power mode is unavailable for temporary sessions';
-    if (session.remote) return 'Power mode is unavailable for remote sessions';
+    if (limitedControlled(session)) return 'Power mode is unavailable while a limited phone controls this conversation';
     if (session.status !== 'idle') return 'Stop the selected session before enabling power mode';
     if (this.blockingLeaseFor(session.id)) return 'A selected session has an active or unconfirmed power lease';
     if (this.startingSessions.has(session.id)) return 'Power mode is already starting for a selected session';
@@ -120,7 +121,8 @@ export class PowerSessions {
     // The state transition happens synchronously. Provider dispatch must not
     // retain authority while expiry cleanup is still awaiting I/O.
     this.expireDue();
-    if (session.mode !== 'managed' || session.remote) return { cli: false, computer: false };
+    // An owner phone's conversation keeps the desktop's lease; a limited phone's never gains one.
+    if (session.mode !== 'managed' || limitedControlled(session)) return { cli: false, computer: false };
     const lease = this.activeLeaseFor(session.id);
     if (!lease || this.canonicalNow(session.cwd) !== lease.cwd) return { cli: false, computer: false };
     return { cli: lease.cli, computer: lease.computer, leaseId: lease.id, revision: lease.revision, expiresAt: lease.expiresAt };
@@ -143,7 +145,7 @@ export class PowerSessions {
     const sessions = new Map(this.hooks.sessions().map(session => [session.id, session]));
     const parentSession = typeof parent === 'string' ? sessions.get(parent) : sessions.get(parent.id);
     const childSession = typeof child === 'string' ? sessions.get(child) : sessions.get(child.id);
-    if (!parentSession || !childSession || parentSession.mode !== 'managed' || childSession.mode !== 'managed' || parentSession.remote || childSession.remote) return false;
+    if (!parentSession || !childSession || parentSession.mode !== 'managed' || childSession.mode !== 'managed' || limitedControlled(parentSession) || limitedControlled(childSession)) return false;
     if (childSession.parentId !== parentSession.id) return false;
     const parentRoot = await this.projectRoot(parentSession.cwd).catch(() => '');
     this.expireDue();
@@ -152,7 +154,7 @@ export class PowerSessions {
     if (!parentRoot || parentRoot !== childRoot) return false;
     const live = new Map(this.hooks.sessions().map(session => [session.id, session]));
     const liveParent = live.get(parentSession.id), liveChild = live.get(childSession.id);
-    if (!liveParent || !liveChild || liveParent.mode !== 'managed' || liveChild.mode !== 'managed' || liveParent.remote || liveChild.remote || liveChild.parentId !== liveParent.id) return false;
+    if (!liveParent || !liveChild || liveParent.mode !== 'managed' || liveChild.mode !== 'managed' || limitedControlled(liveParent) || limitedControlled(liveChild) || liveChild.parentId !== liveParent.id) return false;
     if (this.canonicalNow(liveParent.cwd) !== parentRoot || this.canonicalNow(liveChild.cwd) !== parentRoot) return false;
     const lease = this.activeLeaseFor(liveParent.id);
     if (!lease || lease.cwd !== parentRoot || lease.sessionIds.includes(childSession.id)) return !!lease && lease.cwd === parentRoot;
@@ -179,7 +181,7 @@ export class PowerSessions {
     const sessions = new Map(this.hooks.sessions().map(session => [session.id, session]));
     return ids.map(id => {
       const session = sessions.get(id);
-      if (!session || session.mode !== 'managed' || session.temporary || session.remote || session.status !== 'idle') throw new Error('A selected session changed while power mode was starting');
+      if (!session || session.mode !== 'managed' || session.temporary || limitedControlled(session) || session.status !== 'idle') throw new Error('A selected session changed while power mode was starting');
       if (!this.startingSessions.has(id) || this.blockingLeaseFor(id)) throw new Error('A selected session has an active or unconfirmed power lease');
       return session;
     });

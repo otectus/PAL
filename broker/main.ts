@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { activatePendingRecovery } from './recovery.ts';
 import { chmod, unlink, lstat, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { socketPath, paths, privateDir, ensureUserPath } from './paths.ts';
+import { socketPath, paths, legacyPaths, hasExplicitPalPaths, privateDir, ensureUserPath } from './paths.ts';
 import { Core } from './core.ts';
 import { JsonLines } from './wire.ts';
 import { Fanout } from './fanout.ts';
@@ -11,7 +11,7 @@ import type { FanoutClient } from './fanout.ts';
 import { requirePeerCredentials, sameUserPeer, trustedServer } from './peercred.ts';
 import { MobileGateway } from './remote/server.ts';
 import { linuxNative } from './telemetry/native.ts';
-/** systemd restarts the service for this status; see packaging/cere-broker.service. */
+/** systemd restarts the service for this status; see packaging/pal-broker.service. */
 const restartStatus = 75;
 requirePeerCredentials();
 process.umask(0o077);
@@ -25,23 +25,32 @@ const path = socketPath();
 await (async () => {
   let native;
   try { native = linuxNative(); } catch (cause) {
-    throw new Error('Cere cannot acquire its broker lock. Rebuild or reinstall the native helper before starting the broker.', { cause });
+    throw new Error('PAL cannot acquire its broker lock. Rebuild or reinstall the native helper before starting the broker.', { cause });
   }
   for (let attempt = 0; attempt < 50; attempt++) {
     if (native.lock(join(paths().runtime, 'broker.lock')) >= 0) return;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   const owner = (await readFile(join(paths().runtime, 'broker.pid'), 'utf8').catch(() => '')).trim();
-  console.error(`Another Cere broker${/^\d+$/.test(owner) ? ` (pid ${owner})` : ''} owns this runtime directory; not starting a second one.`);
+  console.error(`Another PAL broker${/^\d+$/.test(owner) ? ` (pid ${owner})` : ''} owns this runtime directory; not starting a second one.`);
   process.exit(0);
 })();
 // A listening socket counts as a running broker only when its server is this user.
-async function occupied() {
+async function occupied(socket = path) {
   return new Promise<boolean>((resolve, reject) => {
-    const client = net.createConnection(path);
-    client.once('connect', () => { const trusted = trustedServer(client); client.destroy(); trusted ? resolve(true) : reject(new Error('The Cere broker socket belongs to another user')); });
+    const client = net.createConnection(socket);
+    client.once('connect', () => { const trusted = trustedServer(client); client.destroy(); trusted ? resolve(true) : reject(new Error('The PAL broker socket belongs to another user')); });
     client.once('error', () => resolve(false));
   });
+}
+// An upgrade may intentionally keep using the legacy state directory. Do not let an old broker and PAL
+// open that database concurrently merely because their default runtime socket names differ.
+if (!hasExplicitPalPaths() && paths().state === legacyPaths().state) {
+  const legacySocket = join(legacyPaths().runtime, 'broker.sock');
+  if (legacySocket !== path && await occupied(legacySocket)) {
+    console.error('An older Cere broker is still running and owns the state PAL will upgrade. Quit Cere and stop cere-broker.service before starting PAL.');
+    process.exit(1);
+  }
 }
 if (await occupied()) process.exit(0);
 try { const s = await lstat(path); if (!s.isSocket() || s.uid !== process.getuid?.()) throw new Error('Unsafe broker socket'); await unlink(path); } catch (e:any) { if (e.code !== 'ENOENT') throw e; }
@@ -49,7 +58,7 @@ activatePendingRecovery(paths().state);
 type Client = FanoutClient<net.Socket> & { role?: string };
 const core = new Core(), fanout = new Fanout<net.Socket>(), clients = fanout.clients as Set<Client>;
 const mobile = new MobileGateway(core);
-await mobile.start().catch(error=>{console.error('Cere remote listener unavailable: '+error.message);});
+await mobile.start().catch(error=>{console.error('PAL remote listener unavailable: '+error.message);});
 const send = (client: Client, data: unknown) => fanout.send(client, data);
 const server = net.createServer(socket => {
   if (!sameUserPeer(socket)) { socket.destroy(); return; }
@@ -66,13 +75,13 @@ const server = net.createServer(socket => {
       if (m.method === 'subscribe') { subscribed = true; client.subscribed = true; client.role=m.params?.role; client.resync=m.params?.resync===true; send(client,{id:m.id,result:core.snapshot()}); return; }
       // Liveness: answered by this loop directly, so a reply means the broker itself is running.
       if (m.method === 'ping') { send(client,{id:m.id,result:{}}); return; }
-      if (['ui.toggle','ui.expand'].includes(m.method)&&![...clients].some(c=>c.role==='ui')){send(client,{id:m.id,error:{message:'Cere interface is not running'}});return;}
+      if (['ui.toggle','ui.expand'].includes(m.method)&&![...clients].some(c=>c.role==='ui')){send(client,{id:m.id,error:{message:'PAL interface is not running'}});return;}
       if (m.method.startsWith('memory.') && Buffer.byteLength(JSON.stringify(m)) > 1024*1024) { send(client,{id:m.id,error:{code:'INVALID_ARGUMENT',message:'Memory frame exceeds 1 MiB'}}); return; }
       void (m.method.startsWith('remote.') ? core.withMutation(()=>mobile.local(m.method,m.params)) : core.rpc(m.method,m.params)).then(result => send(client,{id:m.id,result}), error => send(client,{id:m.id,error:{code:error.code||'INVALID_ARGUMENT',message:error.message}}));
     }); } catch { socket.destroy(); }
   });
 });
-for (const event of ['state','message','notice','ui']) core.on(event, params => fanout.broadcast(event, params));
+for (const event of ['state','message','notice','ui','terminal']) core.on(event, params => fanout.broadcast(event, params));
 server.on('error', error => { console.error(error.message); process.exitCode=1; void core.close(); });
 server.listen(path, async () => { await chmod(path,0o600); await writeFile(join(paths().runtime,'broker.pid'),String(process.pid),{mode:0o600}); void core.detect(); });
 let closing = false;

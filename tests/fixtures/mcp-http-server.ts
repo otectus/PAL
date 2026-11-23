@@ -1,5 +1,5 @@
 /**
- * A Streamable HTTP MCP server for tests, built on the official SDK's server so Cere's client is
+ * A Streamable HTTP MCP server for tests, built on the official SDK's server so PAL's client is
  * checked against the reference implementation. It requires a bearer token when one is given, offers
  * tools (one returns an image), resources and a prompt, and has a route that redirects elsewhere.
  */

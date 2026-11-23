@@ -1,10 +1,10 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-// Settings › Saved scripts: commands Cere may run, each reviewed in Desktop before it runs.
+// Settings › Saved scripts: commands PAL may run, each reviewed in Desktop before it runs.
 ColumnLayout {
     id:scripts
-    Layout.fillWidth:true;spacing:14
+    Layout.fillWidth:true;spacing:Theme.space4
     property var settings:App.state.settings||({})
     function update(value){return App.rpc("settings.update",value)}
     CSection {

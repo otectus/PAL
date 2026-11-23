@@ -2,7 +2,7 @@
  * Extraction: a derived, versioned text representation of a document with source locators (lines,
  * rows, pages, paragraphs, tables, sheets and cells, sections, archive members). Shared by artifacts,
  * workspace files and document collections. Parsing runs in a worker thread; PDFs are read by poppler in
- * a separate process, inside Cere's execution boundary when it is available.
+ * a separate process, inside PAL's execution boundary when it is available.
  *
  * Extraction is not comprehension. An empty result says no text was found, not that the document says
  * nothing; scanned pages, hidden sheets, macros, embedded objects and external links are reported as
@@ -64,7 +64,7 @@ export class Extractor {
         }
         return new Promise<string>((resolve, reject) => execFile(argv[0], argv.slice(1).map(arg => arg.replace('/work/doc.pdf', join(scratch, 'doc.pdf'))), { timeout: 60_000, maxBuffer: 24 * 1024 * 1024, env: { PATH: '/usr/bin', LANG: 'C.UTF-8' } }, (error, stdout, stderr) => error ? reject(new Error(String(stderr).trim().split('\n').slice(-1)[0] || error.message)) : resolve(stdout)));
       };
-      const info = await runTool(['/usr/bin/pdfinfo', '/work/doc.pdf']).catch((error: Error) => { throw Object.assign(new Error(/Incorrect password|encrypted/i.test(error.message) ? 'The PDF is encrypted; Cere does not open encrypted documents' : 'The PDF could not be read: ' + error.message.slice(0, 200)), { code: /password|encrypted/i.test(error.message) ? 'encrypted' : 'malformed' }); });
+      const info = await runTool(['/usr/bin/pdfinfo', '/work/doc.pdf']).catch((error: Error) => { throw Object.assign(new Error(/Incorrect password|encrypted/i.test(error.message) ? 'The PDF is encrypted; PAL does not open encrypted documents' : 'The PDF could not be read: ' + error.message.slice(0, 200)), { code: /password|encrypted/i.test(error.message) ? 'encrypted' : 'malformed' }); });
       const pages = Number(/^Pages:\s+(\d+)/m.exec(info)?.[1] || 0), warnings: string[] = [];
       if (/^Encrypted:\s+yes/m.test(info)) warnings.push('The PDF is marked encrypted; some text may be withheld by its permissions');
       const from = Math.max(1, Number(options.fromPage) || 1), to = Math.min(pages, Number(options.toPage) || pages, from + extractionLimits.pages - 1);
@@ -88,8 +88,8 @@ export class Extractor {
     if (version.mime === 'application/pdf') { parsed = await this.pdf(data, options, signal); extractor = 'poppler-pdftotext'; }
     else if (version.kind === 'image') { parsed = { status: 'empty', units: [{ locator: { image: version.versionId }, kind: 'metadata', text: `${version.name}: ${version.image ? `${version.image.width}×${version.image.height} ${version.image.format}` : version.mime}` }], warnings: ['Images have no text layer; use OCR or a vision pass to read their content'], stats: {} }; extractor = 'image-metadata'; }
     else if (/^(audio|video)\//.test(version.mime)) throw Object.assign(new Error('Recordings are read through transcription (More › Transcribe a recording), which keeps timestamps'), { code: 'use_transcription' });
-    else if (version.mime === 'application/octet-stream') throw Object.assign(new Error('This file type has no text Cere can extract'), { code: 'unsupported' });
-    else { parsed = await this.parse(data, version.mime, version.name, options, signal); extractor = 'cere-extract'; }
+    else if (version.mime === 'application/octet-stream') throw Object.assign(new Error('This file type has no text PAL can extract'), { code: 'unsupported' });
+    else { parsed = await this.parse(data, version.mime, version.name, options, signal); extractor = 'pal-extract'; }
     const body = parsed.units.map(unit => unit.text).join('\n');
     const extraction: Extraction = { schema: 1, extractor, extractorVersion, source: { artifactId: version.artifactId, versionId: version.versionId, sha256: version.sha256, mime: version.mime, name: version.name }, options, ...parsed, derivedSha256: createHash('sha256').update(body).digest('hex') };
     const artifact = await store.install({ sessionId, bytes: Buffer.from(JSON.stringify(extraction)), name: version.name.replace(/\.[^.]+$/, '') + ' (extracted).json', mime: 'application/json', source: 'derived', policy: version.policy, label: 'extraction',

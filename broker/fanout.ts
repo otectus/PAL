@@ -58,7 +58,7 @@ export class Fanout<S extends FanoutSocket = FanoutSocket> {
   send(client: FanoutClient<S>, data: unknown) { this.write(client, JSON.stringify(data)+'\n'); }
   /** An event for every subscriber. State snapshots and message updates supersede older copies. */
   broadcast(event: string, params: any) {
-    const line = JSON.stringify({method:event,params})+'\n', coalescable = event==='state'||event==='message';
+    const line = JSON.stringify({method:event,params})+'\n', coalescable = event==='state'||event==='message'||event==='terminal';
     for (const client of this.clients) {
       if (!client.subscribed || client.socket.destroyed) continue;
       if (coalescable && (client.socket.writableLength > this.backlog || client.pendingState !== undefined || client.pendingMessages?.size || client.resyncPending)) {

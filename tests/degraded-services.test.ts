@@ -14,7 +14,7 @@ import { healthReport } from '../broker/health.ts';
 import type { Hooks } from '../broker/providers.ts';
 
 test('chat completes while memory, workspace awareness, speech and desktop tools are all unavailable', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-degraded-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-degraded-'));
   let hooks: Hooks | undefined, sends = 0;
   const core = new Core(new Store(directory), (_session, h) => { hooks = h; return { async send() { sends++; }, async interrupt() {}, async close() {} }; });
   t.after(async () => { await core.close(); await rm(directory, { recursive: true, force: true }); });

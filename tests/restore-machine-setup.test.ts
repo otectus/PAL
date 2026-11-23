@@ -10,7 +10,7 @@ import { RemoteStore } from '../broker/remote/store.ts';
 import { ProviderCredentials } from '../broker/credentials.ts';
 
 test('restore keeps this machine’s keys, phones, voices and preferences while the backup supplies content',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'cere-restore-setup-'));
+  const dir=await mkdtemp(join(tmpdir(),'pal-restore-setup-'));
   const core=new Core(new Store(dir),()=>({async send(){},async interrupt(){},async close(){}}));
   let previous='';
   t.after(async()=>{if(!core.closed)await core.close();await rm(dir,{recursive:true,force:true});if(previous)await rm(previous,{recursive:true,force:true});});
@@ -21,7 +21,7 @@ test('restore keeps this machine’s keys, phones, voices and preferences while 
   await writeFile(join(dir,'remote-identity','tls.crt'),'certificate',{mode:0o600});
   const remote=new RemoteStore(core.store),cursorKey=core.store.get('remoteCursorKey','');
   remote.saveDevice({id:'00000000-0000-4000-8000-000000000001',name:'Kept phone',connectionKey:'c',actionKey:'a',keyVersion:1,scopeVersion:'3',createdAt:1,expiresAt:Date.now()+86400000,projects:[{id:'p',name:'Project',path:dir}],caps:['chat.read'],categories:[],scriptIds:[],ollamaHosts:[]});
-  remote.configure({enabled:true,addresses:['127.0.0.1'],port:8443,name:'Cere'});
+  remote.configure({enabled:true,addresses:['127.0.0.1'],port:8443,name:'PAL'});
   core.store.set('indextts.voices',[{id:'voice-1',name:'Kept voice',version:'2.5'}]);
   core.store.set('transcriptEpoch','old-epoch');
   const style=await core.rpc('presets.save',{label:'Calm',text:'Be calm.',expectedRevision:'0'});

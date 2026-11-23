@@ -7,7 +7,7 @@ import { Store } from '../broker/store.ts';
 import { mobilePage } from '../broker/remote/transcript.ts';
 
 test('mobile chat pages remain useful through long runs of tool activity', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-mobile-transcript-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-mobile-transcript-'));
   const store = new Store(directory);
   store.saveSession({ id: 'session', provider: 'ollama', nativeId: null, title: 'Fixture', cwd: directory,
     mode: 'managed', status: 'idle', created: Date.now(), updated: Date.now(), draft: '', scroll: 0, model: 'fixture', effort: '' });

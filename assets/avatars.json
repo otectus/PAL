@@ -1,24 +1,25 @@
 [
   {
-    "id": "cere_default",
-    "label": "Cere (Default)",
-    "description": "Long cobalt hair, cyan eyes and a fitted black outfit with cyan trim.",
-    "themeLabel": "Cobalt & cyan",
-    "portrait": "cere_default-portraits.png",
-    "rig": "cere_default-surface-rig.json",
+    "id": "pal",
+    "label": "PAL (Default)",
+    "description": "A compact white robot with a glossy black face, cyan eyes and cyan chest light.",
+    "themeLabel": "Pearl & cyan",
+    "portrait": "pal-portraits.png",
+    "rig": "pal-surface-rig.json",
     "default": true,
     "aliases": [
-      "cere"
+      "cere",
+      "cere_default"
     ],
     "palette": {
       "background": "#0b121b",
-      "sidebar": "#080f17",
-      "surface": "#101b27",
-      "raised": "#182736",
-      "input": "#0c1621",
-      "selected": "#13334a",
+      "sidebar": "#111821",
+      "surface": "#151b24",
+      "raised": "#1e252e",
+      "input": "#121922",
+      "selected": "#223342",
       "codeSurface": "#0d131c",
-      "userBubble": "#112638",
+      "userBubble": "#17232f",
       "approvalSurface": "#29291f",
       "questionSurface": "#22272c",
       "warningSurface": "#2b261e",
@@ -27,22 +28,99 @@
       "permissionBadge": "#3a3021",
       "overlayScrim": "#b304090f",
       "line": "#263848",
-      "subtle": "#192937",
-      "userBubbleBorder": "#2d5373",
+      "subtle": "#192633",
+      "userBubbleBorder": "#263848",
       "border": "#61788f",
       "borderHover": "#7e96ae",
       "borderStrong": "#6b839c",
-      "primaryBorder": "#2f86c2",
+      "primaryBorder": "#6591b1",
       "dangerBorder": "#a86b7a",
       "warningBorder": "#94784a",
       "approvalBorder": "#9a8150",
-      "activeBorder": "#2f86c2",
+      "activeBorder": "#6591b1",
       "scrollThumb": "#6b839c",
       "scrollThumbHover": "#8ba3ba",
       "text": "#edf5fc",
       "muted": "#9aafc2",
-      "accent": "#149cff",
-      "accentText": "#49dfff",
+      "accent": "#50e9ef",
+      "accentText": "#79f6f8",
+      "success": "#82dccc",
+      "danger": "#ff9eae",
+      "amber": "#ffd385",
+      "warm": "#f1bbdf",
+      "portraitSurface": "#101a22",
+      "portraitTop": "#31404f",
+      "portraitBottom": "#111820",
+      "portraitBorder": "#5b7483",
+      "portraitAccent": "#2cdce5",
+      "portraitWarm": "#8ff8f6",
+      "portraitAttention": "#e0b665",
+      "portraitSpeech": "#8bffff",
+      "stageSurface": "#111a22",
+      "stageBorder": "#324855",
+      "stageSpotlight": "#1b2a33",
+      "stageSpotlightBorder": "#365461",
+      "badgeSurface": "#ed10212c",
+      "petShadow": "#36070c13"
+    },
+    "authoring": {
+      "crop": [281, 23, 461, 976],
+      "eyes": [
+        [421, 210, 48, 82],
+        [560, 210, 48, 82]
+      ],
+      "bounds": [281, 23, 461, 976],
+      "color": "cyan",
+      "portraitFace": {
+        "cx": 128,
+        "cy": 126,
+        "rx": 96,
+        "ry": 80
+      }
+    }
+  },
+  {
+    "id": "pal_classic",
+    "label": "PAL (Classic)",
+    "description": "Long cobalt hair, cyan eyes and a fitted black outfit with cyan trim.",
+    "themeLabel": "Cobalt & cyan",
+    "portrait": "pal_classic-portraits.png",
+    "rig": "pal_classic-surface-rig.json",
+    "default": false,
+    "aliases": [],
+    "palette": {
+      "background": "#0b121b",
+      "sidebar": "#111821",
+      "surface": "#151b24",
+      "raised": "#1e252e",
+      "input": "#121922",
+      "selected": "#223342",
+      "codeSurface": "#0d131c",
+      "userBubble": "#17232f",
+      "approvalSurface": "#29291f",
+      "questionSurface": "#22272c",
+      "warningSurface": "#2b261e",
+      "dangerSurface": "#33232e",
+      "questionBadge": "#173746",
+      "permissionBadge": "#3a3021",
+      "overlayScrim": "#b304090f",
+      "line": "#263848",
+      "subtle": "#192633",
+      "userBubbleBorder": "#263848",
+      "border": "#61788f",
+      "borderHover": "#7e96ae",
+      "borderStrong": "#6b839c",
+      "primaryBorder": "#6591b1",
+      "dangerBorder": "#a86b7a",
+      "warningBorder": "#94784a",
+      "approvalBorder": "#9a8150",
+      "activeBorder": "#6591b1",
+      "scrollThumb": "#6b839c",
+      "scrollThumbHover": "#8ba3ba",
+      "text": "#edf5fc",
+      "muted": "#9aafc2",
+      "accent": "#8bc7f2",
+      "accentText": "#8bc7f2",
       "success": "#82dccc",
       "danger": "#ff9eae",
       "amber": "#ffd385",
@@ -1095,23 +1173,23 @@
     }
   },
   {
-    "id": "cere_gothic",
-    "label": "Cere (Gothic)",
+    "id": "pal_gothic",
+    "label": "PAL (Gothic)",
     "description": "Long cobalt hair, cyan eyes and a layered black lace gothic dress.",
     "themeLabel": "Black lace & cobalt",
-    "portrait": "cere_gothic-portraits.png",
-    "rig": "cere_gothic-surface-rig.json",
+    "portrait": "pal_gothic-portraits.png",
+    "rig": "pal_gothic-surface-rig.json",
     "default": false,
-    "aliases": [],
+    "aliases": ["cere_gothic"],
     "palette": {
       "background": "#0d1019",
-      "sidebar": "#090c14",
-      "surface": "#141824",
-      "raised": "#202636",
-      "input": "#10141f",
-      "selected": "#243249",
+      "sidebar": "#13161f",
+      "surface": "#161a23",
+      "raised": "#1f232c",
+      "input": "#141720",
+      "selected": "#292e3f",
       "codeSurface": "#0f121b",
-      "userBubble": "#19263b",
+      "userBubble": "#1c202d",
       "approvalSurface": "#29291f",
       "questionSurface": "#22272c",
       "warningSurface": "#2b261e",
@@ -1119,23 +1197,23 @@
       "questionBadge": "#173746",
       "permissionBadge": "#3a3021",
       "overlayScrim": "#b304090f",
-      "line": "#30394c",
-      "subtle": "#1c2333",
-      "userBubbleBorder": "#2d5373",
+      "line": "#2e3346",
+      "subtle": "#1e2330",
+      "userBubbleBorder": "#2e3346",
       "border": "#7b88a3",
       "borderHover": "#99acd0",
       "borderStrong": "#8e9fbd",
-      "primaryBorder": "#2f86c2",
+      "primaryBorder": "#7a86ad",
       "dangerBorder": "#a86b7a",
       "warningBorder": "#94784a",
       "approvalBorder": "#9a8150",
-      "activeBorder": "#2f86c2",
+      "activeBorder": "#7a86ad",
       "scrollThumb": "#6b839c",
       "scrollThumbHover": "#8ba3ba",
       "text": "#eef4ff",
       "muted": "#a9b7ce",
-      "accent": "#65a6ff",
-      "accentText": "#83caff",
+      "accent": "#a8b9ed",
+      "accentText": "#a8b9ed",
       "success": "#82dccc",
       "danger": "#ff9eae",
       "amber": "#ffd385",
@@ -2192,23 +2270,23 @@
     }
   },
   {
-    "id": "cere_punk",
-    "label": "Cere (Punk)",
+    "id": "pal_punk",
+    "label": "PAL (Punk)",
     "description": "Long cobalt hair, blue eyes and a black respirator with strapped tactical gear.",
     "themeLabel": "Cool blue & black",
-    "portrait": "cere_punk-portraits.png",
-    "rig": "cere_punk-surface-rig.json",
+    "portrait": "pal_punk-portraits.png",
+    "rig": "pal_punk-surface-rig.json",
     "default": false,
-    "aliases": [],
+    "aliases": ["cere_punk"],
     "palette": {
       "background": "#0b121b",
-      "sidebar": "#080f17",
-      "surface": "#101b27",
-      "raised": "#182736",
-      "input": "#0c1621",
-      "selected": "#13334a",
+      "sidebar": "#111821",
+      "surface": "#151b24",
+      "raised": "#1e252e",
+      "input": "#121922",
+      "selected": "#223342",
       "codeSurface": "#0d131c",
-      "userBubble": "#112638",
+      "userBubble": "#17232f",
       "approvalSurface": "#29291f",
       "questionSurface": "#22272c",
       "warningSurface": "#2b261e",
@@ -2217,22 +2295,22 @@
       "permissionBadge": "#3a3021",
       "overlayScrim": "#b304090f",
       "line": "#263848",
-      "subtle": "#192937",
-      "userBubbleBorder": "#2d5373",
+      "subtle": "#192633",
+      "userBubbleBorder": "#263848",
       "border": "#61788f",
       "borderHover": "#7e96ae",
       "borderStrong": "#6b839c",
-      "primaryBorder": "#2f86c2",
+      "primaryBorder": "#6591b1",
       "dangerBorder": "#a86b7a",
       "warningBorder": "#94784a",
       "approvalBorder": "#9a8150",
-      "activeBorder": "#2f86c2",
+      "activeBorder": "#6591b1",
       "scrollThumb": "#6b839c",
       "scrollThumbHover": "#8ba3ba",
       "text": "#edf5fc",
       "muted": "#9aafc2",
-      "accent": "#149cff",
-      "accentText": "#49dfff",
+      "accent": "#8bc7f2",
+      "accentText": "#8bc7f2",
       "success": "#82dccc",
       "danger": "#ff9eae",
       "amber": "#ffd385",
@@ -2315,23 +2393,23 @@
     }
   },
   {
-    "id": "cere_punk_unmasked",
-    "label": "Cere (Punk - No Mask)",
+    "id": "pal_punk_unmasked",
+    "label": "PAL (Punk - No Mask)",
     "description": "Long cobalt hair, blue eyes and strapped black punk gear with an uncovered face.",
     "themeLabel": "Cool blue & black",
-    "portrait": "cere_punk_unmasked-portraits.png",
-    "rig": "cere_punk_unmasked-surface-rig.json",
+    "portrait": "pal_punk_unmasked-portraits.png",
+    "rig": "pal_punk_unmasked-surface-rig.json",
     "default": false,
-    "aliases": [],
+    "aliases": ["cere_punk_unmasked"],
     "palette": {
       "background": "#0b121b",
-      "sidebar": "#080f17",
-      "surface": "#101b27",
-      "raised": "#182736",
-      "input": "#0c1621",
-      "selected": "#13334a",
+      "sidebar": "#111821",
+      "surface": "#151b24",
+      "raised": "#1e252e",
+      "input": "#121922",
+      "selected": "#223342",
       "codeSurface": "#0d131c",
-      "userBubble": "#112638",
+      "userBubble": "#17232f",
       "approvalSurface": "#29291f",
       "questionSurface": "#22272c",
       "warningSurface": "#2b261e",
@@ -2340,22 +2418,22 @@
       "permissionBadge": "#3a3021",
       "overlayScrim": "#b304090f",
       "line": "#263848",
-      "subtle": "#192937",
-      "userBubbleBorder": "#2d5373",
+      "subtle": "#192633",
+      "userBubbleBorder": "#263848",
       "border": "#61788f",
       "borderHover": "#7e96ae",
       "borderStrong": "#6b839c",
-      "primaryBorder": "#2f86c2",
+      "primaryBorder": "#6591b1",
       "dangerBorder": "#a86b7a",
       "warningBorder": "#94784a",
       "approvalBorder": "#9a8150",
-      "activeBorder": "#2f86c2",
+      "activeBorder": "#6591b1",
       "scrollThumb": "#6b839c",
       "scrollThumbHover": "#8ba3ba",
       "text": "#edf5fc",
       "muted": "#9aafc2",
-      "accent": "#149cff",
-      "accentText": "#49dfff",
+      "accent": "#8bc7f2",
+      "accentText": "#8bc7f2",
       "success": "#82dccc",
       "danger": "#ff9eae",
       "amber": "#ffd385",
@@ -3455,13 +3533,13 @@
     "aliases": [],
     "palette": {
       "background": "#100b0d",
-      "sidebar": "#090708",
-      "surface": "#1a1013",
-      "raised": "#291a1e",
-      "input": "#120b0e",
-      "selected": "#421c24",
+      "sidebar": "#151216",
+      "surface": "#191619",
+      "raised": "#221f23",
+      "input": "#161316",
+      "selected": "#382629",
       "codeSurface": "#120a0d",
-      "userBubble": "#30171f",
+      "userBubble": "#25191c",
       "approvalSurface": "#2d231b",
       "questionSurface": "#2d1a20",
       "warningSurface": "#2e221b",
@@ -3469,23 +3547,23 @@
       "questionBadge": "#441b26",
       "permissionBadge": "#3b2b1d",
       "overlayScrim": "#b3090305",
-      "line": "#48232d",
-      "subtle": "#321b22",
-      "userBubbleBorder": "#763a47",
+      "line": "#3f2a2e",
+      "subtle": "#281b1e",
+      "userBubbleBorder": "#3f2a2e",
       "border": "#99737b",
       "borderHover": "#c1909a",
       "borderStrong": "#ad7c87",
-      "primaryBorder": "#d65366",
+      "primaryBorder": "#ab737a",
       "dangerBorder": "#bf7f74",
       "warningBorder": "#a08359",
       "approvalBorder": "#ae8d5a",
-      "activeBorder": "#d65366",
+      "activeBorder": "#ab737a",
       "scrollThumb": "#ad7c87",
       "scrollThumbHover": "#ca98a2",
       "text": "#fff0ed",
       "muted": "#c6a8ae",
-      "accent": "#ff6b78",
-      "accentText": "#ff9098",
+      "accent": "#eea0a9",
+      "accentText": "#eea0a9",
       "success": "#d0d49a",
       "danger": "#ffb39f",
       "amber": "#ffd188",
@@ -3593,13 +3671,13 @@
     "aliases": [],
     "palette": {
       "background": "#0c090a",
-      "sidebar": "#070607",
-      "surface": "#170e10",
-      "raised": "#241414",
-      "input": "#100a0c",
-      "selected": "#381010",
+      "sidebar": "#121114",
+      "surface": "#151417",
+      "raised": "#1e1e21",
+      "input": "#131113",
+      "selected": "#342425",
       "codeSurface": "#10090b",
-      "userBubble": "#2c1012",
+      "userBubble": "#211718",
       "approvalSurface": "#292018",
       "questionSurface": "#29141a",
       "warningSurface": "#2b1e16",
@@ -3607,23 +3685,23 @@
       "questionBadge": "#40131e",
       "permissionBadge": "#342419",
       "overlayScrim": "#b3060203",
-      "line": "#492020",
-      "subtle": "#2b1617",
-      "userBubbleBorder": "#873238",
+      "line": "#3b292a",
+      "subtle": "#251a1a",
+      "userBubbleBorder": "#3b292a",
       "border": "#a47276",
       "borderHover": "#d28b91",
       "borderStrong": "#bd767e",
-      "primaryBorder": "#f24b4b",
+      "primaryBorder": "#a97373",
       "dangerBorder": "#c78070",
       "warningBorder": "#aa8457",
       "approvalBorder": "#ad8958",
-      "activeBorder": "#f24b4b",
+      "activeBorder": "#a97373",
       "scrollThumb": "#bd767e",
       "scrollThumbHover": "#dc9199",
       "text": "#fff2f3",
       "muted": "#caa9b1",
-      "accent": "#ff5353",
-      "accentText": "#ff7b7b",
+      "accent": "#eda0a0",
+      "accentText": "#eda0a0",
       "success": "#e0d49b",
       "danger": "#ffc2a6",
       "amber": "#ffd185",
@@ -3749,13 +3827,13 @@
     "aliases": [],
     "palette": {
       "background": "#0c0911",
-      "sidebar": "#08060c",
-      "surface": "#17101f",
-      "raised": "#24192f",
-      "input": "#100b18",
-      "selected": "#2d1943",
+      "sidebar": "#121119",
+      "surface": "#15141c",
+      "raised": "#1e1e26",
+      "input": "#131119",
+      "selected": "#2c2537",
       "codeSurface": "#100a18",
-      "userBubble": "#241332",
+      "userBubble": "#1d1825",
       "approvalSurface": "#29211d",
       "questionSurface": "#261a32",
       "warningSurface": "#2a211c",
@@ -3763,23 +3841,23 @@
       "questionBadge": "#341e49",
       "permissionBadge": "#35291f",
       "overlayScrim": "#b305020b",
-      "line": "#3e2954",
-      "subtle": "#2c1d3c",
-      "userBubbleBorder": "#65418a",
+      "line": "#322a3e",
+      "subtle": "#201a28",
+      "userBubbleBorder": "#322a3e",
       "border": "#947cae",
       "borderHover": "#bba0d7",
       "borderStrong": "#aa89cb",
-      "primaryBorder": "#ae6bf2",
+      "primaryBorder": "#8a78a5",
       "dangerBorder": "#bb7a9c",
       "warningBorder": "#a98a66",
       "approvalBorder": "#af9066",
-      "activeBorder": "#ae6bf2",
+      "activeBorder": "#8a78a5",
       "scrollThumb": "#aa89cb",
       "scrollThumbHover": "#c8a8e8",
       "text": "#f6efff",
       "muted": "#bfb0d2",
-      "accent": "#bd8aff",
-      "accentText": "#d4adff",
+      "accent": "#c0a7e5",
+      "accentText": "#c0a7e5",
       "success": "#cfcedf",
       "danger": "#ffafbd",
       "amber": "#ffda9b",
@@ -3861,13 +3939,13 @@
     "aliases": [],
     "palette": {
       "background": "#14120f",
-      "sidebar": "#100f0c",
-      "surface": "#1d1a16",
-      "raised": "#2a261f",
-      "input": "#181512",
-      "selected": "#342f27",
+      "sidebar": "#181817",
+      "surface": "#1c1b1b",
+      "raised": "#252525",
+      "input": "#1a1918",
+      "selected": "#373127",
       "codeSurface": "#151310",
-      "userBubble": "#28241e",
+      "userBubble": "#26221c",
       "approvalSurface": "#2e2922",
       "questionSurface": "#2c2721",
       "warningSurface": "#2b261e",
@@ -3875,23 +3953,23 @@
       "questionBadge": "#38332a",
       "permissionBadge": "#38332a",
       "overlayScrim": "#b30a0907",
-      "line": "#3d372d",
-      "subtle": "#2c2821",
-      "userBubbleBorder": "#585042",
+      "line": "#3c362b",
+      "subtle": "#29251e",
+      "userBubbleBorder": "#3c362b",
       "border": "#857863",
       "borderHover": "#a7977d",
       "borderStrong": "#92846d",
-      "primaryBorder": "#b68a57",
+      "primaryBorder": "#9a896b",
       "dangerBorder": "#a86b7a",
       "warningBorder": "#94784a",
       "approvalBorder": "#9a8150",
-      "activeBorder": "#b68a57",
+      "activeBorder": "#9a896b",
       "scrollThumb": "#92846d",
       "scrollThumbHover": "#b6a488",
       "text": "#f5f0e8",
       "muted": "#bdb2a4",
-      "accent": "#d1a66e",
-      "accentText": "#ebc596",
+      "accent": "#d4bc93",
+      "accentText": "#d4bc93",
       "success": "#82dccc",
       "danger": "#ff9eae",
       "amber": "#ffd385",
@@ -3961,13 +4039,13 @@
     "aliases": [],
     "palette": {
       "background": "#11130f",
-      "sidebar": "#0d0e0b",
-      "surface": "#181b15",
-      "raised": "#22251c",
-      "input": "#141611",
-      "selected": "#2c3024",
+      "sidebar": "#161817",
+      "surface": "#191c1b",
+      "raised": "#222525",
+      "input": "#171a18",
+      "selected": "#323429",
       "codeSurface": "#131611",
-      "userBubble": "#20231b",
+      "userBubble": "#22241d",
       "approvalSurface": "#26251b",
       "questionSurface": "#24281e",
       "warningSurface": "#27241a",
@@ -3975,23 +4053,23 @@
       "questionBadge": "#2a2f23",
       "permissionBadge": "#2e2a1d",
       "overlayScrim": "#b30b0c0a",
-      "line": "#373d2d",
-      "subtle": "#24281e",
-      "userBubbleBorder": "#4a513c",
+      "line": "#373a2d",
+      "subtle": "#25271f",
+      "userBubbleBorder": "#373a2d",
       "border": "#a8b699",
       "borderHover": "#c3d0b1",
       "borderStrong": "#b5c39f",
-      "primaryBorder": "#93a175",
+      "primaryBorder": "#909474",
       "dangerBorder": "#a86b7a",
       "warningBorder": "#94784a",
       "approvalBorder": "#9a8150",
-      "activeBorder": "#93a175",
+      "activeBorder": "#909474",
       "scrollThumb": "#b3c0a0",
       "scrollThumbHover": "#ccd8bc",
       "text": "#fcfaf6",
       "muted": "#c1c6c3",
-      "accent": "#afc08b",
-      "accentText": "#e2d7b5",
+      "accent": "#c7cb9f",
+      "accentText": "#c7cb9f",
       "success": "#82dccc",
       "danger": "#ff9eae",
       "amber": "#ffd385",
@@ -4080,13 +4158,13 @@
     "aliases": [],
     "palette": {
       "background": "#080f18",
-      "sidebar": "#060b12",
-      "surface": "#0b1722",
-      "raised": "#0f2130",
-      "input": "#09131d",
-      "selected": "#132d3f",
+      "sidebar": "#0f151e",
+      "surface": "#121922",
+      "raised": "#1b222b",
+      "input": "#0f161f",
+      "selected": "#20313c",
       "codeSurface": "#09121b",
-      "userBubble": "#0e202e",
+      "userBubble": "#15212b",
       "approvalSurface": "#1e2123",
       "questionSurface": "#102434",
       "warningSurface": "#1f2121",
@@ -4094,23 +4172,23 @@
       "questionBadge": "#122b3d",
       "permissionBadge": "#262724",
       "overlayScrim": "#b3050a10",
-      "line": "#18394f",
-      "subtle": "#102434",
-      "userBubbleBorder": "#1f4e6b",
+      "line": "#243742",
+      "subtle": "#17242e",
+      "userBubbleBorder": "#243742",
       "border": "#6bb6de",
       "borderHover": "#86cff7",
       "borderStrong": "#6ec2f0",
-      "primaryBorder": "#3d9fd5",
+      "primaryBorder": "#6693a5",
       "dangerBorder": "#a86b7a",
       "warningBorder": "#94784a",
       "approvalBorder": "#9a8150",
-      "activeBorder": "#3d9fd5",
+      "activeBorder": "#6693a5",
       "scrollThumb": "#70c0eb",
       "scrollThumbHover": "#94d7fb",
       "text": "#f3fcff",
       "muted": "#b0cbd6",
-      "accent": "#49bfff",
-      "accentText": "#9deaff",
+      "accent": "#8ecce2",
+      "accentText": "#8ecce2",
       "success": "#82dccc",
       "danger": "#ff9eae",
       "amber": "#ffd385",
@@ -4292,13 +4370,13 @@
     "aliases": [],
     "palette": {
       "background": "#111110",
-      "sidebar": "#0d0d0c",
-      "surface": "#191916",
-      "raised": "#24231f",
-      "input": "#151413",
-      "selected": "#302e28",
+      "sidebar": "#161718",
+      "surface": "#191a1b",
+      "raised": "#222425",
+      "input": "#171818",
+      "selected": "#34332e",
       "codeSurface": "#141412",
-      "userBubble": "#22211d",
+      "userBubble": "#242320",
       "approvalSurface": "#26231c",
       "questionSurface": "#272521",
       "warningSurface": "#27231b",
@@ -4306,23 +4384,23 @@
       "questionBadge": "#2e2c26",
       "permissionBadge": "#2e281d",
       "overlayScrim": "#b30b0b0a",
-      "line": "#3c3932",
-      "subtle": "#272521",
-      "userBubbleBorder": "#524d42",
+      "line": "#3a3833",
+      "subtle": "#272622",
+      "userBubbleBorder": "#3a3833",
       "border": "#b5b2a3",
       "borderHover": "#d1cbbc",
       "borderStrong": "#c4beab",
-      "primaryBorder": "#a59b83",
+      "primaryBorder": "#9a9484",
       "dangerBorder": "#a86b7a",
       "warningBorder": "#94784a",
       "approvalBorder": "#9a8150",
-      "activeBorder": "#a59b83",
+      "activeBorder": "#9a9484",
       "scrollThumb": "#c1bcab",
       "scrollThumbHover": "#d8d4c5",
       "text": "#fdfcf9",
       "muted": "#c4c9ca",
-      "accent": "#c5b99c",
-      "accentText": "#efe5ce",
+      "accent": "#d5ccb6",
+      "accentText": "#d5ccb6",
       "success": "#82dccc",
       "danger": "#ff9eae",
       "amber": "#ffd385",
@@ -4449,13 +4527,13 @@
     "aliases": [],
     "palette": {
       "background": "#100b15",
-      "sidebar": "#0c0810",
-      "surface": "#18111f",
-      "raised": "#24192c",
-      "input": "#140e19",
-      "selected": "#30213a",
+      "sidebar": "#15121c",
+      "surface": "#19161f",
+      "raised": "#221f29",
+      "input": "#16131d",
+      "selected": "#322939",
       "codeSurface": "#130d18",
-      "userBubble": "#22172a",
+      "userBubble": "#221b28",
       "approvalSurface": "#251e20",
       "questionSurface": "#261a2f",
       "warningSurface": "#261d1f",
@@ -4463,23 +4541,23 @@
       "questionBadge": "#2e2038",
       "permissionBadge": "#2d2322",
       "overlayScrim": "#b30a070e",
-      "line": "#3d2a49",
-      "subtle": "#261a2f",
-      "userBubbleBorder": "#533963",
+      "line": "#382e3f",
+      "subtle": "#251d2b",
+      "userBubbleBorder": "#382e3f",
       "border": "#b997d4",
       "borderHover": "#d4b0ed",
       "borderStrong": "#c99ee4",
-      "primaryBorder": "#a975c7",
+      "primaryBorder": "#957ea2",
       "dangerBorder": "#a86b7a",
       "warningBorder": "#94784a",
       "approvalBorder": "#9a8150",
-      "activeBorder": "#a975c7",
+      "activeBorder": "#957ea2",
       "scrollThumb": "#c59fe0",
       "scrollThumbHover": "#dbbbf2",
       "text": "#fcf6ff",
       "muted": "#c2bed6",
-      "accent": "#cb8cee",
-      "accentText": "#e6b8ff",
+      "accent": "#ceb0de",
+      "accentText": "#ceb0de",
       "success": "#82dccc",
       "danger": "#ff9eae",
       "amber": "#ffd385",
@@ -4660,13 +4738,13 @@
     "aliases": [],
     "palette": {
       "background": "#0e140c",
-      "sidebar": "#0b0f09",
-      "surface": "#151d11",
-      "raised": "#1f2818",
-      "input": "#11180e",
-      "selected": "#2a3520",
+      "sidebar": "#141915",
+      "surface": "#171d18",
+      "raised": "#202622",
+      "input": "#151b15",
+      "selected": "#2d3725",
       "codeSurface": "#10170e",
-      "userBubble": "#1e2617",
+      "userBubble": "#1f2619",
       "approvalSurface": "#232518",
       "questionSurface": "#222b1a",
       "warningSurface": "#242517",
@@ -4674,23 +4752,23 @@
       "questionBadge": "#28331f",
       "permissionBadge": "#2b2b1a",
       "overlayScrim": "#b3090d08",
-      "line": "#354229",
-      "subtle": "#222b1a",
-      "userBubbleBorder": "#495937",
+      "line": "#333c2a",
+      "subtle": "#21291c",
+      "userBubbleBorder": "#333c2a",
       "border": "#aac294",
       "borderHover": "#c5dcad",
       "borderStrong": "#b7d19a",
-      "primaryBorder": "#94b16e",
+      "primaryBorder": "#889a6f",
       "dangerBorder": "#a86b7a",
       "warningBorder": "#94784a",
       "approvalBorder": "#9a8150",
-      "activeBorder": "#94b16e",
+      "activeBorder": "#889a6f",
       "scrollThumb": "#b4cd9b",
       "scrollThumbHover": "#cde3b7",
       "text": "#fbfdf6",
       "muted": "#c0ccc2",
-      "accent": "#b2d483",
-      "accentText": "#dcf0b0",
+      "accent": "#bcd499",
+      "accentText": "#bcd499",
       "success": "#82dccc",
       "danger": "#ff9eae",
       "amber": "#ffd385",
@@ -4886,13 +4964,13 @@
     "aliases": [],
     "palette": {
       "background": "#071310",
-      "sidebar": "#050e0c",
-      "surface": "#091c18",
-      "raised": "#0c2722",
-      "input": "#081713",
-      "selected": "#0f342d",
+      "sidebar": "#0e1818",
+      "surface": "#111c1b",
+      "raised": "#1b2525",
+      "input": "#0f1a18",
+      "selected": "#1e352f",
       "codeSurface": "#081613",
-      "userBubble": "#0b2520",
+      "userBubble": "#132520",
       "approvalSurface": "#1d251c",
       "questionSurface": "#0d2a24",
       "warningSurface": "#1e241b",
@@ -4900,23 +4978,23 @@
       "questionBadge": "#0f322b",
       "permissionBadge": "#252a1d",
       "overlayScrim": "#b3050c0a",
-      "line": "#124238",
-      "subtle": "#0d2a24",
-      "userBubbleBorder": "#18594c",
+      "line": "#223b34",
+      "subtle": "#152823",
+      "userBubbleBorder": "#223b34",
       "border": "#60c3b4",
       "borderHover": "#7bdccc",
       "borderStrong": "#60d1bf",
-      "primaryBorder": "#2eb29a",
+      "primaryBorder": "#619889",
       "dangerBorder": "#a86b7a",
       "warningBorder": "#94784a",
       "approvalBorder": "#9a8150",
-      "activeBorder": "#2eb29a",
+      "activeBorder": "#619889",
       "scrollThumb": "#64cebd",
       "scrollThumbHover": "#89e3d4",
       "text": "#f2fdfa",
       "muted": "#accccc",
-      "accent": "#36d5b8",
-      "accentText": "#8ff1d9",
+      "accent": "#87d1bd",
+      "accentText": "#87d1bd",
       "success": "#82dccc",
       "danger": "#ff9eae",
       "amber": "#ffd385",
@@ -5097,13 +5175,13 @@
     "aliases": [],
     "palette": {
       "background": "#120e1a",
-      "sidebar": "#0e0b14",
-      "surface": "#1b1524",
-      "raised": "#281f31",
-      "input": "#16111e",
-      "selected": "#35293f",
+      "sidebar": "#171420",
+      "surface": "#1a1823",
+      "raised": "#23222d",
+      "input": "#181521",
+      "selected": "#352c3e",
       "codeSurface": "#15101d",
-      "userBubble": "#251d2f",
+      "userBubble": "#251e2d",
       "approvalSurface": "#272025",
       "questionSurface": "#2b2134",
       "warningSurface": "#272023",
@@ -5111,23 +5189,23 @@
       "questionBadge": "#33273d",
       "permissionBadge": "#2e2626",
       "overlayScrim": "#b30c0911",
-      "line": "#43344f",
-      "subtle": "#2b2134",
-      "userBubbleBorder": "#5c4769",
+      "line": "#3b3144",
+      "subtle": "#282030",
+      "userBubbleBorder": "#3b3144",
       "border": "#c5abd9",
       "borderHover": "#e0c4f2",
       "borderStrong": "#d7b5ea",
-      "primaryBorder": "#ba90ce",
+      "primaryBorder": "#9c84a7",
       "dangerBorder": "#a86b7a",
       "warningBorder": "#94784a",
       "approvalBorder": "#9a8150",
-      "activeBorder": "#ba90ce",
+      "activeBorder": "#9c84a7",
       "scrollThumb": "#d2b4e6",
       "scrollThumbHover": "#e6cdf6",
       "text": "#fdfaff",
       "muted": "#c5c5d6",
-      "accent": "#dfadf6",
-      "accentText": "#f2d2ff",
+      "accent": "#d7b6e4",
+      "accentText": "#d7b6e4",
       "success": "#82dccc",
       "danger": "#ff9eae",
       "amber": "#ffd385",
@@ -5339,13 +5417,13 @@
     "aliases": [],
     "palette": {
       "background": "#110b0c",
-      "sidebar": "#0c0709",
-      "surface": "#191012",
-      "raised": "#26171b",
-      "input": "#150d0f",
-      "selected": "#3a1d24",
+      "sidebar": "#161215",
+      "surface": "#191618",
+      "raised": "#221f22",
+      "input": "#171315",
+      "selected": "#372c25",
       "codeSurface": "#100a0b",
-      "userBubble": "#28151a",
+      "userBubble": "#251d19",
       "approvalSurface": "#251819",
       "questionSurface": "#26171b",
       "warningSurface": "#252018",
@@ -5353,23 +5431,23 @@
       "questionBadge": "#3c2027",
       "permissionBadge": "#331f21",
       "overlayScrim": "#b3060404",
-      "line": "#492d34",
-      "subtle": "#2c1b1f",
-      "userBubbleBorder": "#77404e",
+      "line": "#3d322a",
+      "subtle": "#281f1c",
+      "userBubbleBorder": "#3d322a",
       "border": "#a97985",
       "borderHover": "#c398a3",
       "borderStrong": "#b68692",
-      "primaryBorder": "#e5b561",
+      "primaryBorder": "#a38d6f",
       "dangerBorder": "#c58791",
       "warningBorder": "#c09f72",
       "approvalBorder": "#c07c84",
-      "activeBorder": "#e5b561",
+      "activeBorder": "#a38d6f",
       "scrollThumb": "#b68692",
       "scrollThumbHover": "#c9a6af",
       "text": "#f9f0f3",
       "muted": "#ceb1b8",
-      "accent": "#ecc98d",
-      "accentText": "#f2dab0",
+      "accent": "#e2c599",
+      "accentText": "#e2c599",
       "success": "#ade1cb",
       "danger": "#f0adb8",
       "amber": "#f5d7a3",
@@ -5439,13 +5517,13 @@
     "aliases": [],
     "palette": {
       "background": "#100a12",
-      "sidebar": "#0b070d",
-      "surface": "#170e1b",
-      "raised": "#231528",
-      "input": "#130c16",
-      "selected": "#331d3a",
+      "sidebar": "#15111a",
+      "surface": "#19151d",
+      "raised": "#221f27",
+      "input": "#16121a",
+      "selected": "#342733",
       "codeSurface": "#0f0911",
-      "userBubble": "#231528",
+      "userBubble": "#231923",
       "approvalSurface": "#251819",
       "questionSurface": "#221726",
       "warningSurface": "#252018",
@@ -5453,23 +5531,23 @@
       "questionBadge": "#35203c",
       "permissionBadge": "#331f21",
       "overlayScrim": "#b3060407",
-      "line": "#43294c",
-      "subtle": "#29192e",
-      "userBubbleBorder": "#6a4077",
+      "line": "#3a2c38",
+      "subtle": "#261c26",
+      "userBubbleBorder": "#3a2c38",
       "border": "#9d79a9",
       "borderHover": "#b898c3",
       "borderStrong": "#aa86b6",
-      "primaryBorder": "#e561ac",
+      "primaryBorder": "#9d7b92",
       "dangerBorder": "#c58791",
       "warningBorder": "#c09f72",
       "approvalBorder": "#c07c83",
-      "activeBorder": "#e561ac",
+      "activeBorder": "#9d7b92",
       "scrollThumb": "#aa86b6",
       "scrollThumbHover": "#c0a6c9",
       "text": "#f7f0f9",
       "muted": "#c7b1ce",
-      "accent": "#ec8dc3",
-      "accentText": "#f2b0d6",
+      "accent": "#daabc9",
+      "accentText": "#daabc9",
       "success": "#ade1cb",
       "danger": "#f0adb8",
       "amber": "#f5d7a3",
@@ -5630,13 +5708,13 @@
     "aliases": [],
     "palette": {
       "background": "#090d13",
-      "sidebar": "#06090d",
-      "surface": "#0d131c",
-      "raised": "#141c29",
-      "input": "#0b0f16",
-      "selected": "#1d283a",
+      "sidebar": "#10141a",
+      "surface": "#13171e",
+      "raised": "#1c2128",
+      "input": "#10151b",
+      "selected": "#252f3a",
       "codeSurface": "#080c11",
-      "userBubble": "#151d28",
+      "userBubble": "#181f27",
       "approvalSurface": "#252018",
       "questionSurface": "#171d26",
       "warningSurface": "#252018",
@@ -5644,23 +5722,23 @@
       "questionBadge": "#202b3c",
       "permissionBadge": "#332b1f",
       "overlayScrim": "#b3030507",
-      "line": "#26374f",
-      "subtle": "#172130",
-      "userBubbleBorder": "#405677",
+      "line": "#2a3540",
+      "subtle": "#1a222b",
+      "userBubbleBorder": "#2a3540",
       "border": "#798da9",
       "borderHover": "#98a9c3",
       "borderStrong": "#8699b6",
-      "primaryBorder": "#61aae5",
+      "primaryBorder": "#7792a9",
       "dangerBorder": "#c58791",
       "warningBorder": "#c09f72",
       "approvalBorder": "#c0a47c",
-      "activeBorder": "#61aae5",
+      "activeBorder": "#7792a9",
       "scrollThumb": "#8699b6",
       "scrollThumbHover": "#a6b4c9",
       "text": "#f0f4f9",
       "muted": "#b1bcce",
-      "accent": "#8dc1ec",
-      "accentText": "#b0d4f2",
+      "accent": "#a6cbea",
+      "accentText": "#a6cbea",
       "success": "#ade1cb",
       "danger": "#f0adb8",
       "amber": "#f5d7a3",
@@ -5857,13 +5935,13 @@
     "aliases": [],
     "palette": {
       "background": "#0a0a13",
-      "sidebar": "#07070d",
-      "surface": "#0f0e1b",
-      "raised": "#161528",
-      "input": "#0c0b16",
-      "selected": "#1f1d3a",
+      "sidebar": "#10111a",
+      "surface": "#14151e",
+      "raised": "#1d1f28",
+      "input": "#11121b",
+      "selected": "#31282d",
       "codeSurface": "#090911",
-      "userBubble": "#171528",
+      "userBubble": "#1f1a21",
       "approvalSurface": "#252118",
       "questionSurface": "#181726",
       "warningSurface": "#252018",
@@ -5871,23 +5949,23 @@
       "questionBadge": "#22203c",
       "permissionBadge": "#332d1f",
       "overlayScrim": "#b3040307",
-      "line": "#2a284d",
-      "subtle": "#1a182f",
-      "userBubbleBorder": "#444077",
+      "line": "#382c32",
+      "subtle": "#221c23",
+      "userBubbleBorder": "#382c32",
       "border": "#7c79a9",
       "borderHover": "#9b98c3",
       "borderStrong": "#8986b6",
-      "primaryBorder": "#e56c61",
+      "primaryBorder": "#a37d79",
       "dangerBorder": "#c58791",
       "warningBorder": "#c09f72",
       "approvalBorder": "#c0ac7c",
-      "activeBorder": "#e56c61",
+      "activeBorder": "#a37d79",
       "scrollThumb": "#8986b6",
       "scrollThumbHover": "#a9a6c9",
       "text": "#f1f0f9",
       "muted": "#b3b1ce",
-      "accent": "#ec958d",
-      "accentText": "#f2b6b0",
+      "accent": "#e4aea5",
+      "accentText": "#e4aea5",
       "success": "#ade1cb",
       "danger": "#f0adb8",
       "amber": "#f5d7a3",
@@ -6053,13 +6131,13 @@
     "aliases": [],
     "palette": {
       "background": "#0b0a12",
-      "sidebar": "#07070c",
-      "surface": "#0f0f1a",
-      "raised": "#171627",
-      "input": "#0d0c15",
-      "selected": "#1f1d3a",
+      "sidebar": "#11111a",
+      "surface": "#15151d",
+      "raised": "#1e1f27",
+      "input": "#12121a",
+      "selected": "#282a39",
       "codeSurface": "#0a0910",
-      "userBubble": "#171528",
+      "userBubble": "#1a1b26",
       "approvalSurface": "#211825",
       "questionSurface": "#181726",
       "warningSurface": "#252018",
@@ -6067,23 +6145,23 @@
       "questionBadge": "#22203c",
       "permissionBadge": "#2d1f33",
       "overlayScrim": "#b3040407",
-      "line": "#2c2a4b",
-      "subtle": "#1b1a2e",
-      "userBubbleBorder": "#444077",
+      "line": "#2d2f3f",
+      "subtle": "#1d1d2a",
+      "userBubbleBorder": "#2d2f3f",
       "border": "#7c79a9",
       "borderHover": "#9b98c3",
       "borderStrong": "#8986b6",
-      "primaryBorder": "#6177e5",
+      "primaryBorder": "#7c84a8",
       "dangerBorder": "#c58791",
       "warningBorder": "#c09f72",
       "approvalBorder": "#ac7cc0",
-      "activeBorder": "#6177e5",
+      "activeBorder": "#7c84a8",
       "scrollThumb": "#8986b6",
       "scrollThumbHover": "#a9a6c9",
       "text": "#f1f0f9",
       "muted": "#b3b1ce",
-      "accent": "#8d9dec",
-      "accentText": "#b0bbf2",
+      "accent": "#acb9e8",
+      "accentText": "#acb9e8",
       "success": "#ade1cb",
       "danger": "#f0adb8",
       "amber": "#f5d7a3",
@@ -6220,13 +6298,13 @@
     "aliases": [],
     "palette": {
       "background": "#0d0c10",
-      "sidebar": "#09090b",
-      "surface": "#131217",
-      "raised": "#1c1b22",
-      "input": "#0f0f13",
-      "selected": "#221d3a",
+      "sidebar": "#131318",
+      "surface": "#16161b",
+      "raised": "#1f2025",
+      "input": "#141418",
+      "selected": "#332f29",
       "codeSurface": "#0c0b0e",
-      "userBubble": "#181528",
+      "userBubble": "#211e1d",
       "approvalSurface": "#1c1825",
       "questionSurface": "#1a1726",
       "warningSurface": "#252018",
@@ -6234,23 +6312,23 @@
       "questionBadge": "#25203c",
       "permissionBadge": "#251f33",
       "overlayScrim": "#b3050406",
-      "line": "#363442",
-      "subtle": "#211f28",
-      "userBubbleBorder": "#494077",
+      "line": "#39352d",
+      "subtle": "#24211f",
+      "userBubbleBorder": "#39352d",
       "border": "#8179a9",
       "borderHover": "#9f98c3",
       "borderStrong": "#8e86b6",
-      "primaryBorder": "#e5be61",
+      "primaryBorder": "#a09371",
       "dangerBorder": "#c58791",
       "warningBorder": "#c09f72",
       "approvalBorder": "#937cc0",
-      "activeBorder": "#e5be61",
+      "activeBorder": "#a09371",
       "scrollThumb": "#8e86b6",
       "scrollThumbHover": "#aca6c9",
       "text": "#f2f0f9",
       "muted": "#b5b1ce",
-      "accent": "#ecd08d",
-      "accentText": "#f2deb0",
+      "accent": "#dfcd9b",
+      "accentText": "#dfcd9b",
       "success": "#ade1cb",
       "danger": "#f0adb8",
       "amber": "#f5d7a3",
@@ -6618,13 +6696,13 @@
     "aliases": [],
     "palette": {
       "background": "#120a0d",
-      "sidebar": "#0d0709",
-      "surface": "#1b0e13",
-      "raised": "#28151d",
-      "input": "#160c10",
-      "selected": "#3a1d28",
+      "sidebar": "#171116",
+      "surface": "#1a1519",
+      "raised": "#231f23",
+      "input": "#181216",
+      "selected": "#37282d",
       "codeSurface": "#11090c",
-      "userBubble": "#28151d",
+      "userBubble": "#261a1e",
       "approvalSurface": "#181e25",
       "questionSurface": "#26171d",
       "warningSurface": "#252018",
@@ -6632,23 +6710,23 @@
       "questionBadge": "#3c202b",
       "permissionBadge": "#1f2833",
       "overlayScrim": "#b3070405",
-      "line": "#4c2937",
-      "subtle": "#2e1922",
-      "userBubbleBorder": "#774056",
+      "line": "#3d2d33",
+      "subtle": "#291c21",
+      "userBubbleBorder": "#3d2d33",
       "border": "#a9798d",
       "borderHover": "#c398a9",
       "borderStrong": "#b68699",
-      "primaryBorder": "#e56196",
+      "primaryBorder": "#a37d8a",
       "dangerBorder": "#c58791",
       "warningBorder": "#c09f72",
       "approvalBorder": "#7c9dc0",
-      "activeBorder": "#e56196",
+      "activeBorder": "#a37d8a",
       "scrollThumb": "#b68699",
       "scrollThumbHover": "#c9a6b4",
       "text": "#f9f0f4",
       "muted": "#ceb1bc",
-      "accent": "#ec8db3",
-      "accentText": "#f2b0ca",
+      "accent": "#e1afc0",
+      "accentText": "#e1afc0",
       "success": "#ade1cb",
       "danger": "#f0adb8",
       "amber": "#f5d7a3",
@@ -6731,13 +6809,13 @@
     "aliases": [],
     "palette": {
       "background": "#0c1013",
-      "sidebar": "#080b0e",
-      "surface": "#11191c",
-      "raised": "#192326",
-      "input": "#0e1418",
-      "selected": "#24342f",
+      "sidebar": "#12161a",
+      "surface": "#151a1e",
+      "raised": "#1e2328",
+      "input": "#13171b",
+      "selected": "#263434",
       "codeSurface": "#0b1115",
-      "userBubble": "#162623",
+      "userBubble": "#1a2324",
       "approvalSurface": "#24231d",
       "questionSurface": "#1d2330",
       "warningSurface": "#29221c",
@@ -6745,23 +6823,23 @@
       "questionBadge": "#272b3b",
       "permissionBadge": "#302a25",
       "overlayScrim": "#b305080a",
-      "line": "#344640",
-      "subtle": "#1c2b29",
-      "userBubbleBorder": "#47695e",
+      "line": "#2b3a39",
+      "subtle": "#1c2627",
+      "userBubbleBorder": "#2b3a39",
       "border": "#849d9a",
       "borderHover": "#a6c4bc",
       "borderStrong": "#a38ec0",
-      "primaryBorder": "#62d5ae",
+      "primaryBorder": "#739d93",
       "dangerBorder": "#c68ba8",
       "warningBorder": "#bc9d78",
       "approvalBorder": "#a58cbe",
-      "activeBorder": "#62d5ae",
+      "activeBorder": "#739d93",
       "scrollThumb": "#90aaa3",
       "scrollThumbHover": "#b1cfc5",
       "text": "#f0faf7",
       "muted": "#b1c6c0",
-      "accent": "#71edc0",
-      "accentText": "#a2f8d5",
+      "accent": "#9fdaca",
+      "accentText": "#9fdaca",
       "success": "#8ce6c4",
       "danger": "#f5aacd",
       "amber": "#f4d0a1",
@@ -7608,1282 +7686,6 @@
               [
                 0.540866,
                 0.375649
-              ]
-            ]
-          }
-        ]
-      }
-    }
-  },
-  {
-    "id": "alia",
-    "label": "Alia",
-    "description": "Honey-blonde wavy bob, olive eyes, black floral lace, a pleated skirt and ankle-strap heels.",
-    "themeLabel": "Charcoal, honey & copper",
-    "portrait": "alia-portraits.png",
-    "rig": "alia-surface-rig.json",
-    "default": false,
-    "aliases": [],
-    "palette": {
-      "background": "#12100f",
-      "sidebar": "#0e0c0b",
-      "surface": "#1c1816",
-      "raised": "#29221e",
-      "input": "#171311",
-      "selected": "#342922",
-      "codeSurface": "#14100e",
-      "userBubble": "#29201b",
-      "approvalSurface": "#2c271d",
-      "questionSurface": "#2b241e",
-      "warningSurface": "#2d251b",
-      "dangerSurface": "#30201f",
-      "questionBadge": "#372a21",
-      "permissionBadge": "#352b21",
-      "overlayScrim": "#b30b0908",
-      "line": "#3e3128",
-      "subtle": "#2b231d",
-      "userBubbleBorder": "#5c4738",
-      "border": "#9b8069",
-      "borderHover": "#b99b7e",
-      "borderStrong": "#ac8d70",
-      "primaryBorder": "#c28b59",
-      "dangerBorder": "#bf807a",
-      "warningBorder": "#b8935c",
-      "approvalBorder": "#a99b70",
-      "activeBorder": "#c28b59",
-      "scrollThumb": "#ac8d70",
-      "scrollThumbHover": "#d0ad8b",
-      "text": "#faf0e5",
-      "muted": "#c4b2a3",
-      "accent": "#e4b078",
-      "accentText": "#f6cc99",
-      "success": "#b9cc8b",
-      "danger": "#ffa59c",
-      "amber": "#f3ca85",
-      "warm": "#efb399",
-      "portraitSurface": "#2b211b",
-      "portraitTop": "#4b3525",
-      "portraitBottom": "#1d1713",
-      "portraitBorder": "#8b6950",
-      "portraitAccent": "#c28b59",
-      "portraitWarm": "#edb093",
-      "portraitAttention": "#c9b374",
-      "portraitSpeech": "#f6cc99",
-      "stageSurface": "#211a16",
-      "stageBorder": "#584333",
-      "stageSpotlight": "#35271d",
-      "stageSpotlightBorder": "#644a34",
-      "badgeSurface": "#ed261d17",
-      "petShadow": "#360b0908"
-    },
-    "authoring": {
-      "portraitFace": {
-        "cx": 130,
-        "cy": 131,
-        "rx": 75,
-        "ry": 54
-      },
-      "crop": [
-        20,
-        30,
-        390,
-        905
-      ],
-      "eyes": [
-        [
-          155,
-          215,
-          60,
-          47
-        ],
-        [
-          241,
-          214,
-          61,
-          48
-        ]
-      ],
-      "color": "olive",
-      "referenceHeight": 880,
-      "bounds": [
-        23,
-        17,
-        385,
-        891
-      ],
-      "componentCells": true,
-      "portraitComponents": true,
-      "normalizedRoutes": [
-        "wave",
-        "thinking",
-        "present",
-        "celebrate",
-        "shy"
-      ],
-      "sheetLandmarks": {
-        "wave": [
-          {
-            "eyes": [
-              [
-                0.4863463883995121,
-                0.2616171107680605
-              ],
-              [
-                0.6064321309527738,
-                0.2649025024108792
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.42934381912017694,
-                0.26336649680498264
-              ],
-              [
-                0.5496928819612525,
-                0.265483435830439
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4214586884363506,
-                0.2563646865419647
-              ],
-              [
-                0.5222929936305732,
-                0.2653299338835832
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.37740904874780995,
-                0.268545843085377
-              ],
-              [
-                0.5022407101657482,
-                0.2638303728325535
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4858052775250227,
-                0.2545768880800728
-              ],
-              [
-                0.6137036555598885,
-                0.2509496367549143
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4475301056770705,
-                0.2522937658720406
-              ],
-              [
-                0.5790968977323578,
-                0.2547168829546992
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.42,
-                0.25333333333333335
-              ],
-              [
-                0.5466666666666666,
-                0.25333333333333335
-              ]
-            ],
-            "closed": true
-          },
-          {
-            "eyes": [
-              [
-                0.3945899893503727,
-                0.25333333333333335
-              ],
-              [
-                0.5149733759318423,
-                0.25
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4917622080679405,
-                0.25
-              ],
-              [
-                0.611380042462845,
-                0.25
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4546772944858193,
-                0.24356933343510453
-              ],
-              [
-                0.5675427906415028,
-                0.24304206053819044
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.42,
-                0.25
-              ],
-              [
-                0.54,
-                0.25
-              ]
-            ],
-            "closed": true
-          },
-          {
-            "eyes": [
-              [
-                0.3937528280930768,
-                0.24920127795527156
-              ],
-              [
-                0.4941498285018218,
-                0.24389071131674273
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.49375796178343956,
-                0.24333333333333332
-              ],
-              [
-                0.6171974522292994,
-                0.24000000000000002
-              ]
-            ],
-            "closed": true
-          },
-          {
-            "eyes": [
-              [
-                0.44301101360186573,
-                0.23884215216080926
-              ],
-              [
-                0.5704677962730448,
-                0.24200642869226865
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.42728237791932056,
-                0.24
-              ],
-              [
-                0.5469214437367305,
-                0.24
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.3976675945097286,
-                0.240369922534182
-              ],
-              [
-                0.5184097896196275,
-                0.23938314153864126
-              ]
-            ]
-          }
-        ],
-        "thinking": [
-          {
-            "eyes": [
-              [
-                0.5369728262917877,
-                0.28587164314974967
-              ],
-              [
-                0.6328939900359463,
-                0.28238842345773035
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.46009592671775285,
-                0.28094081357239253
-              ],
-              [
-                0.5734267957337911,
-                0.28612323000382706
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4374407969949371,
-                0.283905325443787
-              ],
-              [
-                0.523517419417101,
-                0.2672902097902098
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.3676075114349415,
-                0.2822246817930271
-              ],
-              [
-                0.4671420754417242,
-                0.27365915852103695
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.5503675268247863,
-                0.2523476554591749
-              ],
-              [
-                0.6440672401339549,
-                0.22989034079716333
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.48905774784369027,
-                0.25079856926990685
-              ],
-              [
-                0.5840529998627962,
-                0.22330897581180884
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.41341022551213635,
-                0.217837264015608
-              ],
-              [
-                0.519673790106554,
-                0.24554288945770583
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.36370194785118004,
-                0.2198873527905786
-              ],
-              [
-                0.47276407437540924,
-                0.2479936902297151
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.5514520554748513,
-                0.2566335221158399
-              ],
-              [
-                0.6488933032653033,
-                0.23177191833819416
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.48876083979917845,
-                0.22901081568273998
-              ],
-              [
-                0.572027772324058,
-                0.2556791146044446
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.42071689523918826,
-                0.22781140762213314
-              ],
-              [
-                0.5247089830880738,
-                0.23124841364806556
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.34583627235384423,
-                0.24119905251980722
-              ],
-              [
-                0.437096871420821,
-                0.25299632134804795
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.5476415906352212,
-                0.2367689232641001
-              ],
-              [
-                0.6735280410128942,
-                0.2282958199356913
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.47311535585616205,
-                0.2277282086479067
-              ],
-              [
-                0.5735965312642629,
-                0.24805194805194805
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4384361959147815,
-                0.2481100795755968
-              ],
-              [
-                0.5400752965690337,
-                0.2179368029739777
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.36664174200711486,
-                0.2200417728201244
-              ],
-              [
-                0.4778105511028803,
-                0.24781817391250333
-              ]
-            ]
-          }
-        ],
-        "present": [
-          {
-            "eyes": [
-              [
-                0.5151351149596896,
-                0.2501235104101631
-              ],
-              [
-                0.6404355939772872,
-                0.24955920052895939
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4149813411423464,
-                0.24949976563326898
-              ],
-              [
-                0.5470144472642573,
-                0.24860552320769247
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.42436397058823533,
-                0.24999197860962566
-              ],
-              [
-                0.5462695149149708,
-                0.2497845756139595
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.41711083777504443,
-                0.24867857496533968
-              ],
-              [
-                0.5529047149358874,
-                0.2465661483540005
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4828869728295673,
-                0.2487499790966404
-              ],
-              [
-                0.6112319927971188,
-                0.24388695570394056
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4178704215884664,
-                0.24691841624654703
-              ],
-              [
-                0.5562183262932485,
-                0.24413854110489905
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4250123233651002,
-                0.2441575428979386
-              ],
-              [
-                0.5584314340541737,
-                0.24368863129497007
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.41926347357119054,
-                0.24647121228467653
-              ],
-              [
-                0.557731406356288,
-                0.24368514888763387
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4796502892344677,
-                0.24063973375242675
-              ],
-              [
-                0.6129679144385026,
-                0.2388947563210298
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4201501043424733,
-                0.24016631321831314
-              ],
-              [
-                0.5502626614860854,
-                0.23872875294169038
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.42102237627839934,
-                0.24128686327077747
-              ],
-              [
-                0.5581962071128698,
-                0.2386388878503234
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.42486434897793796,
-                0.23967888194488032
-              ],
-              [
-                0.5578888325177018,
-                0.23853950359789644
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4837577399380805,
-                0.2556948893974066
-              ],
-              [
-                0.6140693119353005,
-                0.2516477529226794
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.418697982600264,
-                0.2553683585129859
-              ],
-              [
-                0.5484675247798685,
-                0.2528790981529166
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4203474676089517,
-                0.25380584148444035
-              ],
-              [
-                0.5511315980764929,
-                0.2534854245880862
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4140055263111873,
-                0.25387045813586095
-              ],
-              [
-                0.5583900720896973,
-                0.2513700280218596
-              ]
-            ]
-          }
-        ],
-        "celebrate": [
-          {
-            "eyes": [
-              [
-                0.4852735783899931,
-                0.25731336561198065
-              ],
-              [
-                0.583986056119814,
-                0.2542729645533384
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.47057730886395716,
-                0.2567557777294791
-              ],
-              [
-                0.5439575286506763,
-                0.25717208350769516
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.44646437839112996,
-                0.25788911964924427
-              ],
-              [
-                0.5440265105870201,
-                0.2535888692430749
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4060915867944622,
-                0.25758670820353063
-              ],
-              [
-                0.4996288766256818,
-                0.25208471002863525
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4833333333333333,
-                0.23333333333333334
-              ],
-              [
-                0.5866666666666667,
-                0.23333333333333334
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.45657730240311156,
-                0.2341595126003877
-              ],
-              [
-                0.5514825402163556,
-                0.23145044139009946
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.44,
-                0.23333333333333334
-              ],
-              [
-                0.54,
-                0.23333333333333334
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.410183496980747,
-                0.23366792276653217
-              ],
-              [
-                0.5206215509729887,
-                0.23497213375796178
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4949044585987261,
-                0.22666666666666668
-              ],
-              [
-                0.5918789808917199,
-                0.22666666666666668
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.46629392971246014,
-                0.23
-              ],
-              [
-                0.5635782747603834,
-                0.23333333333333334
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4566799857578035,
-                0.23070097604259093
-              ],
-              [
-                0.5426691218643402,
-                0.23012111637704055
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4197058291639038,
-                0.23394728960766695
-              ],
-              [
-                0.5122433863603701,
-                0.23186686439281592
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4983384104126281,
-                0.2128219329825533
-              ],
-              [
-                0.5887786433882305,
-                0.21689040018270864
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.46101238019169327,
-                0.21712446921443734
-              ],
-              [
-                0.5675602876147579,
-                0.21570279986276644
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.44697055556814835,
-                0.21913321395380467
-              ],
-              [
-                0.540995254650189,
-                0.21784200776511786
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.40808755577852296,
-                0.21700794862346687
-              ],
-              [
-                0.5113095642716334,
-                0.21664520937796447
-              ]
-            ]
-          }
-        ],
-        "shy": [
-          {
-            "eyes": [
-              [
-                0.5061644657863146,
-                0.2561144142696449
-              ],
-              [
-                0.6415752741774676,
-                0.2522715645713777
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.44797156580837333,
-                0.2566674198837728
-              ],
-              [
-                0.5937800046896791,
-                0.24988632273808586
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.3923977639000806,
-                0.25529069140330063
-              ],
-              [
-                0.5310152981501083,
-                0.25021872265966755
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.3412250223528281,
-                0.25482311948575487
-              ],
-              [
-                0.4789656481251588,
-                0.25016797494280735
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.484125816993464,
-                0.24509112286890064
-              ],
-              [
-                0.6446961349381252,
-                0.23744720430599395
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4449392399683159,
-                0.24555389345965262
-              ],
-              [
-                0.5950072817919463,
-                0.2367596756216611
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.39238350823144313,
-                0.24138587968375202
-              ],
-              [
-                0.5359482192380675,
-                0.23932608610027964
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.3551387584881766,
-                0.24286183901568517
-              ],
-              [
-                0.5003234017207764,
-                0.23777163941098367
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.5023788927335641,
-                0.24777404758429428
-              ],
-              [
-                0.6453575721153846,
-                0.24158976943755167
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.44648548675267774,
-                0.24829945320880095
-              ],
-              [
-                0.5911660516605166,
-                0.24159498207885305
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4001243672543201,
-                0.24329144904700584
-              ],
-              [
-                0.541297727144549,
-                0.23964409114285198
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.3481610640282227,
-                0.23816613494032848
-              ],
-              [
-                0.5008538117296067,
-                0.24353933119804774
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.5001060520361991,
-                0.26561051899907323
-              ],
-              [
-                0.6429863612111512,
-                0.26171693577029204
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.44294833948339485,
-                0.26748640483383684
-              ],
-              [
-                0.5873552681247063,
-                0.2651325457744924
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.3891129032258065,
-                0.2671006607073455
-              ],
-              [
-                0.5329190076490895,
-                0.2640238745546051
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.3554220358957516,
-                0.2641534725288589
-              ],
-              [
-                0.5025301514367313,
-                0.2634645544843349
-              ]
-            ]
-          }
-        ],
-        "carry": [
-          {
-            "eyes": [
-              [
-                0.5650574035914041,
-                0.260553992001185
-              ],
-              [
-                0.6670349060222478,
-                0.2557575757575758
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4804495548239568,
-                0.25041765726402365
-              ],
-              [
-                0.575759277247792,
-                0.252024426597851
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4081740976645435,
-                0.2745939829605964
-              ],
-              [
-                0.5193912046776837,
-                0.27187843414090984
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.3318036595991868,
-                0.2829509148997967
-              ],
-              [
-                0.4415731728459271,
-                0.2679396686232261
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.5409378185524975,
-                0.26666666666666666
-              ],
-              [
-                0.6369622833843017,
-                0.26
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4722750347909603,
-                0.2538197022390684
-              ],
-              [
-                0.5688639673121645,
-                0.2588717015468608
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4244720080455917,
-                0.27014233697451173
-              ],
-              [
-                0.5119334530162556,
-                0.2605995483353974
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.38763510298416154,
-                0.25569182816099745
-              ],
-              [
-                0.4986084764376997,
-                0.272765724522293
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.53452049017081,
-                0.2553302471148204
-              ],
-              [
-                0.6311076197957581,
-                0.24757580853091193
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.48021550612188196,
-                0.25502549957335346
-              ],
-              [
-                0.5712502380297484,
-                0.2538772401244102
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4007405601438454,
-                0.25287590349180494
-              ],
-              [
-                0.5019413663729169,
-                0.24282105730663
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.3884671375951383,
-                0.24493165674981193
-              ],
-              [
-                0.49666378298743463,
-                0.2609872461434359
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.5277777777777778,
-                0.24689694594153191
-              ],
-              [
-                0.6436355896126011,
-                0.24375137272128267
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4715214277845103,
-                0.259718866681309
-              ],
-              [
-                0.5721227431458503,
-                0.2468572557152027
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.4140479290565507,
-                0.23602934516801014
-              ],
-              [
-                0.5085484411666108,
-                0.229939603106126
-              ]
-            ]
-          },
-          {
-            "eyes": [
-              [
-                0.3996805111821086,
-                0.246771574871987
-              ],
-              [
-                0.5019289890891555,
-                0.2539615774202963
               ]
             ]
           }

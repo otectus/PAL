@@ -161,7 +161,7 @@ test('Anthropic schema-bearing tool mode is data-only and parses only the named 
 });
 
 test('connection-scoped credentials support separate same-origin accounts and opaque rotation revisions', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-task-credentials-')); t.after(() => rm(directory, { recursive: true, force: true }));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-task-credentials-')); t.after(() => rm(directory, { recursive: true, force: true }));
   const credentials = new ProviderCredentials(directory), origin = 'https://gateway.example';
   credentials.update('compatible', 'account-one', origin, 'connection:one');
   credentials.update('compatible', 'account-two', origin, 'connection:two');
@@ -173,7 +173,7 @@ test('connection-scoped credentials support separate same-origin accounts and op
 });
 
 test('a legacy compatible key is available only to its migrated origin and connection account', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-legacy-credentials-')); t.after(() => rm(directory, { recursive: true, force: true }));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-legacy-credentials-')); t.after(() => rm(directory, { recursive: true, force: true }));
   const credentials = new ProviderCredentials(directory), origin = 'https://gateway.example';
   credentials.update('compatible', 'legacy-key', origin); credentials.bindLegacyCompatible('connection:original', origin);
   assert.equal(credentials.key('compatible', origin, 'connection:original'), 'legacy-key');

@@ -26,7 +26,7 @@ gradle.projectsEvaluated {
             output.parentFile.mkdirs()
             output.text = JsonOutput.prettyPrint(JsonOutput.toJson([
                 bomFormat: 'CycloneDX', specVersion: '1.5', version: 1,
-                metadata: [component: [type: 'application', name: 'Cere Mobile', version: app.android.defaultConfig.versionName]],
+                metadata: [component: [type: 'application', name: 'PAL Mobile', version: app.android.defaultConfig.versionName]],
                 components: components
             ])) + '\n'
         }

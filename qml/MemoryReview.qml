@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 CDialog {
     id:review
-    width:Math.min(680,parent?parent.width-32:680)
+    preferredWidth:Theme.dialogLarge
     property string sessionId:""
     property var listing:({rows:[],assertions:[]})
     property var selected:({})
@@ -24,10 +24,10 @@ CDialog {
     }
     CText { visible:!(review.listing.rows||[]).length;text:"No message proposals. Use a message’s menu to propose a decision or constraint.";color:Theme.muted }
     CText { visible:!!review.selected.id;text:review.selected.sourceLabel||"";color:Theme.amber }
-    CTextArea { visible:!!review.selected.id;Layout.fillWidth:true;Layout.preferredHeight:100;readOnly:true;selectByMouse:true;wrapMode:TextEdit.Wrap;text:review.selected.sourceText||"";color:Theme.text;Accessible.name:"Supporting passage" }
-    CTextArea { id:note;visible:!!review.selected.id;Layout.fillWidth:true;Layout.preferredHeight:100;wrapMode:TextEdit.Wrap;color:Theme.text;Accessible.name:"Reviewed memory text" }
+    CTextArea { visible:!!review.selected.id;Layout.fillWidth:true;Layout.preferredHeight:Theme.editorShort;readOnly:true;selectByMouse:true;wrapMode:TextEdit.Wrap;text:review.selected.sourceText||"";color:Theme.text;Accessible.name:"Supporting passage" }
+    CTextArea { id:note;visible:!!review.selected.id;Layout.fillWidth:true;Layout.preferredHeight:Theme.editorShort;wrapMode:TextEdit.Wrap;color:Theme.text;Accessible.name:"Reviewed memory text" }
     Flow {
-        Layout.fillWidth:true;spacing:6
+        Layout.fillWidth:true;spacing:Theme.space2
         visible:!!review.selected.id
         Repeater {
             model:[{label:"Confirm",choice:"confirm"},{label:"Correct",choice:"correct"},{label:"Keep local",choice:"local"},{label:"Forget proposal",choice:"forget"}]

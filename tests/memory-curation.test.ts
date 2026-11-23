@@ -8,7 +8,7 @@ import { Canonical } from '../broker/graph-memory/canonical.ts';
 // A05 retention, correction and erasure gates for M05's retention pins, plus M05's timeline and
 // bounded neighborhood views. A pin keeps a record from retention expiry; it is never truth.
 function canonical(t: TestContext) {
-  const directory = mkdtempSync(join(tmpdir(), 'cere-curation-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pal-curation-'));
   const c = new Canonical(directory);
   t.after(() => { c.close(); rmSync(directory, { recursive: true, force: true }); });
   return { c, scope: c.registerScope({ key: 'curation', label: 'Curation' }).id, other: c.registerScope({ key: 'other', label: 'Other' }).id };
@@ -102,7 +102,7 @@ test('M05 a neighborhood is one hop, current, accepted and bounded', t => {
 test('M05 the broker exposes curation through memory.graph within the conversation’s project', async t => {
   const { Core } = await import('../broker/core.ts');
   const { Store } = await import('../broker/store.ts');
-  const dir = mkdtempSync(join(tmpdir(), 'cere-curation-core-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pal-curation-core-'));
   const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   t.after(async () => { await core.close(); rmSync(dir, { recursive: true, force: true }); });
   await core.updateSettings({ memory: { enabled: true }, ollama: { host: 'http://127.0.0.1:9' } });
@@ -119,7 +119,7 @@ test('M05 the broker exposes curation through memory.graph within the conversati
 test('re-adjudication is a global memory.graph method that backs memory up before it writes', async t => {
   const { Core } = await import('../broker/core.ts');
   const { Store } = await import('../broker/store.ts');
-  const dir = mkdtempSync(join(tmpdir(), 'cere-readjudicate-core-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pal-readjudicate-core-'));
   const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   t.after(async () => { await core.close(); rmSync(dir, { recursive: true, force: true }); });
   await core.updateSettings({ memory: { enabled: true }, ollama: { host: 'http://127.0.0.1:9' } });

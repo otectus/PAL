@@ -3,6 +3,9 @@
  * services and is Core's single entry point for them: the tool registry, the interface's RPCs, session
  * clean-up, restart recovery and shutdown. Authorization stays in one place per service; Core only routes.
  */
+import { registerCanvasTools } from './canvas-tools.ts';
+import { registerSkillTools } from './skill-tools.ts';
+import { limitedControlled, ownerControlled } from './authority.ts';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Core } from './core.ts';
@@ -79,6 +82,8 @@ export class Workbench {
   private ready = false;
   /** Counts artifact changes so open browsers know to reload. */
   private artifactRevision = 0;
+  // An empty Files pane is a normal state. Refresh it when folders change, including on a phone.
+  private rootsRevision = 0;
   /** Empty when confined file access works here; otherwise the reason, shown wherever files are offered. */
   problem = '';
   private probed = false;
@@ -108,8 +113,12 @@ export class Workbench {
     registerFileTools(this);
     registerImageTools(this);
     registerAnalysisTools(this);
+    registerSkillTools(this);
+    registerCanvasTools(this);
     this.registerKnowledgeTools();
     this.registerHelperTool();
+    this.registerSpecialistTools();
+    this.registerTranslationTool();
     this.changes.recover();
     void this.artifacts.recover();
     // Outstanding operations never resume by themselves; a backend job with an ID is checked by status.
@@ -128,6 +137,35 @@ export class Workbench {
       run: async ({ sessionId, signal }, args) => this.helpers.run(sessionId, args.role, args.request, args.inputs, args.changeSetId, signal),
     });
   }
+  /** PAL Everywhere §17.2: named specialists as child operations of this conversation, one or several at once. */
+  private registerSpecialistTools() {
+    const task = z.strictObject({ specialist: z.string().min(1).max(80), request: z.string().min(3).max(2000), inputs: z.array(referenceSchema).max(6).default([]), changeSetId: z.string().regex(/^[0-9a-f-]{36}$/).optional() });
+    const names = () => this.core.specialists.list().specialists.map(item => `${item.name} (${item.role})`).join(', ');
+    this.registry.register({
+      name: 'specialists_run', family: 'files', core: false, effects: { read: true },
+      description: `Ask one specialist for a focused task on inputs this conversation can already see. It has no tools and changes nothing; a document editor's edits arrive as a change set for the person to review. Specialists: ${names()}. Results are suggestions to check.`,
+      input: task,
+      available: () => (this.helpers.settings().provider || this.vision.settings().provider || this.core.specialists.list().specialists.some(item => item.provider)) ? '' : 'No helper model is set up (Settings › Connections › Images & analysis)',
+      run: async ({ sessionId, signal, turnId }: any, args) => this.core.specialists.run(sessionId, { ...args, ...(turnId ? { turnId } : {}) }, signal),
+    });
+    this.registry.register({
+      name: 'specialists_panel', family: 'files', core: false, effects: { read: true },
+      description: `Ask up to ${4} specialists at once (they run ${'two'} at a time by default) and get their views side by side, each attributed; disagreements are kept. Use it only when several perspectives help.`,
+      input: z.strictObject({ tasks: z.array(task).min(1).max(4) }),
+      available: () => (this.helpers.settings().provider || this.vision.settings().provider) ? '' : 'No helper model is set up (Settings › Connections › Images & analysis)',
+      run: async ({ sessionId, signal, turnId }: any, args) => this.core.specialists.panel(sessionId, args.tasks, turnId, signal),
+    });
+  }
+  /** PAL Everywhere §16.3: translation into a new linked file (documents) or text (selections). */
+  private registerTranslationTool() {
+    this.registry.register({
+      name: 'translate', family: 'files', core: false, effects: { read: true },
+      description: 'Translate a text, or a text file or document this conversation can see, into a language, keeping its structure (headings, lists, tables; code is left as is) and an optional glossary. A document becomes a new linked file; the original is never changed.',
+      input: z.strictObject({ targetLanguage: z.string().min(2).max(40), text: z.string().max(120_000).optional(), input: referenceSchema.optional(), glossary: z.array(z.strictObject({ source: z.string().min(1).max(200), target: z.string().max(200) })).max(50).optional() }),
+      available: () => this.helpers.settings().provider ? '' : 'No helper model is set up (Settings › Connections › Images & analysis)',
+      run: async ({ sessionId, signal }, args) => this.core.translation.run({ sessionId, ...args }, signal),
+    });
+  }
   private registerKnowledgeTools() {
     this.registry.register({
       name: 'knowledge_search', family: 'knowledge', core: true, effects: { read: true },
@@ -139,8 +177,8 @@ export class Workbench {
         const route = (await this.route(sessionId, signal)).route === 'local' ? 'local' as const : 'cloud' as const;
         const packet = await this.core.collections.context(session, args.query, 2400, route, signal);
         if (!packet.text) return completed(packet.detail?.withheld?.length ? `Nothing could be used: ${packet.detail.withheld.join(', ')} ${packet.detail.withheld.length === 1 ? 'does' : 'do'} not allow this conversation’s model.` : 'No excerpt matched. That does not prove the documents never mention it.', { collections: packet.detail?.collections || [], withheld: packet.detail?.withheld || [] });
-        if (!this.spendEvidence(sessionId, turnId, Buffer.byteLength(packet.text))) return failed('evidence-budget', 'This turn already received the most content Cere releases in one turn', 'never');
-        const body = JSON.parse(packet.text.replace(/^<cere_document_data>\n|\n<\/cere_document_data>$/g, '').replaceAll('<\\/cere_document_data>', '</cere_document_data>'));
+        if (!this.spendEvidence(sessionId, turnId, Buffer.byteLength(packet.text))) return failed('evidence-budget', 'This turn already received the most content PAL releases in one turn', 'never');
+        const body = JSON.parse(packet.text.replace(/^<pal_document_data>\n|\n<\/pal_document_data>$/g, '').replaceAll('<\\/pal_document_data>', '</pal_document_data>'));
         return completed(`${body.items.length} excerpt${body.items.length === 1 ? '' : 's'} from ${packet.detail.sources.length} source${packet.detail.sources.length === 1 ? '' : 's'}. ${body.how_to_answer}`, { items: body.items, grounding: body.grounding, note: body.note });
       },
     });
@@ -148,7 +186,7 @@ export class Workbench {
   /** Images tools need the Images family; generation additionally needs a configured backend, checked when called. */
   imagesAvailable(session: Session) {
     if (!sessionCapabilities(session).images) return 'Images is not turned on for this conversation';
-    return this.core.settings.paused ? 'Cere actions are paused' : '';
+    return this.core.settings.paused ? 'PAL actions are paused' : '';
   }
   /**
    * The media bridge: images a tool result asked to show the conversation model, re-authorized for the
@@ -171,6 +209,8 @@ export class Workbench {
     if (terminalStates.includes(operation.state)) return operation;
     const controller = this.runControllers.get(operationId);
     if (!controller) return this.operations.get(operationId);
+    // A run still waiting for its turn (a queued specialist) ends at once: nothing was sent.
+    if (operation.state === 'queued') { controller.abort(new Error('Cancelled by the user')); return this.operations.transition(operation.id, 'cancelled', { cancellation: { requested: Date.now(), confirmed: true, note: 'Cancelled before it started' } }); }
     if (!terminalStates.includes(operation.state)) this.operations.transition(operation.id, 'cancel_requested', { cancellation: { requested: Date.now(), confirmed: false, note: 'Stopping the run' } });
     controller.abort(new Error('Cancelled by the user'));
     return this.operations.get(operationId);
@@ -183,9 +223,13 @@ export class Workbench {
     const selected = sessionCapabilities(session), families = new Set<string>();
     if (this.core.settings.paused) return families;
     for (const family of ['files', 'images', 'analysis'] as const) if (selected[family] && !this.core.withheld(session.id, family)) families.add(family);
-    if (families.has('images') || families.has('analysis')) families.add('operations');
+    // Host commands follow the style's analysis ceiling: a style that withholds running code withholds them too.
+    if (selected.host && !this.core.withheld(session.id, 'analysis')) families.add('host');
+    if (families.has('images') || families.has('analysis') || families.has('host')) families.add('operations');
     // On-demand collection evidence follows the collections' own binding and consent rules.
-    if (!session.temporary && !session.remote && !this.core.withheld(session.id, 'memory') && this.core.collections.bound(session).length) families.add('knowledge');
+    if (!session.temporary && ownerControlled(session) && !this.core.withheld(session.id, 'memory') && this.core.collections.bound(session).length) families.add('knowledge');
+    // Enabled skills for this conversation's scope; which of them the model may load is decided per request (skills.ts).
+    if (!session.temporary && this.core.skills.list().some(v => v.status === 'enabled' && (v.scope === 'personal' || (!!v.project && (session.cwd === v.project || session.cwd.startsWith(v.project + '/')))))) families.add('skills');
     return families;
   }
   tools(sessionId: string): OllamaTool[] {
@@ -288,7 +332,7 @@ export class Workbench {
     }
     const authorize = () => {
       const current = this.core.store.session(sessionId);
-      if (this.core.settings.paused) throw new WorkspaceError('paused', 'Cere actions were paused; nothing more was changed');
+      if (this.core.settings.paused) throw new WorkspaceError('paused', 'PAL actions were paused; nothing more was changed');
       if (!sessionCapabilities(current).files) throw new WorkspaceError('revoked', 'Files was turned off for this conversation; nothing more was changed');
       if (decidedBy === 'grant' && !this.grantFor(sessionId, set, true)) throw new WorkspaceError('revoked', 'The edit permission ended; nothing more was changed');
     };
@@ -333,6 +377,7 @@ export class Workbench {
   activeGrants(sessionId?: string) { return [...this.grants.values()].filter(grant => grant.expires > Date.now() && (!sessionId || grant.sessionId === sessionId)); }
   /** A root's permissions changed or it was removed: its pending reviews and edit grants are retired. */
   private rootChanged(root: WorkspaceRoot, reason: string) {
+    this.rootsRevision++;
     if (reason === 'added') { if (!this.core.closed) this.core.changed(); return; }
     for (const set of this.changes.pendingFor(root.id)) {
       const approval = [...this.core.approvals.values()].find(item => item.value.fields?.changeSetId === set.id);
@@ -385,15 +430,15 @@ export class Workbench {
   summary() {
     const pending = this.core.store.db.prepare("SELECT id,session_id FROM change_sets WHERE status='pending' ORDER BY created DESC LIMIT 50").all().map(row => ({ changeSetId: String(row.id), sessionId: String(row.session_id) }));
     const active = this.operations.active().slice(0, 50).map(operation => ({ operationId: operation.id, sessionId: operation.sessionId, kind: operation.kind, state: operation.state }));
-    return { problem: this.problem, checked: this.probed, artifactRevision: this.artifactRevision, pendingChanges: pending, activeOperations: active, imageConnections: this.media.connections().filter(c => c.enabled).length, grants: this.activeGrants().map(({ id, sessionId, rootId, paths, expires, maxOperations, usedOperations, maxBytes, usedBytes }) => ({ id, sessionId, rootId, paths, expires, maxOperations, usedOperations, maxBytes, usedBytes })) };
+    return { problem: this.problem, checked: this.probed, artifactRevision: this.artifactRevision, rootsRevision: this.rootsRevision, pendingChanges: pending, activeOperations: active, imageConnections: this.media.connections().filter(c => c.enabled).length, grants: this.activeGrants().map(({ id, sessionId, rootId, paths, expires, maxOperations, usedOperations, maxBytes, usedBytes }) => ({ id, sessionId, rootId, paths, expires, maxOperations, usedOperations, maxBytes, usedBytes })) };
   }
-  static readOnly = ['workspace.roots', 'workspace.grants', 'files.list', 'files.stat', 'files.read', 'files.text', 'files.find', 'files.search', 'changes.list', 'changes.review', 'changes.trash',
+  static readOnly = ['workspace.roots', 'workspace.grants', 'files.list', 'files.stat', 'files.read', 'files.text', 'files.table', 'files.find', 'files.search', 'changes.list', 'changes.review', 'changes.trash',
     'shelf.get', 'references.search', 'references.pin', 'references.preview', 'artifacts.list', 'artifacts.get', 'artifacts.derived', 'artifacts.thumbnail', 'artifacts.file', 'images.connections', 'images.capabilities', 'operations.list', 'operations.get', 'operations.partial', 'operations.usage', 'codelab.status'];
   private session(id: unknown) {
     if (typeof id !== 'string') throw new Error('Choose a conversation');
     const session = this.core.store.session(id);
     if (session.temporary) throw new Error('Temporary conversations stay text-only; files are unavailable');
-    if (session.remote) throw new Error('Workspace files are managed on the desktop');
+    if (limitedControlled(session)) throw new Error('A limited phone controls this conversation; its files are managed on the desktop or an owner phone');
     return session;
   }
   private async rootFor(p: any) { const session = this.session(p.sessionId), root = this.roots.get(session.id, p.rootId); return { session, root }; }
@@ -418,13 +463,22 @@ export class Workbench {
       case 'files.list': { const { root } = await this.rootFor(p); return list(root, normalizePath(p.path, root.path), { cursor: p.cursor, limit: p.limit, hidden: p.hidden === true || root.policy.hidden }); }
       case 'files.stat': { const { root } = await this.rootFor(p); return statPath(root, normalizePath(p.path, root.path)); }
       case 'files.read': { const { root } = await this.rootFor(p); return readExcerpt(root, normalizePath(p.path, root.path), { startLine: p.startLine, lineCount: Math.min(Number(p.lineCount) || 300, 300) }); }
+      case 'files.table': {
+        // §15.2: a table's columns and types before analysis, with the same path and readability checks as reading it.
+        const { root } = await this.rootFor(p), rel = normalizePath(p.path, root.path);
+        readable(root, rel);
+        const file = await readText(root, rel);
+        if (file.binary) throw new Error('This is not a text table');
+        const { previewTable } = await import('./table-preview.ts');
+        return { name: rel.split('/').pop(), ...previewTable(file.text, rel) };
+      }
       case 'files.text': {
         // The whole text for the Workbench editor, bounded by what one proposal may stage.
         const { root } = await this.rootFor(p), rel = normalizePath(p.path, root.path);
         readable(root, rel);
         const file = await readText(root, rel);
         if (file.binary) throw new Error('This is not UTF-8 text; open it in another application');
-        if (file.size > workspaceLimits.proposalBytes) throw new Error('This file is larger than 256 KiB, the most Cere edits in one change; open it in your editor');
+        if (file.size > workspaceLimits.proposalBytes) throw new Error('This file is larger than 256 KiB, the most PAL edits in one change; open it in your editor');
         return { path: rel, version: file.version, text: file.text, newline: file.newline, endsWithNewline: file.endsWithNewline, size: file.size };
       }
       case 'files.find': { const { root } = await this.rootFor(p); return find(root, normalizePath(p.path, root.path), String(p.pattern || ''), { cursor: p.cursor }); }
@@ -600,12 +654,12 @@ export class Workbench {
       case 'operations.partial': owned(p.id); return { data: this.media.partial(p.id) };
       case 'operations.usage': return this.operations.usage(this.session(p.sessionId).id);
       case 'operations.check': {
-        // The person asks Cere to look again: status only, never a new submission.
+        // The person asks PAL to look again: status only, never a new submission.
         const operation = owned(p.id);
         if (!operation.remoteId || operation.backend?.kind !== 'comfyui') throw new Error('Only a ComfyUI job with a known ID can be checked; other providers answer once');
         await this.media.reconcile(operation); return describeForUi(this.operations.get(operation.id));
       }
-      case 'operations.cancel': { const operation = owned(p.id); return describeForUi(operation.kind === 'codelab.run' || operation.kind === 'command.run' ? await this.cancelRun(operation.id) : await this.media.cancel(operation.id)); }
+      case 'operations.cancel': { const operation = owned(p.id); return describeForUi(['codelab.run', 'command.run', 'command.host', 'specialist.run'].includes(operation.kind) ? await this.cancelRun(operation.id) : await this.media.cancel(operation.id)); }
       case 'operations.retry': {
         // A retry the user asks for is a new operation linked to the uncertain one, never a replay of it.
         const previous = owned(p.id);
@@ -639,13 +693,13 @@ export class Workbench {
     this.operations.removeSession(sessionId);
     for (const grant of [...this.grants.values()]) if (grant.sessionId === sessionId) this.grants.delete(grant.id);
     this.changes.removeSession(sessionId);
-    // Cere's own conversation workspace is removed with the conversation; folders the user chose are untouched.
+    // PAL's own conversation workspace is removed with the conversation; folders the user chose are untouched.
     for (const path of this.roots.removeSession(sessionId)) void rm(path, { recursive: true, force: true }).catch(() => {});
   }
   async close() {
     this.extractor.close();
     for (const timer of this.expiryTimers.values()) clearTimeout(timer); this.expiryTimers.clear(); this.grants.clear();
-    for (const controller of this.runControllers.values()) controller.abort(new Error('Cere is closing'));
+    for (const controller of this.runControllers.values()) controller.abort(new Error('PAL is closing'));
     // Stopped runs still record that they were interrupted; give them a bounded moment to do so.
     if (this.activeRuns.size) await Promise.race([Promise.allSettled([...this.activeRuns]), new Promise(resolve => setTimeout(resolve, 5000).unref())]);
     await this.media.close();

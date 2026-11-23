@@ -9,7 +9,7 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import type { Core } from './core.ts';
 
-export const packageFormat = 'cere-package', packageSchema = 1, packageLimitBytes = 1024 * 1024;
+export const packageFormat = 'pal-package', legacyPackageFormat = 'cere-package', packageSchema = 1, packageLimitBytes = 1024 * 1024;
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 
 export class ProfilePackages {
@@ -32,16 +32,16 @@ export class ProfilePackages {
     const items = this.core.presets.catalog().items.filter(item => profiles.includes(item.id))
       .map(({ id, label, text, traits, instructions, ceiling, posture, constraints }) => ({ id, label, text, traits, instructions, ceiling, posture, constraints: constraints || [] }));
     const text = JSON.stringify({ format: packageFormat, schema: packageSchema, created: new Date().toISOString(), profiles: items, recipes: this.core.workflows.exportRecipes(recipes) }, null, 2) + '\n';
-    return { text, filename: 'cere-styles-and-recipes.json', profiles: items.length, recipes: recipes.length };
+    return { text, filename: 'pal-styles-and-recipes.json', profiles: items.length, recipes: recipes.length };
   }
   private parse(text: unknown) {
     if (typeof text !== 'string' || !text.trim() || Buffer.byteLength(text) > packageLimitBytes) throw new Error('Choose a package file of up to 1 MB');
     let value: any;
-    try { value = JSON.parse(text); } catch { throw new Error('This is not a Cere package (invalid JSON)'); }
-    if (value?.format !== packageFormat) throw new Error('This is not a Cere package');
-    if (!Number.isInteger(value.schema) || value.schema > packageSchema || value.schema < 1) throw new Error('This package was made by a newer version of Cere. Update Cere to import it.');
+    try { value = JSON.parse(text); } catch { throw new Error('This is not a PAL package (invalid JSON)'); }
+    if (![packageFormat, legacyPackageFormat].includes(value?.format)) throw new Error('This is not a PAL package');
+    if (!Number.isInteger(value.schema) || value.schema > packageSchema || value.schema < 1) throw new Error('This package was made by a newer version of PAL. Update PAL to import it.');
     const allowed = ['format', 'schema', 'created', 'profiles', 'recipes'];
-    if (Object.keys(value).some(key => !allowed.includes(key))) throw new Error('This package has fields Cere does not import; nothing was imported');
+    if (Object.keys(value).some(key => !allowed.includes(key))) throw new Error('This package has fields PAL does not import; nothing was imported');
     if (!Array.isArray(value.profiles ?? []) || !Array.isArray(value.recipes ?? []) || (value.profiles?.length || 0) > 50 || (value.recipes?.length || 0) > 100) throw new Error('Invalid package contents');
     return value;
   }

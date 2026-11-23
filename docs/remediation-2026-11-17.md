@@ -1,6 +1,6 @@
 # Repository remediation implementation record
 
-This work applies `Cere_Repository_Remediation_Spec.md` to the existing `ui-overhaul` checkout at `c99b682af7fe6b8316400201369117b3a64f71b3`, preserving its pre-existing uncommitted changes. The audit baseline is `c65798e21338b4cbec9f686e6e2fb619e8b141ef`. This record describes the fixes and their evidence; it does **not** certify exhaustive repository coverage or release readiness.
+This work applies `PAL_Repository_Remediation_Spec.md` to the existing `ui-overhaul` checkout at `c99b682af7fe6b8316400201369117b3a64f71b3`, preserving its pre-existing uncommitted changes. The audit baseline is `c65798e21338b4cbec9f686e6e2fb619e8b141ef`. This record describes the fixes and their evidence; it does **not** certify exhaustive repository coverage or release readiness.
 
 ## Implemented finding corrections
 
@@ -32,23 +32,23 @@ Snapshot hydration contract version 1 is additive to desktop state version 1. `h
 
 Collection cleanup uses canonical tombstones. Physical Neo4j/Qdrant purge is asynchronous; `purge_complete:false` is not presented as completed physical deletion. Canonical memory has no scope-delete command: an unexpected catalog persistence failure after scope allocation may retain empty scope metadata, with exact-scope Forget attempted. Ownership-ambiguous historical data must not be erased speculatively.
 
-The file lock guarantees no lost update among Cere writers. External editors do not participate in that lock; near-commit checks detect observed changes, but a portable filesystem compare-and-swap against an uncooperative writer is not claimed. Process supervision proves only the original owned process group; it cannot prove termination of descendants that escape with `setsid`, or work dispatched to remote services.
+The file lock guarantees no lost update among PAL writers. External editors do not participate in that lock; near-commit checks detect observed changes, but a portable filesystem compare-and-swap against an uncooperative writer is not claimed. Process supervision proves only the original owned process group; it cannot prove termination of descendants that escape with `setsid`, or work dispatched to remote services.
 
 ## Current validation
 
 Runtime: Node 26.13.1 (package minimum 24.22.0; `.node-version` remains the existing 26.8.2 pin).
 
-- Clean installation: `npm ci --prefix /tmp/cere-remediation-install-20261117` — passed, including install scripts; 73 packages installed.
+- Clean installation: `npm ci --prefix /tmp/pal-remediation-install-20261117` — passed, including install scripts; 73 packages installed.
 - `npm audit --json` — zero reported vulnerabilities, including GHSA-mrhx-c7xc-m3w5.
 - `npm run typecheck` and `git diff --check` — passed after integration.
 - `cmake --build build --parallel 4` — passed.
 - `QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME= QT_QUICK_BACKEND=software ctest --test-dir build --output-on-failure` — 5/6 passed. The OpenGL avatar check fails silhouette/ground comparisons under the forced offscreen platform. CMake explicitly excludes offscreen as a valid GL readback platform, and historical `VALIDATION.md` documents the same failure. Motion, registration, software avatar, catalog and QML pass. The subsequent private Xvfb run passed the OpenGL test (155.24 seconds): all six native/QML checks have therefore passed across their intended display configurations.
-- Focused offscreen `cere-ui-check`: `draftsStayCoherentAcrossComposers reconnectRecoversTranscriptAndFailsPendingRequests draftSurvivesUnconfirmedSave approvalsIdentifyTheirRequester` — 6 passed including setup/cleanup, zero failures/skips. Reconnect includes the new framing regression.
+- Focused offscreen `pal-ui-check`: `draftsStayCoherentAcrossComposers reconnectRecoversTranscriptAndFailsPendingRequests draftSurvivesUnconfirmedSave approvalsIdentifyTheirRequester` — 6 passed including setup/cleanup, zero failures/skips. Reconnect includes the new framing regression.
 - `./gradlew :core:data:testDebugUnitTest` — passed, including two new coroutine scheduling tests in `RepositoryCommitGateTest`.
 - Initial full Node run: 852 tests, 844 passed, two settings-merge regressions, six skipped. Both regressions were corrected; affected integration tests passed 133/133.
 - Subsequent full Node run: 868 tests, 861 passed, one misconfigured fake-server fixture, six skipped. The fixture was corrected; its focused rerun passed. Final integrated gate results follow below.
 
-- Final full broker gate: `CERE_TTS_DISABLED=1 node --test --test-concurrency=4 tests/*.test.ts` — **870 tests, 864 passed, zero failed, six skipped**. Five skips require the private compositor/audio desktop; one requires opt-in installed IndexTTS synthesis. Four final targeted hydration/deletion/commit-guard regressions also passed after the final narrow edits.
+- Final full broker gate: `PAL_TTS_DISABLED=1 node --test --test-concurrency=4 tests/*.test.ts` — **870 tests, 864 passed, zero failed, six skipped**. Five skips require the private compositor/audio desktop; one requires opt-in installed IndexTTS synthesis. Four final targeted hydration/deletion/commit-guard regressions also passed after the final narrow edits.
 - Complete configured Android compile/unit/lint/build gate passed: `./gradlew --no-daemon :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug :app:lintRelease :app:lintDev :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:assembleDev` (257 tasks, 2m 58s). This is build evidence, not device execution or release signing evidence.
 
 Built APK SHA-256 values (no device installation performed):
@@ -59,11 +59,11 @@ Built APK SHA-256 values (no device installation performed):
 | `release/app-release-unsigned.apk` | `3d6e0b3fae77ecb982f1aad98523957fe1964a2c4040ca23e3ab8e70897c0b85` |
 | `dev/app-dev.apk` | `6c5066ef46034219996371a77ef7682b3f587dcdb4ce9126d218ad11f82985aa` |
 
-Machine-local logs: `/tmp/cere-remediation-install.log`, `/tmp/cere-remediation-audit.json`, `/tmp/cere-remediation-native.log`, `/tmp/cere-remediation-ctest.log`, `/tmp/cere-remediation-ui.log`, `/tmp/cere-remediation-suite-verified.log`, `/tmp/cere-remediation-android-gates.log`. Android XML results are under `mobile/android/core/data/build/test-results/testDebugUnitTest/`. These are local evidence, not published release artifacts.
+Machine-local logs: `/tmp/pal-remediation-install.log`, `/tmp/pal-remediation-audit.json`, `/tmp/pal-remediation-native.log`, `/tmp/pal-remediation-ctest.log`, `/tmp/pal-remediation-ui.log`, `/tmp/pal-remediation-suite-verified.log`, `/tmp/pal-remediation-android-gates.log`. Android XML results are under `mobile/android/core/data/build/test-results/testDebugUnitTest/`. These are local evidence, not published release artifacts.
 
-The OpenGL rerun used temporary Xvfb/Xauth packages under `.local-deps/remediation-xvfb`: `PATH="$PWD/.local-deps/remediation-xvfb/usr/bin:$PATH" QT_QPA_PLATFORM=xcb QT_QPA_PLATFORMTHEME= .local-deps/remediation-xvfb/usr/bin/xvfb-run -a ctest --test-dir build --output-on-failure -R '^avatar$'` passed 1/1. Evidence: `/tmp/cere-remediation-gl.log`. No renderer assertions were weakened.
+The OpenGL rerun used temporary Xvfb/Xauth packages under `.local-deps/remediation-xvfb`: `PATH="$PWD/.local-deps/remediation-xvfb/usr/bin:$PATH" QT_QPA_PLATFORM=xcb QT_QPA_PLATFORMTHEME= .local-deps/remediation-xvfb/usr/bin/xvfb-run -a ctest --test-dir build --output-on-failure -R '^avatar$'` passed 1/1. Evidence: `/tmp/pal-remediation-gl.log`. No renderer assertions were weakened.
 
-The private-compositor rerun was attempted with a temporary Cage package extracted under `.local-deps/remediation-cage` (no host installation). Hyprland failed before tests with `xdg_wm_base: expected at most 5, got 6`. Logs are `/tmp/cere-remediation-compositor.log` and `build/remediation-desktop/`. This environment failure does not count as a passed compositor gate.
+The private-compositor rerun was attempted with a temporary Cage package extracted under `.local-deps/remediation-cage` (no host installation). Hyprland failed before tests with `xdg_wm_base: expected at most 5, got 6`. Logs are `/tmp/pal-remediation-compositor.log` and `build/remediation-desktop/`. This environment failure does not count as a passed compositor gate.
 
 ## Spec work not completed
 

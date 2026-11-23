@@ -91,7 +91,7 @@ export async function transform(bytes: Buffer, steps: TransformStep[]) {
 }
 
 /**
- * Cere's mask: single-channel coverage the size of the base, 255 edits and 0 preserves. Any input the
+ * PAL's mask: single-channel coverage the size of the base, 255 edits and 0 preserves. Any input the
  * editor painted (PNG with alpha or gray) becomes that, after a check that it matches the base exactly.
  */
 export async function normalizeMask(maskBytes: Buffer, base: { width: number; height: number }) {

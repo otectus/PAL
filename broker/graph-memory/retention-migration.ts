@@ -1,3 +1,32 @@
+import type { DatabaseSync } from "node:sqlite";
+
+/**
+ * Migration 7 copies every legacy pin into retention_holds, whose unique index allows one active hold
+ * per target and reason. Legacy pins had no such constraint, so a store with two active pins on one
+ * record failed that copy, rolled back, and failed the same way on every later start. Run inside
+ * migration 7's transaction, just before its SQL, this keeps the oldest active pin of each such record
+ * with every distinct note of the group, and releases the others at the store's latest revision. No
+ * pin is deleted, and the shipped, checksummed migration text is unchanged.
+ */
+export function repairLegacyPins(db: DatabaseSync) {
+  if (!db.prepare("SELECT 1 AS n FROM sqlite_master WHERE type='table' AND name='retention_pins'").get()) return;
+  const revision = Number((db.prepare("SELECT COALESCE(MAX(revision),0) AS n FROM commits").get() as { n: number }).n);
+  const active = db.prepare(
+    "SELECT id,target_kind,target_id,note FROM retention_pins WHERE released_revision IS NULL ORDER BY target_kind,target_id,created_revision,created_us,id",
+  ).all() as { id: string; target_kind: string; target_id: string; note: string }[];
+  const groups = new Map<string, typeof active>();
+  for (const pin of active) {
+    const key = pin.target_kind + "\u0000" + pin.target_id;
+    groups.set(key, [...(groups.get(key) || []), pin]);
+  }
+  for (const [kept, ...duplicates] of groups.values()) {
+    if (!duplicates.length) continue;
+    const note = [...new Set([kept, ...duplicates].map((pin) => pin.note.trim()).filter(Boolean))].join("; ");
+    if (note !== kept.note.trim()) db.prepare("UPDATE retention_pins SET note=? WHERE id=?").run(note, kept.id);
+    for (const duplicate of duplicates) db.prepare("UPDATE retention_pins SET released_revision=? WHERE id=?").run(revision, duplicate.id);
+  }
+}
+
 /**
  * Retention storage is kept in its own append-only migration so schema.ts can
  * register it at the next free migration id without making this module depend

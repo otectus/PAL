@@ -60,7 +60,7 @@ export interface GraphRepository {
 export type ArtifactKind = 'statement' | 'derived_summary' | 'assertion' | 'episode_summary' | 'topic_summary' | 'entity_description' | 'conversation' | 'saved' | 'episode' | 'topic';
 export type VectorDistance = 'Cosine' | 'Dot' | 'Euclid' | 'Manhattan';
 
-/** The payload is deliberately text-free; Cere hydrates text from canonical storage. */
+/** The payload is deliberately text-free; PAL hydrates text from canonical storage. */
 export interface VectorArtifactMetadata {
   ownerId: string;
   scopeId: string;

@@ -1,3 +1,4 @@
+import { ownerControlled } from './authority.ts';
 import type { Core } from './core.ts';
 import { categoryEnabled } from './permissions.ts';
 import type { Session, ToolDefinition } from './types.ts';
@@ -13,11 +14,11 @@ const followUp = { type: 'object', description: 'Only when the user asked for a 
 export const orchestrationDefinitions: ToolDefinition[] = [
   { name: 'providers.list', title: 'List providers', category: 'providers', description: 'List available Codex and Claude providers and their selectable models and efforts', schema: {}, readOnly: true },
   { name: 'sessions.list', title: 'List delegated sessions', category: 'providers', description: 'List sessions created by this conversation', schema: {}, readOnly: true },
-  { name: 'sessions.start', title: 'Delegate a task', category: 'providers', description: 'Start a visible Codex or Claude conversation in the current project after user approval. Returns its ID immediately; Cere sends this conversation a delegation update when it finishes.',
+  { name: 'sessions.start', title: 'Delegate a task', category: 'providers', description: 'Start a visible Codex or Claude conversation in the current project after user approval. Returns its ID immediately; PAL sends this conversation a delegation update when it finishes.',
     schema: { provider: { type: 'string', enum: ['codex', 'claude'] }, prompt, model: { type: 'string', maxLength: 512, description: 'Optional model ID from providers_list; omit for CLI default' }, effort: { type: 'string', maxLength: 32, description: 'Optional effort supported by that model' }, followUp }, required: ['provider', 'prompt'] },
-  { name: 'sessions.send', title: 'Continue delegated work', category: 'providers', description: 'Send a follow-up to an idle delegated session after user approval. Returns immediately; Cere sends this conversation a delegation update when it finishes.', schema: { id, prompt, followUp }, required: ['id', 'prompt'] },
+  { name: 'sessions.send', title: 'Continue delegated work', category: 'providers', description: 'Send a follow-up to an idle delegated session after user approval. Returns immediately; PAL sends this conversation a delegation update when it finishes.', schema: { id, prompt, followUp }, required: ['id', 'prompt'] },
   { name: 'sessions.read', title: 'Read delegated results', category: 'providers', description: 'Read status and recent conversation messages from a delegated session', schema: { id }, readOnly: true },
-  { name: 'sessions.wait', title: 'Wait for delegated work', category: 'providers', description: 'Wait up to 60 seconds for a delegated turn, then return status and recent messages. Usually unnecessary: a finished session reports back by itself. Waiting sessions need user input in Cere.', schema: { id, seconds: { type: 'integer', minimum: 1, maximum: 60 } }, required: ['id'], readOnly: true },
+  { name: 'sessions.wait', title: 'Wait for delegated work', category: 'providers', description: 'Wait up to 60 seconds for a delegated turn, then return status and recent messages. Usually unnecessary: a finished session reports back by itself. Waiting sessions need user input in PAL.', schema: { id, seconds: { type: 'integer', minimum: 1, maximum: 60 } }, required: ['id'], readOnly: true },
   { name: 'sessions.stop', title: 'Stop delegated work', category: 'providers', description: 'Interrupt a session created by this conversation', schema: { id } },
 ];
 // With automatic delegation updates off, results arrive only by waiting or reading, as before they existed,
@@ -25,7 +26,7 @@ export const orchestrationDefinitions: ToolDefinition[] = [
 const withoutUpdates: Record<string, string> = {
   'sessions.start': 'Start a visible Codex or Claude conversation in the current project after user approval. Returns its ID immediately; use sessions_read to check results later.',
   'sessions.send': 'Send a follow-up to an idle delegated session after user approval. Returns immediately.',
-  'sessions.wait': 'Wait up to 60 seconds for a delegated turn, then return status and recent messages. Waiting sessions need user input in Cere.',
+  'sessions.wait': 'Wait up to 60 seconds for a delegated turn, then return status and recent messages. Waiting sessions need user input in PAL.',
 };
 /** An orchestration tool as offered to the model, with or without automatic delegation updates. */
 export function orchestrationOffer(def: ToolDefinition, updates: boolean): Pick<ToolDefinition, 'description' | 'schema' | 'required'> {
@@ -55,7 +56,7 @@ export async function orchestrate(core: Core, parentId: string, name: string, ar
   const permitted = () => {
     signal.throwIfAborted();
     const parent = core.store.session(parentId);
-    if (!(parent.ollama?.tools || parent.api?.tools) || !categoryEnabled(core.settingsFor(parentId), 'providers') || (parent.remote && !parent.remote.caps.includes('providers.execute'))) throw new Error('Provider orchestration is disabled in Cere settings');
+    if (!(parent.ollama?.tools || parent.api?.tools) || !categoryEnabled(core.settingsFor(parentId), 'providers') || (parent.remote && !parent.remote.caps.includes('providers.execute'))) throw new Error('Provider orchestration is disabled in PAL settings');
     return parent;
   };
   const parent = permitted();
@@ -94,7 +95,10 @@ export async function orchestrate(core: Core, parentId: string, name: string, ar
   if (child && busy(child)) throw new Error('The delegated session is busy. Wait for it or stop it first.');
   if (!child && children().filter(busy).length >= 4) throw new Error('At most four delegated sessions may run at once');
   const provider = child?.provider || args.provider, next = args.followUp;
-  if (parent.remote && (provider === 'claude' || next?.provider === 'claude')) throw new Error('Claude native policy is unverified for remote delegation');
+  // A limited phone's conversation launches its Claude child in Claude Code's restricted mode, as a phone-started Claude
+  // session does. An owner phone's child inherits the owner snapshot and the desktop's launch policy; never more than the parent.
+  const ownerParent = !!parent.remote && ownerControlled(parent);
+  const remotePolicy = (ownerParent ? 'desktop' : provider === 'claude' ? 'restricted' : 'unknown') as Session['effectivePolicy'];
   if (core.capabilities[provider]?.available === false) throw new Error(provider + ' is unavailable');
   const label = (value: string) => value === 'codex' ? 'Codex' : 'Claude';
   // A declared next task is shown with this one, but allowing this task never allows that one.
@@ -107,13 +111,13 @@ export async function orchestrate(core: Core, parentId: string, name: string, ar
   if(answer.automatic&&!core.automaticallyApprove(parentId,{kind:'provider',choices:['allow']}))throw new Error('Automatic CLI permission was revoked');
   if (!child) {
     child = await core.create({ provider, cwd: parent.cwd, trusted: true, model: args.model, effort: args.effort, title: 'Delegated · ' + args.prompt.trim().slice(0, 60) },permitted);
-    child = core.updateSession(child.id, { parentId, remote:parent.remote ? structuredClone(parent.remote) : undefined, effectivePolicy:parent.remote ? 'unknown' : undefined });
+    child = core.updateSession(child.id, { parentId, remote:parent.remote ? structuredClone(parent.remote) : undefined, effectivePolicy:parent.remote ? remotePolicy : undefined });
   }
   permitted();
-  if(!parent.remote)await core.power.attachChild(parent.id,child.id);
+  if(ownerControlled(parent))await core.power.attachChild(parent.id,child.id);
   if (parent.remote && child.remote?.deviceId !== parent.remote.deviceId) {
     await core.disconnect(child.id);
-    child = core.updateSession(child.id,{remote:structuredClone(parent.remote),effectivePolicy:'unknown'});
+    child = core.updateSession(child.id,{remote:structuredClone(parent.remote),effectivePolicy:remotePolicy});
   }
   permitted();
   // Registered before dispatch, so a child that finishes before send() returns still reports back.

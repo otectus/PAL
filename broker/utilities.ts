@@ -66,5 +66,5 @@ export class Utilities {
     }
     throw new Error('Unknown utility operation');
   }
-  close(){for(const controller of this.running.values())controller.abort(new Error('Cere is closing'));}
+  close(){for(const controller of this.running.values())controller.abort(new Error('PAL is closing'));}
 }

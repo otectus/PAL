@@ -10,7 +10,7 @@ import { buildCommand, buildRequest, validTemplates } from '../broker/custom-too
 
 const idle = () => ({ async send() {}, async interrupt() {}, async close() {} });
 async function broker(t: any) {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-custom-tools-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-custom-tools-'));
   const core = new Core(new Store(join(dir, 'state')), idle);
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   await core.rpc('provider.credentials', { provider: 'openai', key: 'fixture-key' });

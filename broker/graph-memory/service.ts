@@ -33,7 +33,7 @@ import { CollectorRpc } from "./collector-rpc.ts";
 import { defaultExtractionModel } from "./models.ts";
 import { embeddingPrompts } from "./prompts.ts";
 import { extractionProposals } from "./proposals.ts";
-import { paths } from "../paths.ts";
+import { palEnv, paths } from "../paths.ts";
 
 type Row = Record<string, any>;
 export interface MemoryConfiguration {
@@ -208,9 +208,9 @@ export class MemoryService {
     };
     if (policy.fish_enabled) {
       this.collectorRpc = new CollectorRpc(
-        process.env.CERE_RUNTIME_DIR
+        palEnv('RUNTIME_DIR')
           ? join(paths().runtime, "memory")
-          : join(process.env.XDG_RUNTIME_DIR || paths().runtime, "cere-memory"),
+          : join(process.env.XDG_RUNTIME_DIR || paths().runtime, "pal-memory"),
         {
           apply: accept,
           snapshot: () => this.live.snapshot(),
@@ -232,11 +232,11 @@ export class MemoryService {
           titleApplicationAllowlist: policy.title_applications,
         }),
       );
-    if (policy.kitty_enabled && process.env.CERE_KITTY_INSPECT_ENDPOINT)
+    if (policy.kitty_enabled && palEnv('KITTY_INSPECT_ENDPOINT'))
       this.collectors.push(
         new KittyCollector({
-          endpoint: process.env.CERE_KITTY_INSPECT_ENDPOINT,
-          instanceId: process.env.CERE_KITTY_INSTANCE_ID || randomUUID(),
+          endpoint: palEnv('KITTY_INSPECT_ENDPOINT')!,
+          instanceId: palEnv('KITTY_INSTANCE_ID') || randomUUID(),
           approvedCwdRoots: policy.approved_roots,
         }),
       );
@@ -405,8 +405,9 @@ export class MemoryService {
     let repo = this.vectors.get(fingerprint);
     if (!repo) {
       repo = new QdrantVectorRepository({
-        endpoint: process.env.CERE_QDRANT_URL || "http://127.0.0.1:6333",
+        endpoint: palEnv('QDRANT_URL') || "http://127.0.0.1:6333",
         apiKey: await this.secret("qdrant"),
+        // Stable legacy namespace: changing it would strand existing vectors during the PAL upgrade.
         collectionPrefix: "cere_" + fingerprint.slice(0, 12),
         dimension,
         distance: "Cosine",
@@ -419,7 +420,7 @@ export class MemoryService {
     return repo;
   }
   async secret(kind: string) {
-    const path = process.env.CERE_MEMORY_CREDENTIALS_FILE;
+    const path = palEnv('MEMORY_CREDENTIALS_FILE');
     if (path) {
       const { stat } = await import("node:fs/promises");
       const s = await stat(path);
@@ -429,14 +430,14 @@ export class MemoryService {
       return String(values[kind] || "");
     }
     return kind === "graph"
-      ? process.env.CERE_NEO4J_PASSWORD || ""
-      : process.env.CERE_QDRANT_API_KEY || "";
+      ? palEnv('NEO4J_PASSWORD') || ""
+      : palEnv('QDRANT_API_KEY') || "";
   }
   async graphRepo() {
     if (!this.graph) {
       this.graph = new Neo4jGraphRepository({
-        uri: process.env.CERE_NEO4J_URI || "bolt://127.0.0.1:7687",
-        username: process.env.CERE_NEO4J_USER || "neo4j",
+        uri: palEnv('NEO4J_URI') || "bolt://127.0.0.1:7687",
+        username: palEnv('NEO4J_USER') || "neo4j",
         password: await this.secret("graph"),
         connectionTimeoutMs: 1000,
         maxTransactionRetryTimeMs: 0,
@@ -567,7 +568,7 @@ export class MemoryService {
   async embeddingImpact(host: string, candidate: string, signal: AbortSignal) {
     const counts = await this.canonical.call("embedding_impact", {}, signal);
     const describe = async (model: string) => {
-      const identity = await this.identity(host, signal, model), [probe] = await this.embed(host, ["Cere memory embedding probe"], "document", signal, model);
+      const identity = await this.identity(host, signal, model), [probe] = await this.embed(host, ["PAL memory embedding probe"], "document", signal, model);
       const fingerprint = this.fingerprint(identity, probe.length);
       return { model, fingerprint, dimension: probe.length, records: counts.spaces.find((space: Row) => space.fingerprint === fingerprint)?.records || 0 };
     };
@@ -582,7 +583,7 @@ export class MemoryService {
     const model = this.configuration.embedding_model, cached = this.spaces.get(host);
     if (cached && cached.model === model && Date.now() - cached.at < 300000) return cached;
     const identity = await this.identity(host, signal);
-    const [probe] = await this.embed(host, ["Cere memory embedding probe"], "document", signal);
+    const [probe] = await this.embed(host, ["PAL memory embedding probe"], "document", signal);
     const space = { model, at: Date.now(), dimension: probe.length, fingerprint: this.fingerprint(identity, probe.length) };
     this.spaces.set(host, space);
     return space;

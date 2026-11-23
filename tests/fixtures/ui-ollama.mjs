@@ -39,9 +39,24 @@ const server=createServer(async(req,res)=>{
     // Delegation update: the turn starts a Codex task and replies; the task's automatic update gets a summary.
     const users=(body.messages||[]).filter(m=>m.role==='user'),latest=body.messages?.at(-1);
     const answer=message=>res.end(JSON.stringify({message:{role:'assistant',...message},done:true})+'\n');
+    const researchPrompt=String(users.at(-1)?.content||'');
+    if(researchPrompt.startsWith('Write a Markdown research report.')){
+      const version=researchPrompt.includes('version 5.0')?'5.0':'4.2';
+      const passage=/^\[(E\d+\.P\d+)\] /m.exec(researchPrompt)?.[1]||'E1.P1';
+      return answer({content:'## Finding\n\nOffline indexing requires version '+version+' ['+passage+'].\n\n## Open questions\n\n- None in this fixture.'});
+    }
+    if(researchPrompt.startsWith('Check each claim against only its cited passages.')){
+      const version=researchPrompt.includes('version 5.0')?'5.0':'4.2';
+      return answer({content:JSON.stringify([{index:0,status:'supported',quote:'Offline indexing requires version '+version+'.'}])});
+    }
+    if (users.at(-1)?.content === 'Where can I keep my project notes while we work?') return answer({content: [
+      'Open **Notes** in the Workbench. The scratchpad belongs to the current project, so another conversation in the same folder can pick up where you left off.',
+      'For a separate topic, open the library and create a named note. You can search those notes across projects and open one beside whichever conversation you are working in.',
+      'If a note needs more room, expand the Workbench. Restore split view when you want to see the conversation again. The editor keeps your draft while you change the layout.',
+    ].join('\n\n')});
     // The phone's paired connectivity check (ConnectedDesktopTest) asks for this exact reply.
-    if(String(users.at(-1)?.content).includes('Reply with exactly CERE_MOBILE_OK'))return answer({content:'CERE_MOBILE_OK'});
-    if(String(users.at(-1)?.content).includes('<cere_delegation_update>'))return answer({content:'The delegated check finished: its changes are ready and its checks passed.'});
+    if(String(users.at(-1)?.content).includes('Reply with exactly PAL_MOBILE_OK'))return answer({content:'PAL_MOBILE_OK'});
+    if(String(users.at(-1)?.content).includes('<pal_delegation_update>'))return answer({content:'The delegated check finished: its changes are ready and its checks passed.'});
     if(users.at(-1)?.content==='delegation-ui-check')return answer(latest?.role==='tool'?{content:'Started the delegated check; it will report back.'}:{content:'',tool_calls:[{function:{name:'sessions_start',arguments:{provider:'codex',prompt:'completion-delegation'}}}]});
     res.write(JSON.stringify({message:{role:'assistant',content:'Hello from Ollama. '},done:false})+'\n');
     if(body.messages?.at(-1)?.content==='queue-validation-hold')await new Promise(resolve=>setTimeout(resolve,2500));

@@ -51,7 +51,7 @@ const ratio = (part: number, whole: number) => whole ? part / whole : null;
 const gate = (value: number | null, threshold: string, pass: (value: number) => boolean): Gate => ({ status: value === null ? 'unmeasured' : pass(value) ? 'passed' : 'failed', value, threshold });
 
 export async function evaluate(adapter: ExtractionAdapter, cases: ExtractionCase[], options: { signal?: AbortSignal; progress?: (done: number, total: number) => void } = {}) {
-  const directory = mkdtempSync(join(tmpdir(), 'cere-extraction-eval-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pal-extraction-eval-'));
   const c = new Canonical(directory);
   const latencies: number[] = [], caseResults: Row[] = [];
   const reasons = new Map<string, number>(), rejections = new Map<string, number>();

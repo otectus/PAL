@@ -7,6 +7,11 @@ for (const avatar of avatarCatalog) {
   if (!existsSync(asset(avatar.portrait)) || typeof rig.texture !== 'string' ||
       !/^[a-zA-Z0-9_-]+\.png$/.test(rig.texture) || !existsSync(asset(rig.texture)))
     throw new Error(`${avatar.id}: missing portrait or surface texture`);
+  if (rig.static === true) {
+    if (!Array.isArray(rig.parts) || !rig.parts.length)
+      throw new Error(`${avatar.id}: missing reference artwork`);
+    continue;
+  }
   for (const route of avatarRoutes)
     if (!Array.isArray(rig.surfaceSequences?.routes?.[route]?.frames) || rig.surfaceSequences.routes[route].frames.length < 2)
       throw new Error(`${avatar.id}: missing ${route} frames`);

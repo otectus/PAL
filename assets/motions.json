@@ -4045,7 +4045,7 @@
       30
     ]
   },
-  "rig": "cere-rig.json",
+  "rig": "pal-rig.json",
   "idleProfiles": {
     "calm": {
       "idleWhileReading": false,

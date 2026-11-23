@@ -7,7 +7,7 @@ import {Core} from '../broker/core.ts';
 import {Store} from '../broker/store.ts';
 
 test('idle energy defaults to Lively, persists Calm, and rejects unknown profiles',async t=>{
- const directory=await mkdtemp(join(tmpdir(),'cere-motion-'));
+ const directory=await mkdtemp(join(tmpdir(),'pal-motion-'));
  const store=new Store(directory),core=new Core(store);
  t.after(async()=>{await core.close();await rm(directory,{recursive:true,force:true});});
  assert.equal(core.settings.idleEnergy,'lively');
@@ -19,7 +19,7 @@ test('idle energy defaults to Lively, persists Calm, and rejects unknown profile
 });
 
 test('settled tone shares attention transport without overriding activity or accepting a second authority',async t=>{
- const directory=await mkdtemp(join(tmpdir(),'cere-mood-'));
+ const directory=await mkdtemp(join(tmpdir(),'pal-mood-'));
  const core=new Core(new Store(directory));
  t.after(async()=>{await core.close();await rm(directory,{recursive:true,force:true});});
  const session={id:'mood-session',provider:'ollama' as const,nativeId:'',title:'Mood',cwd:directory,mode:'managed' as const,status:'idle' as const,created:Date.now(),updated:Date.now(),draft:'',scroll:0,model:''};

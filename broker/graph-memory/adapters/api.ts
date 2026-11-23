@@ -104,7 +104,7 @@ export class RoutedExtractionAdapter implements ExtractionAdapter {
   async extract(source: ExtractionSource, signal?: AbortSignal): Promise<ExtractionRun> {
     const input = JSON.stringify({ sourceRecordId: source.sourceRecordId, sourceRole: source.sourceRole, sourceText: source.text });
     const result = await this.router.generate(this.binding, { task: 'extract', sourcePolicy: source.modelRoute, allowCloud: this.allowCloud,
-      schemaName: 'cere_memory_extraction_v1', schema: MutationProposalBatchSchema, jsonSchema: MutationProposalBatchSchemaJson,
+      schemaName: 'pal_memory_extraction_v1', schema: MutationProposalBatchSchema, jsonSchema: MutationProposalBatchSchemaJson,
       system: SYSTEM_PROMPT, input, maxOutputTokens: 2_048, maxInputCodePoints: 32_768, maxOutputCharacters: 64_000 }, signal ?? AbortSignal.timeout(60_000));
     for (const assertion of result.value.assertions) for (const quote of assertion.quotes) if (quote.sourceRecordId !== source.sourceRecordId || !exactOccurrence(source.text, quote.quote, quote.occurrenceIndex)) throw new Error('Extraction model returned a fabricated or mismatched evidence quotation');
     for (const statement of result.value.statements ?? []) if (statement.quote.sourceRecordId !== source.sourceRecordId || !exactOccurrence(source.text, statement.quote.quote, statement.quote.occurrenceIndex)) throw new Error('Extraction model returned a fabricated or mismatched evidence quotation');

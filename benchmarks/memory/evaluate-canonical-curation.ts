@@ -18,7 +18,7 @@ const cases=[
   {key:'assistant',role:'assistant',category:'project_convention',modality:'actual',quote:'Assistant recommends keeping rollback notes beside each deployment record.'},
 ] as const;
 
-const directory=await mkdtemp(join(tmpdir(),'cere-canonical-curation-'));
+const directory=await mkdtemp(join(tmpdir(),'pal-canonical-curation-'));
 const identities:Row[]=[];
 let service:MemoryService|undefined;
 const nativeFetch=globalThis.fetch;

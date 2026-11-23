@@ -37,9 +37,10 @@ import { factTimeline } from "./timeline.ts";
 import { validateClaim, normalized, stableJSON, span, occurrenceAt } from "./ontology.ts";
 import { overlaps, remainder, eligibleTime } from "./temporal.ts";
 import { rrf, relationalRank, ftsQuery, lexicalFloor, informativeTerms, hasInformativeTerm } from "./ranking.ts";
-import { compactItem, itemTokens, packetOverheadTokens, itemEvidenceLimit } from "./packet.ts";
+import { compactItem, itemTokens, packetOverheadTokens, itemEvidenceLimit, recallGroup, automaticGroupLimits, automaticDisputedWeight } from "./packet.ts";
 import {
   planRetention,
+  restatedSupport,
   retentionDeadlineActive,
   type RetentionDecision,
   type RetentionTarget,
@@ -50,6 +51,8 @@ type Row = Record<string, any>;
 const uuid = () => randomUUID(),
   now = () => Date.now() * 1000,
   digest = (s: string) => createHash("sha256").update(s).digest("hex"),
+  /** A record restated from a less restricted source keeps the stricter restriction. */
+  strictest = (current: string, incoming: string) => (current === "local_only" || incoming === "local_only" ? "local_only" : incoming),
   /** A vector as packed little-endian 32-bit floats, and back. */
   packVector = (vector: number[]) => {
     const floats = Float32Array.from(vector);
@@ -221,6 +224,7 @@ export class Canonical {
     for (const migration of pending) {
       this.db.exec("BEGIN IMMEDIATE");
       try {
+        migration.repair?.(this.db);
         this.db.exec(migration.sql);
         this.run(
           "INSERT INTO schema_migrations VALUES (?,?,?)",
@@ -297,7 +301,7 @@ export class Canonical {
     } catch (e: any) {
       // A cleanup failure must not replace the reason the backup failed.
       if (partial) try { rmSync(partial, { force: true }); } catch {}
-      fail("MIGRATION_BACKUP_FAILED", `Memory needs a schema update (${from} to ${to}) and was left unchanged: ${e?.message || e}. Make room or fix ${directory}, then restart Cere.`);
+      fail("MIGRATION_BACKUP_FAILED", `Memory needs a schema update (${from} to ${to}) and was left unchanged: ${e?.message || e}. Make room or fix ${directory}, then restart PAL.`);
     }
     this.pruneMigrationBackups(directory);
   }
@@ -722,7 +726,7 @@ export class Canonical {
       id: uuid(),
       observation_id: id,
       model_identity: "unconfigured",
-      prompt_version: "cere-extract-1",
+      prompt_version: "pal-extract-1",
       parser_version: "1",
       schema_version: 1,
       status: role === "assistant" ? "derived" : p.kind === "document" ? "skipped" : "pending",
@@ -1223,6 +1227,9 @@ export class Canonical {
             : null,
       };
       const same = operation==='assert' ? current.find(prior=>!conflicting.includes(prior)&&prior.status===status&&prior.modality===v.modality&&prior.epistemic_type===v.epistemic_type&&prior.valid_mode===v.valid_mode&&prior.valid_from_us===v.valid_from_us&&prior.valid_to_us===v.valid_to_us) : undefined;
+      // Restating a pending candidate attaches to it rather than adding a duplicate (attachSupport),
+      // when no settled version already holds the claim.
+      const restated = same || operation !== "assert" ? undefined : this.restatedCandidate(slot.id, v, time);
       // Repetition adds source lineage without creating a competing fact or a confidence boost.
       let version: string;
       if (same) {
@@ -1230,9 +1237,10 @@ export class Canonical {
         if (same.known_from_revision === this.revision) version = this.amend(same, {}, time, supports);
         else {
           this.closeVersion(same, time);
-          version = this.newVersion(v, supports, time, same.logical_id);
+          version = this.newVersion({ ...v, sensitivity: strictest(same.sensitivity, v.sensitivity) }, supports, time, same.logical_id);
         }
-      } else version = this.newVersion(v, [e], time);
+      } else if (restated) version = this.attachSupport(restated, v, e, claim, time);
+      else version = this.newVersion(v, [e], time);
       targets.push(version);
       for (const old of current)
         if (old.known_to_revision === null && operation !== "assert")
@@ -1268,6 +1276,77 @@ export class Canonical {
         aggregate_revision: r,
       };
     });
+  }
+  /** Evidence that an unreleased hold on this logical record protects. */
+  heldEvidenceIds(kind: RetentionTargetKind, logicalId: string): string[] {
+    return this.all(
+      "SELECT DISTINCT he.evidence_id AS id FROM retention_hold_evidence he JOIN retention_holds h ON h.id=he.hold_id WHERE h.target_kind=? AND h.target_id=? AND h.released_revision IS NULL",
+      kind, logicalId,
+    ).map((row) => row.id as string);
+  }
+  /**
+   * The pending candidate a new mention restates, if any: the same slot, member, polarity, modality,
+   * source authority and valid interval, still allowed storage by the retention planner. The most
+   * recently learned such record answers for any older duplicates.
+   */
+  restatedCandidate(slot: string, v: Row, atUs: number): Row | undefined {
+    for (const prior of this.all("SELECT * FROM assertion_versions WHERE slot_id=? AND known_to_revision IS NULL AND erased=0 AND status='candidate' ORDER BY known_from_revision DESC,version_id", slot))
+      if (prior.object_entity_id === v.object_entity_id && prior.value_json === v.value_json && prior.polarity === v.polarity &&
+        prior.modality === v.modality && prior.epistemic_type === v.epistemic_type && prior.valid_mode === v.valid_mode &&
+        prior.valid_from_us === v.valid_from_us && prior.valid_to_us === v.valid_to_us &&
+        this.retentionDecision(this.retentionTarget(prior.scope_id, prior.version_id, "assertion"), atUs).storageAllowed)
+        return prior;
+    return undefined;
+  }
+  /**
+   * Re-mention: a restated claim's witness becomes independent support of the candidate it restates,
+   * in that record's next version, instead of a second record. Repetition settles nothing. The record
+   * stays a candidate, keeps its claim and every earlier witness and never gains confidence; a new
+   * independent source restarts its candidate deadline, as a fresh duplicate would have had. A
+   * mention the acceptance rule admits on its own (accepted, or disputed by a conflict) promotes the
+   * record instead, which then cites only witnesses that rule admits: a question or a hedge stays with
+   * the superseded candidate version. Retention holds keep exactly the evidence they protect, and the
+   * record keeps a bounded set of recent witnesses besides (retention.ts restatedSupport).
+   */
+  attachSupport(prior: Row, v: Row, e: Row, claim: Claim, time: number): string {
+    const support = this.support(prior.version_id), promoted = v.status !== "candidate";
+    if (!promoted && support.some((old) => old.id === e.id)) return prior.version_id;
+    const independent = !support.some((old) => old.independence_group === e.independence_group);
+    const supports = restatedSupport(
+      [...support.filter((old) => old.id !== e.id && (!promoted || !this.holdReasons(old, claim, true).length)), e],
+      new Set([...this.heldEvidenceIds("assertion", prior.logical_id), e.id]),
+    );
+    const next: Row = promoted
+      ? { ...v }
+      : { ...prior, expires_at_us: prior.expires_at_us === null || !independent ? prior.expires_at_us : Math.max(prior.expires_at_us, v.expires_at_us) };
+    next.extraction_confidence = Math.min(prior.extraction_confidence, v.extraction_confidence);
+    next.sensitivity = strictest(prior.sensitivity, v.sensitivity);
+    if (prior.known_from_revision !== this.revision) {
+      this.closeVersion(prior, time);
+      const version = this.newVersion(next, supports, time, prior.logical_id);
+      this.lineage(version, prior.version_id, "supersedes");
+      return version;
+    }
+    // Inserted earlier in this same revision (an extraction batch): nothing outside the batch has seen
+    // it, so it is revised in place, as amend() does, including the witnesses it no longer cites.
+    for (const old of support)
+      if (!supports.some((kept) => kept.id === old.id)) {
+        this.run("DELETE FROM assertion_evidence WHERE version_id=? AND evidence_id=? AND relation='support'", prior.version_id, old.id);
+        this.run("DELETE FROM lineage WHERE derived_id=? AND input_id=? AND role='support'", prior.version_id, old.id);
+      }
+    for (const item of supports)
+      if (!support.some((old) => old.id === item.id)) {
+        this.insert("assertion_evidence", { version_id: prior.version_id, evidence_id: item.id, relation: "support", independence_group: item.independence_group });
+        this.lineage(prior.version_id, item.id, "support");
+      }
+    this.run(
+      "UPDATE assertion_versions SET status=?,retention_class=?,expires_at_us=?,extraction_run_id=?,extraction_confidence=?,sensitivity=?,time_precision=?,time_zone=?,time_expression=? WHERE version_id=?",
+      next.status, next.retention_class, next.expires_at_us, next.extraction_run_id, next.extraction_confidence, next.sensitivity,
+      next.time_precision, next.time_zone, next.time_expression, prior.version_id,
+    );
+    if (next.sensitivity !== prior.sensitivity) this.run("UPDATE artifacts SET sensitivity=? WHERE record_id=?", next.sensitivity, prior.version_id);
+    this.effect(prior.version_id);
+    return prior.version_id;
   }
   /**
    * Re-versions a current assertion. One inserted earlier in this same revision
@@ -1572,8 +1651,8 @@ export class Canonical {
     k: number,
     world: number | undefined,
     route: string,
+    retentionAtUs = now(),
   ) {
-    const retentionAtUs = now();
     const retentionAllowed = v?.version_id && !v.erased && v.known_to_revision === null
       ? this.retentionDecision(this.retentionTarget(v.scope_id, v.version_id, "assertion"), retentionAtUs).recallAllowedByRetention
       : retentionDeadlineActive(v?.expires_at_us ?? null, retentionAtUs);
@@ -1599,12 +1678,19 @@ export class Canonical {
       this.support(v.version_id).length > 0
     );
   }
+  /**
+   * The record behind an artifact, if this query may recall it, with its evidence. Retention is
+   * judged at one instant, `atUs`: a passage is recalled only while the shared planner allows it, so
+   * one past its raw deadline is not offered in the minutes before expiry removes it, and a hold
+   * overlays both that deadline and any deadline of the artifact itself.
+   */
   hydrateArtifact(
     id: string,
     scope: string,
     k: number,
     world: number | undefined,
     route: string,
+    atUs = now(),
   ) {
     const a = this.one(
       "SELECT a.*,p.body AS text,p.erased AS payload_erased FROM artifacts a JOIN payloads p ON p.id=a.payload_id WHERE a.id=? AND a.scope_id=? AND a.invalidated=0",
@@ -1613,14 +1699,15 @@ export class Canonical {
     );
     let passageRetention: RetentionDecision | null = null;
     if (a.id && ["conversation", "saved"].includes(a.kind)) {
-      try { passageRetention = this.retentionDecision(this.retentionTarget(scope, a.record_id, "observation"), now()); } catch {}
+      try { passageRetention = this.retentionDecision(this.retentionTarget(scope, a.record_id, "observation"), atUs); } catch {}
     }
     if (
       !a.id ||
       a.payload_erased ||
       a.known_from_revision > k ||
       (a.known_to_revision !== null && k >= a.known_to_revision) ||
-      (a.expires_us && a.expires_us <= now() && !passageRetention?.recallAllowedByRetention) ||
+      (passageRetention && !passageRetention.recallAllowedByRetention) ||
+      (a.expires_us && a.expires_us <= atUs && !passageRetention?.recallAllowedByRetention) ||
       (route === "cloud" &&
         (!this.policy.allow_cloud_memory || a.sensitivity === "local_only")) ||
       this.one(
@@ -1634,7 +1721,7 @@ export class Canonical {
     if (a.kind === "statement") {
       const v=this.one("SELECT * FROM memory_statement_versions WHERE version_id=? AND erased=0",a.record_id);
       if(!v.version_id || !eligibleTime(v as any,world) || !["accepted","candidate","disputed"].includes(v.status))return null;
-      const allowed=v.known_to_revision===null?this.retentionDecision(this.retentionTarget(scope,v.version_id,"statement"),now()).recallAllowedByRetention:retentionDeadlineActive(v.expires_at_us,now());
+      const allowed=v.known_to_revision===null?this.retentionDecision(this.retentionTarget(scope,v.version_id,"statement"),atUs).recallAllowedByRetention:retentionDeadlineActive(v.expires_at_us,atUs);
       if(!allowed)return null;
       a.statement=v; a.evidence=statementSupport(this,v.version_id);
       if(!a.evidence.length)return null;
@@ -1643,7 +1730,7 @@ export class Canonical {
         "SELECT * FROM assertion_versions WHERE version_id=?",
         a.record_id,
       );
-      if (!this.eligibleAssertion(v, k, world, route)) return null;
+      if (!this.eligibleAssertion(v, k, world, route, atUs)) return null;
       a.assertion = v;
       a.evidence = this.support(v.version_id);
     } else {
@@ -1696,9 +1783,17 @@ export class Canonical {
     ]);
     const scopes = this.effectiveScopes(p.scope_id);
     const lookupScopes = JSON.stringify(scopes);
+    // The intent decides what may enter the packet. "automatic" is the recall a turn makes for its own
+    // message, which the model receives without asking: it keeps only matches above the relevance
+    // floors, leaves out unreviewed candidates, ranks disputed records lower and caps each group's
+    // share of the packet (packet.ts). "search", the default, answers someone who asked: every
+    // eligible match, best first, with uncertain records labeled.
+    const intent = p.intent ?? "search";
+    if (intent !== "automatic" && intent !== "search") fail("INVALID_ARGUMENT", "Recall intent must be automatic or search");
+    const automatic = intent === "automatic";
     // Automatic recall keeps only matches that clear a relevance floor; an explicit search lists
-    // weaker matches too, best first.
-    const floor = p.relevance_floor === true;
+    // weaker matches too, best first. A caller may ask for the floor alone.
+    const floor = p.relevance_floor === true || automatic;
     const text = safeText(p.text || "memory", 1000),
       route = p.model_route || "local",
       k = this.knowledge(p),
@@ -1774,10 +1869,17 @@ export class Canonical {
     const glue = (a: Row) =>
       ["conversation", "episode", "topic"].includes(a.kind) &&
       !hasInformativeTerm(String(a.text).replace(/^Assistant \(unverified\): /, ""));
+    // An unreviewed candidate is never offered unasked; a search still finds it, labeled.
+    const withheld = new Set<string>();
     const add = (id: string) => {
       if (cache.has(id)) return cache.get(id)!;
+      if (withheld.has(id)) return null;
       const a = eligible({ id });
       if (!a || repeated(a) || (floor && glue(a))) return null;
+      if (automatic && (a.assertion || a.statement)?.status === "candidate") {
+        withheld.add(id);
+        return null;
+      }
       cache.set(id, a);
       return a;
     };
@@ -1971,6 +2073,15 @@ export class Canonical {
       const value=this.one("SELECT assessed_value FROM memory_assessments m JOIN memory_curation_jobs j ON j.id=m.job_id WHERE (m.version_id=? OR EXISTS (SELECT 1 FROM memory_curation_decisions d WHERE d.assessment_id=m.id AND d.after_id=? AND d.undone_revision IS NULL)) AND j.config_revision=? ORDER BY m.created_us DESC LIMIT 1",a.record_id,a.record_id,this.curation.revision()).assessed_value;
       if(typeof value==='number')rank[1]*=1+.1*value;
     }
+    // A disputed record is still relevant, but unasked it ranks below settled records of like relevance.
+    let downranked = 0;
+    if (automatic)
+      for (const rank of ranks) {
+        const record = cache.get(rank[0])!;
+        if ((record.assertion || record.statement)?.status !== "disputed") continue;
+        rank[1] *= automaticDisputedWeight;
+        downranked++;
+      }
     if(world===undefined)for(const rank of ranks){const artifact=cache.get(rank[0])!;if(['conversation','episode','topic'].includes(artifact.kind)){const created=this.one('SELECT transaction_us FROM commits WHERE revision=?',artifact.content_revision).transaction_us;rank[1]*=2**(-Math.max(0,now()-created)/(864e8*this.policy.half_life_days));}}
     // Equal scores go to the more recently learned record (a correction outranks what it corrects),
     // then to the ID, so the order never depends on how random IDs happen to sort.
@@ -1995,6 +2106,10 @@ export class Canonical {
     let used = packetOverheadTokens,
       trimmed = 0,
       duplicates = 0;
+    // Items and tokens each group holds in the packet, and automatic items a full group left out.
+    const groupItems: Record<string, number> = {},
+      groupTokens: Record<string, number> = {},
+      groupTrimmed: Record<string, number> = {};
     for (const aid of ordered) {
       const a = cache.get(aid)!;
       const passage = a.assertion ? "" : String(a.text).replace(/^Assistant \(unverified\): /, "").trim();
@@ -2020,7 +2135,15 @@ export class Canonical {
         retainedExcerpt=(a.assertion||a.statement)&&cited.length&&this.one(
           "SELECT 1 AS n FROM evidence e JOIN observations o ON o.id=e.observation_id JOIN payloads p ON p.id=o.payload_id WHERE p.erased AND e.id IN (SELECT value FROM json_each(?)) LIMIT 1",JSON.stringify(cited.map(e=>e.id))).n;
       if(retainedExcerpt)compact.source_context="retained_excerpt";
-      const needed=itemTokens(compact);
+      const needed=itemTokens(compact),
+        group = recallGroup(compact),
+        limit = automaticGroupLimits[group];
+      // A group past its share is reported as omitted, like a budget trim, so the model can search.
+      if (automatic && ((groupItems[group] || 0) >= limit.items || (groupTokens[group] || 0) + needed > limit.share * budget)) {
+        groupTrimmed[group] = (groupTrimmed[group] || 0) + 1;
+        trimmed++;
+        continue;
+      }
       if (
         used + needed > budget ||
         evidence.length + witnesses.length > 24 ||
@@ -2030,6 +2153,8 @@ export class Canonical {
         continue;
       }
       used += needed;
+      groupItems[group] = (groupItems[group] || 0) + 1;
+      groupTokens[group] = (groupTokens[group] || 0) + needed;
       items.push(compact);
       if (passage) passages.push(passage);
       for (const e of witnesses) {
@@ -2131,6 +2256,14 @@ export class Canonical {
         nodes: nodes.size,
         edges: edges.length,
         candidates: cache.size,
+        // Counts only. `included` is per group (packet.ts recallGroup); the rest apply to automatic recall.
+        recall_policy: {
+          intent,
+          included: groupItems,
+          withheld_candidates: withheld.size,
+          disputed_downranked: downranked,
+          group_trimmed: groupTrimmed,
+        },
       },
       results,
       mode: semantic.length ? "semantic" : "keyword",
@@ -3907,7 +4040,7 @@ export class Canonical {
     this.run(
       "UPDATE extraction_runs SET model_identity=?,prompt_version=?,parser_version=?,status='validated' WHERE id=?",
       JSON.stringify(p.identity),
-      p.prompt_version || "cere-extract-1",
+      p.prompt_version || "pal-extract-1",
       p.parser_version || "1",
       p.id,
     );
@@ -4218,7 +4351,7 @@ export class Canonical {
   /**
    * Semantic recall over every stored vector of one embedding space in the authorized scopes, best
    * first, with no projection needed. Also returns this query's own similarity floor: the score
-   * that 95% of the memories searched fall below. On Cere's conversations that kept 78% of the
+   * that 95% of the memories searched fall below. On PAL's conversations that kept 78% of the
    * answers to past questions while admitting about 5% of the store, where any fixed threshold
    * traded worse; a model's scores differ too much between queries for one number to fit.
    */
@@ -4444,53 +4577,87 @@ export class Canonical {
     });
     return { protected: protectedCount, blocked };
   }
+  /**
+   * Whether the shared retention planner (retention.ts) ends storage of this live record at `atUs`.
+   * Expiry asks it instead of repeating its rules. A record already gone, or one the ID no longer
+   * resolves to (a later version answers for it), is not this sweep's to remove.
+   */
+  storageEnded(scope: string, id: string, kind: RetentionTargetKind, atUs: number) {
+    let target: RetentionTarget;
+    try { target = this.retentionTarget(scope, id, kind); }
+    catch (error: any) { if (error?.code === "NOT_FOUND") return false; throw error; }
+    return !target.erased && target.id === id && !this.retentionDecision(target, atUs).storageAllowed;
+  }
+  /**
+   * Walks one expiry query in deadline order and acts on at most `limit` rows that `due` accepts. A
+   * row it declines is stepped over by key, so a record kept past its own deadline cannot hold up the
+   * records behind it; a sweep reads at most four times `limit` rows. The query names its order
+   * columns `deadline` and `id`.
+   */
+  sweep(query: string, args: unknown[], limit: number, due: (row: Row) => boolean, act: (row: Row) => void) {
+    let deadline = Number.MIN_SAFE_INTEGER, id = "", scanned = 0, acted = 0;
+    while (acted < limit && scanned < limit * 4) {
+      const rows = this.all(`SELECT * FROM (${query}) WHERE deadline>? OR (deadline=? AND id>?) ORDER BY deadline,id LIMIT ?`, ...args, deadline, deadline, id, limit);
+      for (const row of rows) {
+        if (acted >= limit || scanned >= limit * 4) break;
+        this.checkpoint();
+        scanned++;
+        deadline = row.deadline;
+        id = row.id;
+        if (!due(row)) continue;
+        act(row);
+        acted++;
+      }
+      if (rows.length < limit) break;
+    }
+    return acted;
+  }
+  /**
+   * Removes what retention no longer allows. The planner decides for each passage, assertion and
+   * statement; each query only narrows the scan to records past their own deadline that no active hold
+   * names, which the planner would keep anyway, so a protected backlog is never read again each tick.
+   * A superseded version is history rather than a retained record: it goes at its own deadline.
+   */
   expire() {
     const atUs = now(), grace = this.installAtRiskGrace(atUs);
-    // Only live raw payloads qualify: a retained witness keeps its observation live after
-    // its payload is erased, and must not be selected again. Deterministic expiry order
-    // lets a bounded batch drain without starving later sources.
-    const expired = this.all(
-      `SELECT o.scope_id,o.id FROM observations o JOIN payloads p ON p.id=o.payload_id
+    let count = this.expireDetachedEvidence(atUs);
+    // Only live raw payloads qualify: a retained witness keeps its observation live after its payload
+    // is erased, and must not be selected again.
+    count += this.sweep(
+      `SELECT o.scope_id,o.id,p.expires_us AS deadline FROM observations o JOIN payloads p ON p.id=o.payload_id
        WHERE o.erased=0 AND p.erased=0 AND p.expires_us IS NOT NULL AND p.expires_us<=?
          AND NOT EXISTS (SELECT 1 FROM retention_holds h WHERE h.target_kind='observation' AND h.target_id=o.id
-           AND h.released_revision IS NULL AND (h.expires_at_us IS NULL OR h.expires_at_us>?))
-       ORDER BY p.expires_us,o.id LIMIT 50`,
-      atUs, atUs,
+           AND h.released_revision IS NULL AND (h.expires_at_us IS NULL OR h.expires_at_us>?))`,
+      [atUs, atUs], 50,
+      (row) => this.storageEnded(row.scope_id, row.id, "observation", atUs),
+      (row) => {
+        const retained=this.retainedEvidenceIds(row.id,atUs);
+        if(retained.length){
+          // The exact supporting quotations have their own evidence retention.
+          // Expire every full-turn copy, including its FTS/vector document, in a journaled deletion.
+          const roots=[this.one('SELECT payload_id FROM observations WHERE id=?',row.id).payload_id,
+            ...this.all("SELECT id FROM artifacts WHERE record_id=? AND kind='conversation'",row.id).map(a=>a.id),
+            ...this.all('SELECT id FROM evidence WHERE observation_id=? AND erased=0',row.id).filter(e=>!retained.includes(e.id)).map(e=>e.id)];
+          const intent={id:uuid(),scope_id:row.scope_id,epoch:this.epoch('erasure')+1,selector:{kind:'raw_expiration',id:row.id},targets:this.descendants(roots)};
+          this.appendRegistry(intent);this.suppress(intent,'expiration');
+          return;
+        }
+        this.forget({ scope_id: row.scope_id, id: row.id }, "expiration");
+      },
     );
-    let count = this.expireDetachedEvidence(atUs);
-    for (const row of expired) {
-      this.checkpoint();
-      const retained=this.retainedEvidenceIds(row.id,atUs);
-      if(retained.length){
-        // The exact supporting quotations have their own evidence retention.
-        // Expire every full-turn copy, including its FTS/vector document, in a journaled deletion.
-        const roots=[this.one('SELECT payload_id FROM observations WHERE id=?',row.id).payload_id,
-          ...this.all("SELECT id FROM artifacts WHERE record_id=? AND kind='conversation'",row.id).map(a=>a.id),
-          ...this.all('SELECT id FROM evidence WHERE observation_id=? AND erased=0',row.id).filter(e=>!retained.includes(e.id)).map(e=>e.id)];
-        const intent={id:uuid(),scope_id:row.scope_id,epoch:this.epoch('erasure')+1,selector:{kind:'raw_expiration',id:row.id},targets:this.descendants(roots)};
-        this.appendRegistry(intent);this.suppress(intent,'expiration');count++;continue;
-      }
-      this.forget({ scope_id: row.scope_id, id: row.id }, "expiration");
-      count++;
-    }
-    for(const candidate of this.all(`SELECT version_id,scope_id,known_to_revision FROM assertion_versions v
-      WHERE erased=0 AND expires_at_us IS NOT NULL AND expires_at_us<=? AND
-        (known_to_revision IS NOT NULL OR NOT EXISTS (SELECT 1 FROM retention_holds h WHERE h.target_kind='assertion' AND h.target_id=v.logical_id
-          AND h.released_revision IS NULL AND (h.expires_at_us IS NULL OR h.expires_at_us>?)))
-      ORDER BY expires_at_us,version_id LIMIT 100`,atUs,atUs)){
-      this.checkpoint();
-      const intent={id:uuid(),scope_id:candidate.scope_id,epoch:this.epoch('erasure')+1,selector:{kind:'candidate_expiration',id:candidate.version_id},targets:this.descendants([candidate.version_id])};
-      this.appendRegistry(intent);this.suppress(intent,'expiration');count++;
-    }
-    for(const candidate of this.all(`SELECT version_id,scope_id,known_to_revision FROM memory_statement_versions v
-      WHERE erased=0 AND expires_at_us IS NOT NULL AND expires_at_us<=? AND
-        (known_to_revision IS NOT NULL OR NOT EXISTS (SELECT 1 FROM retention_holds h WHERE h.target_kind='statement' AND h.target_id=v.logical_id
-          AND h.released_revision IS NULL AND (h.expires_at_us IS NULL OR h.expires_at_us>?)))
-      ORDER BY expires_at_us,version_id LIMIT 100`,atUs,atUs)){
-      this.checkpoint();
-      const intent={id:uuid(),scope_id:candidate.scope_id,epoch:this.epoch('erasure')+1,selector:{kind:'statement_expiration',id:candidate.version_id},targets:this.descendants([candidate.version_id])};
-      this.appendRegistry(intent);this.suppress(intent,'expiration');count++;
-    }
+    for (const [kind, table, selector] of [["assertion", "assertion_versions", "candidate_expiration"], ["statement", "memory_statement_versions", "statement_expiration"]] as const)
+      count += this.sweep(
+        `SELECT version_id AS id,scope_id,known_to_revision,expires_at_us AS deadline FROM ${table} v
+         WHERE erased=0 AND expires_at_us IS NOT NULL AND expires_at_us<=? AND
+           (known_to_revision IS NOT NULL OR NOT EXISTS (SELECT 1 FROM retention_holds h WHERE h.target_kind='${kind}' AND h.target_id=v.logical_id
+             AND h.released_revision IS NULL AND (h.expires_at_us IS NULL OR h.expires_at_us>?)))`,
+        [atUs, atUs], 100,
+        (row) => row.known_to_revision !== null || this.storageEnded(row.scope_id, row.id, kind, atUs),
+        (row) => {
+          const intent={id:uuid(),scope_id:row.scope_id,epoch:this.epoch('erasure')+1,selector:{kind:selector,id:row.id},targets:this.descendants([row.id])};
+          this.appendRegistry(intent);this.suppress(intent,'expiration');
+        },
+      );
     return { expired: count, grace };
   }
   /**

@@ -26,8 +26,8 @@ Run syntax checks for the dependency launcher and Fish emitter:
 
 ```sh
 bash -n tools/memory-dependencies.sh
-fish -n broker/graph-memory/adapters/fish/cere-memory.fish
-python3 -m py_compile broker/graph-memory/adapters/fish/cere-memory-emitter.py
+fish -n broker/graph-memory/adapters/fish/pal-memory.fish
+python3 -m py_compile broker/graph-memory/adapters/fish/pal-memory-emitter.py
 ```
 
 Result: all passed.
@@ -35,12 +35,12 @@ Result: all passed.
 For a real dependency check, create a mode `0600` environment file from `packaging/memory.env.example`, install the checksum-locked archives once, and run:
 
 ```sh
-CERE_MEMORY_DEPS_HOME=/path/to/private/state \
-CERE_MEMORY_ENV_FILE=/path/to/private/dependencies.env \
+PAL_MEMORY_DEPS_HOME=/path/to/private/state \
+PAL_MEMORY_ENV_FILE=/path/to/private/dependencies.env \
 tools/memory-dependencies.sh local-install
 
-CERE_MEMORY_DEPS_HOME=/path/to/private/state \
-CERE_MEMORY_ENV_FILE=/path/to/private/dependencies.env \
+PAL_MEMORY_DEPS_HOME=/path/to/private/state \
+PAL_MEMORY_ENV_FILE=/path/to/private/dependencies.env \
 tools/memory-dependencies.sh check
 ```
 
@@ -64,7 +64,7 @@ Verification phase after stopping and restarting both dependency processes:
 
 This live check covers backend-success retry, a reconstructed same-revision graph replay, correction with historical graph retention, erasure, contiguous revision rejection, persisted state after process restart, concurrent graph generations, immutable vector revision publication, point retirement, isolated vector generations, and erasure across vector generations.
 
-Runtime logs from this run are at `/tmp/cere-memory-integration-deps/neo4j/logs/neo4j.log` and `/tmp/cere-memory-integration-deps/run/qdrant.log`. They show the two starts, persisted collection recovery, cleanup, and graceful shutdown. The temporary test credential file was removed after the run.
+Runtime logs from this run are at `/tmp/pal-memory-integration-deps/neo4j/logs/neo4j.log` and `/tmp/pal-memory-integration-deps/run/qdrant.log`. They show the two starts, persisted collection recovery, cleanup, and graceful shutdown. The temporary test credential file was removed after the run.
 
 The deployment profile pins:
 

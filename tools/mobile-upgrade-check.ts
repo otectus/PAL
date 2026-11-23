@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * In-place upgrade gate for development builds (MOB-006). On a test emulator or a phone whose Cere
+ * In-place upgrade gate for development builds (MOB-006). On a test emulator or a phone whose PAL
  * Mobile data may be discarded, against an isolated broker with fixture providers:
  *
  *  1. checks that the old and candidate APKs are the same package and signer, the candidate newer;
@@ -70,8 +70,8 @@ async function identity(apk: string) {
 }
 type Node = { text: string; desc: string; cls: string; bounds: [number, number, number, number] };
 async function screen(): Promise<Node[]> {
-  await adb(['shell', 'uiautomator', 'dump', '/sdcard/cere-ui.xml'], 30_000, true);
-  const xml = await adb(['exec-out', 'cat', '/sdcard/cere-ui.xml'], 30_000, true);
+  await adb(['shell', 'uiautomator', 'dump', '/sdcard/pal-ui.xml'], 30_000, true);
+  const xml = await adb(['exec-out', 'cat', '/sdcard/pal-ui.xml'], 30_000, true);
   const decode = (value: string) => value.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#10;/g, '\n').replace(/&amp;/g, '&');
   return [...xml.matchAll(/<node [^>]*>/g)].map(match => {
     const attribute = (name: string) => decode(new RegExp(`${name}="([^"]*)"`).exec(match[0])?.[1] ?? '');
@@ -103,7 +103,7 @@ async function scrollUntil(what: string, predicate: (node: Node) => boolean, tim
 
 const summary: Record<string, unknown> = { started: new Date().toISOString(), serial: serial ?? 'default', package: appPackage };
 let broker: ChildProcess | undefined, ollama: ChildProcess | undefined, brokerLog = '', port = 0, exitCode = 1, reverseAdded = false;
-const work = await mkdtemp(join(tmpdir(), 'cere-upgrade-'));
+const work = await mkdtemp(join(tmpdir(), 'pal-upgrade-'));
 const state = join(work, 'state'), runtime = join(work, 'run'), project = join(work, 'project'), home = join(work, 'home'), socketPath = join(runtime, 'broker.sock');
 const instrumentation = new Set<ChildProcess>();
 try {
@@ -117,8 +117,8 @@ try {
 
   ollama = spawn(process.execPath, [join(root, 'tests/fixtures/ui-ollama.mjs')], { stdio: ['ignore', 'pipe', 'inherit'] });
   const ollamaHost = await new Promise<string>((resolvePromise, reject) => { ollama!.stdout!.once('data', chunk => resolvePromise(String(chunk).trim())); ollama!.once('exit', () => reject(new Error('Ollama fixture exited'))); });
-  const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, LANG: 'C.UTF-8', CERE_STATE_DIR: state, CERE_RUNTIME_DIR: runtime, CERE_TTS_DISABLED: '1',
-    CERE_OLLAMA_HOST: ollamaHost, CERE_CODEX_BIN: join(root, 'tests/fixtures/ui-codex.mjs'), CERE_CLAUDE_BIN: join(work, 'absent-claude'), CERE_ANTIGRAVITY_BIN: join(work, 'absent-antigravity') };
+  const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, LANG: 'C.UTF-8', PAL_STATE_DIR: state, PAL_RUNTIME_DIR: runtime, PAL_TTS_DISABLED: '1',
+    PAL_OLLAMA_HOST: ollamaHost, PAL_CODEX_BIN: join(root, 'tests/fixtures/ui-codex.mjs'), PAL_CLAUDE_BIN: join(work, 'absent-claude'), PAL_ANTIGRAVITY_BIN: join(work, 'absent-antigravity') };
   const store = new Store(state); store.set('settings', { memory: { enabled: false } }); store.close();
   broker = spawn(process.execPath, [join(root, 'broker/main.ts')], { cwd: root, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   broker.stdout!.on('data', chunk => { brokerLog += chunk; }); broker.stderr!.on('data', chunk => { brokerLog += chunk; });
@@ -133,7 +133,7 @@ try {
   for (const permission of ['android.permission.POST_NOTIFICATIONS', 'android.permission.ACCESS_LOCAL_NETWORK']) await adb(['shell', 'pm', 'grant', appPackage, permission], 30_000, true);
   let oldDeviceId: string;
   if (oldTestApk) {
-    const prepared = await brokerRequest(socketPath, 'remote.preparePair', { addresses: ['127.0.0.1'], port, name: 'Cere upgrade check', actionAuthentication: 'trusted-device' });
+    const prepared = await brokerRequest(socketPath, 'remote.preparePair', { addresses: ['127.0.0.1'], port, name: 'PAL upgrade check', actionAuthentication: 'trusted-device' });
     const pairing = spawn('adb', [...(serial ? ['-s', serial] : []), 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', 'dev.otectus.cere.mobile.UsbPairingSetupTest#pairFromExplicitUsbOffer', '-e', 'cerePairingOffer', prepared.uri, `${appPackage}.test/androidx.test.runner.AndroidJUnitRunner`], { stdio: ['ignore', 'pipe', 'pipe'] });
     instrumentation.add(pairing); let pairingOutput = ''; pairing.stdout!.on('data', chunk => { pairingOutput += chunk; }); pairing.stderr!.on('data', chunk => { pairingOutput += chunk; });
     const pairingDone = new Promise<void>(resolvePromise => pairing.once('close', () => { instrumentation.delete(pairing); resolvePromise(); }));
@@ -147,7 +147,7 @@ try {
     oldDeviceId = phone.deviceId;
     summary.oldPairing = 'instrumentation';
   } else {
-    const prepared = await brokerRequest(socketPath, 'remote.preparePair', { addresses: ['127.0.0.1'], port, name: 'Cere upgrade check', actionAuthentication: 'trusted-device', networkReturn: true });
+    const prepared = await brokerRequest(socketPath, 'remote.preparePair', { addresses: ['127.0.0.1'], port, name: 'PAL upgrade check', actionAuthentication: 'trusted-device', networkReturn: true });
     await adb(['logcat', '-c'], 30_000, true);
     await adb(['shell', 'am', 'start', '-W', '-n', `${appPackage}/dev.otectus.cere.mobile.MainActivity`]);
     // 0.1.4 exposes the offer field on the first screen. Newer builds put it behind a manual-entry
@@ -192,7 +192,7 @@ try {
   summary.installedVersionCode = Number(/versionCode=(\d+)/.exec(installed)?.[1]);
   if (summary.installedVersionCode !== after.versionCode) throw new Error('The candidate did not replace the old install');
   await adb(['logcat', '-c'], 30_000, true);
-  await adb(['shell', 'am', 'start', '-W', '-n', `${appPackage}/dev.otectus.cere.mobile.MainActivity`]);
+  await adb(['shell', 'am', 'start', '-W', '-n', `${appPackage}/dev.otectus.pal.mobile.MainActivity`]);
   const signedIn = await until('the upgraded app to sign in as the same device', async () => {
     const status = await brokerRequest(socketPath, 'remote.status');
     return (status.connected as { id: string }[]).some(entry => entry.id === oldDeviceId) ? true : undefined;
@@ -228,7 +228,7 @@ try {
   summary.finished = new Date().toISOString(); summary.passed = exitCode === 0;
   try {
     const logcat = await adb(['logcat', '-d', '-v', 'threadtime'], 30_000, true).catch(() => '');
-    await writeFile(join(evidence, 'logcat.txt'), logcat.split('\n').filter(line => /Cere|cere|AndroidRuntime|TestRunner/.test(line)).join('\n'));
+    await writeFile(join(evidence, 'logcat.txt'), logcat.split('\n').filter(line => /PAL|pal|AndroidRuntime|TestRunner/.test(line)).join('\n'));
     await writeFile(join(evidence, 'broker.log'), brokerLog);
     await writeFile(join(evidence, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
     await writeFile(join(evidence, 'harness.log'), log.join('\n') + '\n');

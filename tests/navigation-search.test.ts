@@ -7,7 +7,7 @@ import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
 
 async function fixture(t:test.TestContext) {
-  const directory=await mkdtemp(join(tmpdir(),'cere-navigation-search-')),project=join(directory,'special-project');await mkdir(project);
+  const directory=await mkdtemp(join(tmpdir(),'pal-navigation-search-')),project=join(directory,'special-project');await mkdir(project);
   const core=new Core(new Store(join(directory,'state')),()=>({async send(){},async interrupt(){},async close(){}}));
   t.after(async()=>{await core.close();await rm(directory,{recursive:true,force:true})});
   const current=await core.create({provider:'codex',cwd:project,title:'Current conversation',trusted:true});

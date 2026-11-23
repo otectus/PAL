@@ -1,6 +1,6 @@
 /**
  * A fact's history as a source-linked timeline (M05): every version of one assertion slot in the
- * order Cere learned them, with its valid-time interval, the revision interval during which it was
+ * order PAL learned them, with its valid-time interval, the revision interval during which it was
  * the known view, its status, and the evidence that supports it. Each entry names the fields that
  * changed from the version before it. Built from inspect()'s history; it reads nothing else, never
  * merges valid time with recording time, and labels nothing as proven: status is the engine's own.

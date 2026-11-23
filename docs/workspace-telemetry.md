@@ -15,10 +15,10 @@ telemetry.
 A paired phone with Desktop control can show a workspace card for one of its
 granted projects: whether the desktop's fresh workspace state is inside that
 project (with the folder relative to it), elsewhere, or unknown. While telemetry or
-memory is off, or Cere actions are paused, the card says awareness is unavailable.
+memory is off, or PAL actions are paused, the card says awareness is unavailable.
 No window title, command or path outside the project reaches the phone.
 
-**CLI injection is withheld.** Cere's Codex, Claude Code and AntiGravity adapters
+**CLI injection is withheld.** PAL's Codex, Claude Code and AntiGravity adapters
 use persistent provider conversations. No verified ephemeral input channel is
 implemented for them. This limitation appears in the settings panel and status.
 Enabling telemetry does not silently add it to CLI prompts or histories.
@@ -27,18 +27,18 @@ Enabling telemetry does not silently add it to CLI prompts or histories.
 
 ## Installation and walkthrough
 
-Build with `npm run build`; normal CMake installation installs `cere-report`,
-`cere-run`, `cere-telemetry-hooks`, the Linux native module and shell integration
+Build with `npm run build`; normal CMake installation installs `pal-report`,
+`pal-run`, `pal-telemetry-hooks`, the Linux native module and shell integration
 files. No new npm or system dependency was added. The native reporter avoids a
 Python interpreter startup on every prompt; Python 3 remains an existing runtime
 dependency for the explicit stderr wrapper and installer.
 
 1. Add an existing project directory in Settings, then enable telemetry.
-2. Run `cere-telemetry-hooks install fish` (or `bash` / `zsh`). Open a new shell.
+2. Run `pal-telemetry-hooks install fish` (or `bash` / `zsh`). Open a new shell.
    The installer adds one marked source block; repeated installation is idempotent.
 3. Run a command, including `false`, and edit/save a file under the selected root.
    Status should show a listening socket, an active watcher and received events.
-4. Enable command capture if desired. Use `cere-run make` to explicitly capture
+4. Enable command capture if desired. Use `pal-run make` to explicitly capture
    the final five stderr lines. Ordinary hooks cannot read terminal scrollback.
 5. Send a message in an Ollama or direct API conversation associated with that
    workspace. The context includes only available fields, capped at 600 UTF-16
@@ -49,14 +49,14 @@ dependency for the explicit stderr wrapper and installer.
    injection.
 7. Clear: discard samples, queued events and pending debounce work. Configuration
    and listener remain. Asynchronous work from before Clear cannot reinsert data.
-8. Run `cere-telemetry-hooks uninstall fish` to remove the marked rc block. Open a
+8. Run `pal-telemetry-hooks uninstall fish` to remove the marked rc block. Open a
    new shell to remove already-loaded functions. Disable telemetry to close its
-   listener and watches. Cere removes only the socket inode it owns; do not delete
+   listener and watches. PAL removes only the socket inode it owns; do not delete
    a live socket manually. A harmless empty lock file may remain.
 
 For a source checkout, put `build` and `tools` on PATH before sourcing the hook,
-or set `CERE_REPORT` to `build/cere-report` and `CERE_RUN` to `tools/cere-run`.
-The shell function named `cere-run` supplies its own session, pid and reserved
+or set `PAL_REPORT` to `build/pal-report` and `PAL_RUN` to `tools/pal-run`.
+The shell function named `pal-run` supplies its own session, pid and reserved
 sequence numbers to the executable; use the function from an integrated shell.
 
 The wrapper forwards stdout normally and tees stderr back to the terminal while
@@ -105,9 +105,9 @@ queue, rather than modifying state directly.
   Reducing selected trees/exclusions or raising an appropriate limit, followed by
   Pause/Resume, restores collection. Events dropped during overload cannot be
   reconstructed.
-- Socket: `$XDG_RUNTIME_DIR/cere/telemetry.sock`, otherwise
-  `/tmp/cere-$UID/telemetry.sock` in a private 0700 directory. The socket is 0600.
-  The existing explicit `CERE_RUNTIME_DIR` development/test override is respected
+- Socket: `$XDG_RUNTIME_DIR/pal/telemetry.sock`, otherwise
+  `/tmp/pal-$UID/telemetry.sock` in a private 0700 directory. The socket is 0600.
+  The existing explicit `PAL_RUNTIME_DIR` development/test override is respected
   by the broker; normal shell helpers use the standard XDG/fallback location.
 - Startup is serialized with `flock`. Symlink/non-socket/foreign-owned paths are
   refused. Live listeners are left intact and reported as in use. Only refused or
@@ -116,7 +116,7 @@ queue, rather than modifying state directly.
 - The listener provides one small capture-policy JSON line on connection; the
   reporter uses it before sending an event. The backend independently strips
   command text and rejects output when disabled. Unknown/malformed events never
-  log contents. `NODE_DEBUG=cere-telemetry` enables rate-limited error-code-only
+  log contents. `NODE_DEBUG=pal-telemetry` enables rate-limited error-code-only
   debug messages.
 - Secret-like assignments/flags, Authorization headers, token patterns and URL
   userinfo are replaced at ingestion before retained state. The wrapper also
@@ -143,11 +143,11 @@ Commands (run from the repository root):
 npm run build
 npm run typecheck
 npm test
-CERE_TTS_DISABLED=1 node --test tests/telemetry.test.ts tests/telemetry-persistence.test.ts tests/telemetry-shells.test.ts
+PAL_TTS_DISABLED=1 node --test tests/telemetry.test.ts tests/telemetry-persistence.test.ts tests/telemetry-shells.test.ts
 python3 tests/telemetry-shells.py
 node tools/benchmark-telemetry.ts
 LD_LIBRARY_PATH="$PWD/.local-deps/usr/lib" QT_PLUGIN_PATH="$PWD/.local-deps/usr/lib/qt6/plugins" /usr/lib/qt6/bin/qmllint -I qml qml/TelemetrySettings.qml
-LD_LIBRARY_PATH="$PWD/.local-deps/usr/lib" QT_PLUGIN_PATH="$PWD/.local-deps/usr/lib/qt6/plugins" QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic ./build/cere-ui-check settingsSectionNavigation workspaceTelemetryControls
+LD_LIBRARY_PATH="$PWD/.local-deps/usr/lib" QT_PLUGIN_PATH="$PWD/.local-deps/usr/lib/qt6/plugins" QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic ./build/pal-ui-check settingsSectionNavigation workspaceTelemetryControls
 PATH="$PWD/.local-deps/usr/bin:$PATH" LD_LIBRARY_PATH="$PWD/.local-deps/usr/lib" ctest --test-dir build --output-on-failure
 npx tsc -p tsconfig.mobile.json
 node tools/mobile-contract.ts --check
@@ -171,12 +171,12 @@ ignored dependency files were written. Peak RSS was **178.7 MiB** (first-half pe
 177.7, second-half 178.7); 131 watches were registered, and pending work drained to
 zero. Excess traffic caused 65,053 counted drops and explicit degradation. The
 host event-loop p99 delay was **12.17 ms**, maximum **21.00 ms**, including benchmark
-filesystem work. This measures the isolated host, not total Cere UI memory or a
+filesystem work. This measures the isolated host, not total PAL UI memory or a
 physical compositor's frame time. A separate offscreen Qt test performed 4,096
 rename-over saves while the settings view was active: 75 UI heartbeat samples,
 maximum gap **23 ms**, below its 150 ms stall assertion.
 
-Evidence files from this implementation are under `/tmp/cere-telemetry-*`:
+Evidence files from this implementation are under `/tmp/pal-telemetry-*`:
 `build.log`, `types.log`, `focused.log`, `full-tests.log`, `ui.txt`, `qmllint.log`,
 `shells.json`, and `load.json`. The final validation record states current suite
 results and unrelated concurrent-work blockers. Offscreen UI acceptance is not a
@@ -194,9 +194,9 @@ claim of a physical-desktop walkthrough or an installed-client restart.
 - `broker/telemetry/service.ts`: bounded broker/worker communication and request invalidation.
 - `native/telemetry.cpp`: inotify events and flock descriptors with cleanup hooks.
 - `native/report.cpp`: bounded, silent native shell reporter.
-- `shell/cere.fish`, `shell/cere.bash`, `shell/cere.zsh`: guarded shell hooks and `cere-run` functions.
-- `tools/cere-run`: explicit bounded stderr tee and output-event reporter.
-- `tools/cere-telemetry-hooks`: idempotent marked rc-block installer/uninstaller.
+- `shell/pal.fish`, `shell/pal.bash`, `shell/pal.zsh`: guarded shell hooks and `pal-run` functions.
+- `tools/pal-run`: explicit bounded stderr tee and output-event reporter.
+- `tools/pal-telemetry-hooks`: idempotent marked rc-block installer/uninstaller.
 - `tools/benchmark-telemetry.ts`: isolated idle/flood/checkout measurements.
 - `broker/core.ts`: settings, status, lifecycle, RPC controls and eligible request context.
 - `broker/types.ts`, `broker/store.ts`: persisted configuration defaults and merging.

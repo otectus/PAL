@@ -9,12 +9,15 @@
 #include <QImageReader>
 #include <QMatrix4x4>
 #include <QMetaType>
+#include <QPointer>
+#include <QQueue>
 #include <QQuickWindow>
 #include <QSGImageNode>
 #include <QSGOpacityNode>
 #include <QSGTexture>
 #include <QSGTransformNode>
 #include <QTransform>
+#include <QThreadPool>
 
 #include <algorithm>
 #include <cmath>
@@ -33,6 +36,9 @@ constexpr int maximumTextureLevel = 4;
 constexpr int minimumLevelSide = 4;
 // Five gesture routes plus an authored carried loop, decoded one atlas at a time.
 constexpr int maximumSurfaceFrames = 384;
+// Cache neighboring drawings for click/reverse transitions without retaining
+// a second unbounded copy of a 300-frame surface atlas.
+constexpr int maximumPreparedSurfaceFrames = 16;
 constexpr qreal heldSurfaceDeformationScale = 0.35;
 constexpr int surfaceDeformationTransitionFrames = 8;
 
@@ -77,6 +83,7 @@ struct PartImages
 {
     QVector<QVector<QImage>> frames;
     QVector<QVector<QImage>> blinks;
+    QVector<quint64> uses;
 };
 
 QString imagePath(const QUrl &source)
@@ -98,28 +105,153 @@ struct ImageCache
 
 ImageCache &imageCache()
 {
-    // Source and definition setters run on the GUI thread. Keep only the most
-    // recently decoded atlas: settings can instantiate every avatar preview,
-    // and a generated surface atlas is hundreds of decoded megabytes. QImage
-    // implicit sharing keeps the returned image alive during preparation.
+    // Synchronous callers and asynchronous GUI-side completions share one
+    // most-recent atlas. A generated surface atlas is hundreds of decoded
+    // megabytes; live async puppets pin only their own implicitly shared image.
     static ImageCache cache;
     return cache;
 }
+
+QImage decodeAtlas(const QString &path);
 
 QImage cachedAtlas(const QString &path, const QString &key)
 {
     ImageCache &cache = imageCache();
     if (!key.isEmpty() && cache.atlasKey == key && !cache.atlas.isNull())
         return cache.atlas;
-    QImageReader reader(path);
-    reader.setAutoTransform(true);
-    QImage image = reader.read();
+    QImage image = decodeAtlas(path);
     if (image.isNull())
-        return {};
-    image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        return image;
     cache.atlasKey = key;
     cache.atlas = image;
     return image;
+}
+
+QImage decodeAtlas(const QString &path)
+{
+    QImageReader reader(path);
+    reader.setAutoTransform(true);
+    QImage image = reader.read();
+    if (!image.isNull())
+        image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    return image;
+}
+
+struct AsyncAtlasRecipient
+{
+    std::function<bool()> current;
+    std::function<void(const QImage &)> deliver;
+};
+
+struct AsyncAtlasJob
+{
+    QString key;
+    QString path;
+    QVector<AsyncAtlasRecipient> recipients;
+};
+
+struct AsyncAtlasState
+{
+    QHash<QString, std::shared_ptr<AsyncAtlasJob>> jobs;
+    QQueue<std::shared_ptr<AsyncAtlasJob>> queued;
+    std::shared_ptr<AsyncAtlasJob> active;
+};
+
+AsyncAtlasState &asyncAtlasState()
+{
+    // All state access happens through the GUI-side request/completion paths.
+    static AsyncAtlasState state;
+    return state;
+}
+
+QObject *asyncAtlasDispatcher()
+{
+    // Deliberately process-lifetime: workers can always enqueue completion
+    // without racing destruction of an AvatarPuppet or application child.
+    static QObject *dispatcher = new QObject;
+    return dispatcher;
+}
+
+void startNextAsyncAtlasJob();
+
+void finishAsyncAtlasJob(const QString &key, QImage image)
+{
+    AsyncAtlasState &state = asyncAtlasState();
+    const std::shared_ptr<AsyncAtlasJob> job = state.jobs.take(key);
+    if (!job || job != state.active)
+        return;
+    state.active.reset();
+    bool delivered = false;
+    for (const AsyncAtlasRecipient &recipient : job->recipients) {
+        if (!recipient.current())
+            continue;
+        if (!delivered && !image.isNull()) {
+            ImageCache &cache = imageCache();
+            cache.atlasKey = key;
+            cache.atlas = image;
+        }
+        delivered = true;
+        recipient.deliver(image);
+    }
+    startNextAsyncAtlasJob();
+}
+
+void startNextAsyncAtlasJob()
+{
+    AsyncAtlasState &state = asyncAtlasState();
+    if (state.active)
+        return;
+    while (!state.queued.isEmpty()) {
+        const std::shared_ptr<AsyncAtlasJob> job = state.queued.dequeue();
+        QVector<AsyncAtlasRecipient> current;
+        current.reserve(job->recipients.size());
+        for (const AsyncAtlasRecipient &recipient : std::as_const(job->recipients))
+            if (recipient.current())
+                current.append(recipient);
+        job->recipients = std::move(current);
+        if (job->recipients.isEmpty()) {
+            state.jobs.remove(job->key);
+            continue;
+        }
+        state.active = job;
+        QObject *const dispatcher = asyncAtlasDispatcher();
+        QThreadPool::globalInstance()->start([key = job->key, path = job->path,
+                                               dispatcher] {
+            QImage image = decodeAtlas(path);
+            QMetaObject::invokeMethod(dispatcher,
+                    [key, image = std::move(image)]() mutable {
+                finishAsyncAtlasJob(key, std::move(image));
+            }, Qt::QueuedConnection);
+        });
+        return;
+    }
+}
+
+void requestAsyncAtlas(const QString &key, const QString &path,
+                       AsyncAtlasRecipient recipient)
+{
+    AsyncAtlasState &state = asyncAtlasState();
+    ImageCache &cache = imageCache();
+    if (!key.isEmpty() && key == cache.atlasKey && !cache.atlas.isNull()) {
+        QMetaObject::invokeMethod(asyncAtlasDispatcher(),
+                [recipient = std::move(recipient), image = cache.atlas] {
+            if (recipient.current())
+                recipient.deliver(image);
+        }, Qt::QueuedConnection);
+        return;
+    }
+    const auto existing = state.jobs.constFind(key);
+    if (existing != state.jobs.cend()) {
+        (*existing)->recipients.append(std::move(recipient));
+        return;
+    }
+    auto job = std::make_shared<AsyncAtlasJob>();
+    job->key = key;
+    job->path = path;
+    job->recipients.append(std::move(recipient));
+    state.jobs.insert(key, job);
+    state.queued.enqueue(job);
+    startNextAsyncAtlasJob();
 }
 
 QVector<QImage> textureLevels(const QImage &crop)
@@ -321,9 +453,12 @@ struct AvatarPuppet::Private
     QVector<AvatarSkeleton::Bone> bones;
     QVector<Part> parts;
     QVector<PartImages> partImages;
+    QImage retainedAtlas;
+    quint64 imageUse = 0;
     quint64 revision = 0;
     bool ready = false;
     bool validationOnly = false;
+    bool asynchronous = false;
     QString error;
 };
 
@@ -397,6 +532,20 @@ void AvatarPuppet::setSurfaceFrame(int frame)
     update();
 }
 
+bool AvatarPuppet::asynchronous() const
+{
+    return d->asynchronous;
+}
+
+void AvatarPuppet::setAsynchronous(bool asynchronous)
+{
+    if (d->asynchronous == asynchronous)
+        return;
+    d->asynchronous = asynchronous;
+    emit asynchronousChanged();
+    rebuild();
+}
+
 bool AvatarPuppet::ready() const
 {
     return d->ready;
@@ -429,6 +578,7 @@ void AvatarPuppet::setStatus(bool ready, const QString &error)
 
 void AvatarPuppet::loadSource()
 {
+    d->retainedAtlas = {};
     d->sourceKey.clear();
     const QString path = imagePath(d->source);
     if (!path.isEmpty()) {
@@ -790,7 +940,7 @@ void AvatarPuppet::rebuild()
     // Validation only: the atlas's stored size is enough to check every rectangle against it.
     QImage atlas;
     QRect atlasRect;
-    if (validationError.isEmpty() && d->validationOnly) {
+    if (validationError.isEmpty() && (d->validationOnly || d->asynchronous)) {
         QImageReader reader(imagePath(d->source));
         reader.setAutoTransform(true);
         const QSize size = reader.canRead() ? reader.size() : QSize();
@@ -809,6 +959,7 @@ void AvatarPuppet::rebuild()
             PartImages images;
             images.frames.resize(part.surfaceFrames.size());
             images.blinks.resize(part.surfaceFrames.size());
+            images.uses.resize(part.surfaceFrames.size());
             for (int frameIndex = 0; frameIndex < part.surfaceFrames.size(); ++frameIndex) {
                 const Part::SurfaceFrame &frame = part.surfaceFrames[frameIndex];
                 if (!atlasRect.contains(frame.sourceRect)) {
@@ -827,7 +978,7 @@ void AvatarPuppet::rebuild()
                 break;
             d->partImages.append(images);
         }
-        if (validationError.isEmpty() && !d->validationOnly
+        if (validationError.isEmpty() && !d->validationOnly && !d->asynchronous
                 && !prepareFrameImages(d->surfaceFrame, &validationError)) {
             // prepareFrameImages supplies the diagnostic.
         }
@@ -838,11 +989,72 @@ void AvatarPuppet::rebuild()
         d->parts.clear();
         d->partImages.clear();
         setStatus(false, validationError);
+    } else if (d->asynchronous && !d->validationOnly) {
+        d->referenceSize = QSizeF(reference[0], reference[1]);
+        setImplicitSize(d->referenceSize.width(), d->referenceSize.height());
+        setStatus(false, {});
+        const quint64 revision = d->revision;
+        const QString path = imagePath(d->source);
+        const QString key = d->sourceKey.isEmpty() ? path : d->sourceKey;
+        QPointer<AvatarPuppet> guard(this);
+        // Source and definition bindings change in one QML turn. Defer starting
+        // the worker so only the final consistent pair pays for a decode.
+        QMetaObject::invokeMethod(this, [guard, revision, path, key] {
+            if (!guard || guard->d->revision != revision)
+                return;
+            if (!guard->d->retainedAtlas.isNull()) {
+                guard->finishSourceLoad(revision, guard->d->retainedAtlas);
+                return;
+            }
+            requestAsyncAtlas(key, path, AsyncAtlasRecipient{
+                [guard, revision] {
+                    return guard && guard->d->revision == revision
+                            && guard->d->asynchronous && !guard->d->validationOnly;
+                },
+                [guard, revision](const QImage &image) {
+                    if (guard)
+                        guard->finishSourceLoad(revision, image);
+                }});
+        }, Qt::QueuedConnection);
     } else {
         d->referenceSize = QSizeF(reference[0], reference[1]);
         setImplicitSize(d->referenceSize.width(), d->referenceSize.height());
         setStatus(true, {});
     }
+    update();
+}
+
+void AvatarPuppet::finishSourceLoad(quint64 revision, QImage image)
+{
+    if (revision != d->revision || !d->asynchronous || d->validationOnly)
+        return;
+    if (image.isNull()) {
+        setStatus(false, QStringLiteral("source atlas could not be loaded"));
+        update();
+        return;
+    }
+    d->retainedAtlas = std::move(image);
+    QString preparationError;
+    if (!prepareFrameImages(d->surfaceFrame, &preparationError)) {
+        d->retainedAtlas = {};
+        setStatus(false, preparationError);
+        update();
+        return;
+    }
+    // All connected routes leave neutral through authored frame one. Preparing
+    // it after the worker decode removes the remaining first-click crop cost.
+    if (d->surfaceFrame == 0) {
+        bool hasFirstAuthoredFrame = false;
+        for (const Part &part : std::as_const(d->parts))
+            hasFirstAuthoredFrame |= part.surfaceMotion && part.surfaceFrames.size() > 1;
+        if (hasFirstAuthoredFrame && !prepareFrameImages(1, &preparationError)) {
+            d->retainedAtlas = {};
+            setStatus(false, preparationError);
+            update();
+            return;
+        }
+    }
+    setStatus(true, {});
     update();
 }
 
@@ -856,12 +1068,17 @@ bool AvatarPuppet::prepareFrameImages(int requestedFrame, QString *error)
                 && requestedFrame < part.surfaceFrames.size()) {
             selectedFrames[index] = requestedFrame;
         }
-        preparationNeeded |= d->partImages[index].frames[selectedFrames[index]].isEmpty();
+        PartImages &images = d->partImages[index];
+        const int selected = selectedFrames[index];
+        preparationNeeded |= images.frames[selected].isEmpty();
+        if (!images.frames[selected].isEmpty())
+            images.uses[selected] = ++d->imageUse;
     }
     if (!preparationNeeded)
         return true;
 
-    const QImage atlas = cachedAtlas(imagePath(d->source), d->sourceKey);
+    const QImage atlas = d->retainedAtlas.isNull()
+            ? cachedAtlas(imagePath(d->source), d->sourceKey) : d->retainedAtlas;
     if (atlas.isNull()) {
         *error = QStringLiteral("source atlas could not be loaded while preparing surface frame");
         return false;
@@ -873,19 +1090,29 @@ bool AvatarPuppet::prepareFrameImages(int requestedFrame, QString *error)
         if (!images.frames[frameIndex].isEmpty())
             continue;
         if (part.surfaceMotion) {
-            // A player needs only its current authored drawing. Dropping prior
-            // CPU crops bounds a 256-frame animation at one frame plus mips.
-            for (int stale = 0; stale < images.frames.size(); ++stale) {
-                if (stale == frameIndex)
+            int prepared = 0;
+            int oldest = -1;
+            quint64 oldestUse = std::numeric_limits<quint64>::max();
+            for (int candidate = 0; candidate < images.frames.size(); ++candidate) {
+                if (images.frames[candidate].isEmpty())
                     continue;
-                images.frames[stale].clear();
-                images.blinks[stale].clear();
+                ++prepared;
+                if (candidate != frameIndex && images.uses[candidate] < oldestUse) {
+                    oldest = candidate;
+                    oldestUse = images.uses[candidate];
+                }
+            }
+            if (prepared >= maximumPreparedSurfaceFrames && oldest >= 0) {
+                images.frames[oldest].clear();
+                images.blinks[oldest].clear();
+                images.uses[oldest] = 0;
             }
         }
         const Part::SurfaceFrame &frame = part.surfaceFrames[frameIndex];
         images.frames[frameIndex] = textureLevels(atlas.copy(frame.sourceRect));
         if (!frame.blinkSourceRect.isNull())
             images.blinks[frameIndex] = textureLevels(atlas.copy(frame.blinkSourceRect));
+        images.uses[frameIndex] = ++d->imageUse;
     }
     return true;
 }

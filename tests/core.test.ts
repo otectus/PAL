@@ -11,7 +11,7 @@ import type { Hooks } from '../broker/providers.ts';
 import { defaultPersonality, personalityMaxLength } from '../broker/personality.ts';
 
 async function setup(t: any) {
-  const directory=await mkdtemp(join(tmpdir(),'cere-test-'));
+  const directory=await mkdtemp(join(tmpdir(),'pal-test-'));
   let hooks: Hooks | undefined, sends=0;
   const core=new Core(new Store(directory),(_s,h)=>{hooks=h;return{async send(){sends++},async interrupt(){h.event({type:'complete',text:'interrupted'})},async close(){}}});
   t.after(async()=>{await core.close();await rm(directory,{recursive:true,force:true})});
@@ -77,8 +77,8 @@ test('expressive settings default, validate atomically and persist',async t=>{
 });
 test('JSON lines preserves partial and Unicode messages and rejects oversized input',()=>{
   const parser=new JsonLines(),received:any[]=[];
-  parser.push('{"text":"Ce',m=>received.push(m));parser.push('re ✦"}\n\n{"n":2}\n',m=>received.push(m));
-  assert.deepEqual(received,[{text:'Cere ✦'},{n:2}]);assert.throws(()=>parser.push('x'.repeat(8*1024*1024+1),()=>{}),/exceeds/);
+  parser.push('{"text":"P',m=>received.push(m));parser.push('AL ✦"}\n\n{"n":2}\n',m=>received.push(m));
+  assert.deepEqual(received,[{text:'PAL ✦'},{n:2}]);assert.throws(()=>parser.push('x'.repeat(8*1024*1024+1),()=>{}),/exceeds/);
 });
 test('animation previews relay to the pet and desktop actions emit a reaction',async t=>{
   const {core,session}=await setup(t), events:any[]=[];
@@ -198,12 +198,12 @@ test('action validation prevents argument injection',()=>{
   assert.throws(()=>validateAction('audio.mute',{command:'anything'}),/Unexpected/);
 });
 test('database files are private and a broker restart never replays work',async t=>{
-  const directory=await mkdtemp(join(tmpdir(),'cere-recovery-'));let executions=0;
+  const directory=await mkdtemp(join(tmpdir(),'pal-recovery-'));let executions=0;
   const first=new Core(new Store(directory),()=>({async send(){executions++},async interrupt(){},async close(){}}));
   const s=await first.create({provider:'codex',cwd:directory,trusted:true});await first.send({id:s.id,text:'once'});await first.close();
   const recovered=new Core(new Store(directory));t.after(async()=>{await recovered.close();await rm(directory,{recursive:true,force:true})});
   assert.equal(recovered.store.session(s.id).status,'interrupted');assert.equal(executions,1);
-  assert.equal((await stat(join(directory,'cere.sqlite'))).mode&0o777,0o600);
+  assert.equal((await stat(join(directory,'pal.sqlite'))).mode&0o777,0o600);
 });
 
 test('permission bypasses default off, validate strictly, and survive broker restart', async t => {
@@ -353,7 +353,7 @@ test('Claude computer-tool entry approval follows computer power independently o
   core.tokens.set('claude', session.id);
   await core.rpc('power.start', { sessionIds: [session.id], minutes: 5, cli: false, computer: true });
   const input = { address: '0x123' };
-  assert.deepEqual(await core.rpc('mcp.call', { token: 'claude', name: 'approve', args: { tool_name: 'mcp__cere__windows_focus', input } }), { behavior: 'allow', updatedInput: input });
+  assert.deepEqual(await core.rpc('mcp.call', { token: 'claude', name: 'approve', args: { tool_name: 'mcp__pal__windows_focus', input } }), { behavior: 'allow', updatedInput: input });
   const command = core.rpc('mcp.call', { token: 'claude', name: 'approve', args: { tool_name: 'Bash', input: { command: 'printf test' } } });
   assert.equal(core.approvals.size, 1);
   assert.equal(core.snapshot().approvals[0].kind, 'provider');
@@ -367,7 +367,7 @@ test('Claude native permission prompts honor persistent computer and CLI switche
   core.tokens.set('claude-persistent',session.id);
   await core.updateSettings({bypassComputerPermissions:true});
   const input={address:'0x456'};
-  assert.deepEqual(await core.rpc('mcp.call',{token:'claude-persistent',name:'approve',args:{tool_name:'mcp__cere__windows_focus',input}}),{behavior:'allow',updatedInput:input});
+  assert.deepEqual(await core.rpc('mcp.call',{token:'claude-persistent',name:'approve',args:{tool_name:'mcp__pal__windows_focus',input}}),{behavior:'allow',updatedInput:input});
   assert.equal(core.approvals.size,0);
   const command=core.rpc('mcp.call',{token:'claude-persistent',name:'approve',args:{tool_name:'Bash',input:{command:'printf test'}}});
   assert.equal(core.snapshot().approvals[0].kind,'provider');
@@ -386,7 +386,7 @@ test('project trust remains explicit because power can only select an existing i
 test('revoking persistent bypass before a native Claude approval is returned denies it', async t => {
   const {core,directory}=await setup(t);
   const session=await core.create({provider:'claude',cwd:directory,trusted:true});core.tokens.set('revocation',session.id);
-  for(const [key,tool_name] of [['bypassCliPermissions','Bash'],['bypassComputerPermissions','mcp__cere__windows_focus']] as const){
+  for(const [key,tool_name] of [['bypassCliPermissions','Bash'],['bypassComputerPermissions','mcp__pal__windows_focus']] as const){
     await core.updateSettings({[key]:true});
     const pending=core.rpc('mcp.call',{token:'revocation',name:'approve',args:{tool_name,input:{}}});
     await core.updateSettings({[key]:false});

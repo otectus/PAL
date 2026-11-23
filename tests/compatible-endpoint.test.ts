@@ -41,7 +41,7 @@ async function server(t: any, handler: Handler) {
   return { url: `http://127.0.0.1:${(http.address() as any).port}/v1`, requests };
 }
 async function broker(t: any) {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-compatible-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-compatible-'));
   const core = new Core(new Store(join(dir, 'state')));
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   await core.updateSettings({ memory: { enabled: false } });
@@ -109,7 +109,7 @@ test('M13 only declared capabilities are used: tools, images, streaming and usag
   let plan = (await core.rpc('session.context', { id: session.id })).lastPlan;
   assert.equal(plan.reported, undefined, 'usage is not recorded unless the endpoint is declared to report it');
   assert.equal(plan.contextSize, 8192);
-  assert.ok(plan.unknown.some((line: string) => /not declared; Cere assumes 8,192 tokens/.test(line)));
+  assert.ok(plan.unknown.some((line: string) => /not declared; PAL assumes 8,192 tokens/.test(line)));
   assert.ok(plan.unknown.some((line: string) => /as you declared them; not verified/.test(line)));
   // Declared usage and a declared context window: requested, recorded as reported, never priced.
   await core.updateSettings({ compatible: { usage: true, contextLength: 16384, maxOutputTokens: 2048 } });
@@ -140,15 +140,15 @@ test('M13 declared tool calling runs tools through the usual loop, and an endpoi
     const last = body.messages.at(-1);
     if (last.role === 'user' && last.content.includes('Wait')) { hold = res; res.write(chunk({ role: 'assistant', content: 'Thinking' })); req.on('close', () => { closed = true; }); return; }
     if (last.role === 'tool') { res.end(chunk({ content: 'The note is saved.' }) + chunk({}, 'stop')); return; }
-    // The call has no ID: Cere gives it one so its result can be matched.
-    res.end(chunk({ tool_calls: [{ index: 0, type: 'function', function: { name: 'web_search', arguments: '{"query":"cere"}' } }] }) + chunk({}, 'tool_calls'));
+    // The call has no ID: PAL gives it one so its result can be matched.
+    res.end(chunk({ tool_calls: [{ index: 0, type: 'function', function: { name: 'web_search', arguments: '{"query":"pal"}' } }] }) + chunk({}, 'tool_calls'));
   });
   const { core, dir } = await broker(t);
   await core.updateSettings({ compatible: { baseUrl: endpoint.url, requiresKey: false, tools: true }, webSearch: { enabled: true } });
-  core.web.search = (async () => ({ results: [{ title: 'Cere', url: 'https://cere.example', snippet: 'x' }] })) as any;
+  core.web.search = (async () => ({ results: [{ title: 'PAL', url: 'https://pal.example', snippet: 'x' }] })) as any;
   const session = await core.create({ provider: 'compatible', model: 'm', cwd: dir });
   assert.ok(core.toolsFor(session.id).some(tool => tool.function.name === 'web_search'));
-  await core.send({ id: session.id, text: 'Search for cere' }); await idle(core, session.id);
+  await core.send({ id: session.id, text: 'Search for pal' }); await idle(core, session.id);
   assert.equal(core.store.messages(session.id).at(-1)?.text, 'The note is saved.');
   const followUp = endpoint.requests.at(-1)!.body.messages;
   const call = followUp.at(-2).tool_calls[0], result = followUp.at(-1);

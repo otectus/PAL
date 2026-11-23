@@ -38,5 +38,5 @@ test('paired evidence hashes the installed APKs and tears down after a report wr
   assert.ok(added);
   assert.ok(history.some(args => args[1] === '--remove' && args[2] === added[2]));
   assert.equal(history.filter(args => args.includes('clear')).length, 1, 'cleanup does not clear an application when setup never completed');
-  assert.deepEqual((await readdir(tmp)).filter(name => name.startsWith('cere-paired-')), []);
+  assert.deepEqual((await readdir(tmp)).filter(name => name.startsWith('pal-paired-')), []);
 });

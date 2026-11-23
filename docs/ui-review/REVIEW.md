@@ -1,10 +1,10 @@
-# Cere desktop UI/UX review
+# PAL desktop UI/UX review
 
-Date: 2026-10-01. Scope: compact panel, expanded workspace, pet ↔ panel ↔ workspace transitions, pending-approval bubble and tray as entry/exit points. Everything below was run against the workspace build with isolated `CERE_STATE_DIR`/`CERE_RUNTIME_DIR` (the UI-check harness creates them under `/tmp`), the local Ollama and Codex fixtures only, and the real Hyprland session for layer-shell behaviour. The user's broker, state and running client were not touched.
+Date: 2026-10-01. Scope: compact panel, expanded workspace, pet ↔ panel ↔ workspace transitions, pending-approval bubble and tray as entry/exit points. Everything below was run against the workspace build with isolated `PAL_STATE_DIR`/`PAL_RUNTIME_DIR` (the UI-check harness creates them under `/tmp`), the local Ollama and Codex fixtures only, and the real Hyprland session for layer-shell behaviour. The user's broker, state and running client were not touched.
 
 Evidence tags: **Observed** = reproduced with a screenshot or log; **Code-inferred** = read in source, not reproduced; **Assumed** = neither.
 
-Evidence directories: `docs/ui-review/baseline/` (PNG captures and JSON notes copied from `/tmp/cere-ui-evidence`), run logs `/tmp/cere-ui-review-baseline-existing.log`, `/tmp/cere-ui-review-baseline-b.log`, `/tmp/cere-ui-review-live2.log`, `/tmp/cere-ui-review-offscreen2.log`, `/tmp/cere-ui-review-render-timing.log`.
+Evidence directories: `docs/ui-review/baseline/` (PNG captures and JSON notes copied from `/tmp/pal-ui-evidence`), run logs `/tmp/pal-ui-review-baseline-existing.log`, `/tmp/pal-ui-review-baseline-b.log`, `/tmp/pal-ui-review-live2.log`, `/tmp/pal-ui-review-offscreen2.log`, `/tmp/pal-ui-review-render-timing.log`.
 
 ## 1. Implementation map
 
@@ -36,10 +36,10 @@ Pages inside both panels: `Chat.qml` (conversation, composer, tools, dialogs), `
 
 | Surface | always-on-top **on** (default; overlay process) | always-on-top **off** (ui process) | Keyboard | Size control |
 | --- | --- | --- | --- | --- |
-| Pet | layer-shell `overlay`, scope `cere-pet`, anchors top-left + margins (`controller.cpp:365-380`) | xdg `Tool` window, floated and moved via `hyprctl` dispatch (`:399`) | none | fixed 192×208 × scale |
-| Compact panel | layer-shell `overlay`, `cere-panel`, keyboard **on-demand**, activate on show | xdg `Tool` window; **no float/move dispatch**, so Hyprland tiles it (Observed: 944×1145, 944×567) | on-demand / normal | `Placement::compactPanel` (overlay) / compositor (ui) |
-| Workspace | — | ordinary xdg toplevel in both modes (`view("Workspace.qml", false, "Cere")`) | normal | 1040×780, min 720×580 |
-| Bubble | layer-shell `overlay`, `cere-approval`, on-demand, no activate-on-show | xdg `Tool`, floated via dispatch; accepts focus only while approvals are pending (`:575`) | on-demand / normal | width 392, height = content ≤ 460 |
+| Pet | layer-shell `overlay`, scope `pal-pet`, anchors top-left + margins (`controller.cpp:365-380`) | xdg `Tool` window, floated and moved via `hyprctl` dispatch (`:399`) | none | fixed 192×208 × scale |
+| Compact panel | layer-shell `overlay`, `pal-panel`, keyboard **on-demand**, activate on show | xdg `Tool` window; **no float/move dispatch**, so Hyprland tiles it (Observed: 944×1145, 944×567) | on-demand / normal | `Placement::compactPanel` (overlay) / compositor (ui) |
+| Workspace | — | ordinary xdg toplevel in both modes (`view("Workspace.qml", false, "PAL")`) | normal | 1040×780, min 720×580 |
+| Bubble | layer-shell `overlay`, `pal-approval`, on-demand, no activate-on-show | xdg `Tool`, floated via dispatch; accepts focus only while approvals are pending (`:575`) | on-demand / normal | width 392, height = content ≤ 460 |
 
 A toplevel cannot set its own position on Wayland, so only the layer-shell (on-top) mode controls placement: anchors + margins per output, output chosen from the pet's remembered output. Both panels are destroyed and recreated on every switch (`togglePanel` deletes the workspace view, `showWorkspace` deletes the compact view); in the default mode they even live in different processes (overlay host vs ui host).
 
@@ -50,7 +50,7 @@ A toplevel cannot set its own position on Wayland, so only the layer-shell (on-t
 - Not carried anywhere: cursor position, selection, the **Search web** checkbox, Activity Panel expansion, which message was at the top of the viewport, keyboard focus. Question-form drafts are kept in `Controller::m_questionDrafts` (same process only).
 - Consequence: any transition can lose the cursor/selection, drop a Web-search intent, and restore the scroll to a different message (see F-01).
 
-### Existing `cere-ui-check` coverage and VALIDATION.md gaps
+### Existing `pal-ui-check` coverage and VALIDATION.md gaps
 
 Relevant slots (45 total): `navigationAndScreenshots`, `markdownMessages` (markdown features, wide table, compact 440×720 resize), `questionsAndAgentActivity` (question drafts in workspace and compact), `activityAndPermissionBubble` (bubble ↔ panel hand-over, multiple approvals, cancellation), `compactSessionNavigation` (360/440/1040 sizes), `responsiveLayoutsAndDesktopActions` (4 sizes × 4 pages, control bounds), `approvalsIdentifyTheirRequester`, `completionBubbles`, `pinnedConversationBubbles`, `compactProjectsAndEnterToSend`, `compactComposerClipboard`, `foldersAttachmentsAndPalette`, `sessionContextActions`, `draftsStayCoherentAcrossComposers`, `compactPanelFitsEveryOutput`, `reconnectRecoversTranscriptAndFailsPendingRequests`. Not covered before this review: cursor/selection/toggle survival across surfaces, scroll anchoring, keyboard-only paths, Enter-vs-approve, 200+ message sessions, long replies with code/tables/long URLs, fractional output scales, frame pacing, broker restart in the real broker. `VALIDATION.md` records no screen-reader, multi-scale, or keyboard-only UI verification; its listed limits are TTS/GPU and provider-usage items. Baseline run of the existing subset: 15 of 17 passed; `compactPanelFitsEveryOutput` asserts height ≤ 720 while `togglePanel` now requests 860 (stale assertion), and `sessionContextActions` failed once on timing and passed alone.
 
@@ -172,7 +172,7 @@ Frame pacing is healthy at scale 1 with the portrait/pet animation paused: one f
 | Handoff | dialog with provider, trust box, editable draft; creates the new session with the draft in the composer | same | `review-workflow-handoff-{,draft-}compact.png` |
 | Change a setting | reduce-motion toggle round-trips | same | `review-workflow-settings-compact.png` |
 | Desktop control | 1-minute timer started, feedback banner shown | same | `review-workflow-desktop-feedback-compact.png` |
-| Broker disconnect mid-turn and restart | header "Reconnecting…", footer "Offline", toast "Cere is reconnecting to her session broker."; Stop and "Writing a response…" stay visible (stale) and the composer stays editable while Send is disabled; after the restart the turn is `interrupted` with the banner "Cere restarted. The previous turn was not replayed." | same | `review-broker-disconnected-{workspace,compact}.png`; the post-reconnect capture is missing because the harness expands through the broker (`review-broker-disconnect.json` has the state) |
+| Broker disconnect mid-turn and restart | header "Reconnecting…", footer "Offline", toast "PAL is reconnecting to her session broker."; Stop and "Writing a response…" stay visible (stale) and the composer stays editable while Send is disabled; after the restart the turn is `interrupted` with the banner "PAL restarted. The previous turn was not replayed." | same | `review-broker-disconnected-{workspace,compact}.png`; the post-reconnect capture is missing because the harness expands through the broker (`review-broker-disconnect.json` has the state) |
 
 ### 2.8 Accessibility inventory (Observed with `QAccessible` active; `review-accessibility.json`)
 
@@ -206,11 +206,11 @@ Severity: S1 workflow blocked / data lost / approval clarity; S2 accessibility f
 | F-14 | both | draft loss (race) | S2 | rare | S | Code-inferred | — | `qml/Chat.qml:117-125` |
 | F-15 | settings | consistency | S3 | each visit | S | Observed | `settings-440x720-top.png` | `qml/Settings.qml:10-22,55-60` |
 | F-16 | both | tokens / consistency | S3 | always | M | Observed (grep) | — | 15 QML files, `qml/Theme.qml` |
-| F-17 | bubble | timing glitch | S3 | after closing a panel | S | Code-inferred + flake log | `/tmp/cere-ui-review-baseline-existing.log` | `qml/ApprovalBubble.qml:30-33` |
+| F-17 | bubble | timing glitch | S3 | after closing a panel | S | Code-inferred + flake log | `/tmp/pal-ui-review-baseline-existing.log` | `qml/ApprovalBubble.qml:30-33` |
 | F-18 | both | scrollbars | S3 | always | S | Code-inferred | `markdown-wide-table.png` | `qml/CScrollBar.qml`, `qml/MessageCard.qml:34` |
 | F-19 | both | toast pushes layout | S3 | each toast | S | Observed | `markdown-wide-table.png`, `question-form.png` | `qml/Shell.qml:220-224` |
 | F-20 | compact sessions | density | S3 | each visit | S | Observed | `compact-before-select-440.png` | `qml/SessionList.qml:182-228` |
-| F-21 | tests | stale regression | S3 | CI | S | Observed | `/tmp/cere-ui-review-baseline-b.log` | `tests/ui.cpp` `compactPanelFitsEveryOutput` |
+| F-21 | tests | stale regression | S3 | CI | S | Observed | `/tmp/pal-ui-review-baseline-b.log` | `tests/ui.cpp` `compactPanelFitsEveryOutput` |
 | F-22 | compact chat | truncation | S4 | long names | S | Observed | `context-drawer.png` | `qml/Chat.qml:211-224` (attachment chip) |
 | F-23 | compact desktop | layout | S4 | narrow widths | S | Observed | `desktop-360x560-top.png` | `qml/Desktop.qml:60-87` |
 | F-25 | both | duplicate messaging | S4 | each provider error | S | Observed | `review-workflow-error-compact.png` | `qml/Chat.qml:155-158`, `qml/Shell.qml:220-224` |
@@ -247,13 +247,13 @@ Details for S1/S2:
 
 ## 5. Staged plan
 
-Each stage is one commit; after each: build (`tools/build.sh`), `npm test`, `npm run typecheck`, `QT_QUICK_CONTROLS_STYLE=Basic ./build/cere-ui-check` (full), new review slots as regressions.
+Each stage is one commit; after each: build (`tools/build.sh`), `npm test`, `npm run typecheck`, `QT_QUICK_CONTROLS_STYLE=Basic ./build/pal-ui-check` (full), new review slots as regressions.
 
 **Stage 1 — S1 fixes**
 1. F-01: add a per-session `uiState` (cursor, selection, webSearch, activityExpanded, anchor message id + offset within it) to the draft payload and `Chat.qml` load/save; restore scroll by message id (`positionViewAtIndex` + offset) instead of `contentY`; focus the composer after load. Files: `qml/Chat.qml`, `broker/core.ts` (`draft`), `broker/types.ts`, `broker/store.ts`. Verify: `reviewTransitions` snapshots equal before/after for all fields (new regression), `draftsStayCoherentAcrossComposers` still passes.
 2. F-02: restructure the requester block (`ApprovalCard.qml`) into provider · id on line 1, title (elide right) on line 2, cwd (elide middle) on line 3, no line cap; same block reused by `CompletionCard`. Verify: `approvalsIdentifyTheirRequester` extended to assert the cwd text is visible on all three surfaces with a 120-char title.
 3. F-03: compact chat column becomes height-aware: merge title + provider into one row, move the five conversation tools into an overflow menu when `chat.height < 640`, cap the activity bar, make the page scrollable when its content exceeds the viewport, and give pending questions a minimum visible height. Verify: new `reviewSurfacesAtScale` assertion that the tools row and composer are inside the window on every fixture output; `compactPanelFitsEveryOutput` updated to the 860 request.
-4. F-04 (if approved in §6): float and move "Cere Panel" like the pet/bubble in the non-on-top mode, with min/max size set so Hyprland honours it. Verify: live check that the compact window is `floating` and 440×≤860 via `hyprctl clients`.
+4. F-04 (if approved in §6): float and move "PAL Panel" like the pet/bubble in the non-on-top mode, with min/max size set so Hyprland honours it. Verify: live check that the compact window is `floating` and 440×≤860 via `hyprctl clients`.
 
 **Stage 2 — shared rules and tokens**
 5. F-06, F-16, F-18: add the tokens in §4, replace the 40 literals, restyle `CScrollBar` (12 px track, ≥ 3:1 thumb, always-visible horizontal bar in `MessageCard`), apply the type and radius scales. Verify: a small `tests/qml` lint (no hex literals outside `Theme.qml`) and a contrast table recomputed in the report.
@@ -288,7 +288,7 @@ Each stage is one commit; after each: build (`tools/build.sh`), `npm test`, `npm
 - QSG_RENDER_TIMING in Qt 6.11 prints through the `qt.scenegraph.time.*` logging categories; the README's instruction still works but the output format is the logging-category one.
 - The Ollama fixture returns one fixed two-chunk reply, so streaming pacing was measured with incremental transcript revisions, not through the broker.
 - `broker/core.ts` clears the draft after `session.send` whenever the draft revision is unchanged; sending via the API while a draft exists therefore empties the composer on all surfaces (matches the UI's own send path; noted for API users).
-- Peer-session overlap: a second Claude session (cere-24) briefly ran the same harness at 10:37–10:39 and truncated `/tmp/cere-ui-review-live.log`; it removed its edits, and every number above comes from the clean rerun or from runs it did not overlap.
+- Peer-session overlap: a second Claude session (pal-24) briefly ran the same harness at 10:37–10:39 and truncated `/tmp/pal-ui-review-live.log`; it removed its edits, and every number above comes from the clean rerun or from runs it did not overlap.
 
 ## 8. Not verified
 
@@ -300,7 +300,7 @@ Each stage is one commit; after each: build (`tools/build.sh`), `npm test`, `npm
 
 ## 9. Harness changes made during Phase 2 (no product behaviour changed)
 
-- `tests/ui.cpp`: ten `review*` slots (empty states, long content, approvals and keyboard, transitions, workflows, responsiveness, accessibility inventory, live outputs, surfaces at scale, broker restart) plus null guards in `item()`/`capture()`; they write `review-*.json` and `review-*.png` to `/tmp/cere-ui-evidence` and become the regression scenarios for Stage 1–3.
+- `tests/ui.cpp`: ten `review*` slots (empty states, long content, approvals and keyboard, transitions, workflows, responsiveness, accessibility inventory, live outputs, surfaces at scale, broker restart) plus null guards in `item()`/`capture()`; they write `review-*.json` and `review-*.png` to `/tmp/pal-ui-evidence` and become the regression scenarios for Stage 1–3.
 - `tests/fixtures/ui-codex.mjs`: `completion-rich[:imagePath]` prompt producing the long reply used above. `tests/fixtures/offscreen-scales.json`: dpr 1 / 1.25 / 1.5 / 2 outputs and a 1366×768 @1.5 output.
 - Inert `objectName` hooks: `messageList` (`Chat.qml`), `activityPanel` (`Chat.qml`), `messageActions_<id>` (`MessageCard.qml`), `globalApprovals` (`Shell.qml`).
 - Baseline captures copied to `docs/ui-review/baseline/`; after-captures will go to `docs/ui-review/after/` at the same sizes, scales and theme.

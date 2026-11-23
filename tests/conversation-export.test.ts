@@ -7,7 +7,7 @@ import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
 
 test('M15 exports only visible selected messages with sources, keeps code intact and needs a deliberate choice for temporary chats', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-export-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-export-'));
   const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   const session = await core.create({ provider: 'codex', cwd: dir, trusted: true, title: 'Release: plan / notes?' });
@@ -18,7 +18,7 @@ test('M15 exports only visible selected messages with sources, keeps code intact
   put('a2', 'assistant', 'A private follow-up the user did not select.');
   const all = await core.rpc('session.export', { id: session.id });
   assert.equal(all.messages, 3, 'tool activity is left out unless asked for');
-  assert.match(all.text, /^# Release: plan \/ notes\?\n\n_Exported from Cere on .* · codex · /);
+  assert.match(all.text, /^# Release: plan \/ notes\?\n\n_Exported from PAL on .* · codex · /);
   assert.match(all.text, /## You · 2026-10-15 12:00 UTC\n\nHow do I build it\?\n\nAttached files: notes\.txt/);
   assert.match(all.text, /```sh\nnpm run build\n```/, 'code fences survive');
   assert.match(all.text, /Sources:\n- \[Build docs\]\(https:\/\/example\.org\/build\)/);
@@ -27,7 +27,7 @@ test('M15 exports only visible selected messages with sources, keeps code intact
   assert.equal(all.filename, 'Release plan notes.md');
   const selected = await core.rpc('session.export', { id: session.id, messageIds: ['a1'], format: 'text' });
   assert.equal(selected.messages, 1); assert.doesNotMatch(selected.text, /private follow-up|How do I build/);
-  assert.match(selected.text, /^Release: plan \/ notes\?\nExported from Cere/);
+  assert.match(selected.text, /^Release: plan \/ notes\?\nExported from PAL/);
   assert.match((await core.rpc('session.export', { id: session.id, includeTools: true })).text, /## Tool activity · .*\n\n```text\nnpm run build\nexit 0\n```/);
   await assert.rejects(core.rpc('session.export', { id: session.id, messageIds: ['gone'] }), /no longer in this conversation/);
   await assert.rejects(core.rpc('session.export', { id: session.id, format: 'html' }), /Markdown or plain text/);

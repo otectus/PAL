@@ -81,8 +81,14 @@ export function avatarFor(value: unknown): Avatar {
   return (typeof value === 'string' ? byId.get(value) : undefined) || byId.get(defaultAvatar)!;
 }
 export function authoringAvatars(ids: string[]): Avatar[] {
-  return ids.length ? ids.map(value => {
+  const selected = ids.length ? ids.map(value => {
     if (!avatarIds.includes(value)) throw new Error(`Unknown avatar source: ${value}`);
     return byId.get(value)!;
   }) : avatarCatalog;
+  // The sheet authoring tools need the local extraction, eyelid and gesture drawings.
+  // A static reference already supplies its complete runtime artwork.
+  return selected.filter(entry => {
+    const definition = JSON.parse(readFileSync(new URL('../assets/' + entry.rig, import.meta.url), 'utf8'));
+    return definition.static !== true;
+  });
 }

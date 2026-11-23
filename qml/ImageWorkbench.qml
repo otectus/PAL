@@ -8,9 +8,11 @@ import QtQuick.Layouts
 Item {
     id: editor
     objectName: "imageWorkbench"
+    implicitHeight: editorLayout.implicitHeight
     property string sessionId: ""
-    readonly property string artifactId: WorkbenchState.artifactId
-    readonly property string versionId: WorkbenchState.versionId
+    readonly property var selection: WorkbenchState.imageFor(sessionId)
+    readonly property string artifactId: selection.artifactId || ""
+    readonly property string versionId: selection.versionId || ""
     property var info: null
     property string path: ""
     property string error: ""
@@ -26,23 +28,30 @@ Item {
     property string cropRatio: "free"
     property string compareId: ""
     property string comparePath: ""
+    property string loadedArtifactId: ""
     property real split: 0.5
     readonly property int naturalWidth: picture.implicitWidth
     readonly property int naturalHeight: picture.implicitHeight
     signal closeRequested()
     signal maskReady(var ref)
-    RpcClient { id: rpc }
+    readonly property string ownerKey: sessionId + ":" + artifactId + ":" + versionId
+    RpcClient { id: rpc; scope: editor.ownerKey }
+    Timer { id: initialLoad; interval: 0; onTriggered: editor.load() }
     function load() {
+        if (loadedArtifactId !== artifactId) notice = ""
+        loadedArtifactId = artifactId
+        info = null; path = ""; error = ""; compareId = ""; comparePath = ""
+        shapes = []; maskStrokes = []; maskInverted = false; undone = []; cropRect = null
         if (!artifactId || !versionId || !sessionId) return
         rpc.call("artifacts.get", { sessionId: sessionId, artifactId: artifactId }, value => { if (!value.error) info = value })
         rpc.call("artifacts.file", { sessionId: sessionId, artifactId: artifactId, versionId: versionId }, value => {
             if (value.error) { error = value.error; return }
             path = value.path; error = ""
-            const draft = WorkbenchState.draft(versionId)
+            const draft = WorkbenchState.draft(versionId, sessionId)
             shapes = draft ? draft.shapes : []; maskStrokes = draft ? draft.mask : []; maskInverted = draft ? draft.inverted : false; undone = []
         })
     }
-    function keepDraft() { WorkbenchState.keepDraft(versionId, shapes.length || maskStrokes.length || maskInverted ? { shapes: shapes, mask: maskStrokes, inverted: maskInverted } : undefined) }
+    function keepDraft() { WorkbenchState.keepDraft(versionId, shapes.length || maskStrokes.length || maskInverted ? { shapes: shapes, mask: maskStrokes, inverted: maskInverted } : undefined, sessionId) }
     function add(shape) { if (shape.layer === "mask") maskStrokes = maskStrokes.concat([shape]); else shapes = shapes.concat([shape]); undone = []; keepDraft(); annotations.requestPaint(); maskLayer.requestPaint() }
     function undo() {
         const last = [...shapes, ...maskStrokes].sort((a, b) => b.at - a.at)[0]; if (!last) return
@@ -54,16 +63,18 @@ Item {
         notice = ""; error = ""
         rpc.call("images.transform", { sessionId: sessionId, artifactId: artifactId, versionId: versionId, steps: steps }, value => {
             if (value.error) { error = value.error; return }
-            notice = label + " · new version"; WorkbenchState.keepDraft(versionId, undefined); WorkbenchState.versionId = value.versionId; load()
+            notice = label + " · new version"; WorkbenchState.keepDraft(versionId, undefined, sessionId); WorkbenchState.selectImage(sessionId, artifactId, value.versionId)
         })
     }
     function saveAnnotations() {
         cropRect = null; annotations.requestPaint()
+        const requestedOwner = ownerKey
         Qt.callLater(() => {
+            if (requestedOwner !== ownerKey) return
             const data = annotations.toDataURL("image/png")
             rpc.call("images.saveEdit", { sessionId: sessionId, artifactId: artifactId, versionId: versionId, layer: data, recipe: JSON.stringify({ base: versionId, shapes: shapes }) }, value => {
                 if (value.error) { error = value.error; return }
-                notice = "Annotations saved as a new version; the original is unchanged"; WorkbenchState.keepDraft(versionId, undefined); shapes = []; WorkbenchState.versionId = value.versionId; load()
+                notice = "Annotations saved as a new version; the original is unchanged"; WorkbenchState.keepDraft(versionId, undefined, sessionId); shapes = []; WorkbenchState.selectImage(sessionId, artifactId, value.versionId)
             })
         })
     }
@@ -80,67 +91,108 @@ Item {
     }
     function ratioOf(name) { return name === "1:1" ? 1 : name === "4:3" ? 4 / 3 : name === "3:2" ? 3 / 2 : name === "16:9" ? 16 / 9 : name === "9:16" ? 9 / 16 : 0 }
     function fit() { const z = Math.min(view.width / Math.max(1, naturalWidth), view.height / Math.max(1, naturalHeight)); WorkbenchState.zoom = Math.max(0.05, Math.min(8, z)) }
-    onVersionIdChanged: load()
-    onSessionIdChanged: load()
-    Component.onCompleted: load()
+    onSelectionChanged: initialLoad.restart()
+    onSessionIdChanged: initialLoad.restart()
+    Component.onCompleted: initialLoad.restart()
     Keys.onPressed: event => {
         if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_Z) { if (event.modifiers & Qt.ShiftModifier) redo(); else undo(); event.accepted = true }
         else if (event.key === Qt.Key_Escape) { closeRequested(); event.accepted = true }
     }
     ColumnLayout {
-        anchors.fill: parent; spacing: 6
-        RowLayout {
-            Layout.fillWidth: true; spacing: 6
-            CButton { objectName: "imageEditorBack"; text: "Gallery"; iconName: "back"; quiet: true; onClicked: editor.closeRequested() }
-            CText { Layout.fillWidth: true; text: (info?.artifact?.name || "") + (editor.naturalWidth ? " · " + editor.naturalWidth + "×" + editor.naturalHeight : ""); elide: Text.ElideMiddle; wrapMode: Text.NoWrap; font.weight: Font.DemiBold }
-            CComboBox { objectName: "imageVersion"; implicitWidth: 140; model: (editor.info?.versions || []).map((v, i) => "Version " + (i + 1)); currentIndex: Math.max(0, (editor.info?.versions || []).findIndex(v => v.versionId === editor.versionId)); Accessible.name: "Version"
-                onActivated: index => WorkbenchState.versionId = editor.info.versions[index].versionId }
+        id: editorLayout
+        anchors.fill: parent; spacing: Theme.space2
+        GridLayout {
+            Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredWidth: editor.width; Layout.maximumWidth: editor.width; rowSpacing: Theme.space1; columnSpacing: Theme.space2
+            readonly property bool compact: editor.width < Theme.toolbarBreakpoint
+            columns: compact ? 2 : 3
+            CButton { objectName: "imageEditorBack"; Layout.row: 0; Layout.column: 0; text: "Gallery"; iconName: "back"; quiet: true; onClicked: editor.closeRequested() }
+            CText { Layout.row: parent.compact ? 1 : 0; Layout.column: parent.compact ? 0 : 1; Layout.columnSpan: parent.compact ? 2 : 1; Layout.fillWidth: true; text: (info?.artifact?.name || "") + (editor.naturalWidth ? " · " + editor.naturalWidth + "×" + editor.naturalHeight : ""); elide: Text.ElideMiddle; wrapMode: Text.NoWrap; font.weight: Font.DemiBold }
+            CComboBox { objectName: "imageVersion"; Layout.row: 0; Layout.column: parent.compact ? 1 : 2; Layout.fillWidth: parent.compact; Layout.minimumWidth: 0; implicitWidth: Theme.fieldMedium; model: (editor.info?.versions || []).map((v, i) => "Version " + (i + 1)); currentIndex: Math.max(0, (editor.info?.versions || []).findIndex(v => v.versionId === editor.versionId)); Accessible.name: "Version"
+                onActivated: index => WorkbenchState.selectImage(editor.sessionId, editor.artifactId, editor.info.versions[index].versionId) }
         }
         Flow {
-            Layout.fillWidth: true; spacing: 4
+            Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredWidth: editor.width; Layout.maximumWidth: editor.width; spacing: Theme.space1
             Repeater {
                 model: [["pan", "Move"], ["crop", "Crop"], ["arrow", "Arrow"], ["rect", "Box"], ["pen", "Draw"], ["text", "Label"], ["mask", "Mask brush"], ["erase", "Mask eraser"]]
-                CButton { required property var modelData; objectName: "imageTool_" + modelData[0]; text: modelData[1]; implicitHeight: 30; quiet: editor.tool !== modelData[0]; primary: editor.tool === modelData[0]; Accessible.role: Accessible.RadioButton; Accessible.checked: editor.tool === modelData[0]; onClicked: { editor.tool = modelData[0]; editor.forceActiveFocus() } }
+                CButton { required property var modelData; objectName: "imageTool_" + modelData[0]; text: modelData[1]; implicitHeight: Theme.compactHeight; quiet: editor.tool !== modelData[0]; primary: editor.tool === modelData[0]; Accessible.role: Accessible.RadioButton; Accessible.checked: editor.tool === modelData[0]; onClicked: { editor.tool = modelData[0]; editor.forceActiveFocus() } }
             }
         }
         Flow {
-            Layout.fillWidth: true; spacing: 4
-            CButton { text: "Fit"; implicitHeight: 30; quiet: true; onClicked: editor.fit() }
-            CButton { text: "100%"; implicitHeight: 30; quiet: true; onClicked: WorkbenchState.zoom = 1 }
-            CSlider { implicitWidth: 120; from: 0.05; to: 8; value: WorkbenchState.zoom; onMoved: WorkbenchState.zoom = value; Accessible.name: "Zoom" }
-            CButton { text: "Undo"; implicitHeight: 30; quiet: true; enabled: editor.shapes.length + editor.maskStrokes.length > 0; onClicked: editor.undo() }
-            CButton { text: "Redo"; implicitHeight: 30; quiet: true; enabled: editor.undone.length > 0; onClicked: editor.redo() }
-            CButton { text: "Rotate"; implicitHeight: 30; quiet: true; onClicked: editor.applySteps([{ op: "rotate", degrees: 90 }], "Rotated") }
-            CButton { text: "Flip"; implicitHeight: 30; quiet: true; onClicked: editor.applySteps([{ op: "flip", axis: "horizontal" }], "Flipped") }
-            CButton { text: "Resize…"; implicitHeight: 30; quiet: true; onClicked: resizeDialog.open() }
-            CButton { text: "Export as…"; implicitHeight: 30; quiet: true; onClicked: formatDialog.open() }
-            CButton { text: "Open in another app"; implicitHeight: 30; quiet: true; help: "Edit a copy elsewhere, then import it back as a new version"; onClicked: externalDialog.open() }
+            Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredWidth: editor.width; Layout.maximumWidth: editor.width; spacing: Theme.space1
+            CButton { text: "Fit"; implicitHeight: Theme.compactHeight; quiet: true; onClicked: editor.fit() }
+            CButton { text: "100%"; implicitHeight: Theme.compactHeight; quiet: true; onClicked: WorkbenchState.zoom = 1 }
+            CSlider { implicitWidth: Theme.fieldMedium; from: 0.05; to: 8; value: WorkbenchState.zoom; onMoved: WorkbenchState.zoom = value; Accessible.name: "Zoom" }
+            CButton { text: "Undo"; implicitHeight: Theme.compactHeight; quiet: true; enabled: editor.shapes.length + editor.maskStrokes.length > 0; onClicked: editor.undo() }
+            CButton { text: "Redo"; implicitHeight: Theme.compactHeight; quiet: true; enabled: editor.undone.length > 0; onClicked: editor.redo() }
+            CButton { text: "Rotate"; implicitHeight: Theme.compactHeight; quiet: true; onClicked: editor.applySteps([{ op: "rotate", degrees: 90 }], "Rotated") }
+            CButton { text: "Flip"; implicitHeight: Theme.compactHeight; quiet: true; onClicked: editor.applySteps([{ op: "flip", axis: "horizontal" }], "Flipped") }
+            CButton { text: "Resize…"; implicitHeight: Theme.compactHeight; quiet: true; onClicked: resizeDialog.open() }
+            CButton { text: "Export as…"; implicitHeight: Theme.compactHeight; quiet: true; onClicked: formatDialog.open() }
+            CButton { text: "Open in another app"; implicitHeight: Theme.compactHeight; quiet: true; help: "Edit a copy elsewhere, then import it back as a new version"; onClicked: externalDialog.open() }
         }
-        RowLayout {
-            visible: editor.tool === "crop"; Layout.fillWidth: true; spacing: 4
-            CComboBox { implicitWidth: 120; model: ["free", "1:1", "4:3", "3:2", "16:9", "9:16"]; onActivated: index => editor.cropRatio = model[index]; Accessible.name: "Crop ratio" }
-            CText { Layout.fillWidth: true; text: editor.cropRect ? Math.round(editor.cropRect.width) + "×" + Math.round(editor.cropRect.height) + " at " + Math.round(editor.cropRect.x) + ", " + Math.round(editor.cropRect.y) : "Drag on the image to choose the area"; color: Theme.muted; font.pixelSize: Theme.caption }
-            CButton { objectName: "imageApplyCrop"; text: "Crop"; primary: true; implicitHeight: 30; enabled: !!editor.cropRect; onClicked: editor.applyCrop() }
+        GridLayout {
+            visible: editor.tool === "crop"; Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredWidth: editor.width; Layout.maximumWidth: editor.width; rowSpacing: Theme.space1; columnSpacing: Theme.space1
+            readonly property bool compact: editor.width < Theme.toolbarBreakpoint
+            columns: compact ? 2 : 3
+            CComboBox { Layout.fillWidth: parent.compact; Layout.minimumWidth: 0; implicitWidth: Theme.fieldMedium; model: ["free", "1:1", "4:3", "3:2", "16:9", "9:16"]; onActivated: index => editor.cropRatio = model[index]; Accessible.name: "Crop ratio" }
+            CText { Layout.row: parent.compact ? 1 : 0; Layout.column: parent.compact ? 0 : 1; Layout.columnSpan: parent.compact ? 2 : 1; Layout.fillWidth: true; text: editor.cropRect ? Math.round(editor.cropRect.width) + "×" + Math.round(editor.cropRect.height) + " at " + Math.round(editor.cropRect.x) + ", " + Math.round(editor.cropRect.y) : "Drag on the image to choose the area"; color: Theme.muted; font.pixelSize: Theme.caption }
+            CButton { objectName: "imageApplyCrop"; Layout.row: 0; Layout.column: parent.compact ? 1 : 2; Layout.alignment: Qt.AlignRight; text: "Crop"; primary: true; implicitHeight: Theme.compactHeight; enabled: !!editor.cropRect; onClicked: editor.applyCrop() }
         }
-        RowLayout {
-            visible: ["arrow", "rect", "pen", "text", "mask", "erase"].indexOf(editor.tool) >= 0; Layout.fillWidth: true; spacing: 4
-            Repeater { model: ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff", "#000000"]
-                Rectangle { required property string modelData; visible: editor.tool !== "mask" && editor.tool !== "erase"; width: 22; height: 22; radius: 11; color: modelData; border.width: editor.ink == modelData ? 3 : 1; border.color: Theme.focus
-                    Accessible.role: Accessible.Button; Accessible.name: "Color " + modelData; MouseArea { anchors.fill: parent; onClicked: editor.ink = parent.modelData } } }
-            CText { Layout.fillWidth: false; text: "Size" } CSpinBox { from: 1; to: 400; value: editor.brush; onValueModified: editor.brush = value; Accessible.name: "Brush size" }
-            CField { id: labelText; visible: editor.tool === "text"; implicitWidth: 160; placeholderText: "Label text"; Accessible.name: "Label text" }
-            CButton { visible: editor.tool === "mask" || editor.tool === "erase"; text: editor.maskInverted ? "Uninvert" : "Invert"; implicitHeight: 30; quiet: true; onClicked: { editor.maskInverted = !editor.maskInverted; editor.keepDraft(); maskLayer.requestPaint() } }
-            CButton { visible: editor.tool === "mask" || editor.tool === "erase"; text: "Clear mask"; implicitHeight: 30; quiet: true; onClicked: { editor.maskStrokes = []; editor.maskInverted = false; editor.keepDraft(); maskLayer.requestPaint() } }
+        Item {
+            visible: ["arrow", "rect", "pen", "text", "mask", "erase"].indexOf(editor.tool) >= 0
+            Layout.fillWidth: true; Layout.minimumWidth: 0; implicitHeight: brushOptions.implicitHeight
+            Flow {
+                id: brushOptions
+                anchors.left: parent.left; anchors.right: parent.right; spacing: Theme.space1
+                Repeater { model: ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff", "#000000"]
+                    AbstractButton {
+                        id: swatch
+                        required property string modelData
+                        visible: editor.tool !== "mask" && editor.tool !== "erase"
+                        width: Theme.minimumTarget
+                        height: Theme.minimumTarget
+                        hoverEnabled: true
+                        Accessible.role: Accessible.RadioButton
+                        Accessible.name: qsTr("Annotation color %1").arg(modelData)
+                        Accessible.checked: editor.ink == modelData
+                        onClicked: editor.ink = modelData
+                        background: Rectangle {
+                            radius: width / 2
+                            color: Theme.transparent
+                            border.width: Theme.focusWidth
+                            border.color: swatch.visualFocus ? Theme.focus : swatch.hovered ? Theme.borderHover : Theme.transparent
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: Theme.space1
+                                radius: width / 2
+                                color: swatch.modelData
+                                border.color: Theme.border
+                                CIcon {
+                                    anchors.fill: parent
+                                    visible: editor.ink == swatch.modelData
+                                    name: "check"
+                                    color: parent.color.hslLightness > 0.5 ? Theme.background : Theme.text
+                                }
+                            }
+                        }
+                    }
+                }
+                CText { width: implicitWidth; height: Theme.compactHeight; verticalAlignment: Text.AlignVCenter; text: "Size" }
+                CSpinBox { from: 1; to: 400; value: editor.brush; onValueModified: editor.brush = value; Accessible.name: "Brush size" }
+                CField { id: labelText; visible: editor.tool === "text"; width: Math.min(implicitWidth, editor.width); placeholderText: "Label text"; Accessible.name: "Label text" }
+                CButton { visible: editor.tool === "mask" || editor.tool === "erase"; text: editor.maskInverted ? "Uninvert" : "Invert"; implicitHeight: Theme.compactHeight; quiet: true; onClicked: { editor.maskInverted = !editor.maskInverted; editor.keepDraft(); maskLayer.requestPaint() } }
+                CButton { visible: editor.tool === "mask" || editor.tool === "erase"; text: "Clear mask"; implicitHeight: Theme.compactHeight; quiet: true; onClicked: { editor.maskStrokes = []; editor.maskInverted = false; editor.keepDraft(); maskLayer.requestPaint() } }
+            }
         }
         CText { visible: !!editor.error; text: editor.error; color: Theme.danger; font.pixelSize: Theme.secondary; Accessible.role: Accessible.AlertMessage }
         CText { visible: !!editor.notice; text: editor.notice; color: Theme.accentText; font.pixelSize: Theme.secondary }
         Flickable {
             id: view; objectName: "imageCanvas"
-            Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: Theme.editorMedium; clip: true
             contentWidth: stage.width * WorkbenchState.zoom; contentHeight: stage.height * WorkbenchState.zoom
             interactive: editor.tool === "pan"; boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: CScrollBar {}
-            ScrollBar.horizontal: ScrollBar {}
+            ScrollBar.horizontal: CScrollBar {}
             Item {
                 id: stage; width: editor.naturalWidth; height: editor.naturalHeight; scale: WorkbenchState.zoom; transformOrigin: Item.TopLeft
                 // Transparency shows as a checkerboard, never as an invented background color.
@@ -212,8 +264,8 @@ Item {
             CText { Layout.fillWidth: false; text: "Before" } CSlider { Layout.fillWidth: true; from: 0; to: 1; value: editor.split; onMoved: editor.split = value; Accessible.name: "Comparison divider" } CText { Layout.fillWidth: false; text: "After" }
         }
         Flow {
-            Layout.fillWidth: true; spacing: 6
-            CComboBox { objectName: "imageCompare"; implicitWidth: 170; model: ["Compare with…"].concat((editor.info?.versions || []).map((v, i) => "Version " + (i + 1))); Accessible.name: "Compare with version"
+            Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredWidth: editor.width; Layout.maximumWidth: editor.width; spacing: Theme.space2
+            CComboBox { objectName: "imageCompare"; implicitWidth: Theme.fieldWidth; model: ["Compare with…"].concat((editor.info?.versions || []).map((v, i) => "Version " + (i + 1))); Accessible.name: "Compare with version"
                 onActivated: index => { if (!index) { editor.comparePath = ""; return } const v = editor.info.versions[index - 1]; rpc.call("artifacts.file", { sessionId: editor.sessionId, artifactId: editor.artifactId, versionId: v.versionId }, value => editor.comparePath = value.error ? "" : value.path) } }
             CButton { objectName: "imageSaveAnnotations"; text: "Save annotations"; enabled: editor.shapes.length > 0; onClicked: editor.saveAnnotations() }
             CButton { objectName: "imageSaveMask"; text: "Use mask for an edit"; primary: editor.maskStrokes.length > 0; enabled: editor.maskStrokes.length > 0 || editor.maskInverted; onClicked: editor.saveMask() }
@@ -241,7 +293,7 @@ Item {
         CText { text: "Edit in another application"; font.pixelSize: Theme.title; font.bold: true }
         CText { text: "Save a copy, edit it in your editor, then import the edited file back as a new version. The original stays as it is." }
         CButton { text: "Save a copy and open it"; onClicked: { const path = App.chooseSavePath(editor.info?.artifact?.name || "image.png"); if (!path) return; rpc.call("artifacts.saveAs", { sessionId: editor.sessionId, artifactId: editor.artifactId, versionId: editor.versionId, path: path, replace: true }, value => { if (value.error) editor.error = value.error; else { externalDialog.saved = value.path; App.openPath(value.path) } }) } }
-        CButton { text: "Import the edited file as a new version"; enabled: !!externalDialog.saved; onClicked: rpc.call("artifacts.import", { sessionId: editor.sessionId, path: externalDialog.saved, artifactId: editor.artifactId, destinations: (editor.info?.versions || []).slice(-1)[0]?.policy || {} }, value => { if (value.error) editor.error = value.error; else { externalDialog.close(); WorkbenchState.versionId = value.versionId; editor.load() } }) }
+        CButton { text: "Import the edited file as a new version"; enabled: !!externalDialog.saved; onClicked: rpc.call("artifacts.import", { sessionId: editor.sessionId, path: externalDialog.saved, artifactId: editor.artifactId, destinations: (editor.info?.versions || []).slice(-1)[0]?.policy || {} }, value => { if (value.error) editor.error = value.error; else { externalDialog.close(); WorkbenchState.selectImage(editor.sessionId, editor.artifactId, value.versionId) } }) }
         CButton { text: "Close"; quiet: true; onClicked: externalDialog.close() }
     }
 }

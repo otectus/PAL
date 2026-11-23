@@ -8,7 +8,7 @@ import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
 
 test('M21 only a whole transcript that is an allowlisted phrase is a command; everything else stays text', () => {
-  for (const [text, id] of [['Stop speaking.', 'stop-speaking'], ['Cere, stop speaking', 'stop-speaking'], ['hey Cere stop talking', 'stop-speaking'], ['please read that again', 'read-last'],
+  for (const [text, id] of [['Stop speaking.', 'stop-speaking'], ['PAL, stop speaking', 'stop-speaking'], ['hey PAL stop talking', 'stop-speaking'], ['please read that again', 'read-last'],
     ['Open Settings!', 'open-settings'], ['new conversation please', 'new-conversation'], ['Stop the reply', 'stop-reply']] as [string, string][])
     assert.equal(matchCommand(text)?.id, id, text);
   assert.equal(matchCommand('Nova, open desktop', 'Nova')?.id, 'open-desktop', 'the assistant’s chosen name can address it');
@@ -17,11 +17,11 @@ test('M21 only a whole transcript that is an allowlisted phrase is a command; ev
 });
 
 test('M21 commands are off by default, shown before they run, never answer approvals, and run only allowlisted actions', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-voice-commands-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-voice-commands-'));
   const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   const session = await core.create({ provider: 'codex', cwd: dir, trusted: true });
-  core.transcription.finish = (async () => ({ sessionId: session.id, revision: 1, text: 'Cere, stop speaking' })) as any;
+  core.transcription.finish = (async () => ({ sessionId: session.id, revision: 1, text: 'PAL, stop speaking' })) as any;
   assert.equal((await core.rpc('transcription.finish', {})).command, undefined, 'off by default: the transcript is text');
   await assert.rejects(core.rpc('voice.command', { id: 'stop-speaking' }), /Voice commands are off/);
   await core.updateSettings({ voiceCommands: { enabled: true } });

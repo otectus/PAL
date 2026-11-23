@@ -2,9 +2,9 @@ import QtQuick
 import QtQuick.Controls
 Item {
     id: pet
-    width: 192; height: 208
+    width: Theme.petWidth; height: Theme.petHeight
     Accessible.role: Accessible.Button
-    Accessible.name: App.assistantName + ", " + (((App.animations.clips || {})[App.motion] || {}).label || "Open Cere")
+    Accessible.name: App.assistantName + ", " + (((App.animations.clips || {})[App.motion] || {}).label || "Open PAL")
     Accessible.onPressAction: App.clickPet()
     property var settings: App.state.settings || ({})
     property bool dragging: false
@@ -54,7 +54,7 @@ Item {
     CMenu {
         id: context
         onVisibleChanged: App.setPetInteracting(visible||petMouse.containsMouse||petMouse.pressed)
-        CMenuItem { text: "Open Cere"; onTriggered: App.togglePanel() }
+        CMenuItem { text: "Open PAL"; onTriggered: App.togglePanel() }
         CMenuItem { text: "Expand workspace"; onTriggered: App.expand() }
         CMenuSeparator {}
         CMenuItem { text: "Always on top"; checkable: true; checked: settings.topmost === true; onTriggered: App.rpc("settings.update",{topmost:!checked ? false : true}) }

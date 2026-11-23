@@ -1,4 +1,4 @@
-Cere Mobile dependency and artwork notices
+PAL Mobile dependency and artwork notices
 
 The generated mobile-sbom.cdx.json lists resolved release-runtime Maven components,
 versions and artifact SHA-256 hashes. Repository source retains its existing
@@ -20,6 +20,6 @@ Review the generated inventory against upstream notices for the exact release;
 this source list is not an assertion that every transitive notice is included.
 Preserve embedded upstream META-INF notices in packages where applicable.
 
-Cere face artwork was generated from this repository's existing Cere reference
+PAL face artwork was generated from this repository's existing PAL reference
 art. Its unmodified transparent PNG and exact generation prompt are retained in
-mobile/artwork/cere-face-icon.png and cere-face-icon.prompt.txt.
+mobile/artwork/pal-face-icon.png and pal-face-icon.prompt.txt.

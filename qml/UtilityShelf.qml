@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 CDialog {
     id:shelf
-    width:Math.min(700,parent?parent.width-32:700)
+    preferredWidth:Theme.dialogLarge
     property var entries:[]
     property var selected:({})
     property var pending:({})
@@ -55,13 +55,13 @@ CDialog {
             CButton { required property var modelData;required property int index;objectName:"vaultResult_"+index;Layout.fillWidth:true;alignLeft:true;text:modelData.title+" · "+modelData.path;onClicked:shelf.call("notes.read",{path:modelData.path}) }
         }
         ColumnLayout {
-            visible:!!shelf.vaultNote;Layout.fillWidth:true;spacing:6
+            visible:!!shelf.vaultNote;Layout.fillWidth:true;spacing:Theme.space2
             CText { objectName:"vaultNoteTitle";text:shelf.vaultNote?.title||"";font.weight:Font.DemiBold;Layout.fillWidth:true;elide:Text.ElideRight }
             CText { visible:(shelf.vaultNote?.tags||[]).length>0;text:"#"+(shelf.vaultNote?.tags||[]).join("  #");color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
-            CTextArea { objectName:"vaultNoteText";Layout.fillWidth:true;Layout.preferredHeight:160;readOnly:true;wrapMode:TextEdit.Wrap;textFormat:TextEdit.PlainText;text:(shelf.vaultNote?.text||"")+(shelf.vaultNote?.truncated?"\n…":"");Accessible.name:"Note text" }
+            CTextArea { objectName:"vaultNoteText";Layout.fillWidth:true;Layout.preferredHeight:Theme.editorMedium;readOnly:true;wrapMode:TextEdit.Wrap;textFormat:TextEdit.PlainText;text:(shelf.vaultNote?.text||"")+(shelf.vaultNote?.truncated?"\n…":"");Accessible.name:"Note text" }
             CText { text:(shelf.vaultNote?.backlinks||[]).length?"Linked from":"No other notes link here.";color:Theme.muted;font.pixelSize:Theme.secondary }
             Flow {
-                Layout.fillWidth:true;spacing:6
+                Layout.fillWidth:true;spacing:Theme.space2
                 Repeater { model:shelf.vaultNote?.backlinks||[];CButton { required property var modelData;required property int index;objectName:"vaultBacklink_"+index;quiet:true;text:modelData.title;help:modelData.path;onClicked:shelf.call("notes.read",{path:modelData.path}) } }
             }
             CButton { text:"Open in its editor";onClicked:App.openPath((App.state.settings?.notesVault?.path||"")+"/"+shelf.vaultNote.path) }
@@ -94,7 +94,7 @@ CDialog {
         }
         RowLayout {
             CField { id:timerLabel;Layout.fillWidth:true;placeholderText:"Timer label";Accessible.name:"Timer label" }
-            CField { id:minutes;Layout.preferredWidth:80;text:"25";Accessible.name:"Timer minutes" }
+            CField { id:minutes;Layout.preferredWidth:Theme.fieldTiny;text:"25";Accessible.name:"Timer minutes" }
             CButton { text:"Start";onClicked:shelf.call("action.run",{name:"timer.start",args:{minutes:Number(minutes.text),label:timerLabel.text||"Focus"}}) }
         }
     }

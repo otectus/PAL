@@ -30,7 +30,7 @@ test('qualification excludes deterministic outcomes and requires per-category su
 });
 
 test('measured qualification requires exact observed identities, contract, policy, and category metrics', t => {
-  const directory = mkdtempSync(join(tmpdir(), 'cere-calibration-identity-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pal-calibration-identity-'));
   const c = new Canonical(directory);
   t.after(() => { c.close(); rmSync(directory, { recursive: true, force: true }); });
   const profile = c.curation.profile();

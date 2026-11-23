@@ -12,7 +12,7 @@
       "type": "offer",
       "v": 1,
       "desktopId": "uuid",
-      "name": "Cere",
+      "name": "PAL",
       "certificate": "DER base64url",
       "spki": "sha256(SPKI bytes)",
       "identityKey": "SPKI base64url",
@@ -25,7 +25,8 @@
       "signature": "DER base64url",
       "actionAuthentication": "biometric | trusted-device (optional; absent means biometric)",
       "replacesDeviceId": "optional UUID of the existing phone being replaced on the same desktop",
-      "responseReturn": "optional 'network' — the gateway listens for the offer's lifetime and takes the answer over pinned TLS"
+      "responseReturn": "optional 'network' — the gateway listens for the offer's lifetime and takes the answer over pinned TLS",
+      "accessRole": "owner | observer (optional, signed; absent means limited)"
     },
     "offerSignatureTranscript": {
       "domain": "cere.mobile.pair.offer.v1",
@@ -131,7 +132,8 @@
         "message.sources",
         "citations.display",
         "agent.refs"
-      ]
+      ],
+      "role": "observer | limited | owner — the stored role; a connection acts as an owner only after client.features declares owner.policy.v1"
     }
   },
   "actions": {
@@ -169,26 +171,107 @@
     },
     "signedMethods": [
       "sessions.create",
-      "sessions.send",
-      "sessions.configure",
-      "approvals.answer except deny/cancel",
-      "desktop.execute",
-      "timers.cancel",
-      "settings.patch",
-      "memory.save",
-      "attachments.begin",
-      "attachments.commit",
       "sessions.handoffCreate",
       "sessions.import",
+      "sessions.send",
       "sessions.focusTerminal",
+      "sessions.configure",
+      "approvals.answer except deny/cancel",
+      "attachments.begin",
+      "attachments.commit",
+      "desktop.execute",
+      "timers.cancel",
       "captures.start",
       "captures.attach",
+      "settings.patch",
+      "memory.save",
       "memory.forget",
       "memory.clear",
       "memory.correct",
       "memory.resolveConflict",
       "memory.identity",
-      "memory.freezeEpisode"
+      "memory.freezeEpisode",
+      "owner.profile.set",
+      "owner.devices.revoke",
+      "owner.devices.setRole",
+      "owner.power.start",
+      "owner.sessions.capabilities",
+      "owner.sessions.delete",
+      "owner.sessions.branch",
+      "workbench.addRoot",
+      "workbench.conversationRoot",
+      "workbench.updateRoot",
+      "workbench.grantEdits",
+      "workbench.changes.propose",
+      "workbench.changes.apply",
+      "workbench.changes.undo",
+      "workbench.artifacts.remove",
+      "workbench.artifacts.extract",
+      "workbench.artifacts.export",
+      "workbench.artifacts.bundle",
+      "workbench.operations.retry",
+      "workbench.codelab.run",
+      "workbench.commands.run",
+      "workbench.images.generate",
+      "workbench.images.transform",
+      "workbench.images.saveEdit",
+      "workbench.images.mask",
+      "workbench.images.sketch",
+      "workbench.images.contactSheet",
+      "workbench.images.analyze",
+      "transfers.upload",
+      "owner.settings.patch",
+      "owner.connections.save",
+      "owner.connections.remove",
+      "owner.credentials.set",
+      "owner.extensions.secret",
+      "owner.extensions.oauthStart",
+      "owner.extensions.oauthSignOut",
+      "owner.extensions.importApply",
+      "owner.collections.addUrl",
+      "owner.collections.addArtifact",
+      "owner.specialists.save",
+      "owner.specialists.delete",
+      "owner.specialists.setConcurrency",
+      "owner.setups.save",
+      "owner.setups.delete",
+      "owner.setups.apply",
+      "owner.setups.start",
+      "owner.extensions.resolveWrite",
+      "owner.customTools.credential",
+      "owner.schedules.setEnabled",
+      "owner.schedules.delete",
+      "owner.schedules.create",
+      "owner.schedules.adopt",
+      "owner.recipes.createDraft",
+      "owner.results.verify",
+      "owner.collections.create",
+      "owner.collections.addSource",
+      "owner.collections.removeSource",
+      "owner.collections.bind",
+      "owner.collections.index",
+      "owner.collections.delete",
+      "owner.projects.save",
+      "owner.models.pull",
+      "owner.models.delete",
+      "owner.usage.setPolicy",
+      "owner.skills.importRepository",
+      "owner.skills.importPath",
+      "owner.skills.importArtifact",
+      "owner.skills.enable",
+      "owner.skills.remove",
+      "owner.research.plan",
+      "owner.research.start",
+      "owner.research.refresh",
+      "owner.research.continue",
+      "owner.research.steer",
+      "owner.research.ask",
+      "owner.research.resynthesize",
+      "canvas.open",
+      "view.start",
+      "owner.backup.create",
+      "terminal.create",
+      "terminal.acquireControl"
     ]
   },
   "request": {
@@ -283,12 +366,15 @@
     },
     "sessions.create": {
       "params": {
-        "provider": "codex|claude|ollama|openai|anthropic|google|compatible",
-        "projectId": "uuid",
+        "provider": "codex|claude|ollama|openai|anthropic|google|compatible|antigravity",
+        "projectId": "uuid (or cwd)",
         "title": "optional",
         "model": "optional",
         "effort": "optional",
-        "tools": false
+        "tools": false,
+        "cwd": "optional absolute desktop folder (owner phones, owner.policy.v1)",
+        "capabilities": "optional {files, images, analysis, host} (owner phones; host runs commands as the desktop account)",
+        "connectionId": "optional saved connection (owner phones)"
       },
       "result": "session"
     },
@@ -313,7 +399,8 @@
         "expectedConfigRevision": "0",
         "desktopAttachments": "optional [{id, sha256}] — the desktop draft's attachments exactly as reviewed (feature drafts.desktopAttachments); refused if unreviewed or changed, and for queued sends",
         "expectedRouteRevision": "optional — the session's routeRevision as reviewed (feature sessions.routeRevision)",
-        "workbenchAcknowledged": "optional ['files'|'images'|'analysis'] — exactly the session's workbenchFamilies the phone showed would pause (feature workbench.takeover); required to take over such a conversation"
+        "workbenchAcknowledged": "optional ['files'|'images'|'analysis'] — exactly the session's workbenchFamilies the phone showed would pause (feature workbench.takeover); required to take over such a conversation",
+        "references": "optional typed Workbench references [{kind, ...}] resolved and checked on the desktop at send (owner phones)"
       },
       "result": {
         "commandId": "uuid",
@@ -380,7 +467,7 @@
     },
     "providers.models": {
       "params": {
-        "provider": "codex|claude|ollama|openai|anthropic|google|compatible",
+        "provider": "codex|claude|ollama|openai|anthropic|google|compatible|antigravity",
         "sessionId": "optional — the conversation's own route: its Ollama host or named compatible connection",
         "listing": "optional true — answer {items, unlisted} (feature models.listing)"
       },
@@ -587,7 +674,7 @@
         "sourceDigest": "hash",
         "draft": "1..100000 UTF16 units",
         "projectId": "uuid",
-        "provider": "codex|claude|ollama|openai|anthropic|google|compatible",
+        "provider": "codex|claude|ollama|openai|anthropic|google|compatible|antigravity",
         "model": "optional",
         "effort": "optional",
         "tools": false
@@ -730,7 +817,7 @@
         "sessionId": "uuid",
         "limit": "default 10, at most 20"
       },
-      "result": "{results:[{id,time,providerOutcome,verification,gate,editedSinceCheck,uncertainty,checks:[{label,status,exitCode?}]}], schedules:[{id,label,enabled,revision,next,lastRun}]} — the provider's report is kept apart from Cere's verification"
+      "result": "{results:[{id,time,providerOutcome,verification,gate,editedSinceCheck,uncertainty,checks:[{label,status,exitCode?}]}], schedules:[{id,label,enabled,revision,next,lastRun}]} — the provider's report is kept apart from PAL's verification"
     },
     "workflows.pauseSchedule": {
       "params": {
@@ -890,6 +977,2240 @@
         "id": "uuid"
       },
       "result": "the frozen episode"
+    },
+    "client.features": {
+      "params": {
+        "features": [
+          "string"
+        ]
+      },
+      "kind": "read",
+      "feature": "owner.policy.v1",
+      "role": "any",
+      "result": "{role: observer|limited|owner, storedRole, operations, features, access}; the connection acts as an owner only after declaring owner.policy.v1"
+    },
+    "devices.setSelfRole": {
+      "params": {
+        "role": "limited|observer",
+        "expectedScopeVersion": "revision"
+      },
+      "kind": "mutation",
+      "feature": "owner.policy.v1",
+      "role": "any",
+      "result": "{role, scopeVersion}; the phone reconnects"
+    },
+    "owner.access": {
+      "params": {},
+      "kind": "read",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "permissions DTO with role, access (EffectiveAccess), workingProfile and this device"
+    },
+    "owner.profile.set": {
+      "params": {
+        "profile": "desktop|review|automatic",
+        "expectedProfileRevision": "revision"
+      },
+      "kind": "signed",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "{workingProfile, profileRevision, access}"
+    },
+    "owner.devices.list": {
+      "params": {},
+      "kind": "read",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "[device: id, name, role, self, lifetime, expiresAt, lastSeen, actionAuthentication, workingProfile, projects]"
+    },
+    "owner.devices.revoke": {
+      "params": {
+        "deviceId": "uuid"
+      },
+      "kind": "signed",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.devices.setRole": {
+      "params": {
+        "deviceId": "uuid",
+        "role": "limited|observer",
+        "expectedScopeVersion": "revision"
+      },
+      "kind": "signed",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.permissions.get": {
+      "params": {
+        "sessionId": "optional uuid"
+      },
+      "kind": "read",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.permissions.revokeGrant": {
+      "params": {
+        "category": "string",
+        "cwd": "string"
+      },
+      "kind": "mutation",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.power.start": {
+      "params": {
+        "sessionIds": [
+          "uuid"
+        ],
+        "minutes": "number",
+        "cli": "boolean",
+        "computer": "boolean"
+      },
+      "kind": "signed",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.power.end": {
+      "params": {
+        "id": "string"
+      },
+      "kind": "mutation",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.sessions.capabilities": {
+      "params": {
+        "sessionId": "uuid",
+        "capabilities": {
+          "files": "optional boolean",
+          "images": "optional boolean",
+          "analysis": "optional boolean",
+          "host": "optional boolean"
+        },
+        "expectedConfigRevision": "revision"
+      },
+      "kind": "signed",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.sessions.delete": {
+      "params": {
+        "sessionId": "uuid",
+        "expectedRevision": "revision"
+      },
+      "kind": "signed",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.sessions.branch": {
+      "params": {
+        "sessionId": "uuid",
+        "text": "string",
+        "provider": "optional string",
+        "model": "optional string"
+      },
+      "kind": "signed",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.sessions.export": {
+      "params": {
+        "sessionId": "uuid",
+        "includeActivity": "optional boolean"
+      },
+      "kind": "read",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.sessions.setFolder": {
+      "params": {
+        "sessionId": "uuid",
+        "folderId": "string | null",
+        "expectedRevision": "revision"
+      },
+      "kind": "mutation",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.folders.list": {
+      "params": {},
+      "kind": "read",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.folders.save": {
+      "params": {
+        "id": "optional string",
+        "name": "string",
+        "expectedRevision": "optional revision"
+      },
+      "kind": "mutation",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.folders.delete": {
+      "params": {
+        "id": "string",
+        "expectedRevision": "revision"
+      },
+      "kind": "mutation",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.roots": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.addRoot": {
+      "params": {
+        "sessionId": "uuid",
+        "path": "string",
+        "policy": {
+          "optional": {
+            "write": "optional boolean",
+            "organize": "optional boolean",
+            "hidden": "optional boolean",
+            "execute": "optional boolean",
+            "destinations": {
+              "optional": {
+                "remote": "optional boolean",
+                "cloud": "optional boolean"
+              }
+            }
+          }
+        },
+        "primary": "optional boolean"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.conversationRoot": {
+      "params": {
+        "sessionId": "uuid",
+        "policy": {
+          "optional": {
+            "write": "optional boolean",
+            "organize": "optional boolean",
+            "hidden": "optional boolean",
+            "execute": "optional boolean",
+            "destinations": {
+              "optional": {
+                "remote": "optional boolean",
+                "cloud": "optional boolean"
+              }
+            }
+          }
+        }
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.updateRoot": {
+      "params": {
+        "sessionId": "uuid",
+        "rootId": "string",
+        "policy": {
+          "write": "optional boolean",
+          "organize": "optional boolean",
+          "hidden": "optional boolean",
+          "execute": "optional boolean",
+          "destinations": {
+            "optional": {
+              "remote": "optional boolean",
+              "cloud": "optional boolean"
+            }
+          }
+        },
+        "expectedRevision": "string",
+        "primary": "optional boolean"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.removeRoot": {
+      "params": {
+        "sessionId": "uuid",
+        "rootId": "string"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.grantEdits": {
+      "params": {
+        "sessionId": "uuid",
+        "rootId": "string",
+        "minutes": "number",
+        "maxOperations": "optional number",
+        "maxBytes": "optional number",
+        "paths": {
+          "optional": [
+            "string"
+          ]
+        }
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.revokeGrant": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "string"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.browse": {
+      "params": {
+        "path": "optional string",
+        "hidden": "optional boolean"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "{path, parent, home, items: [{name, path, kind, size}], truncated}"
+    },
+    "workbench.files.list": {
+      "params": {
+        "sessionId": "uuid",
+        "rootId": "string",
+        "path": "string",
+        "cursor": "optional string",
+        "limit": "optional number",
+        "hidden": "optional boolean"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.files.stat": {
+      "params": {
+        "sessionId": "uuid",
+        "rootId": "string",
+        "path": "string"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.files.read": {
+      "params": {
+        "sessionId": "uuid",
+        "rootId": "string",
+        "path": "string",
+        "startLine": "optional number",
+        "lineCount": "optional number"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.files.text": {
+      "params": {
+        "sessionId": "uuid",
+        "rootId": "string",
+        "path": "string"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "{path, version, text, newline, endsWithNewline, size}"
+    },
+    "workbench.files.find": {
+      "params": {
+        "sessionId": "uuid",
+        "rootId": "string",
+        "path": "string",
+        "pattern": "string",
+        "cursor": "optional string"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.files.search": {
+      "params": {
+        "sessionId": "uuid",
+        "rootId": "string",
+        "path": "string",
+        "query": "string",
+        "mode": "optional literal|regex",
+        "caseSensitive": "optional boolean",
+        "cursor": "optional string"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.changes.list": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.changes.review": {
+      "params": {
+        "sessionId": "uuid",
+        "changeSetId": "string"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.changes.propose": {
+      "params": {
+        "sessionId": "uuid",
+        "operations": [
+          "object (validated by the desktop service)"
+        ],
+        "reason": "optional string",
+        "apply": "optional boolean"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "change review, or {review, applied} with apply"
+    },
+    "workbench.changes.apply": {
+      "params": {
+        "sessionId": "uuid",
+        "changeSetId": "string",
+        "digest": "string",
+        "operations": {
+          "optional": [
+            "number"
+          ]
+        }
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.changes.decline": {
+      "params": {
+        "sessionId": "uuid",
+        "changeSetId": "string"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.changes.undo": {
+      "params": {
+        "sessionId": "uuid",
+        "changeSetId": "string"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.changes.trash": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.artifacts.list": {
+      "params": {
+        "sessionId": "uuid",
+        "kind": "optional string",
+        "source": "optional string",
+        "query": "optional string",
+        "project": "optional boolean",
+        "before": "optional string",
+        "limit": "optional number"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.artifacts.get": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.artifacts.thumbnail": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "versionId": "optional string",
+        "size": "optional number"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.artifacts.update": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "name": "optional string",
+        "pinned": "optional boolean",
+        "tags": {
+          "optional": [
+            "string"
+          ]
+        },
+        "shared": "optional boolean"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.artifacts.remove": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "scope": "optional artifact|version"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.artifacts.extract": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "versionId": "optional string",
+        "options": "optional object (validated by the desktop service)"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.artifacts.useInDraft": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "versionId": "optional string"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.artifacts.export": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "versionId": "string",
+        "rootId": "string",
+        "path": "string"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.artifacts.bundle": {
+      "params": {
+        "sessionId": "uuid",
+        "name": "optional string",
+        "items": [
+          {
+            "artifactId": "string",
+            "versionId": "string"
+          }
+        ]
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.operations.list": {
+      "params": {
+        "sessionId": "uuid",
+        "active": "optional boolean",
+        "limit": "optional number",
+        "before": "optional string"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.operations.get": {
+      "params": {
+        "sessionId": "uuid",
+        "operationId": "string"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.operations.cancel": {
+      "params": {
+        "sessionId": "uuid",
+        "operationId": "string"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.operations.retry": {
+      "params": {
+        "sessionId": "uuid",
+        "operationId": "string",
+        "confirmed": "optional boolean"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.codelab.status": {
+      "params": {},
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.codelab.run": {
+      "params": {
+        "sessionId": "uuid",
+        "code": "string",
+        "inputs": {
+          "optional": [
+            {
+              "artifactId": "string",
+              "versionId": "optional string"
+            }
+          ]
+        },
+        "purpose": "optional string",
+        "timeoutSeconds": "optional number"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.commands.run": {
+      "params": {
+        "sessionId": "uuid",
+        "rootId": "string",
+        "argv": [
+          "string"
+        ],
+        "cwd": "optional string",
+        "network": "optional boolean",
+        "timeoutSeconds": "optional number"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.images.connections": {
+      "params": {},
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.images.capabilities": {
+      "params": {
+        "connectionId": "string",
+        "workflowId": "optional string"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.images.preview": {
+      "params": {
+        "sessionId": "uuid",
+        "connectionId": "string",
+        "workflowId": "optional string",
+        "request": "object (validated by the desktop service)"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.images.generate": {
+      "params": {
+        "sessionId": "uuid",
+        "connectionId": "string",
+        "workflowId": "optional string",
+        "request": "object (validated by the desktop service)",
+        "acknowledgeBilling": "optional boolean"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.images.transform": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "versionId": "optional string",
+        "steps": [
+          "object (validated by the desktop service)"
+        ]
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.images.saveEdit": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "versionId": "optional string",
+        "layer": "optional string",
+        "layerTransferId": "optional uuid",
+        "recipe": "optional string"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.images.mask": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "versionId": "optional string",
+        "mask": "optional string",
+        "maskTransferId": "optional uuid"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.images.sketch": {
+      "params": {
+        "sessionId": "uuid",
+        "width": "number",
+        "height": "number",
+        "background": "optional string"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.images.contactSheet": {
+      "params": {
+        "sessionId": "uuid",
+        "items": [
+          {
+            "artifactId": "string",
+            "versionId": "string"
+          }
+        ]
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.images.inspect": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "versionId": "optional string"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.images.ocr": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "versionId": "optional string",
+        "region": "optional object (validated by the desktop service)"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.images.analyze": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "versionId": "optional string",
+        "question": "optional string",
+        "region": "optional object (validated by the desktop service)"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.references.search": {
+      "params": {
+        "sessionId": "uuid",
+        "query": "string"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.references.preview": {
+      "params": {
+        "sessionId": "uuid",
+        "references": [
+          "object (validated by the desktop service)"
+        ],
+        "text": "optional string"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "workbench.shelf": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "transfers.download": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "versionId": "optional string",
+        "variant": "original|preview"
+      },
+      "kind": "read",
+      "feature": "artifacts.transfer.v1",
+      "role": "owner",
+      "result": "{transferId, variant, name, mime, size, sha256, artifactId, versionId, chunk, expiresAt}; read chunks with transfers.read"
+    },
+    "transfers.read": {
+      "params": {
+        "transferId": "uuid",
+        "offset": "number",
+        "length": "number"
+      },
+      "kind": "read",
+      "feature": "artifacts.transfer.v1",
+      "role": "owner",
+      "result": "binary frame (16-byte transfer UUID, 8-byte big-endian offset, bytes) then {bytes}"
+    },
+    "transfers.upload": {
+      "params": {
+        "sessionId": "uuid",
+        "name": "string",
+        "mime": "string",
+        "size": "number",
+        "sha256": "string",
+        "purpose": "artifact|layer|mask"
+      },
+      "kind": "signed",
+      "feature": "artifacts.transfer.v1",
+      "role": "owner",
+      "result": "{transferId, status, offset, size, sha256, purpose, chunk, expiresAt}; send binary chunks at the committed offset (transfer.progress events)"
+    },
+    "transfers.status": {
+      "params": {
+        "transferId": "uuid"
+      },
+      "kind": "read",
+      "feature": "artifacts.transfer.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "transfers.commit": {
+      "params": {
+        "transferId": "uuid",
+        "destinations": {
+          "optional": {
+            "remote": "boolean",
+            "cloud": "boolean"
+          }
+        }
+      },
+      "kind": "mutation",
+      "feature": "artifacts.transfer.v1",
+      "role": "owner",
+      "result": "{transferId, status: committed, artifact: {artifactId, versionId, name, sha256}}; repeating returns the same version"
+    },
+    "transfers.abort": {
+      "params": {
+        "transferId": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "artifacts.transfer.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.settings.get": {
+      "params": {},
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "{revision, settings (no secrets), families, credentials: {provider: {configured, source}}}"
+    },
+    "owner.settings.patch": {
+      "params": {
+        "expectedRevision": "revision",
+        "family": "companion|appearance|voice|models|search|memory|workbench|permissions|scripts|toolServers|customTools|telemetry",
+        "values": "object (validated by the desktop service)"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.connections.list": {
+      "params": {},
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.connections.save": {
+      "params": "object (validated by the desktop service)",
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.connections.remove": {
+      "params": {
+        "id": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.connections.models": {
+      "params": {
+        "id": "string"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.credentials.set": {
+      "params": {
+        "provider": "openai|anthropic|google|compatible|elevenlabs",
+        "connectionId": "optional string",
+        "key": "string | null"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "sensitive": [
+        "key"
+      ],
+      "result": "{provider, configured, source}; the key itself never comes back"
+    },
+    "owner.extensions.status": {
+      "params": {},
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.extensions.restart": {
+      "params": {
+        "id": "string"
+      },
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.extensions.secret": {
+      "params": {
+        "id": "string",
+        "name": "string",
+        "value": "string | null"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "sensitive": [
+        "value"
+      ],
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.extensions.resources": {
+      "params": {
+        "id": "string",
+        "cursor": "optional string"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.extensions.prompts": {
+      "params": {
+        "id": "string"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.customTools.credential": {
+      "params": {
+        "id": "string",
+        "value": "string | null"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "sensitive": [
+        "value"
+      ],
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.schedules.list": {
+      "params": {},
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.schedules.setEnabled": {
+      "params": {
+        "id": "string",
+        "enabled": "boolean"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.schedules.delete": {
+      "params": {
+        "id": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.schedules.create": {
+      "params": {
+        "label": "string",
+        "when": "object (validated by the desktop service)",
+        "previewToken": "string",
+        "unattended": "true",
+        "missed": "optional skip|once"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "schedule {id, label, when, missed?, authorizedBy: {kind: device, deviceId, name}, next?, ...}"
+    },
+    "owner.recipes.list": {
+      "params": {},
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.recipes.prepare": {
+      "params": {
+        "sessionId": "uuid",
+        "recipeId": "string",
+        "version": "optional number",
+        "inputs": "optional object (validated by the desktop service)"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.recipes.createDraft": {
+      "params": {
+        "previewToken": "string",
+        "reviewed": "true"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.results.list": {
+      "params": {
+        "sessionId": "optional uuid",
+        "limit": "optional number"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.results.verify": {
+      "params": {
+        "sessionId": "uuid",
+        "scriptId": "string",
+        "expectedScript": "object (validated by the desktop service)",
+        "reviewed": "true"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.collections.list": {
+      "params": {
+        "sessionId": "optional uuid"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.collections.create": {
+      "params": {
+        "name": "string",
+        "grounding": "optional strict|balanced|exploratory",
+        "allowCloud": "optional boolean"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.collections.addSource": {
+      "params": {
+        "id": "string",
+        "expectedRevision": "revision",
+        "path": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.collections.removeSource": {
+      "params": {
+        "id": "string",
+        "expectedRevision": "revision",
+        "path": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.collections.bind": {
+      "params": {
+        "id": "string",
+        "target": "global|project|session",
+        "sessionId": "optional uuid",
+        "bound": "boolean"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.collections.index": {
+      "params": {
+        "id": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.collections.cancel": {
+      "params": {},
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.collections.delete": {
+      "params": {
+        "id": "string",
+        "expectedRevision": "revision",
+        "confirmed": "true"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.projects.save": {
+      "params": "object (validated by the desktop service)",
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.models.local": {
+      "params": {},
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.models.pull": {
+      "params": {
+        "model": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.models.delete": {
+      "params": {
+        "model": "string",
+        "confirmed": "true"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.models.cancelPull": {
+      "params": {},
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.jobs.cancel": {
+      "params": {
+        "id": "string"
+      },
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.health": {
+      "params": {},
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.backup.status": {
+      "params": {},
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.backup.create": {
+      "params": {
+        "includeMemory": "optional boolean"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "terminal.profiles": {
+      "params": {},
+      "kind": "read",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "terminal.create": {
+      "params": {
+        "shell": "bash|fish|zsh|sh|default",
+        "cwd": "optional string",
+        "sessionId": "optional uuid",
+        "title": "optional string",
+        "rows": "number",
+        "cols": "number"
+      },
+      "kind": "signed",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "{terminal, lease: {leaseId, epoch, controllerRevision, lastSequence}, screen}"
+    },
+    "terminal.list": {
+      "params": {},
+      "kind": "read",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "terminal.get": {
+      "params": {
+        "terminalId": "uuid"
+      },
+      "kind": "read",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "terminal.attach": {
+      "params": {
+        "terminalId": "uuid"
+      },
+      "kind": "read",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "{terminal, screen: {rows, cols, lines: [[col, text, fg, bg, attrs]], cursor: [row, col, visible], alt, revision}}"
+    },
+    "terminal.acquireControl": {
+      "params": {
+        "terminalId": "uuid",
+        "expectedControllerRevision": "revision",
+        "rows": "optional number",
+        "cols": "optional number"
+      },
+      "kind": "signed",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "terminal.input": {
+      "params": {
+        "terminalId": "uuid",
+        "leaseId": "uuid",
+        "epoch": "number",
+        "sequence": "number",
+        "events": [
+          "{\"text\":\"string\"} | {\"paste\":\"string\"} | {\"key\":\"enter|tab|backspace|escape|up|down|left|right|insert|delete|home|end|pageup|pagedown|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12\",\"mods\":\"optional number\"} | {\"char\":\"number\",\"mods\":\"optional number\"}"
+        ]
+      },
+      "kind": "stream",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "{accepted, duplicate, lastSequence, epoch}: a sequence already accepted is a duplicate and is not written again"
+    },
+    "terminal.inputStatus": {
+      "params": {
+        "terminalId": "uuid",
+        "leaseId": "uuid",
+        "epoch": "number"
+      },
+      "kind": "read",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "{current, lastSequence, epoch, controllerRevision, state}"
+    },
+    "terminal.resize": {
+      "params": {
+        "terminalId": "uuid",
+        "leaseId": "uuid",
+        "rows": "number",
+        "cols": "number"
+      },
+      "kind": "stream",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "terminal.interrupt": {
+      "params": {
+        "terminalId": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "terminal.detach": {
+      "params": {
+        "terminalId": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "terminal.release": {
+      "params": {
+        "terminalId": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "terminal.forget": {
+      "params": {
+        "terminalId": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "terminal.close": {
+      "params": {
+        "terminalId": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "terminal DTO with state exited|unknown and stopReport {signalled, killed, remaining}"
+    },
+    "terminal.history": {
+      "params": {
+        "terminalId": "uuid",
+        "before": "optional number",
+        "limit": "number"
+      },
+      "kind": "read",
+      "feature": "terminal.v1",
+      "role": "owner",
+      "result": "{first, start, end, dropped, lines}"
+    },
+    "owner.usage.summary": {
+      "params": {
+        "days": "optional number",
+        "sessionId": "optional uuid"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "{currency, policy, total, byDay, byProvider, bySession, records}"
+    },
+    "owner.usage.setPolicy": {
+      "params": {
+        "expectedRevision": "revision",
+        "currency": "optional string",
+        "monthlyLimit": "optional number | null",
+        "warnAt": "optional number | null",
+        "prices": "optional object (validated by the desktop service)"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.skills.list": {
+      "params": {},
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.skills.review": {
+      "params": {
+        "versionId": "uuid"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.skills.importRepository": {
+      "params": {
+        "url": "string",
+        "ref": "optional string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.skills.importPath": {
+      "params": {
+        "path": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.skills.importArtifact": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "versionId": "optional string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.skills.enable": {
+      "params": {
+        "versionId": "uuid",
+        "invocation": "optional explicit|automatic",
+        "scope": "optional personal|project",
+        "project": "optional string",
+        "expectedRevision": "revision"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.skills.disable": {
+      "params": {
+        "versionId": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.skills.remove": {
+      "params": {
+        "skillId": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.research.start": {
+      "params": {
+        "sessionId": "uuid",
+        "question": "string",
+        "preset": "optional quick|thorough",
+        "mode": "answer|compare|check|literature",
+        "scope": "web|project|both",
+        "sourceIds": [
+          "string"
+        ],
+        "plan": {
+          "optional": [
+            "string"
+          ]
+        },
+        "sites": {
+          "optional": [
+            "string"
+          ]
+        },
+        "siteMode": "optional only|prefer",
+        "urls": {
+          "optional": [
+            "string"
+          ]
+        },
+        "recency": "optional day|week|month|year",
+        "output": "optional brief|timeline|matrix",
+        "minutes": "optional number",
+        "sources": "optional number",
+        "calls": "optional number",
+        "criteria": {
+          "optional": [
+            "string"
+          ]
+        },
+        "parallel": "optional boolean",
+        "requestId": "uuid"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "research run {id, sessionId, question, state, queries, evidence: [{id, url, title, status, contentHash, retrievedAt, excerpt}], report?: {artifactId, versionId}}; the same requestId returns the same run"
+    },
+    "owner.research.list": {
+      "params": "{\"sessionId\":\"optional uuid\",\"project\":\"optional false\"} | {\"sessionId\":\"uuid\",\"project\":\"true\"}",
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.research.get": {
+      "params": {
+        "id": "uuid"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "bounded research run detail; passages contain id/location and owner.research.passage returns one exact body"
+    },
+    "owner.research.stop": {
+      "params": {
+        "id": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "research run; a partial report is written from the evidence already read"
+    },
+    "owner.research.exclude": {
+      "params": {
+        "id": "uuid",
+        "evidenceId": "string"
+      },
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.research.resynthesize": {
+      "params": {
+        "id": "uuid"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "canvas.status": {
+      "params": {},
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "{available, browser, unavailableReason?, previews}"
+    },
+    "canvas.list": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "canvas.open": {
+      "params": {
+        "sessionId": "uuid",
+        "rootId": "string",
+        "path": "string",
+        "width": "optional number",
+        "height": "optional number",
+        "mobile": "optional boolean"
+      },
+      "kind": "signed",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "preview {id, sessionId, rootId, path, revision, width, height, mobile, files, consoleCount, annotations, frameRevision}"
+    },
+    "canvas.frame": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "{id, revision, frameRevision, width, height, data: JPEG data URL}"
+    },
+    "canvas.input": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid",
+        "kind": "click|type|key|scroll",
+        "x": "optional number",
+        "y": "optional number",
+        "text": "optional string",
+        "key": "optional string",
+        "deltaY": "optional number"
+      },
+      "kind": "stream",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "canvas.resize": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid",
+        "width": "number",
+        "height": "number",
+        "mobile": "optional boolean"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "canvas.reload": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "canvas.console": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "canvas.annotate": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid",
+        "x": "number",
+        "y": "number",
+        "note": "string"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "{id, selector, revision, note, artifact}: bound to the snapshot revision it was made on"
+    },
+    "canvas.annotations": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid"
+      },
+      "kind": "read",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "canvas.screenshot": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "canvas.export": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "canvas.close": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "workbench.remote.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.notebook.scratchpad": {
+      "params": {
+        "project": "string"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "{project, text, revision, updated, device?, history}"
+    },
+    "owner.notebook.save": {
+      "params": {
+        "project": "string",
+        "text": "string",
+        "expectedRevision": "revision"
+      },
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the saved scratchpad; REVISION_CONFLICT when it changed on another device (reload, merge, save again)"
+    },
+    "owner.notebook.day": {
+      "params": {
+        "date": "string",
+        "offsetMinutes": "optional number"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "{date, items: [{time, kind: conversation|run|research|scratchpad, title, sessionId?, project?, ref?}], derived: false}"
+    },
+    "view.start": {
+      "params": {
+        "output": "optional string"
+      },
+      "kind": "signed",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "{viewId, output, outputs: [{name, width, height, focused}], input: {pointer, text, reason?}}; the desktop shows a notice"
+    },
+    "view.frame": {
+      "params": {
+        "viewId": "uuid",
+        "maxWidth": "optional number"
+      },
+      "kind": "read",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "{viewId, revision, output, width, height, data: JPEG data URL}"
+    },
+    "view.input": {
+      "params": {
+        "viewId": "uuid",
+        "kind": "click|move|type|key",
+        "x": "optional number",
+        "y": "optional number",
+        "text": "optional string",
+        "key": "optional string",
+        "frameRevision": "optional number"
+      },
+      "kind": "stream",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "{sent, x?, y?}; REVISION_CONFLICT when the screen changed since frameRevision"
+    },
+    "view.stop": {
+      "params": {
+        "viewId": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "owner.policy.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.extensions.oauthStart": {
+      "params": {
+        "id": "string",
+        "clientId": "optional string",
+        "clientSecret": "optional string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "sensitive": [
+        "clientSecret"
+      ],
+      "result": "{flowId, server, authorizationUrl, redirectUrl: dev.otectus.cere.mobile:/oauth-callback, expiresAt, registered}; open authorizationUrl in the browser; the redirect returns to the app"
+    },
+    "owner.extensions.oauthComplete": {
+      "params": {
+        "state": "string",
+        "code": "optional string",
+        "error": "optional string"
+      },
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "{serverId, server, signedIn, scope?}; only the phone that started the sign-in, once, within ten minutes"
+    },
+    "owner.extensions.oauthSignOut": {
+      "params": {
+        "id": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.extensions.importPreview": {
+      "params": {
+        "text": "string"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "{token, servers: [{name, problem?, warnings, transport?, url?, command?, args?, cwd?, secrets: [{name, value: imported|missing}]}]}; values never returned"
+    },
+    "owner.extensions.importApply": {
+      "params": {
+        "token": "uuid",
+        "names": [
+          "string"
+        ]
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.extensions.writes": {
+      "params": {},
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "[{id, at, server, tool, state: dispatching|completed|failed|unknown|confirmed-done|confirmed-not-done, result?}]"
+    },
+    "owner.translate": {
+      "params": {
+        "sessionId": "uuid",
+        "targetLanguage": "string",
+        "text": "optional string",
+        "input": "optional object (validated by the desktop service)",
+        "glossary": {
+          "optional": [
+            {
+              "source": "string",
+              "target": "string"
+            }
+          ]
+        }
+      },
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "tool result {status, summary, data: {language, segments | text}, artifacts?: [{artifactId, versionId, purpose: translation}]}"
+    },
+    "owner.collections.addUrl": {
+      "params": {
+        "id": "string",
+        "url": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.collections.addArtifact": {
+      "params": {
+        "id": "string",
+        "sessionId": "uuid",
+        "artifactId": "string",
+        "versionId": "optional string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.collections.setWatch": {
+      "params": {
+        "id": "string",
+        "watch": "boolean"
+      },
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.tables.preview": {
+      "params": {
+        "sessionId": "uuid",
+        "artifactId": "optional string",
+        "versionId": "optional string",
+        "rootId": "optional string",
+        "path": "optional string"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "{name, delimiter, rows, columns: [{name, type, missing, distinct, example?}], sample, problems}"
+    },
+    "owner.voice.status": {
+      "params": {},
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "{available, state, engine}"
+    },
+    "owner.voice.transcribe": {
+      "params": {
+        "sessionId": "uuid",
+        "mime": "audio/mp4|audio/aac|audio/ogg|audio/webm|audio/wav",
+        "audio": "string"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "{text, seconds}; the audio is deleted on the desktop after transcription"
+    },
+    "owner.specialists.list": {
+      "params": {},
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "{revision, concurrency, specialists: [{id, name, role, description, provider?, model?, builtin?}], roles}"
+    },
+    "owner.specialists.save": {
+      "params": {
+        "specialist": "object (validated by the desktop service)",
+        "expectedRevision": "optional revision"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.specialists.delete": {
+      "params": {
+        "id": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.specialists.setConcurrency": {
+      "params": {
+        "concurrency": "number"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.setups.list": {
+      "params": {},
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.setups.save": {
+      "params": {
+        "setup": "object (validated by the desktop service)",
+        "expectedRevision": "optional revision"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.setups.delete": {
+      "params": {
+        "id": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.setups.preview": {
+      "params": {
+        "setupId": "string",
+        "sessionId": "uuid"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "{token, setup, changes: [{kind, label, from?, to}], unresolved: [text], notes: [text]}"
+    },
+    "owner.setups.apply": {
+      "params": {
+        "token": "uuid"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "{applied: [kind], session}"
+    },
+    "owner.setups.start": {
+      "params": {
+        "setupId": "string",
+        "expectedSetupRevision": "optional revision",
+        "cwd": "string",
+        "provider": "optional ollama|openai|anthropic|google|compatible|codex|claude|antigravity",
+        "model": "optional string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.extensions.resolveWrite": {
+      "params": {
+        "id": "uuid",
+        "outcome": "done|not-done"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.schedules.adopt": {
+      "params": {
+        "id": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.research.sources": {
+      "params": {
+        "sessionId": "uuid",
+        "query": "optional string"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.research.plan": {
+      "params": {
+        "sessionId": "uuid",
+        "question": "string",
+        "mode": "optional answer|compare|check|literature"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.research.readReport": {
+      "params": {
+        "id": "uuid",
+        "versionId": "optional string"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "{text}"
+    },
+    "owner.research.pause": {
+      "params": {
+        "id": "uuid"
+      },
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.research.refresh": {
+      "params": {
+        "id": "uuid"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.research.continue": {
+      "params": {
+        "id": "uuid",
+        "focus": "optional string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.research.steer": {
+      "params": {
+        "id": "uuid",
+        "focus": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.research.ask": {
+      "params": {
+        "id": "uuid",
+        "question": "string"
+      },
+      "kind": "signed",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.research.update": {
+      "params": {
+        "id": "uuid",
+        "title": "optional string",
+        "pinned": "optional boolean",
+        "archived": "optional boolean",
+        "monitorDays": "optional number"
+      },
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.research.export": {
+      "params": {
+        "id": "uuid",
+        "format": "markdown|csv|bibtex|json"
+      },
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.research.note": {
+      "params": {
+        "id": "uuid",
+        "text": "string"
+      },
+      "kind": "mutation",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "the desktop service result (broker/remote/owner.ts)"
+    },
+    "owner.research.passage": {
+      "params": {
+        "id": "uuid",
+        "passageId": "string",
+        "versionId": "optional string"
+      },
+      "kind": "read",
+      "feature": "settings.owner.v1",
+      "role": "owner",
+      "result": "{id, text, location, sourceId, title, versionId?}"
     }
   },
   "dto": {
@@ -944,14 +3265,17 @@
       "connectionName": "compatible on a named connection only",
       "workbenchFamilies": "[] — Files/Images/Analysis selected on the desktop (feature workbench.takeover)",
       "workbenchTakeover": "'acknowledge' when sending from this phone pauses them, otherwise null",
-      "workbenchNote": "optional explanation"
+      "workbenchNote": "optional explanation",
+      "controller": "{kind: desktop|device, role, self}",
+      "capabilities": "owner connections: the Workbench families in use",
+      "effectivePolicy": "owner connections: restricted | desktop | unknown | null"
     },
     "message": {
       "id": "opaque",
       "sessionId": "uuid",
       "turnId": "optional uuid",
       "role": "assistant",
-      "kind": "conversation kinds: text, message, empty, question, answer, queued, queue-cancelled, or delegation (user role, written by Cere when a delegated session reports back to its parent); other kinds are activity",
+      "kind": "conversation kinds: text, message, empty, question, answer, queued, queue-cancelled, or delegation (user role, written by PAL when a delegated session reports back to its parent); other kinds are activity",
       "text": "whole accumulated text",
       "time": 0,
       "revision": "1",
@@ -1008,7 +3332,13 @@
     "remote.disabled",
     "attachment.progress (data is upload DTO; cursor is opaque like other events)",
     "notice (data {kind:'complete'|'error'|'interrupted', sessionId, title} for in-scope sessions, or {kind:'timer', projectId, timerId, label} for timers set from this device's projects; text is generic and never carries provider error detail)",
-    "capture.updated (data is the capture DTO of a capture this phone started)"
+    "capture.updated (data is the capture DTO of a capture this phone started)",
+    "terminal.screen (data: {id, base, rev, full, rows, cols, cursor, alt, lines|changed}; a base that is not the client's revision means attach again)",
+    "terminal.scroll (data: {id, count, dropped, last})",
+    "terminal.state (data: terminal DTO; every owner connection)",
+    "terminal.bell (data: {id})",
+    "terminal.removed (data: {id})",
+    "transfer.progress (data: {transferId, offset, size})"
   ],
   "notes": "All operations are capability negotiated. Absent operation must have no enabled control. Unsupported forms/unsafe active providers expose deny/Stop only. All mutation failures preserve drafts. Connection loss never queues a new action. On ambiguous mutation query commands.status with original ID. All snapshot arrays replace cached scope; removed resources must be purged. Reconnect always supports full scoped snapshot even without retained replay. No command retry with a new ID without review. TLS trust exactly paired SPKI and valid certificate/SAN. No network pairing endpoint. Session summaries set draftIncluded:false; fetch sessions.get before enabling Send. A positive draftAttachmentCount means the desktop draft must be reviewed there; mobile draft edits and sends do not discard those attachments. sync.open sessionIds is authoritative for cache removal; hydrate omitted summaries by ID with sessions.batch (feature sessions.batch), or with sessions.list and nextSessionOffset on an older desktop. Submitted Ollama image files can be removed after a completed turn because full image context is persisted. Native path inputs remain until session removal, local clear, or device revocation. Command outcomes are redacted across device scopeVersion changes. Memory invalidation clears retained result payloads. cacheEpoch changes clear phone transcript and transient memory views. Memory CAS revisions above 9007199254740991 are rejected.",
   "media": {
@@ -1107,6 +3437,11 @@
     "sessions.toolsState": "session tools is the stored choice for Ollama and hosted API conversations, with toolsAvailable (true, false, or null when the model decides) and toolsUnavailableReason; sessions.configure keeps an omitted effort or tools",
     "sessions.routeRevision": "compatible sessions name routeRevision, imagesAvailable and connectionName; sessions.send and sessions.configure accept expectedRouteRevision and refuse with REVISION_CONFLICT when the connection changed",
     "models.listing": "providers.models listing:true answers {items, unlisted}; snapshot providers carry modelsUnlisted, and traits carry customModel and toolCalling",
-    "workbench.takeover": "sessions name workbenchFamilies, workbenchTakeover ('acknowledge' or null) and workbenchNote; sessions.send takes workbenchAcknowledged; Workbench results arrive as role 'workbench' messages with desktopOnly {kind,label}"
+    "workbench.takeover": "sessions name workbenchFamilies, workbenchTakeover ('acknowledge' or null) and workbenchNote; sessions.send takes workbenchAcknowledged; Workbench results arrive as role 'workbench' messages with desktopOnly {kind,label}",
+    "owner.policy.v1": "device roles (observer, limited, owner), client.features negotiation, working profiles, owner device and power management, View desktop (view.*); an owner connection keeps Workbench families and the desktop launch policy",
+    "workbench.remote.v1": "workbench.* and canvas.*: folders, files, reviewed changes, artifacts, runs, Code Lab, commands, images and live previews of a conversation, through the desktop services",
+    "artifacts.transfer.v1": "transfers.*: verified, resumable artifact downloads (original or preview) and phone uploads that install one artifact version",
+    "settings.owner.v1": "owner.*: typed settings families, connections, keys (write-only), tool servers with OAuth sign-in, configuration import and the external-write ledger, routines (time and folder triggers), recipes, collections (folders, web snapshots, uploads, watching), local models, usage and budgets, skills, working setups, specialists, research runs, voice notes, translation, table previews, scratchpad and Daybook, health and backups",
+    "terminal.v1": "terminal.*: broker-owned PTY terminals on the desktop account; one controller lease, sequenced input without replay, snapshots and deltas with revisions"
   }
 }

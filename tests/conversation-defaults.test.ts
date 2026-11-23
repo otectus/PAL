@@ -11,7 +11,7 @@ import type { ModelOption } from '../broker/types.ts';
 // dialog reads them: projects keep their own defaults, and no other way of starting a conversation does.
 const models: ModelOption[] = [{ id: 'tools-model', displayName: 'Tools model', description: '', efforts: [], defaultEffort: '', isDefault: true, capabilities: ['tools'] }];
 async function setup(t: any) {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-conversation-defaults-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-conversation-defaults-'));
   const core = new Core(new Store(join(directory, 'state')), () => ({ async send() {}, async interrupt() {}, async close() {} }), async () => models);
   t.after(async () => { await core.close(); await rm(directory, { recursive: true, force: true }); });
   const cwd = join(directory, 'project'); await mkdir(cwd);

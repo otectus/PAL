@@ -182,7 +182,7 @@ export function registerImageTools(workbench: Workbench) {
     run: guard(async ({ sessionId }, args) => {
       const operation = workbench.operations.get(args.operationId);
       if (operation.sessionId !== sessionId) return declined('That operation belongs to another conversation.');
-      const after = operation.kind === 'codelab.run' || operation.kind === 'command.run' ? await workbench.cancelRun(operation.id) : await media().cancel(operation.id);
+      const after = ['codelab.run', 'command.run', 'command.host'].includes(operation.kind) ? await workbench.cancelRun(operation.id) : await media().cancel(operation.id);
       return completed(after.cancellation?.confirmed ? 'Cancelled.' : after.cancellation?.note || `It is ${after.state}.`, describeOperation(after));
     }),
   });

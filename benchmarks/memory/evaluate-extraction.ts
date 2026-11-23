@@ -3,9 +3,9 @@
  * Runs the EV-01 extraction evaluation (extraction-eval.ts) against one Ollama model and writes
  * benchmarks/memory/extraction-results-<model>.json. Only the synthetic statements of
  * tests/fixtures/memory/extraction-cases.json are sent. A cloud model receives them only with
- * CERE_ALLOW_CLOUD_EVAL=1 and --approve naming that model.
+ * PAL_ALLOW_CLOUD_EVAL=1 and --approve naming that model.
  *
- *   CERE_ALLOW_CLOUD_EVAL=1 node benchmarks/memory/evaluate-extraction.ts --approve MODEL [--model MODEL] [--digest SHA256] [--endpoint URL]
+ *   PAL_ALLOW_CLOUD_EVAL=1 node benchmarks/memory/evaluate-extraction.ts --approve MODEL [--model MODEL] [--digest SHA256] [--endpoint URL]
  *
  * Without --model, the model is the running broker's configured extraction model.
  */
@@ -14,7 +14,7 @@ import { parseArgs } from 'node:util';
 import { OllamaExtractionAdapter } from '../../broker/graph-memory/adapters/ollama.ts';
 import { evaluate, loadCases, preservedResults, resultsFile } from './extraction-eval.ts';
 
-if (process.env.CERE_ALLOW_CLOUD_EVAL !== '1') throw new Error('Set CERE_ALLOW_CLOUD_EVAL=1 to authorize this synthetic cloud evaluation');
+if (process.env.PAL_ALLOW_CLOUD_EVAL !== '1') throw new Error('Set PAL_ALLOW_CLOUD_EVAL=1 to authorize this synthetic cloud evaluation');
 const { values } = parseArgs({ options: { model: { type: 'string' }, digest: { type: 'string' }, endpoint: { type: 'string', default: 'http://127.0.0.1:11434' }, approve: { type: 'string' } } });
 let model = values.model;
 if (!model) {

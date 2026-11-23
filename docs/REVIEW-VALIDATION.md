@@ -1,6 +1,6 @@
 # Desktop and mobile review: implementation and validation record
 
-Implementation of `Cere_Desktop_Mobile_Review_and_Implementation_Instructions.md` (W01–W16) on branch `ui-overhaul`, starting from the reviewed commit `6ea5ce3`, recorded 2026-10-20, before any of it was pushed. Nothing was published, no repository setting was changed, and the installed Cere application and broker were not touched. The owner's unrelated uncommitted work in the same checkout stays uncommitted and is not part of these commits or artifacts.
+Implementation of `PAL_Desktop_Mobile_Review_and_Implementation_Instructions.md` (W01–W16) on branch `ui-overhaul`, starting from the reviewed commit `6ea5ce3`, recorded 2026-10-20, before any of it was pushed. Nothing was published, no repository setting was changed, and the installed PAL application and broker were not touched. The owner's unrelated uncommitted work in the same checkout stays uncommitted and is not part of these commits or artifacts.
 
 **Machine.** CachyOS rolling, Linux 7.2.11, x86_64, Qt 6.12.0, Hyprland 0.56.2; Node 26.11.1 (system), 24.22.0 and 26.8.2 (official builds, SHA-256 verified); Codex CLI 0.163.0, Claude Code 2.1.303, Ollama 0.34.4, `agy` 1.4.3; Android emulators API 37 and API 36. Desktop checks ran in `tools/test-virtual-desktop.sh` (private Hyprland under Cage on the Intel GPU; no access to the working desktop). The session ran at `SCHED_IDLE` under heavy background load, and the machine rebooted once; timing-sensitive checks were judged against unmodified HEAD under the same conditions.
 
@@ -108,16 +108,16 @@ Final tree `7f14fe4` (tree `92014389`), built and tested in a clean worktree hol
 | Test suite, Node 24.22.0 | `node --test tests/*.test.ts` | 783 tests: 760 passed, 0 failed, 23 skipped |
 | Test suite, Node 26.8.2 (CI pin) | `node --test tests/*.test.ts` | 783 tests: 760 passed, 0 failed, 23 skipped |
 | Native tests | `ctest --test-dir build --output-on-failure` | 4 of 5 passed; `avatar` (GPU) fails as on unmodified HEAD |
-| Offscreen interface suite | `QT_QPA_PLATFORM=offscreen:configfile=tests/fixtures/offscreen-scales.json QT_QUICK_BACKEND=software ./build/cere-ui-check` | 100 passed, 1 failed (`reviewTransitions`, fails identically on HEAD under the same load), 9 skipped (need the live compositor or a real Spotify player); 52.5 min |
+| Offscreen interface suite | `QT_QPA_PLATFORM=offscreen:configfile=tests/fixtures/offscreen-scales.json QT_QUICK_BACKEND=software ./build/pal-ui-check` | 100 passed, 1 failed (`reviewTransitions`, fails identically on HEAD under the same load), 9 skipped (need the live compositor or a real Spotify player); 52.5 min |
 | Workflow lint | `actionlint -shellcheck=…` on `.github/workflows/*.yml`; `shellcheck tools/ci-user.sh tools/build-node-addons.sh` | Clean |
 | Android gates | `gradlew-quiet.sh mobile/android :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug :app:lintRelease :app:lintDev :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:assembleDev` (*host*) | 76 unit tests (22 protocol, 48 data, 6 app), 0 failures; lint 0 errors (29, 30, 30 warnings); 4 APKs |
 | SBOM | `--no-configuration-cache -I ../../tools/mobile-sbom.gradle :app:mobileSbom` (*host*) | CycloneDX 1.5, 154 components |
-| Instrumentation, API 37 | `:app:connectedDebugAndroidTest` on emulator `cere_review_api37` | 30 tests, 0 failures, 8 skipped (paired tests without arguments) |
+| Instrumentation, API 37 | `:app:connectedDebugAndroidTest` on emulator `pal_review_api37` | 30 tests, 0 failures, 8 skipped (paired tests without arguments) |
 | Paired phone-to-broker, API 37 | `node tools/mobile-paired-check.ts --serial emulator-5600` | Passed: SAS matched, USB pairing and `ConnectedDesktopTest`, 5 of 5 checkpoints, one desktop user row for the send |
-| Instrumentation and paired check, API 36 | same, emulator `cere_review_api36` | 30 tests, 0 failures, 8 skipped; paired check passed 5 of 5 |
+| Instrumentation and paired check, API 36 | same, emulator `pal_review_api36` | 30 tests, 0 failures, 8 skipped; paired check passed 5 of 5 |
 | Optimized build | install and launch the R8 dev APK on API 36 | `MainActivity` resumed, no fatal exception, not debuggable, versionCode 1004, minSdk 30, targetSdk 37 |
 | Staged install | `python3 tools/install-user.py --prefix build/review-stage`; `node tools/check-install.ts build/review-stage 7f14fe4…` (*host*) | No problems; build identity `7f14fe4`, not modified |
-| Installed broker | staged broker on a private profile: start, `cli.ts state`, `health.inspect`, `cere remote status`, SIGTERM | Socket in ~1 s; provider order present; health names build `7f14fe4`, `source: installed`, no missing programs; SIGTERM exit 0 with `last-shutdown.json` confirmed |
+| Installed broker | staged broker on a private profile: start, `cli.ts state`, `health.inspect`, `pal remote status`, SIGTERM | Socket in ~1 s; provider order present; health names build `7f14fe4`, `source: installed`, no missing programs; SIGTERM exit 0 with `last-shutdown.json` confirmed |
 | Package | `makepkg -d -f` (dependency check skipped: LayerShellQt is a local build here); `check-install.ts` on the package root | Built in 55 s; no problems; `nodejs>=24.22.0` |
 
 The 23 skipped suite tests are 22 artwork checks that need the local, git-ignored `artwork/` sources and the opt-in IndexTTS synthesis test.
@@ -132,13 +132,13 @@ In `build/review-impl/artifacts/` of the checkout (git-ignored; not published), 
 
 | File | SHA-256 | Notes |
 | --- | --- | --- |
-| `cere-desktop-7f14fe49c3c1-x86_64-staged.tar.gz` | `3c826e9593ad735e316d94ec81b604e43f8312a0736de7ca4fd089bb2bd456fa` | Staged per-user install (`install-user.py --prefix`), 1.44 GB |
-| `cere-0.1.0-1-x86_64.pkg.tar.zst` | `c153e3139f687284878f0752708e721803a5db1b4d418e630a0d798deb2f0b7e` | Arch package (built, not installed) |
-| `cere-mobile-7f14fe49c3c1-release-unsigned.apk` | `997b785f4f832cb1f0fa1d76e09e2fff59a3dbd109a45fde6848a46f7a02defc` | `dev.otectus.cere.mobile` 0.1.4 (1004), minSdk 30, target 37, unsigned, 16 KiB aligned |
-| `cere-mobile-7f14fe49c3c1-dev.apk` | `605948191897ca2e92d1ddd44066f721527048ab25421f7c12be0b62ac251b62` | R8, `…mobile.debug`, debug signer `3aac2955…562b` |
-| `cere-mobile-7f14fe49c3c1-debug.apk` | `fb4a926d8c75ced2fc148013a7a5bafb52e3c9228b9345cea40ca92f0568e1cc` | debug signer `3aac2955…562b` |
-| `cere-mobile-7f14fe49c3c1-debug-androidTest.apk` | `06032f3dfa74f86baf18acd72f0099eda5262b69bc79b5554032d0698d51ba77` | instrumentation |
-| `cere-mobile-7f14fe49c3c1-sbom.cdx.json` | `5af173a7b911f49995b6954d7fbe20b119f8bd898397b3359c2938946d42dc7e` | CycloneDX 1.5 |
+| `pal-desktop-7f14fe49c3c1-x86_64-staged.tar.gz` | `3c826e9593ad735e316d94ec81b604e43f8312a0736de7ca4fd089bb2bd456fa` | Staged per-user install (`install-user.py --prefix`), 1.44 GB |
+| `pal-0.1.0-1-x86_64.pkg.tar.zst` | `c153e3139f687284878f0752708e721803a5db1b4d418e630a0d798deb2f0b7e` | Arch package (built, not installed) |
+| `pal-mobile-7f14fe49c3c1-release-unsigned.apk` | `997b785f4f832cb1f0fa1d76e09e2fff59a3dbd109a45fde6848a46f7a02defc` | `dev.otectus.cere.mobile` 0.1.4 (1004), minSdk 30, target 37, unsigned, 16 KiB aligned |
+| `pal-mobile-7f14fe49c3c1-dev.apk` | `605948191897ca2e92d1ddd44066f721527048ab25421f7c12be0b62ac251b62` | R8, `…mobile.debug`, debug signer `3aac2955…562b` |
+| `pal-mobile-7f14fe49c3c1-debug.apk` | `fb4a926d8c75ced2fc148013a7a5bafb52e3c9228b9345cea40ca92f0568e1cc` | debug signer `3aac2955…562b` |
+| `pal-mobile-7f14fe49c3c1-debug-androidTest.apk` | `06032f3dfa74f86baf18acd72f0099eda5262b69bc79b5554032d0698d51ba77` | instrumentation |
+| `pal-mobile-7f14fe49c3c1-sbom.cdx.json` | `5af173a7b911f49995b6954d7fbe20b119f8bd898397b3359c2938946d42dc7e` | CycloneDX 1.5 |
 | `release-evidence-template-mobile-v0.1.4.json` | `cae5c8164e9a345eed85d9ba62392ac49f6d65b8b3ee1177859a434f41302173` | every gate `not-run`; to be completed on the target phone |
 
 Logs of every check above are in `artifacts/logs/`; paired-check evidence in `build/review-impl/paired-api37-final/` and `paired-api36-final/`.
@@ -169,7 +169,7 @@ Each was reproduced, fixed and covered by a test that fails without the fix, unl
 ## Owner steps
 
 1. **CI on GitHub:** once these commits (`6637073`..`7f14fe4`, plus this record) are on `main`, CI shows whether both workflows pass on one commit (W01) and runs the paired emulator job on API 30 and 35, the minimum and an intermediate level this machine had no image for. Notable changes are summarized in [CHANGELOG.md](../CHANGELOG.md).
-2. **Install on the desktop** when no reply is running: quit the interface (`node broker/cli.ts ui.quit`), `python3 tools/install-user.py`, `systemctl --user restart cere-broker.service`, then start the interface. The working tree also contains unrelated uncommitted work; installing from the working tree includes it, installing from a checkout of `7f14fe4` does not.
+2. **Install on the desktop** when no reply is running: quit the interface (`node broker/cli.ts ui.quit`), `python3 tools/install-user.py`, `systemctl --user restart pal-broker.service`, then start the interface. The working tree also contains unrelated uncommitted work; installing from the working tree includes it, installing from a checkout of `7f14fe4` does not.
 3. **Phone:** install the dev or debug APK on the target phone and run the hardware gates in `docs/mobile/TESTING.md` (biometrics, LAN/WireGuard/cellular moves, sleep/wake, Doze and notifications, TalkBack and large fonts, camera and picker uploads, no-Play behavior, upgrade from 0.1.3). Record them in `docs/mobile/release-evidence/mobile-vX.Y.Z.json` from the template; the release job signs nothing without it.
 4. **Release:** configure the protected `mobile-release` environment and signing secrets, then tag. Publication stays your decision.
 5. **Memory:** a representative extraction evaluation (production-domain corpus, models, billed calls) is still needed before memory loses its experimental label.

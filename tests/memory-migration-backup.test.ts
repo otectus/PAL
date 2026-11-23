@@ -12,7 +12,7 @@ import { healthReport } from '../broker/health.ts';
 
 /** A store written by code that knew only migrations 1–4, holding a note and an assertion; `root` mirrors the state directory. */
 function storeAtFour(t: any) {
-  const root = mkdtempSync(join(tmpdir(), 'cere-premigration-')), directory = join(root, 'graph-memory'), backups = join(root, 'memory-backups');
+  const root = mkdtempSync(join(tmpdir(), 'pal-premigration-')), directory = join(root, 'graph-memory'), backups = join(root, 'memory-backups');
   t.after(() => { try { chmodSync(join(root, 'locked'), 0o700); } catch {} rmSync(root, { recursive: true, force: true }); });
   const later = migrations.splice(migrations.findIndex(migration => migration.id === 5));
   let scope = '', note = '', assertion = '';
@@ -56,7 +56,7 @@ test('S4 an existing store is copied and checked before it migrates; new and cur
   } finally { c.close(); }
   new Canonical(directory, { backups }).close();
   assert.equal(backupFiles(backups).length, 2, 'a current store is not copied again');
-  const fresh = mkdtempSync(join(tmpdir(), 'cere-premigration-fresh-'));
+  const fresh = mkdtempSync(join(tmpdir(), 'pal-premigration-fresh-'));
   try { new Canonical(join(fresh, 'graph-memory'), { backups: join(fresh, 'memory-backups') }).close(); assert.deepEqual(backupFiles(join(fresh, 'memory-backups')), []); }
   finally { rmSync(fresh, { recursive: true, force: true }); }
 });
@@ -157,7 +157,7 @@ test('S4 restoring a pre-migration backup does not bring back what was forgotten
 });
 
 test('S4 Health lists the backup, and clearing memory deletes it', async t => {
-  const state = mkdtempSync(join(tmpdir(), 'cere-premigration-core-')), backups = join(state, 'memory-backups');
+  const state = mkdtempSync(join(tmpdir(), 'pal-premigration-core-')), backups = join(state, 'memory-backups');
   mkdirSync(backups, { recursive: true });
   writeFileSync(join(backups, 'before-migration-4-to-5-2026-10-15.sqlite'), 'x');
   writeFileSync(join(backups, 'before-migration-4-to-5-2026-10-15.sqlite.manifest.json'), JSON.stringify({ created_us: Date.now() * 1000, from: 4, to: 5 }));

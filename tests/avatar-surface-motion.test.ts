@@ -29,7 +29,7 @@ function upperHeadColor(pixels: Buffer, stride: number, left: number, top: numbe
 }
 
 test('new and repaired portrait cells have transparent gutters without neighboring-row fragments', async () => {
-  for(const id of ['cere_default','cere_gothic','cere_punk','cere_punk_unmasked','nova','soap']){
+  for(const id of ['pal','pal_classic','pal_gothic','pal_punk','pal_punk_unmasked','nova','soap']){
     const {data,info}=await sharp(`assets/${id}-portraits.png`).ensureAlpha().raw().toBuffer({resolveWithObject:true});
     assert.deepEqual([info.width,info.height],[1024,768],id);
     for(let cell=0;cell<12;cell++){
@@ -47,6 +47,7 @@ test('new and repaired portrait cells have transparent gutters without neighbori
 
 test('portrait expressions preserve the neutral silhouette, hair and costume outside the face', async () => {
   for(const {id,portrait,authoring} of avatarCatalog){
+    const rig = JSON.parse(readFileSync(`assets/${avatarCatalog.find(entry => entry.id === id)!.rig}`, 'utf8'));
     const {data,info}=await sharp(`assets/${portrait}`).ensureAlpha().raw().toBuffer({resolveWithObject:true});
     const neutral=Buffer.alloc(256*256*4);
     for(let y=0;y<256;y++)data.copy(neutral,y*256*4,(y*info.width)*4,(y*info.width+256)*4);
@@ -62,14 +63,15 @@ test('portrait expressions preserve the neutral silhouette, hair and costume out
         if(Math.hypot((x-cx)/rx,(y-cy)/ry)>=1)assert.fail(`${id}/${cell}: outer artwork changed at ${x},${y}`);
         if(data[b+3]>200 && Math.max(...[0,1,2].map(c=>Math.abs(data[b+c]-neutral[a+c])))>15)changed++;
       }
-      assert.ok(changed>100,`${id}/${cell}: expression must remain visible`);
+      if (rig.static) assert.equal(changed, 0, `${id}/${cell}: static reference keeps its neutral expression`);
+      else assert.ok(changed>100,`${id}/${cell}: expression must remain visible`);
     }
   }
 });
 
 test('new neutral artwork preserves reference colors and blinks only registered visible eyes', async t => {
   const sources = Object.fromEntries(avatarCatalog.map(entry => [entry.id, entry.authoring]));
-  for (const id of ['cere_default', 'cere_gothic', 'cere_punk_unmasked', 'cynthia', 'genga', 'kippy', 'pomni', 'rem', 'sarah', 'sylva', 'witty', 'alia']) {
+  for (const id of ['pal_classic', 'pal_gothic', 'pal_punk_unmasked', 'cynthia', 'genga', 'kippy', 'pomni', 'rem', 'sarah', 'sylva', 'witty']) {
     const directory = 'artwork/avatars/' + id;
     await t.test(id, {skip: !existsSync(directory + '/front.png') || !existsSync('reference/' + id + '.png')}, async () => {
       const cfg = sources[id];
@@ -274,6 +276,7 @@ test('every catalog clip and every route interruption restore neutral without st
   const clips=JSON.parse(readFileSync('assets/motions.json','utf8')).clips;
   for(const avatar of avatars){
     const c=JSON.parse(readFileSync('assets/'+avatar.rig,'utf8')).surfaceSequences;
+    if (!c) continue;
     const names=Object.keys(c.routes);
     const illustrated=['wave','greeting','goodbye','thinking','ponder','curious','skeptical','explainOpen','explainSweep','speaking','listen','approval','celebrate','success','fistPump','shy','hoverBlush','clickBlush','dragging'];
     assert.deepEqual(Object.keys(clips).filter(name=>c.motions[name]).sort(),illustrated.sort(),avatar.id+': explicit illustrated-gesture coverage');
@@ -316,6 +319,13 @@ test('every manifest surface atlas preserves neutral art, planted gestures and f
     const rig = JSON.parse(readFileSync('assets/' + avatar.rig, 'utf8'));
     const part = rig.parts[0];
     const {data, info} = await sharp('assets/' + rig.texture).raw().toBuffer({resolveWithObject: true});
+    if (rig.static) {
+      assert.equal(rig.presentation, 'reference');
+      assert.equal(part.surfaceMotion, false);
+      assert.deepEqual(part.sourceRect, [0, 0, info.width, info.height]);
+      assert.ok(info.width * info.height * 4 <= 256 * 1024 * 1024, 'static artwork stays within Qt image allocation limit');
+      continue;
+    }
     const sourceDir = 'artwork/avatars/' + avatar.id;
     await t.test(avatar.id + ': exact visible neutral source pixels', {
       skip: !existsSync(sourceDir + '/registration.json') || !existsSync(sourceDir + '/front.png')

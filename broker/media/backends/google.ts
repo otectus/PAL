@@ -3,7 +3,7 @@
  * (aistudio.google.com/docs/image-generation): POST v1beta/interactions with an `input` list of text and
  * image blocks and an image `response_format`. Responses are read from `steps[].content[]` (and the
  * `output_image`/`output_text` conveniences when present); text and images are both kept. Gemini has no
- * mask input, so a masked edit relies on Cere's protected-region compositing. Every generated image
+ * mask input, so a masked edit relies on PAL's protected-region compositing. Every generated image
  * carries Google's SynthID watermark.
  */
 import { capability } from '../../tools/contracts.ts';
@@ -20,11 +20,11 @@ export function googleCapabilities(model: string): ImageCapabilities {
   return {
     backend: 'google', model, route: 'cloud',
     generate: capability(state, documented), edit: capability(state, documented),
-    mask: capability('unsupported', documented, 'Gemini takes no mask; Cere can keep pixels outside your selection by compositing'), maskBehavior: 'none',
+    mask: capability('unsupported', documented, 'Gemini takes no mask; PAL can keep pixels outside your selection by compositing'), maskBehavior: 'none',
     maxReferences: 14, formats: ['png', 'jpeg'], transparency: capability('unsupported', documented),
     sizes: [], aspectRatios: [...aspectRatios, ...(/nano-banana-2\.1|3\.1-flash-image/.test(model) ? ['1:4', '4:1', '1:8', '8:1'] : [])], imageSizes: ['1K', '2K', '4K'],
     maxCount: 4, partials: capability('unsupported', documented), seed: capability('unsupported', documented), negativePrompt: capability('unsupported', documented),
-    usage: capability('unknown', documented), cancel: capability('unsupported', documented, 'Stopping ends Cere’s wait; a request Google already received may still complete and be billed'), query: capability('unsupported', documented),
+    usage: capability('unknown', documented), cancel: capability('unsupported', documented, 'Stopping ends PAL’s wait; a request Google already received may still complete and be billed'), query: capability('unsupported', documented),
     notes: ['Requests are billed to your Google AI account.', 'Every generated image carries a SynthID watermark.', 'Several images are made as separate requests.'], billed: true,
   };
 }
@@ -83,7 +83,7 @@ export class GoogleImages implements ImageBackend {
       if (!response.ok) throw await providerError(response, 'Google AI');
       yield { type: 'accepted' };
       let text = '', size = 0;
-      for await (const chunk of response.body as any as AsyncIterable<Uint8Array>) { size += chunk.length; if (size > 100 * 1024 * 1024) throw new Error('The Google response was larger than Cere accepts'); text += Buffer.from(chunk).toString('utf8'); }
+      for await (const chunk of response.body as any as AsyncIterable<Uint8Array>) { size += chunk.length; if (size > 100 * 1024 * 1024) throw new Error('The Google response was larger than PAL accepts'); text += Buffer.from(chunk).toString('utf8'); }
       let value: any;
       try { value = JSON.parse(text); } catch { throw Object.assign(new Error('Google returned an unreadable response; the image may have been made and billed'), { code: 'malformed' }); }
       const parsed = parseInteraction(value);

@@ -2,20 +2,38 @@ import { randomUUID } from 'node:crypto';
 import type { Store } from '../store.ts';
 import { digest } from './crypto.ts';
 import { remoteError } from '../execution.ts';
+import { deviceRole, lapsed, type DeviceRole, type WorkingProfile } from '../authority.ts';
 
 export type Project = {id:string;name:string;path:string};
 export type Device = {id:string;name:string;connectionKey:string;actionKey:string;keyVersion:number;scopeVersion:string;
   actionAuthentication?:'biometric'|'trusted-device';replacesDeviceId?:string;replacementPending?:boolean;
-  createdAt:number;expiresAt:number;revokedAt?:number;lastSeen?:number;projects:Project[];caps:string[];categories:string[];scriptIds:string[];ollamaHosts:string[];
+  /**
+   * What this phone may control (authority.ts): observer, limited (every phone paired before roles) or owner.
+   * Authentication (keys, signing mode) is separate and unchanged by a role change.
+   */
+  role?:DeviceRole;
+  /** 'until-revoked': no expiry (owner phones by default); otherwise `expiresAt` applies. */
+  lifetime?:'until-revoked';
+  /** An owner phone's working profile and its revision (changes never disconnect the phone). */
+  profile?:WorkingProfile;profileRevision?:string;
+  /**
+   * Transient, never stored: the role this connection negotiated. An owner phone acts as an owner only after
+   * its client declared `owner.policy.v1`; an older client keeps the limited behaviour it understands.
+   */
+  connectionRole?:DeviceRole;
+  createdAt:number;expiresAt?:number;revokedAt?:number;lastSeen?:number;projects:Project[];caps:string[];categories:string[];scriptIds:string[];ollamaHosts:string[];
   /** Hosted API providers this phone may run (with the providers.api grant); the compatible endpoint is bound to the origin granted. */
-  apiProviders?:string[];compatibleEndpoint?:string};
+  apiProviders?:string[];compatibleEndpoint?:string;
+  /** The phone that promoted or approved this one, when an owner phone enrolled it. */
+  enrolledBy?:string};
 export type RemoteConfig = {enabled:boolean;addresses:string[];port:number;name:string};
 export class RemoteStore {
   store: Store; epoch=randomUUID();
   constructor(store: Store) {
     this.store=store;
     const version = store.get('remoteSchema',0);
-    if (version>1) throw new Error('Unsupported remote database version');
+    // Version 2 adds device roles. An older binary refuses it instead of reading an owner record as a scoped one.
+    if (version>2) throw new Error('Unsupported remote database version');
     store.db.exec(`BEGIN IMMEDIATE;
       CREATE TABLE IF NOT EXISTS remote_devices(id TEXT PRIMARY KEY,data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS remote_pair_offers(id TEXT PRIMARY KEY,data TEXT NOT NULL,expires INTEGER NOT NULL);
@@ -24,7 +42,8 @@ export class RemoteStore {
       CREATE INDEX IF NOT EXISTS remote_journal_device ON remote_journal(device,seq);
       CREATE TABLE IF NOT EXISTS remote_audit(seq INTEGER PRIMARY KEY AUTOINCREMENT,time INTEGER NOT NULL,data TEXT NOT NULL);
       COMMIT;`);
-    store.set('remoteSchema',1);
+    if (version<2) this.migrateRoles();
+    store.set('remoteSchema',2);
     if (!store.get('remoteLineage','')) store.set('remoteLineage',randomUUID());
     if (!store.get('remoteCursorKey','')) store.set('remoteCursorKey',randomUUID()+randomUUID());
     for (const row of store.db.prepare('SELECT device,id,data FROM remote_commands').all()) {
@@ -33,12 +52,38 @@ export class RemoteStore {
     }
     this.prune();
   }
-  config(): RemoteConfig { return this.store.get('remoteConfig',{enabled:false,addresses:[],port:8443,name:'Cere'}); }
+  /**
+   * Schema 1 → 2: every existing phone becomes an explicit limited device with identical scopes, expiry and
+   * signing mode. Trusted-device signing stays a signing choice; it never implies owner authority.
+   */
+  private migrateRoles() {
+    const db=this.store.db;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const row of db.prepare('SELECT id,data FROM remote_devices').all()) {
+        const device=JSON.parse(String(row.data));
+        if (device.role===undefined) {device.role='limited';db.prepare('UPDATE remote_devices SET data=? WHERE id=?').run(JSON.stringify(device),String(row.id));}
+      }
+      db.prepare('INSERT INTO remote_audit(time,data) VALUES (?,?)').run(Date.now(),JSON.stringify({operation:'schema.roles',decision:'migrated'}));
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+  }
+  config(): RemoteConfig {
+    const config=this.store.get('remoteConfig',{enabled:false,addresses:[],port:8443,name:'PAL'});
+    if(this.store.get<number>('pal.remoteNameMigration',0)<1){if(config.name==='Cere'){config.name='PAL';this.store.set('remoteConfig',config);}this.store.set('pal.remoteNameMigration',1);}
+    return config;
+  }
   configure(config: RemoteConfig) { this.store.set('remoteConfig',config); }
   devices(): Device[] { return this.store.db.prepare('SELECT data FROM remote_devices').all().map(r=>JSON.parse(String(r.data))); }
   device(id: string): Device | undefined { const r=this.store.db.prepare('SELECT data FROM remote_devices WHERE id=?').get(id);return r?JSON.parse(String(r.data)):undefined; }
-  live(id: string) { const d=this.device(id); return d && !d.revokedAt && d.expiresAt>Date.now() ? d : undefined; }
-  saveDevice(d: Device) { this.store.db.prepare('INSERT OR REPLACE INTO remote_devices VALUES (?,?)').run(d.id,JSON.stringify(d)); }
+  live(id: string) { const d=this.device(id); return d && !d.revokedAt && !lapsed(d) ? d : undefined; }
+  /** The connection's transient role is never stored. */
+  saveDevice(d: Device) { const {connectionRole:_transient,...stored}=d;this.store.db.prepare('INSERT OR REPLACE INTO remote_devices VALUES (?,?)').run(d.id,JSON.stringify(stored)); }
+  /** The role this device acts under on a connection: owner only once its client negotiated owner policy. */
+  static effectiveRole(device: Pick<Device,'role'|'connectionRole'>): DeviceRole {
+    const stored=deviceRole(device.role);
+    return stored==='owner'&&device.connectionRole!=='owner'?'limited':stored;
+  }
   audit(event: {deviceId?:string;operation:string;commandId?:string;argsDigest?:string;decision:string;scope?:string;authSessionId?:string;sessionId?:string;projectId?:string;turnId?:string;scopeVersion?:string;policyRevision?:string}) {
     this.store.db.prepare('INSERT INTO remote_audit(time,data) VALUES (?,?)').run(Date.now(),JSON.stringify(event));
   }

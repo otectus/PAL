@@ -5,8 +5,8 @@ import { JsonLines } from './wire.ts';
 import net from 'node:net';
 import { socketPath } from './paths.ts';
 import { trustedServer } from './peercred.ts';
-const token = process.env.CERE_SESSION_TOKEN;
-if (!token) { console.error('Cere MCP must be launched by a managed session'); process.exit(1); }
+const token = process.env.PAL_SESSION_TOKEN || process.env.CERE_SESSION_TOKEN;
+if (!token) { console.error('PAL MCP must be launched by a managed session'); process.exit(1); }
 const lines = new JsonLines();
 const respond = (m: any) => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...m})+'\n');
 let initialized=false,lastTools='';
@@ -41,11 +41,11 @@ async function handle(m: any) {
   if (m.id === undefined) return;
   try {
     let result: any;
-    if (m.method === 'initialize') {initialized=true;result={protocolVersion:'2024-11-05',capabilities:{tools:{listChanged:true}},serverInfo:{name:'cere',version:buildIdentity().version}};}
+    if (m.method === 'initialize') {initialized=true;result={protocolVersion:'2024-11-05',capabilities:{tools:{listChanged:true}},serverInfo:{name:'pal',version:buildIdentity().version}};}
     else if (m.method === 'ping') result={};
     else if (m.method === 'tools/list') {
       const defs = await request('mcp.tools',{token});
-      result={tools:[{name:'approve',description:'Respond to a Claude Code permission request through the Cere user interface',inputSchema:{type:'object',properties:{tool_name:{type:'string'},input:{type:'object'}},required:['tool_name','input']}},...defs.map((d:any)=>({name:d.name.replaceAll('.','_'),description:d.description,inputSchema:{type:'object',properties:d.schema,required:d.required||Object.keys(d.schema),additionalProperties:false}}))]};
+      result={tools:[{name:'approve',description:'Respond to a Claude Code permission request through the PAL user interface',inputSchema:{type:'object',properties:{tool_name:{type:'string'},input:{type:'object'}},required:['tool_name','input']}},...defs.map((d:any)=>({name:d.name.replaceAll('.','_'),description:d.description,inputSchema:{type:'object',properties:d.schema,required:d.required||Object.keys(d.schema),additionalProperties:false}}))]};
     } else if (m.method === 'tools/call') {
       const name = m.params.name === 'approve' ? 'approve' : m.params.name.replace('_','.');
       try {

@@ -9,8 +9,17 @@ readonly NEO4J_SHA256="f8fc23340561405f1ff10ca6ac2d317d095d3c74509a616883c45d7a6
 readonly QDRANT_VERSION="1.19.1"
 readonly QDRANT_SHA256_X86_64="eef986e769d4d3e806dd2d546e1b4ecdd416211e54d34b4ed764fac7c58e1085"
 readonly QDRANT_SHA256_AARCH64="0e607c11705fab22f7d667f4749bc0b6b60a8fa9e91de71880a6ebafbbda1b26"
-readonly DEPS_HOME="${CERE_MEMORY_DEPS_HOME:-${XDG_STATE_HOME:-${HOME}/.local/state}/cere-memory/dependencies}"
-readonly ENV_FILE="${CERE_MEMORY_ENV_FILE:-${XDG_CONFIG_HOME:-${HOME}/.config}/cere-memory/dependencies.env}"
+# Reuse an existing private installation, including the databases and their credentials.
+dependency_path() {
+  local parent="$1" leaf="$2"
+  if [[ ! -e "$parent/pal-memory/$leaf" && -e "$parent/cere-memory/$leaf" ]]; then
+    printf '%s\n' "$parent/cere-memory/$leaf"
+  else
+    printf '%s\n' "$parent/pal-memory/$leaf"
+  fi
+}
+readonly DEPS_HOME="${PAL_MEMORY_DEPS_HOME:-${CERE_MEMORY_DEPS_HOME:-$(dependency_path "${XDG_STATE_HOME:-$HOME/.local/state}" dependencies)}}"
+readonly ENV_FILE="${PAL_MEMORY_ENV_FILE:-${CERE_MEMORY_ENV_FILE:-$(dependency_path "${XDG_CONFIG_HOME:-$HOME/.config}" dependencies.env)}}"
 
 usage() {
   echo "usage: $0 {up|down|status|logs|local-install|local-start|local-stop|check}"
@@ -142,14 +151,14 @@ local_start() {
   mkdir -p "$DEPS_HOME/run" "$DEPS_HOME/qdrant-storage"
   chmod 700 "$DEPS_HOME" "$DEPS_HOME/run" "$DEPS_HOME/qdrant-storage"
   local neo4j_config="$DEPS_HOME/neo4j/conf/neo4j.conf"
-  sed -i '/^# CERE_MEMORY_BEGIN$/,/^# CERE_MEMORY_END$/d' "$neo4j_config"
+  sed -i -e '/^# CERE_MEMORY_BEGIN$/,/^# CERE_MEMORY_END$/d' -e '/^# PAL_MEMORY_BEGIN$/,/^# PAL_MEMORY_END$/d' "$neo4j_config"
   printf '%s\n' \
-    '# CERE_MEMORY_BEGIN' \
+    '# PAL_MEMORY_BEGIN' \
     'server.default_listen_address=127.0.0.1' \
     "server.bolt.listen_address=127.0.0.1:${NEO4J_BOLT_PORT:-7687}" \
     "server.http.listen_address=127.0.0.1:${NEO4J_HTTP_PORT:-7474}" \
     'dbms.usage_report.enabled=false' \
-    '# CERE_MEMORY_END' >>"$neo4j_config"
+    '# PAL_MEMORY_END' >>"$neo4j_config"
   if [[ ! -f "$DEPS_HOME/neo4j/data/dbms/auth.ini" && ! -f "$DEPS_HOME/neo4j/data/dbms/auth" ]]; then
     "$DEPS_HOME/neo4j/bin/neo4j-admin" dbms set-initial-password "$NEO4J_PASSWORD" >/dev/null
   fi

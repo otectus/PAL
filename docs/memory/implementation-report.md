@@ -1,6 +1,6 @@
 # Implementation and publication status
 
-Date: 2026-09-29. This initial repository publication contains an integrated, experimental graph-memory implementation. It does **not** satisfy every completion criterion in `docs/Cere_Graph_Memory_Implementation.md` yet.
+Date: 2026-09-29. This initial repository publication contains an integrated, experimental graph-memory implementation. It does **not** satisfy every completion criterion in `docs/PAL_Graph_Memory_Implementation.md` yet.
 
 ## Status reconciled with source (2026-10-20)
 
@@ -33,10 +33,10 @@ Task creation/binding (item 3), the collector/editor integrations (item 4) and t
 | `node --test tests/memory.test.ts tests/knowledge.test.ts` | 32 passed, 0 failed |
 | `npm run build` | Passed, including native peer-credential module and UI check binary |
 | `python3 tools/install-user.py --prefix build/publish-install` | Passed; isolated staging only |
-| `python3 tools/check-memory-install.py --root build/publish-install/share/cere` | Passed: installed broker/CLI, peer credentials, immediate recall with projections unavailable, guarded forgetting, immediate suppression, pending purge |
-| `build/cere-motion-check` with local dependency library path | 15 passed, 0 failed |
-| `build/cere-ui-check searchAndMemory` with local Qt library/plugin paths and Basic style | 3 passed, 0 failed; native graph inspector included |
-| Full `build/cere-ui-check` with the same environment | Final run: 18 passed, 2 failed. `mouseFollowingAcrossOutputs` failed its target-output expectation; `expressiveActing` failed its composer-focus timeout. These desktop interaction checks remain unresolved. An earlier inspector Escape failure was fixed and passed the subsequent focused and full runs. |
+| `python3 tools/check-memory-install.py --root build/publish-install/share/pal` | Passed: installed broker/CLI, peer credentials, immediate recall with projections unavailable, guarded forgetting, immediate suppression, pending purge |
+| `build/pal-motion-check` with local dependency library path | 15 passed, 0 failed |
+| `build/pal-ui-check searchAndMemory` with local Qt library/plugin paths and Basic style | 3 passed, 0 failed; native graph inspector included |
+| Full `build/pal-ui-check` with the same environment | Final run: 18 passed, 2 failed. `mouseFollowingAcrossOutputs` failed its target-output expectation; `expressiveActing` failed its composer-focus timeout. These desktop interaction checks remain unresolved. An earlier inspector Escape failure was fixed and passed the subsequent focused and full runs. |
 | `tools/memory-dependencies.sh local-install` then `check` against isolated native dependencies | Passed with Neo4j 5.26.31 / Qdrant 1.19.1 across stop/start: replay, revision gaps, historical correction, erasure, generation isolation, vector retirement and cross-generation deletion |
 | Cloud extraction v2 five-case evaluation | 5/5 expected predicates with exact quotes; this is not a production accepted-assertion precision estimate |
 | Publication scan | No credential-shaped tokens or private keys found in publishable source; runtime/build data excluded by Git ignore rules |
@@ -46,10 +46,10 @@ The full UI command was:
 ```sh
 LD_LIBRARY_PATH="$PWD/.local-deps/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
 QT_PLUGIN_PATH="$PWD/.local-deps/usr/lib/qt6/plugins" \
-QT_QUICK_CONTROLS_STYLE=Basic ./build/cere-ui-check
+QT_QUICK_CONTROLS_STYLE=Basic ./build/pal-ui-check
 ```
 
-Machine-local evidence logs are `/tmp/cere-publish-tests.log`, `/tmp/cere-publish-memory-tests.log`, `/tmp/cere-publish-build.log`, `/tmp/cere-publish-install.log`, `/tmp/cere-publish-installed-smoke.log`, `/tmp/cere-publish-motion.log`, `/tmp/cere-publish-inspector.log`, `/tmp/cere-publish-ui-final.log`, and `/tmp/cere-publish-adapters.log`. These are historical local paths, not artifacts downloadable from GitHub. Reproduction commands and aggregate evaluation results are committed; private state and credentials are not.
+Machine-local evidence logs are `/tmp/pal-publish-tests.log`, `/tmp/pal-publish-memory-tests.log`, `/tmp/pal-publish-build.log`, `/tmp/pal-publish-install.log`, `/tmp/pal-publish-installed-smoke.log`, `/tmp/pal-publish-motion.log`, `/tmp/pal-publish-inspector.log`, `/tmp/pal-publish-ui-final.log`, and `/tmp/pal-publish-adapters.log`. These are historical local paths, not artifacts downloadable from GitHub. Reproduction commands and aggregate evaluation results are committed; private state and credentials are not.
 
 ## Outstanding reference-design gates
 
@@ -60,4 +60,4 @@ Machine-local evidence logs are `/tmp/cere-publish-tests.log`, `/tmp/cere-publis
 5. Strict end-to-end deadlines, all intermediate hydration quotas, comprehensive policy revocation/intake behavior, repeated-source independence, and all required M01–M36 failure combinations need further validation. Existing passing fixtures do not certify the entire matrix.
 6. The two desktop UI failures above are from that run. Current full-suite UI results are recorded in [VALIDATION.md](../../VALIDATION.md). Local build/package success and the focused memory inspector test do not replace those checks.
 
-Memory is opt-in, and its README labels these limits. Publishing this source is separate from enabling collectors or restarting an installed user broker. This work staged an installation and exercised disposable dependency services; it did not replace or restart the user's installed Cere application.
+Memory is opt-in, and its README labels these limits. Publishing this source is separate from enabling collectors or restarting an installed user broker. This work staged an installation and exercised disposable dependency services; it did not replace or restart the user's installed PAL application.

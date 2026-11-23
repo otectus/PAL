@@ -5,7 +5,7 @@
 #   tools/ci-user.sh setup          as root: create the user and give it the checkout
 #   tools/ci-user.sh run CMD [ARGS] run CMD as that user (directly when not root)
 set -euo pipefail
-user=cere-ci
+user=pal-ci
 workspace=${GITHUB_WORKSPACE:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
 case ${1-} in
   setup)

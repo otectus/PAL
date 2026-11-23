@@ -1,5 +1,5 @@
 /**
- * M16: opt-in responsiveness measurements. While the user has them on, Cere keeps the durations of
+ * M16: opt-in responsiveness measurements. While the user has them on, PAL keeps the durations of
  * recent turns, time to first reply text, memory recall, tool calls, time to first speech audio and how
  * long Stop took, plus how late the broker's and the window's event loops ran. A span holds a kind, a
  * duration, an outcome and at most a provider or tool family: never text, paths, arguments or audio.

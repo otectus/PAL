@@ -18,17 +18,17 @@ async function until(check:()=>Promise<boolean>,timeout=10000){const end=Date.no
 async function freePort(){const server=net.createServer();await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const port=(server.address() as net.AddressInfo).port;await new Promise<void>(r=>server.close(()=>r()));return port;}
 
 test('real broker process: peer credentials, offline pair, provider approval reconnect, crash ledger, revoke and listener shutdown', {timeout:45000}, async t=>{
-  const directory=await mkdtemp(join(tmpdir(),'cere-mobile-process-')),state=join(directory,'state'),runtime=join(directory,'runtime'),project=join(directory,'project');
+  const directory=await mkdtemp(join(tmpdir(),'pal-mobile-process-')),state=join(directory,'state'),runtime=join(directory,'runtime'),project=join(directory,'project');
   await mkdir(project);const marker=join(project,'effect-started');
-  const oldState=process.env.CERE_STATE_DIR,oldRuntime=process.env.CERE_RUNTIME_DIR;
-  process.env.CERE_STATE_DIR=state;process.env.CERE_RUNTIME_DIR=runtime;
+  const oldState=process.env.PAL_STATE_DIR,oldRuntime=process.env.PAL_RUNTIME_DIR;
+  process.env.PAL_STATE_DIR=state;process.env.PAL_RUNTIME_DIR=runtime;
   const script={id:'crash-fixture',name:'Crash boundary fixture',executable:'/bin/sh',args:['-c','printf accepted > "$1"; sleep 30','fixture',marker],cwd:project,timeout:35000};
   const store=new Store(state);store.set('settings',{profile:'scoped',categories:['scripts'],scripts:[script],memory:{enabled:false}});store.close();
-  const env={...process.env,CERE_CODEX_BIN:resolve('tests/fixtures/ui-codex.mjs'),CERE_CLAUDE_BIN:join(directory,'absent-claude'),CERE_OLLAMA_HOST:'http://127.0.0.1:9'};
+  const env={...process.env,PAL_CODEX_BIN:resolve('tests/fixtures/ui-codex.mjs'),PAL_CLAUDE_BIN:join(directory,'absent-claude'),PAL_OLLAMA_HOST:'http://127.0.0.1:9'};
   let broker:ChildProcess|undefined,log='',socket:WebSocket|undefined;
   async function start(){broker=spawn(process.execPath,['broker/main.ts'],{cwd:resolve('.'),env,detached:true,stdio:['ignore','pipe','pipe']});broker.stdout!.on('data',b=>log+=String(b));broker.stderr!.on('data',b=>log+=String(b));await until(async()=>{try{return !!await request('remote.status',{},500);}catch{return false;}});}
   async function stop(signal:NodeJS.Signals='SIGTERM') {if(!broker||broker.exitCode!==null||broker.signalCode)return;const ended=new Promise<void>(r=>broker!.once('exit',()=>r()));process.kill(-broker.pid!,signal);await ended;}
-  t.after(async()=>{socket?.terminate();await stop('SIGKILL');await writeFile('/tmp/cere-mobile-process.log',log);if(oldState===undefined)delete process.env.CERE_STATE_DIR;else process.env.CERE_STATE_DIR=oldState;if(oldRuntime===undefined)delete process.env.CERE_RUNTIME_DIR;else process.env.CERE_RUNTIME_DIR=oldRuntime;await rm(directory,{recursive:true,force:true});});
+  t.after(async()=>{socket?.terminate();await stop('SIGKILL');await writeFile('/tmp/pal-mobile-process.log',log);if(oldState===undefined)delete process.env.PAL_STATE_DIR;else process.env.PAL_STATE_DIR=oldState;if(oldRuntime===undefined)delete process.env.PAL_RUNTIME_DIR;else process.env.PAL_RUNTIME_DIR=oldRuntime;await rm(directory,{recursive:true,force:true});});
   await start();assert.equal((await request('remote.status')).listening,false);
   const port=await freePort(),offer=parsePairing((await request('remote.preparePair',{addresses:['127.0.0.1'],port,name:'Process fixture'})).uri);
   assert.equal((await request('remote.status')).listening,false);

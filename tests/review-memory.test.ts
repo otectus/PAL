@@ -10,7 +10,7 @@ import { claimSchema, parse } from "../broker/graph-memory/contracts.ts";
 import { extractionProposals } from "../broker/graph-memory/proposals.ts";
 
 // Regressions for the canonical-engine findings of docs/REVIEW.md.
-function fixture(t: any, directory = mkdtempSync(join(tmpdir(), "cere-review-"))) {
+function fixture(t: any, directory = mkdtempSync(join(tmpdir(), "pal-review-"))) {
   const c = new Canonical(directory);
   t.after(() => { try { c.close(); } catch {} rmSync(directory, { recursive: true, force: true }); });
   const scope = c.registerScope({ key: "fixture", label: "Fixture" }).id;
@@ -96,7 +96,7 @@ test("F-003 a pre-erasure backup replayed with the current registry suppresses e
 /** Rebuilds the database written by the pinned engine (see tests/fixtures/memory/legacy-v1.json). */
 function legacyDatabase() {
   const data = JSON.parse(readFileSync(new URL("./fixtures/memory/legacy-v1.json", import.meta.url), "utf8"));
-  const directory = mkdtempSync(join(tmpdir(), "cere-legacy-"));
+  const directory = mkdtempSync(join(tmpdir(), "pal-legacy-"));
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(join(directory, "memory.sqlite"));
   db.exec("PRAGMA foreign_keys=OFF;");
@@ -243,7 +243,7 @@ test("F-010 retained-witness expiration is idempotent and drains more than one b
 
 test("F-011 opposite polarity for the same member of a multivalued slot is a dispute", (t) => {
   for (const order of [["positive", "negative"], ["negative", "positive"]]) {
-    const { c, scope } = fixture(t, mkdtempSync(join(tmpdir(), "cere-polarity-")));
+    const { c, scope } = fixture(t, mkdtempSync(join(tmpdir(), "pal-polarity-")));
     remember(c, scope, "Atlas uses Kitty.", tool("Kitty"));
     const text = (p: string) => p === "negative" ? "Atlas does not use Ruff." : "Atlas uses Ruff.";
     remember(c, scope, text(order[0]), tool("Ruff", {}, { polarity: order[0] }));
@@ -580,4 +580,50 @@ test("pending extraction candidates are re-adjudicated under the current rule th
   assert.deepEqual(decided.map((id) => version(id).erased), decided.map(() => 1));
   assert.deepEqual([version(accepted.id).erased, c.support(accepted.id).length], [0, 1]);
   assert.deepEqual(c.retrieve({ scope_id: scope, text: "Ruff formatting" }).conflicts.map((a: any) => a.version_id), [accepted.id]);
+});
+
+test("restating a candidate attaches independent support instead of a duplicate; a mention the rule admits promotes it", (t) => {
+  const { c, scope } = fixture(t);
+  const version = (id: string) => c.one("SELECT * FROM assertion_versions WHERE version_id=?", id);
+  const live = (name: string) => c.all("SELECT v.* FROM assertion_versions v JOIN entities e ON e.id=v.object_entity_id WHERE v.scope_id=? AND v.known_to_revision IS NULL AND v.erased=0 AND e.name=?", scope, name);
+  // A plan is never settled by repetition: each mention adds support and restarts the candidate deadline.
+  const plan = (text: string, confidence: number) => remember(c, scope, text, tool("Ruff", {}, { modality: "planned", extraction_confidence: confidence }), { model_proposal: true });
+  const first = plan("Atlas will use Ruff.", 0.4), before = version(first.id);
+  const second = plan("We agreed Atlas will use Ruff.", 0.9), after = version(second.id);
+  assert.equal(live("Ruff").length, 1, "one record, not two");
+  assert.deepEqual([second.status, after.logical_id, after.extraction_confidence], ["candidate", before.logical_id, 0.4], "same record, still a candidate, no confidence gained");
+  assert.deepEqual(c.support(second.id).map((e: any) => e.witness).sort(), ["Atlas will use Ruff.", "We agreed Atlas will use Ruff."]);
+  assert.equal(new Set(c.support(second.id).map((e: any) => e.independence_group)).size, 2, "the restatement is independent support");
+  assert.ok(after.expires_at_us > before.expires_at_us, "the deadline runs from the latest independent mention");
+  assert.ok(version(first.id).known_to_revision !== null);
+  assert.ok(c.one("SELECT 1 AS n FROM lineage WHERE derived_id=? AND input_id=? AND role='supersedes'", second.id, first.id).n);
+  assert.equal(c.retentionForecast({ scope_id: scope, id: first.id }).version_id, second.id, "the earlier version resolves to the record");
+  // A question proposes a candidate; a first-hand statement the acceptance rule admits promotes that record.
+  const asked = remember(c, scope, "Does Atlas use Biome?", tool("Biome"), { model_proposal: true });
+  assert.equal(asked.status, "candidate");
+  const said = remember(c, scope, "Atlas uses Biome.", tool("Biome"), { model_proposal: true });
+  assert.deepEqual([said.status, version(said.id).logical_id, live("Biome").length], ["accepted", version(asked.id).logical_id, 1]);
+  assert.deepEqual(c.support(said.id).map((e: any) => e.witness), ["Atlas uses Biome."], "the question is not cited for the fact");
+  assert.deepEqual(c.support(asked.id).map((e: any) => e.witness), ["Does Atlas use Biome?"], "it stays with the superseded candidate");
+  assert.deepEqual(c.retrieve({ scope_id: scope, text: "Biome" }).assertions.map((a: any) => a.version_id), [said.id]);
+});
+
+test("within one extraction batch, a restated candidate is promoted in place and stops citing what the rule holds", (t) => {
+  const { c, scope } = fixture(t);
+  c.policyUpdate({ policy: { enabled: true } });
+  const text = "Does Atlas use Zig? Atlas uses Zig.";
+  const source = observe(c, scope, text);
+  const run = c.extractionNext()!;
+  assert.equal(run.observation_id, source.id);
+  c.extractionResult({ id: run.id, identity: { model: "fixture" } });
+  const [asked, said] = c.applyExtraction({ id: run.id, proposals: [
+    { claim: tool("Zig"), witness: { observation_id: source.id, quote: "Does Atlas use Zig?" } },
+    { claim: tool("Zig"), witness: { observation_id: source.id, quote: "Atlas uses Zig." } },
+  ] });
+  assert.deepEqual([asked.status, said.status, said.id], ["candidate", "accepted", asked.id]);
+  const stored = c.one("SELECT * FROM assertion_versions WHERE version_id=?", said.id);
+  assert.deepEqual([stored.status, stored.retention_class, stored.expires_at_us, stored.known_to_revision], ["accepted", "evidence", null, null]);
+  assert.deepEqual(c.support(said.id).map((e: any) => e.witness), ["Atlas uses Zig."]);
+  assert.equal(c.one("SELECT COUNT(*) AS n FROM lineage WHERE derived_id=? AND role='support'", said.id).n, 1);
+  assert.equal(c.one("SELECT COUNT(*) AS n FROM assertion_versions WHERE scope_id=? AND erased=0", scope).n, 1);
 });

@@ -7,15 +7,20 @@ test('the manifest owns every canonical ID, legacy alias, default and authoring 
   assert.deepEqual(avatarIds, avatarCatalog.map(entry => entry.id));
   assert.equal(avatarFor(null).id, defaultAvatar);
   assert.equal(avatarFor('missing').id, defaultAvatar);
-  assert.equal(validateAvatar('cere'), 'cere_default');
+  assert.equal(validateAvatar('pal'), 'pal');
+  assert.equal(validateAvatar('cere'), 'pal');
+  assert.equal(validateAvatar('cere_default'), 'pal');
+  assert.equal(validateAvatar('cere_gothic'), 'pal_gothic');
+  assert.equal(validateAvatar('cere_punk'), 'pal_punk');
+  assert.equal(validateAvatar('cere_punk_unmasked'), 'pal_punk_unmasked');
   assert.equal(validateAvatar(null), defaultAvatar);
   for (const entry of avatarCatalog) {
     assert.equal(validateAvatar(entry.id), entry.id);
     assert.equal(avatarFor(entry.id), entry);
     for (const alias of entry.aliases) assert.equal(validateAvatar(alias), entry.id);
-    assert.deepEqual(authoringAvatars([entry.id]), [entry]);
+    assert.deepEqual(authoringAvatars([entry.id]), entry.id === "pal" ? [] : [entry]);
   }
-  assert.deepEqual(authoringAvatars([]), avatarCatalog);
+  assert.deepEqual(authoringAvatars([]), avatarCatalog.filter(entry => entry.id !== "pal"));
   for (const invalid of ['', '../nova', 'unknown', {}, 1, undefined]) assert.throws(() => validateAvatar(invalid), /avatar/);
   assert.throws(() => authoringAvatars(['unknown']), /Unknown avatar source/);
 });
@@ -33,7 +38,7 @@ test('malformed manifests fail before consumers use unsafe or ambiguous entries'
   const second = { ...first, id: 'second', default: false, aliases: [] };
   for (const value of [
     [], {}, [first, first], [{ ...first, default: false }], [first, { ...second, default: true }],
-    [first, { ...second, aliases: [first.id] }], [first, { ...second, id: 'cere' }],
+    [first, { ...second, aliases: [first.id] }], [first, { ...second, id: 'pal' }],
     [{ ...first, aliases: ['legacy', 'legacy'] }], [{ ...first, id: '../escape' }],
     [{ ...first, portrait: '../outside.png' }], [{ ...first, rig: '/outside.json' }],
     [{ ...first, label: '' }], [{ ...first, authoring: { ...first.authoring, cellOrder: { carry: [17] } } }],
@@ -47,7 +52,12 @@ test('all manifest entries reference their shipped rig, portraits and connected 
     const portrait = readFileSync(new URL('../assets/' + entry.portrait, import.meta.url));
     assert.equal(portrait.subarray(1, 4).toString(), 'PNG', entry.id);
     assert.equal(rig.texture, `${entry.id}-surface.png`);
-    assert.deepEqual(Object.keys(rig.surfaceSequences.routes), ['wave', 'thinking', 'present', 'celebrate', 'shy', 'carry']);
-    assert.ok(rig.surfaceSequences.routes.carry.frames.length > 1);
+    if (rig.static) {
+      assert.equal(rig.presentation, 'reference');
+      assert.equal(rig.surfaceSequences, null);
+    } else {
+      assert.deepEqual(Object.keys(rig.surfaceSequences.routes), ['wave', 'thinking', 'present', 'celebrate', 'shy', 'carry']);
+      assert.ok(rig.surfaceSequences.routes.carry.frames.length > 1);
+    }
   }
 });

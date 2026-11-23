@@ -6,10 +6,10 @@
  * bytes, a digest over all of it, and its expiry. It is immutable once created: editing it means a new
  * change set and a new review. Applying follows a fixed order: validate, take ordered locks, re-read and
  * compare every precondition, back up what will be replaced, re-check authorization, commit each
- * operation through cere-workspacefs (exclusive create, no-clobber rename, hash-checked replacement) and
+ * operation through pal-workspacefs (exclusive create, no-clobber rename, hash-checked replacement) and
  * record its observed outcome before the next one starts.
  *
- * What is not promised: atomicity across several files, or protection from an editor outside Cere
+ * What is not promised: atomicity across several files, or protection from an editor outside PAL
  * writing between the final check and the commit. A multi-file change is a journaled sequence; a
  * failure stops it, and the exact per-operation outcomes are what the user and the model are told.
  * Nothing is retried or replayed after a stop or a restart.
@@ -58,7 +58,7 @@ export type ChangeSet = {
 };
 type Lock = { key: string; release: () => void };
 const locks = new Map<string, Promise<void>>();
-/** Cere's own commits are serialized per path; keys are taken in sorted order so two change sets never deadlock. */
+/** PAL's own commits are serialized per path; keys are taken in sorted order so two change sets never deadlock. */
 async function acquire(keys: string[]): Promise<Lock[]> {
   const held: Lock[] = [];
   for (const key of [...new Set(keys)].sort()) {
@@ -125,12 +125,12 @@ export class ChangeSets {
     const rel = normalizePath(value, root.path);
     if (!rel) throw fail('invalid-path', 'Name a file or folder inside the workspace folder');
     readable(root, rel);
-    if (credentialName(baseName(rel))) throw fail('credential', 'Cere does not create or change credential files');
+    if (credentialName(baseName(rel))) throw fail('credential', 'PAL does not create or change credential files');
     return rel;
   }
 
   /**
-   * Validates and stages an exact change set. Nothing on disk changes here except Cere's private staging
+   * Validates and stages an exact change set. Nothing on disk changes here except PAL's private staging
    * area. A change set too large to review completely is kept but marked incomplete, which disables approval.
    */
   async propose(sessionId: string, inputs: unknown, p: { reason?: unknown; origin: ChangeSet['origin']; turnId?: string; undoOf?: string; internal?: StagedOperation[] }, signal?: AbortSignal): Promise<ChangeSet> {
@@ -173,8 +173,8 @@ export class ChangeSets {
       const value = await run(['walk', ...rootArgs(this.roots.handle(root)), rel, '--hidden', '--limit', String(workspaceLimits.manifestEntries + 1), '--max-entries', String(workspaceLimits.manifestEntries + 1), '--max-depth', '32', '--deadline-ms', '10000'], { signal, timeoutMs: 15_000 });
       const entries = value.entries as any[];
       if (entries.length > workspaceLimits.manifestEntries || value.stopped) throw fail('too-many', `This folder has more than ${workspaceLimits.manifestEntries} items, more than one change set reviews. Organize a smaller folder.`);
-      if (entries.some(entry => entry.invalidName)) throw fail('unsupported', 'This folder contains names Cere cannot display, so it cannot be reviewed completely');
-      if (entries.some(entry => !['file', 'directory'].includes(entry.type))) throw fail('unsupported', 'This folder contains links or special files; Cere moves only ordinary files and folders');
+      if (entries.some(entry => entry.invalidName)) throw fail('unsupported', 'This folder contains names PAL cannot display, so it cannot be reviewed completely');
+      if (entries.some(entry => !['file', 'directory'].includes(entry.type))) throw fail('unsupported', 'This folder contains links or special files; PAL moves only ordinary files and folders');
       const files = entries.filter(entry => entry.type === 'file'), bytes = files.reduce((sum, entry) => sum + entry.size, 0);
       if (bytes > workspaceLimits.manifestBytes) throw fail('too-large', 'This folder is larger than one change set handles (100 MiB)');
       const lines = entries.map(entry => `${entry.type === 'directory' ? 'd' : 'f'} ${entry.path} ${entry.type === 'file' ? entry.size : ''}`);
@@ -205,16 +205,16 @@ export class ChangeSets {
             if (state !== 'file') throw fail('not-file', `${rel} is not a regular file`);
             if (planned.has(key(root.id, rel))) throw fail('duplicate', `${rel} is already changed earlier in this change set; combine the edits`);
             const current = await readText(root, rel, signal);
-            if (current.binary) throw fail('binary', `${rel} is not UTF-8 text; Cere edits text files only`);
+            if (current.binary) throw fail('binary', `${rel} is not UTF-8 text; PAL edits text files only`);
             if (raw.baseVersion !== undefined && raw.baseVersion !== current.version) throw fail('stale', `${rel} changed since you read it (now ${current.version}). Read it again before proposing an edit.`);
             const next = patched(current, raw);
             const bytes = Buffer.from((current.bom ? '﻿' : '') + next, 'utf8');
-            if (bytes.length > workspaceLimits.proposalBytes) throw fail('too-large', 'The edited file would be larger than 256 KiB, the most Cere edits in one proposal');
+            if (bytes.length > workspaceLimits.proposalBytes) throw fail('too-large', 'The edited file would be larger than 256 KiB, the most PAL edits in one proposal');
             if (sha256(bytes) === current.version.slice(7)) throw fail('no-change', `The edit leaves ${rel} unchanged`);
             let diff = '', notes: string[] = [];
             try { diff = lineDiff(current.lines.join('\n'), next.replace(/\r\n/g, '\n').replace(/\n$/, ''), rel); } catch (error: any) { incomplete ||= error.message; notes = ['Too large to show completely']; }
             if (current.endsWithNewline !== /\n$/.test(next)) notes.push(current.endsWithNewline ? 'Removes the final newline' : 'Adds a final newline');
-            if (current.nlink && current.nlink > 1) notes.push(`This file has ${current.nlink} hard links; Cere replaces this name only and the other links keep the old content.`);
+            if (current.nlink && current.nlink > 1) notes.push(`This file has ${current.nlink} hard links; PAL replaces this name only and the other links keep the old content.`);
             const whitespace = current.text.replace(/\s+/g, '') === next.replace(/\s+/g, '');
             add({ kind, label: 'changed', rootId: root.id, path: rel, source: { type: 'file', sha256: current.version.slice(7) }, destination: { sha256: current.version.slice(7) },
               staged: { sha256: sha256(bytes), bytes: bytes.length }, mode: (current.mode ?? 0o644) & 0o777, dependsOn: dependency(root.id, rel),
@@ -233,7 +233,7 @@ export class ChangeSets {
           if (source.id === target.id && (to === from || to.startsWith(from + '/'))) throw fail('invalid', 'A folder cannot be copied or moved into itself');
           const state = await exists(source, from);
           if (state === 'absent') throw fail('missing', `${from} does not exist`);
-          if (state === 'other') throw fail('unsupported', `${from} is a link or special file; Cere copies and moves only ordinary files and folders`);
+          if (state === 'other') throw fail('unsupported', `${from} is a link or special file; PAL copies and moves only ordinary files and folders`);
           if (await exists(target, to) !== 'absent') {
             if (raw.collision !== 'unique') throw fail('exists', `${to} already exists. Choose another name, or ask for a unique name with collision "unique".`);
             to = await uniqueName(target, to);
@@ -248,7 +248,7 @@ export class ChangeSets {
           planned.set(key(target.id, to), state);
           if (kind === 'move') planned.set(key(source.id, from), 'absent');
         } else if (kind === 'export') {
-          // A file Cere keeps, written as a new file: the review shows its name, type and size; a diff means nothing here.
+          // A file PAL keeps, written as a new file: the review shows its name, type and size; a diff means nothing here.
           const root = this.requireRoot(sessionId, raw.rootId, 'write'), rel = this.writablePath(root, raw.path);
           if (await exists(root, rel) !== 'absent') throw fail('exists', `${rel} already exists; choose another name`);
           const { version, data } = await this.artifactBytes(sessionId, raw.artifactId, raw.versionId);
@@ -264,7 +264,7 @@ export class ChangeSets {
           const sourceInfo: NonNullable<StagedOperation['source']> = state === 'file' ? await run(['hash', ...rootArgs(this.roots.handle(root)), rel], { signal }).then(info => ({ type: 'file' as const, sha256: info.sha256, ino: info.ino }))
             : { type: 'directory', ino: (await statPath(root, rel, signal) as any).ino, manifest: await manifest(root, rel) };
           add({ kind, label: 'trashed', rootId: root.id, path: rel, source: sourceInfo, destination: 'absent', trashId: randomUUID(), dependsOn: dependency(root.id, rel),
-            review: { notes: ['Kept in Cere’s trash so it can be restored', ...(sourceInfo.manifest ? [`${sourceInfo.manifest.files} files and ${sourceInfo.manifest.folders} folders`] : [])] } });
+            review: { notes: ['Kept in PAL’s trash so it can be restored', ...(sourceInfo.manifest ? [`${sourceInfo.manifest.files} files and ${sourceInfo.manifest.folders} folders`] : [])] } });
           planned.set(key(root.id, rel), 'absent');
         } else throw fail('invalid-kind', 'Unknown operation kind: use create_text, patch_text, mkdir, copy, move or trash');
       }
@@ -367,7 +367,7 @@ export class ChangeSets {
     if (operation.kind === 'mkdir') { authorize(); await run(['mkdir', ...rootArgs(handle), operation.path]); return { state: 'committed' }; }
     if (operation.kind === 'create_text' || operation.kind === 'patch_text' || operation.kind === 'export') {
       const bytes = await readFile(join(staging, String(operation.index)));
-      if (sha256(bytes) !== operation.staged!.sha256) throw fail('staging-changed', 'Cere’s staged copy of this edit changed; nothing was written');
+      if (sha256(bytes) !== operation.staged!.sha256) throw fail('staging-changed', 'PAL’s staged copy of this edit changed; nothing was written');
       let backup = '';
       if (operation.destination !== 'absent') {
         // The replaced content is kept privately first; the helper's hash check ties it to what is replaced.
@@ -414,7 +414,7 @@ export class ChangeSets {
       authorize();
       try { await run(['rename', ...rootArgs(handle), operation.path, ...rootArgs(trash), item + '/' + baseName(operation.path), '--expect', expect]); }
       catch (error: any) {
-        if (error?.code !== 'cross-device' || operation.source!.type !== 'file') { await rm(join(trash.path, item + '.json'), { force: true }); await rm(join(trash.path, item), { recursive: true, force: true }); if (error?.code === 'cross-device') throw fail('cross-device', 'This folder is on another drive; Cere can trash its files one at a time but not the whole folder'); throw error; }
+        if (error?.code !== 'cross-device' || operation.source!.type !== 'file') { await rm(join(trash.path, item + '.json'), { force: true }); await rm(join(trash.path, item), { recursive: true, force: true }); if (error?.code === 'cross-device') throw fail('cross-device', 'This folder is on another drive; PAL can trash its files one at a time but not the whole folder'); throw error; }
         await run(['copy', ...rootArgs(handle), operation.path, ...rootArgs(trash), item + '/' + baseName(operation.path), '--expect', expect, '--max-bytes', String(workspaceLimits.manifestBytes)], { timeoutMs: 120_000 });
         authorize();
         await run(['unlink', ...rootArgs(handle), operation.path, '--expect', expect]);
@@ -441,7 +441,7 @@ export class ChangeSets {
     if (digest !== operation.source.manifest.digest) throw fail('stale', `${operation.from || operation.path} changed since review (its contents are different); nothing was moved`);
   }
   private trash?: RootHandle;
-  /** Cere's private trash, a root of its own so restores go through the same confined helper. */
+  /** PAL's private trash, a root of its own so restores go through the same confined helper. */
   async trashRoot(): Promise<RootHandle> {
     const path = this.area('trash');
     if (this.trash?.path === path) return this.trash;
@@ -466,7 +466,7 @@ export class ChangeSets {
 
   /**
    * Undo builds a new change set from the recorded inverse operations, for review like any other. An
-   * inverse whose target no longer holds exactly what Cere wrote is offered as a restore-as-copy instead,
+   * inverse whose target no longer holds exactly what PAL wrote is offered as a restore-as-copy instead,
    * so a newer external edit is never overwritten.
    */
   async undo(id: unknown, signal?: AbortSignal) {
@@ -482,22 +482,22 @@ export class ChangeSets {
       if (operation.kind === 'create_text' || operation.kind === 'copy') {
         const now = await currentHash(operation.path);
         if (now === null) continue;
-        if (now !== outcome.sha256) { conflicts.push(`${operation.path} changed after Cere wrote it; it was left as it is`); continue; }
-        inverse.push({ index, kind: 'trash', label: 'trashed', rootId: root.id, path: operation.path, source: { type: 'file', sha256: now }, destination: 'absent', trashId: randomUUID(), dependsOn: [], review: { notes: [`Undo: ${operation.kind === 'copy' ? 'remove the copy' : 'remove the file Cere created'} (kept in Cere’s trash)`] } });
+        if (now !== outcome.sha256) { conflicts.push(`${operation.path} changed after PAL wrote it; it was left as it is`); continue; }
+        inverse.push({ index, kind: 'trash', label: 'trashed', rootId: root.id, path: operation.path, source: { type: 'file', sha256: now }, destination: 'absent', trashId: randomUUID(), dependsOn: [], review: { notes: [`Undo: ${operation.kind === 'copy' ? 'remove the copy' : 'remove the file PAL created'} (kept in PAL’s trash)`] } });
       } else if (operation.kind === 'patch_text') {
         const now = await currentHash(operation.path), previous = outcome.backup ? await readFile(outcome.backup).catch(() => null) : null;
         if (!previous) { conflicts.push(`${operation.path}: the previous version is no longer kept`); continue; }
         if (now === outcome.sha256) {
           stagedBytes.set(index, previous);
           inverse.push({ index, kind: 'patch_text', label: 'changed', rootId: root.id, path: operation.path, source: { type: 'file', sha256: now! }, destination: { sha256: now! }, staged: { sha256: sha256(previous), bytes: previous.length }, mode: operation.mode, dependsOn: [],
-            review: { notes: ['Undo: restore the version from before Cere’s edit'] } });
+            review: { notes: ['Undo: restore the version from before PAL’s edit'] } });
           try { const current = await readText(root, operation.path, signal); inverse[index].review.diff = lineDiff(current.binary ? '' : current.lines.join('\n'), previous.toString('utf8').replace(/^﻿/, '').replace(/\r\n/g, '\n').replace(/\n$/, ''), operation.path); } catch { inverse[index].review.notes.push('Too large to show completely'); }
         } else {
           // Restore as a copy beside the newer file.
           const copyPath = restoredName(operation.path);
-          if (await currentHash(copyPath) !== null) { conflicts.push(`${operation.path} changed after Cere’s edit and ${copyPath} already exists`); continue; }
+          if (await currentHash(copyPath) !== null) { conflicts.push(`${operation.path} changed after PAL’s edit and ${copyPath} already exists`); continue; }
           stagedBytes.set(index, previous);
-          inverse.push({ index, kind: 'create_text', label: 'added', rootId: root.id, path: copyPath, destination: 'absent', staged: { sha256: sha256(previous), bytes: previous.length }, mode: operation.mode, dependsOn: [], review: { notes: [`Undo as a copy: ${operation.path} changed after Cere’s edit, so the earlier version is restored beside it`] } });
+          inverse.push({ index, kind: 'create_text', label: 'added', rootId: root.id, path: copyPath, destination: 'absent', staged: { sha256: sha256(previous), bytes: previous.length }, mode: operation.mode, dependsOn: [], review: { notes: [`Undo as a copy: ${operation.path} changed after PAL’s edit, so the earlier version is restored beside it`] } });
         }
       } else if (operation.kind === 'mkdir') {
         // The folder may hold only items that earlier undo steps remove; it must be empty once they ran.
@@ -508,12 +508,12 @@ export class ChangeSets {
         if (listing.total > 500 || listing.entries.some((entry: any) => entry.invalidName || !leaving(entry.name))) { conflicts.push(`${operation.path} is no longer empty; it was left in place`); continue; }
         const info = await statPath(root, operation.path, signal) as any;
         inverse.push({ index, kind: 'remove_folder', label: 'removed', rootId: root.id, path: operation.path, source: { type: 'directory', ino: info.ino }, destination: 'absent',
-          dependsOn: listing.entries.map((entry: any) => leaving(entry.name)!.index), review: { notes: ['Undo: remove the empty folder Cere made'] } });
+          dependsOn: listing.entries.map((entry: any) => leaving(entry.name)!.index), review: { notes: ['Undo: remove the empty folder PAL made'] } });
       } else if (operation.kind === 'move') {
         const back = this.roots.get(set.sessionId, operation.fromRootId!);
         if (operation.source?.type === 'file') {
           const now = await currentHash(operation.path);
-          if (now !== operation.source.sha256) { conflicts.push(`${operation.path} changed or is gone since Cere moved it`); continue; }
+          if (now !== operation.source.sha256) { conflicts.push(`${operation.path} changed or is gone since PAL moved it`); continue; }
         }
         let destination = operation.from!;
         try { await statPath(back, destination, signal); destination = restoredName(destination); conflicts.push(`${operation.from} is taken again; the item goes back as ${destination}`); } catch (error: any) { if (error?.code !== 'missing') throw error; }
@@ -522,10 +522,10 @@ export class ChangeSets {
       } else if (operation.kind === 'trash') {
         const trash = await this.trashRoot();
         const record = await readFile(join(trash.path, outcome.trashId + '.json'), 'utf8').then(text => JSON.parse(text), () => null);
-        if (record?.state !== 'trashed') { conflicts.push(`${operation.path} was already restored or permanently deleted from Cere’s trash`); continue; }
+        if (record?.state !== 'trashed') { conflicts.push(`${operation.path} was already restored or permanently deleted from PAL’s trash`); continue; }
         let destination = operation.path;
         try { await statPath(root, destination, signal); destination = restoredName(destination); conflicts.push(`${operation.path} exists again; the trashed item is restored as ${destination}`); } catch (error: any) { if (error?.code !== 'missing') throw error; }
-        inverse.push({ index, kind: 'restore', label: 'restored', rootId: root.id, path: destination, source: { type: operation.source!.type, sha256: operation.source!.sha256 }, destination: 'absent', trashId: outcome.trashId, dependsOn: [], review: { notes: ['Undo: restore from Cere’s trash'] } });
+        inverse.push({ index, kind: 'restore', label: 'restored', rootId: root.id, path: destination, source: { type: operation.source!.type, sha256: operation.source!.sha256 }, destination: 'absent', trashId: outcome.trashId, dependsOn: [], review: { notes: ['Undo: restore from PAL’s trash'] } });
       }
     }
     if (!inverse.length) throw fail('nothing', conflicts.length ? 'Nothing can be undone safely: ' + conflicts.join('; ') : 'Nothing is left to undo');
@@ -553,8 +553,8 @@ export class ChangeSets {
     for (const row of this.store.db.prepare("SELECT data FROM change_sets WHERE status='applying'").all()) {
       const set = JSON.parse(String(row.data)) as ChangeSet;
       for (const { operation, outcome } of this.operations(set.id)) {
-        if (outcome.state === 'committing') this.outcome(set.id, operation.index, { state: 'unknown', code: 'interrupted', message: 'Cere stopped while this was being written. Check the file; nothing is retried automatically.' });
-        else if (outcome.state === 'pending') this.outcome(set.id, operation.index, { state: 'skipped', message: 'Not attempted: Cere stopped first' });
+        if (outcome.state === 'committing') this.outcome(set.id, operation.index, { state: 'unknown', code: 'interrupted', message: 'PAL stopped while this was being written. Check the file; nothing is retried automatically.' });
+        else if (outcome.state === 'pending') this.outcome(set.id, operation.index, { state: 'skipped', message: 'Not attempted: PAL stopped first' });
       }
       set.status = 'unknown'; set.finished = Date.now(); this.save(set);
     }

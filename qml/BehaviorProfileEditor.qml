@@ -5,7 +5,7 @@ import QtQuick.Layouts
 // formatting checks annotate replies and never change them; checkpoints are immutable.
 CDialog {
     id:editor;objectName:"behaviorProfileEditor"
-    width:Math.min(640,parent?parent.width-32:640)
+    preferredWidth:Theme.dialogWide
     property var profile:({})
     property int request:-1
     property int previewRequest:-1
@@ -31,13 +31,13 @@ CDialog {
     function call(method,params){error="";feedback="";action=method;request=App.rpc(method,params)}
     function save(){call("presets.save",{id:profile.id,label:profile.label,text:profile.text,expectedItemRevision:profile.revision,traits:traits,instructions:instructions.text,ceiling:ceiling(),posture:posture.checked,constraints:constraints()})}
     CText { text:"Style details · "+(editor.profile.label||"");font.pixelSize:Theme.title;font.weight:Font.DemiBold }
-    CText { text:"These shape tone only. Tool limits can withhold Cere’s own tools but never grant any; native CLI tools keep their own permissions.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
+    CText { text:"These shape tone only. Tool limits can withhold PAL’s own tools but never grant any; native CLI tools keep their own permissions.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     Repeater {
         model:editor.traitRows
         RowLayout {
             required property var modelData
-            Layout.fillWidth:true;spacing:8
-            CText { text:modelData.label;Layout.preferredWidth:100 }
+            Layout.fillWidth:true;spacing:Theme.space2
+            CText { text:modelData.label;Layout.preferredWidth:Theme.fieldShort }
             CText { text:modelData.low;color:Theme.muted;font.pixelSize:Theme.caption }
             CSlider { objectName:"trait_"+modelData.key;Layout.fillWidth:true;from:-2;to:2;stepSize:1;snapMode:Slider.SnapAlways;value:editor.traits[modelData.key]||0;Accessible.name:modelData.label
                 onMoved:{const next=Object.assign({},editor.traits);if(value===0)delete next[modelData.key];else next[modelData.key]=value;editor.traits=next} }
@@ -45,10 +45,10 @@ CDialog {
         }
     }
     CText { text:"Standing instructions";font.weight:Font.DemiBold }
-    CTextArea { id:instructions;objectName:"behaviorInstructions";Layout.fillWidth:true;Layout.preferredHeight:90;wrapMode:TextEdit.Wrap;textFormat:TextEdit.PlainText;placeholderText:"For example: Ask before long explanations. Use metric units.";Accessible.name:"Standing instructions" }
-    CText { text:"Withhold Cere tools while this style is active";font.weight:Font.DemiBold }
+    CTextArea { id:instructions;objectName:"behaviorInstructions";Layout.fillWidth:true;Layout.preferredHeight:Theme.editorShort;wrapMode:TextEdit.Wrap;textFormat:TextEdit.PlainText;placeholderText:"For example: Ask before long explanations. Use metric units.";Accessible.name:"Standing instructions" }
+    CText { text:"Withhold PAL tools while this style is active";font.weight:Font.DemiBold }
     Flow {
-        Layout.fillWidth:true;spacing:8
+        Layout.fillWidth:true;spacing:Theme.space2
         CCheckBox { id:desktop;objectName:"withholdDesktop";text:"Desktop actions" }
         CCheckBox { id:delegation;objectName:"withholdDelegation";text:"Delegation" }
         CCheckBox { id:web;objectName:"withholdWeb";text:"Web search" }
@@ -58,7 +58,7 @@ CDialog {
     }
     CText { text:"Formatting checks · a reply that misses one gets a note; its text is never changed";font.weight:Font.DemiBold;wrapMode:Text.Wrap;Layout.fillWidth:true }
     Flow {
-        Layout.fillWidth:true;spacing:8
+        Layout.fillWidth:true;spacing:Theme.space2
         CCheckBox { id:noEmoji;objectName:"checkNoEmoji";text:"No emoji" }
         CCheckBox { id:noDash;objectName:"checkNoDash";text:"No em dashes" }
         CCheckBox { id:noTable;objectName:"checkNoTable";text:"No Markdown tables" }
@@ -69,7 +69,7 @@ CDialog {
         CButton { objectName:"behaviorProfileSave";text:"Save details";primary:true;enabled:editor.request<0&&!!editor.profile.id;onClicked:editor.save() }
         CButton { text:"Preview saved instructions";enabled:editor.previewRequest<0&&!!editor.profile.id;onClicked:editor.previewRequest=App.rpc("behavior.preview",{profileId:editor.profile.id}) }
     }
-    CTextArea { visible:!!editor.previewText;objectName:"behaviorPreview";Layout.fillWidth:true;Layout.preferredHeight:160;readOnly:true;wrapMode:TextEdit.Wrap;text:editor.previewText;font.pixelSize:Theme.caption;Accessible.name:"Rendered behavior instructions" }
+    CTextArea { visible:!!editor.previewText;objectName:"behaviorPreview";Layout.fillWidth:true;Layout.preferredHeight:Theme.editorMedium;readOnly:true;wrapMode:TextEdit.Wrap;text:editor.previewText;font.pixelSize:Theme.caption;Accessible.name:"Rendered behavior instructions" }
     // RC-07: trait combinations that pull against each other are a note for you; the style is saved and sent as it is.
     Repeater { model:editor.previewText?editor.conflicts:[];CText { required property string modelData;objectName:"behaviorConflict";Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.amber;font.pixelSize:Theme.secondary;text:modelData } }
     CText { text:"Checkpoints";font.weight:Font.DemiBold }

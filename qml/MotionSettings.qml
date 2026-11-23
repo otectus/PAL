@@ -4,7 +4,7 @@ import QtQuick.Layouts
 // Settings › Motion & expressions: idle movement and conversational reactions.
 ColumnLayout {
     id:motion
-    Layout.fillWidth:true;spacing:14
+    Layout.fillWidth:true;spacing:Theme.space4
     property var settings:App.state.settings||({})
     readonly property real intensity:settings.motionIntensity===undefined?0.7:settings.motionIntensity
     // Expressions need the companion visible and moving; the hint below says what is in the way.
@@ -58,7 +58,7 @@ ColumnLayout {
             CButton { objectName:"previewAnimation";text:"Preview";enabled:motion.canPreview;onClicked:App.preview(expression.currentValue) }
         }
         Flow {
-            Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredWidth:0;spacing:6
+            Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredWidth:0;spacing:Theme.space2
             Repeater {
                 model:[{name:"wave",label:"Say hello"},{name:"nod",label:"A knowing nod"},{name:"giggle",label:"Try to behave"},{name:"thinking",label:"A thoughtful moment"},{name:"explainOpen",label:"Make a point"},{name:"celebrate",label:"Celebrate"},{name:"hoverBlush",label:"A little shy"},{name:"hairToss",label:"A little drama"},{name:"music",label:"Find the rhythm"}]
                 CButton {

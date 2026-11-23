@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A minimal MPRIS player for desktop-control tests on a private session bus.
 
-Owns org.mpris.MediaPlayer2.<name>, answers the properties Cere reads and records
+Owns org.mpris.MediaPlayer2.<name>, answers the properties PAL reads and records
 each control call it receives, one per line, in the log file. It cannot go to the
 next track, so a refused command is observable too. Prints "ready" once the name
 is owned. Never run it on a working desktop's session bus.
@@ -32,7 +32,7 @@ XML = """
 """
 state = {"status": "Paused"}
 properties = {
-    "Identity": lambda: GLib.Variant("s", "Cere fixture player"),
+    "Identity": lambda: GLib.Variant("s", "PAL fixture player"),
     "PlaybackStatus": lambda: GLib.Variant("s", state["status"]),
     "CanControl": lambda: GLib.Variant("b", True),
     "CanPlay": lambda: GLib.Variant("b", True),

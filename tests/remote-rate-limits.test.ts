@@ -25,7 +25,7 @@ async function port() {
 }
 
 async function fixture(t:test.TestContext) {
-  const directory=await mkdtemp(join(tmpdir(),'cere-remote-unlimited-'));
+  const directory=await mkdtemp(join(tmpdir(),'pal-remote-unlimited-'));
   const core=new Core(new Store(directory),(_session,h:Hooks)=>({async send(_text,_images,options){h.policy?.(true);options?.beforeAccept?.();options?.onDispatched?.();options?.onAccepted?.();},async interrupt(){h.event({type:'interrupted'});},async close(){}}));
   const gateway=new MobileGateway(core);
   t.after(async()=>{await gateway.close();await core.close();await rm(directory,{recursive:true,force:true});});

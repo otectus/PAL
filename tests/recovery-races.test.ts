@@ -11,7 +11,7 @@ import { GraphMemory } from '../broker/graph-memory/client.ts';
 import { Canonical } from '../broker/graph-memory/canonical.ts';
 
 test('worker backup immediately restores a consistent snapshot without the SQLite callback stall',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'cere-worker-restore-')),memory=new GraphMemory(dir);
+  const dir=await mkdtemp(join(tmpdir(),'pal-worker-restore-')),memory=new GraphMemory(dir);
   t.after(async()=>{await memory.close();await rm(dir,{recursive:true,force:true});});
   const scope=(await memory.call('scope',{key:'restore-test',label:'Restore test'})).id;
   const kept=await memory.call('save_text',{scope_id:scope,text:'Preserve this reviewed project decision.'});
@@ -29,7 +29,7 @@ test('worker backup immediately restores a consistent snapshot without the SQLit
 });
 
 test('backup discards payloads if forgetting advances after the conversation snapshot',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'cere-backup-race-')),core=new Core(new Store(dir));
+  const dir=await mkdtemp(join(tmpdir(),'pal-backup-race-')),core=new Core(new Store(dir));
   t.after(async()=>{await core.close();await rm(dir,{recursive:true,force:true});});await core.memory.ready;
   const session=await core.create({provider:'codex',cwd:dir,trusted:true});core.draft(session.id,'Old text must not be paired with a new registry');
   const original=core.memory.graph.bind(core.memory);let release!:()=>void,entered!:()=>void;
@@ -42,7 +42,7 @@ test('backup discards payloads if forgetting advances after the conversation sna
 });
 
 test('stale activation is rejected once while the intact current profile remains bootable',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'cere-activation-race-')),stage=dir+'-restore-'+randomUUID(),previous=dir+'-previous-'+randomUUID();
+  const dir=await mkdtemp(join(tmpdir(),'pal-activation-race-')),stage=dir+'-restore-'+randomUUID(),previous=dir+'-previous-'+randomUUID();
   const journal=join(dirname(dir),'.'+basename(dir)+'-recovery.json');
   t.after(async()=>{await rm(dir,{recursive:true,force:true});await rm(stage,{recursive:true,force:true});for(const name of await readdir(dirname(dir)))if(name.startsWith(basename(journal)))await rm(join(dirname(dir),name),{force:true});});
   await mkdir(join(dir,'graph-memory'));await mkdir(stage,{mode:0o700});await writeFile(join(dir,'graph-memory','erasure-registry.jsonl'),'advanced');
@@ -53,7 +53,7 @@ test('stale activation is rejected once while the intact current profile remains
 });
 
 test('restore refuses an in-flight acknowledged mutation before reserving the profile',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'cere-restore-reserve-')),core=new Core(new Store(dir));
+  const dir=await mkdtemp(join(tmpdir(),'pal-restore-reserve-')),core=new Core(new Store(dir));
   t.after(async()=>{await core.close();await rm(dir,{recursive:true,force:true});});await core.memory.ready;
   const backup=await core.rpc('recovery.backup'),review=await core.rpc('recovery.preview',{directory:backup.directory});
   let release!:()=>void;const pending=core.withMutation(()=>new Promise<void>(r=>release=r));

@@ -55,11 +55,11 @@ try {
         : command;
   if (command === "daemon")
     throw new Error(
-      "Graph memory runs in the Cere broker. Start cere-broker.service or node broker/main.ts.",
+      "Graph memory runs in the PAL broker. Start pal-broker.service or node broker/main.ts.",
     );
   if (flags.help) {
     console.log(
-      "cere memory health|doctor|curation settings|configure|status|preview|run|list|apply|undo|cancel|retry|review-later|keep-local|statement-correct, retention preview|protect|release|forecast|policy-preview|policy-apply|policy-undo, models probe|evaluate, query|deep-recall|inspect|remember|correct|resolve-conflict|forget-preview|forget|erasure-status|workspace|policy-get|policy-update|rebuild|backup|restore|compact|readjudicate\nUse --session SESSION_ID to select a project, --file CLAIM.json or --stdin for structured requests, --json for machine output.\ncompact --output BACKUP.sqlite backs memory up to that new file, then removes rows that only erased records still use.\nreadjudicate --output BACKUP.sqlite backs memory up to that new file, then accepts or rejects pending extraction candidates under the current acceptance rule; --dry-run reports the same decisions without writing.",
+      "pal memory health|doctor|curation settings|configure|status|preview|run|list|apply|undo|cancel|retry|review-later|keep-local|statement-correct, retention preview|protect|release|forecast|policy-preview|policy-apply|policy-undo, models probe|evaluate, query|deep-recall|inspect|remember|correct|resolve-conflict|forget-preview|forget|erasure-status|workspace|policy-get|policy-update|rebuild|backup|restore|compact|readjudicate\nUse --session SESSION_ID to select a project, --file CLAIM.json or --stdin for structured requests, --json for machine output.\ncompact --output BACKUP.sqlite backs memory up to that new file, then removes rows that only erased records still use.\nreadjudicate --output BACKUP.sqlite backs memory up to that new file, then accepts or rejects pending extraction candidates under the current acceptance rule; --dry-run reports the same decisions without writing.",
     );
   } else {
     // Backup, restore, rebuild, compaction and re-adjudication (which backs up first) can take minutes.

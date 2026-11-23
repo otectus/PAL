@@ -1,5 +1,5 @@
 /**
- * A stand-in phone for network-return pairing tests: answers a cere-pair offer with fresh keys over
+ * A stand-in phone for network-return pairing tests: answers a pal-pair offer with fresh keys over
  * the pinned gateway, prints the six words it computed on the first line, and exits 0 when the
  * desktop confirms (1 when it closes the offer, 2 on timeout).
  *

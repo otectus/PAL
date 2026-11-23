@@ -34,15 +34,15 @@ if (!['prepare', 'verify'].includes(phase) || !statePath) {
 }
 
 const neo4jConfig = {
-  uri: process.env.CERE_NEO4J_URI ?? `bolt://127.0.0.1:${process.env.NEO4J_BOLT_PORT ?? '7687'}`,
-  username: process.env.CERE_NEO4J_USER ?? 'neo4j',
-  password: process.env.CERE_NEO4J_PASSWORD ?? process.env.NEO4J_PASSWORD ?? '',
-  database: process.env.CERE_NEO4J_DATABASE ?? 'neo4j',
+  uri: process.env.PAL_NEO4J_URI ?? `bolt://127.0.0.1:${process.env.NEO4J_BOLT_PORT ?? '7687'}`,
+  username: process.env.PAL_NEO4J_USER ?? 'neo4j',
+  password: process.env.PAL_NEO4J_PASSWORD ?? process.env.NEO4J_PASSWORD ?? '',
+  database: process.env.PAL_NEO4J_DATABASE ?? 'neo4j',
 };
 const qdrantConfig = {
-  endpoint: process.env.CERE_QDRANT_URL ?? `http://127.0.0.1:${process.env.QDRANT_HTTP_PORT ?? '6333'}`,
-  apiKey: process.env.CERE_QDRANT_API_KEY ?? process.env.QDRANT_API_KEY ?? '',
-  collectionPrefix: 'cere_adapter_check',
+  endpoint: process.env.PAL_QDRANT_URL ?? `http://127.0.0.1:${process.env.QDRANT_HTTP_PORT ?? '6333'}`,
+  apiKey: process.env.PAL_QDRANT_API_KEY ?? process.env.QDRANT_API_KEY ?? '',
+  collectionPrefix: 'pal_adapter_check',
   dimension: 3,
   distance: 'Cosine' as const,
 };

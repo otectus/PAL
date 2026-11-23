@@ -29,8 +29,8 @@ export class Parity {
     }
     if(method==='sessions.history') {
       r.require(device,'providers.execute');r.require(device,'chat.read');const project=r.project(device,p.projectId),provider:'codex'|'claude'=p.provider;
-      // A Claude conversation continues from a phone only in Claude's restricted mode, as a new one does.
-      if(provider==='claude'&&r.core.capabilities.claude?.remoteRestricted!==true)throw remoteError('PROVIDER_POLICY_UNSAFE','This Claude Code version cannot enforce Cere restricted mode. Update Claude Code on the desktop.');
+      // Scoped clients require restricted Claude. A negotiated owner imports under desktop policy.
+      if(!r.owner(device)&&provider==='claude'&&r.core.capabilities.claude?.remoteRestricted!==true)throw remoteError('PROVIDER_POLICY_UNSAFE','This Claude Code version cannot enforce PAL restricted mode. Update Claude Code on the desktop.');
       const controller=new AbortController(),executionId=randomUUID(),check=()=>{r.current(device);controller.signal.throwIfAborted();if(r.core.settings.paused)throw remoteError('POLICY_PAUSED','Native provider access is paused.');};check();
       if([...r.actions.values()].some(a=>a.deviceId===device.id))throw remoteError('SESSION_BUSY','Wait for this device’s active desktop operation.');
       r.actions.set(executionId,{deviceId:device.id,controller,check});
@@ -49,9 +49,9 @@ export class Parity {
       r.require(device,'providers.execute');r.require(device,'chat.write');const ticket=this.history.get(p.historyId);
       if(!ticket||ticket.deviceId!==device.id||ticket.expiresAt<Date.now())throw remoteError('REVISION_CONFLICT','Refresh the desktop history before importing.');
       const project=r.project(device,ticket.projectId);
-      const check=()=>{r.current(device);if(r.core.settings.paused)throw remoteError('POLICY_PAUSED','Native provider access is paused.');if(ticket.provider==='claude'&&r.core.capabilities.claude?.remoteRestricted!==true)throw remoteError('PROVIDER_POLICY_UNSAFE','This Claude Code version cannot enforce Cere restricted mode. Update Claude Code on the desktop.');};check();
+      const check=()=>{r.current(device);if(r.core.settings.paused)throw remoteError('POLICY_PAUSED','Native provider access is paused.');if(!r.owner(device)&&ticket.provider==='claude'&&r.core.capabilities.claude?.remoteRestricted!==true)throw remoteError('PROVIDER_POLICY_UNSAFE','This Claude Code version cannot enforce PAL restricted mode. Update Claude Code on the desktop.');};check();
       this.history.delete(p.historyId); // Single-use ownership claim before the first asynchronous boundary.
-      const session=await r.core.create({provider:ticket.provider,nativeId:ticket.nativeId,cwd:project.path,title:ticket.title,trusted:true,handoffConfirmed:p.externalWriterStopped},check,{remote:r.execution(device,project),effectivePolicy:ticket.provider==='claude'?'restricted':'unknown'});
+      const session=await r.core.create({provider:ticket.provider,nativeId:ticket.nativeId,cwd:project.path,title:ticket.title,trusted:true,handoffConfirmed:p.externalWriterStopped},check,{remote:r.execution(device,project),effectivePolicy:r.owner(device)?'desktop':ticket.provider==='claude'?'restricted':'unknown'});
       return r.sessionDto(device,session);
     }
     if(['memory.inspect','memory.forgetPreview','memory.forget','memory.clear','memory.erasureStatus','memory.timeline','memory.correct','memory.resolveConflict','memory.identity','memory.freezeEpisode'].includes(method)) {

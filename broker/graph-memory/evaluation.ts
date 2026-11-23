@@ -1,6 +1,6 @@
 // Synthetic fixtures, split by source project. These labels exercise the contract.
 // The built-in smoke corpus cannot qualify a route for unattended semantic acceptance.
-export const datasetVersion='cere-curation-synthetic-1';
+export const datasetVersion='pal-curation-synthetic-1';
 export const evaluationCases=[
   {project:'orchid',split:'tuning',role:'user',source:'I prefer concise answers.',claim:'Prefers concise answers',support:'supported',durable:true},
   {project:'fern',split:'tuning',role:'user',source:'I might migrate next year.',claim:'The migration finished',support:'insufficient',durable:false},

@@ -177,7 +177,7 @@ async function send(url: URL, method: string, headers: Record<string, string>, b
     const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)(url, {
       method, signal, agent: false,
       lookup: (_hostname, options, callback: any) => options.all ? callback(null, [pinned]) : callback(null, pinned.address, pinned.family),
-      headers: { 'User-Agent': 'Cere/0.1 custom tool', Accept: 'application/json, text/plain;q=0.9, */*;q=0.5', 'Accept-Encoding': 'identity', ...headers,
+      headers: { 'User-Agent': 'PAL/0.1 custom tool', Accept: 'application/json, text/plain;q=0.9, */*;q=0.5', 'Accept-Encoding': 'identity', ...headers,
         ...(body !== undefined ? { 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(body)) } : {}) },
     }, response => {
       const chunks: Buffer[] = []; let size = 0, truncated = false;

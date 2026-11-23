@@ -39,7 +39,7 @@ export type ImageRequest = {
   prompt: string;
   negativePrompt?: string;
   references: ImageReference[];
-  /** The mask as Cere stores it: grayscale where 255 edits and 0 preserves, the base's exact size. */
+  /** The mask as PAL stores it: grayscale where 255 edits and 0 preserves, the base's exact size. */
   mask?: { artifactId: string; versionId: string; feather?: number };
   size?: string; aspectRatio?: string; imageSize?: string;
   format: 'png' | 'jpeg' | 'webp';

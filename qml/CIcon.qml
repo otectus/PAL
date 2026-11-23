@@ -4,13 +4,27 @@ Item {
     id: icon
     property string name: ""
     property color color: Theme.muted
-    implicitWidth: 20
-    implicitHeight: 20
+    implicitWidth: Theme.iconSize
+    implicitHeight: Theme.iconSize
     readonly property var paths: ({
+        check: "M3 10 L8 15 L17 5",
+        activity: "M2 10 H6 L8 4 L12 16 L14 10 H18",
+        agents: "M3 3 H9 V8 H3 Z M12 12 H18 V17 H12 Z M6 8 V14.5 H12",
+        filter: "M3 5 H17 M6 10 H14 M8 15 H12",
+        notice: "M10 3 L18 17 H2 Z M10 8 V11 M10 14 V14.5",
+        refresh: "M16 6 A7 7 0 1 0 17 13 M16 2 L16 7 L11 7",
+        chevron: "M8 5 L13 10 L8 15",
+        workbench: "M3 3 L17 3 Q18 3 18 4 L18 16 Q18 17 17 17 L3 17 Q2 17 2 16 L2 4 Q2 3 3 3 Z M12 3 L12 17",
+        restore: "M8 3 L17 3 L17 12 M3 8 L12 8 L12 17 L3 17 Z",
+        sidebar: "M3 3 L17 3 Q18 3 18 4 L18 16 Q18 17 17 17 L3 17 Q2 17 2 16 L2 4 Q2 3 3 3 Z M8 3 L8 17",
+        workflow: "M3 3 L8 3 L8 8 L3 8 Z M12 12 L17 12 L17 17 L12 17 Z M6 8 L6 14 L12 14 M8 6 L14 6 L14 12",
+        down: "M5 8 L10 13 L15 8",
         chat: "M4 3 L16 3 Q18 3 18 5 L18 13 Q18 15 16 15 L8 15 L3 18 L3 5 Q3 3 4 3 M7 7 L14 7 M7 11 L11 11",
         sessions: "M6 3 L17 3 L17 15 M3 6 L14 6 L14 18 L3 18 Z M6 10 L11 10 M6 14 L10 14",
         projects: "M2 6 L2 4 L8 4 L10 6 L18 6 L18 16 L2 16 Z M2 8 L18 8",
         star: "M10 2 L12.5 7 L18 8 L14 12 L15 18 L10 15 L5 18 L6 12 L2 8 L7.5 7 Z",
+        skills: "M3 6 H7 V4 A2 2 0 0 1 11 4 V6 H15 V10 H16 A2 2 0 0 1 16 14 H15 V17 H10 V16 A2 2 0 0 0 6 16 V17 H3 Z",
+        setups: "M2 6 L10 2 L18 6 L10 10 Z M2 10 L10 14 L18 10 M2 14 L10 18 L18 14",
         model: "M10 2 L12 7 L17 10 L12 12 L10 18 L8 12 L3 10 L8 7 Z",
         inbox: "M3 4 L17 4 L19 13 L19 17 L1 17 L1 13 Z M1 13 L6 13 L8 15 L12 15 L14 13 L19 13",
         memory: "M4 3 L16 3 L16 17 L4 17 Z M1 6 L6 6 M1 10 L6 10 M1 14 L6 14 M9 7 L13 7 M9 11 L13 11",
@@ -37,9 +51,10 @@ Item {
     })
     Shape {
         anchors.centerIn: parent
-        width: 20; height: 20
+        width: Theme.iconSize; height: Theme.iconSize
+        scale: Math.min(icon.width, icon.height, 20) / 20
         ShapePath {
-            strokeColor: icon.color; strokeWidth: 1.5; fillColor: "transparent"
+            strokeColor: icon.color; strokeWidth: Theme.iconStroke; fillColor: Theme.transparent
             capStyle: ShapePath.RoundCap; joinStyle: ShapePath.RoundJoin
             PathSvg { path: icon.paths[icon.name] || "" }
         }

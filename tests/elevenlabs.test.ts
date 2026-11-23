@@ -37,14 +37,14 @@ test('ElevenLabs aborts a pending HTTP request and clears stale catalog results'
   const refresh=e.refresh();e.reset();await assert.rejects(refresh);assert.deepEqual(e.voices,[]);assert.equal(e.loading,false);
 });
 test('ElevenLabs plays streamed PCM through tuning and releases playback on stop',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'cere-eleven-'));t.after(()=>rm(dir,{recursive:true,force:true}));const log=join(dir,'audio.jsonl');
+  const dir=await mkdtemp(join(tmpdir(),'pal-eleven-'));t.after(()=>rm(dir,{recursive:true,force:true}));const log=join(dir,'audio.jsonl');
   let controller!:ReadableStreamDefaultController<Uint8Array>;
-  let hold=false;const e=new ElevenLabs(()=>config,()=> 'key',()=>{},{env:{...process.env,CERE_APLAY_BIN:resolve('tests/fixtures/audio-sink.mjs'),CERE_AUDIO_SINK_LOG:log},fetch:async()=>hold?pcm(new ReadableStream({start(c){controller=c;c.enqueue(new Uint8Array(48000));},cancel(){}})):pcm(Buffer.alloc(48000))});
+  let hold=false;const e=new ElevenLabs(()=>config,()=> 'key',()=>{},{env:{...process.env,PAL_APLAY_BIN:resolve('tests/fixtures/audio-sink.mjs'),PAL_AUDIO_SINK_LOG:log},fetch:async()=>hold?pcm(new ReadableStream({start(c){controller=c;c.enqueue(new Uint8Array(48000));},cancel(){}})):pcm(Buffer.alloc(48000))});
   let started=0;await e.play('Hello.',signal(),{rate:1.1,pitch:.5,volume:.8},()=>started++);assert.equal(started,1);assert.ok(JSON.parse((await readFile(log,'utf8')).trim()).bytes>0);
   hold=true;const abort=new AbortController();const pending=e.play('Hello.',abort.signal,{rate:1,pitch:0,volume:1},()=>abort.abort());await assert.rejects(pending);assert.ok(controller);
 });
 test('ElevenLabs credentials stay private and settings persist through Core without replacing local voices',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'cere-eleven-core-'));let core=new Core(new Store(dir));t.after(async()=>{await core.close();await rm(dir,{recursive:true,force:true});});
+  const dir=await mkdtemp(join(tmpdir(),'pal-eleven-core-'));let core=new Core(new Store(dir));t.after(async()=>{await core.close();await rm(dir,{recursive:true,force:true});});
   await core.rpc('elevenlabs.credentials',{key:'eleven-secret'});await core.rpc('provider.credentials',{provider:'openai',key:'openai-secret'});
   assert.equal(core.credentials.key('elevenlabs'),'eleven-secret');const file=join(dir,'credentials/provider-credentials.json');assert.equal((await stat(file)).mode&0o777,0o600);
   await core.updateSettings({elevenlabs:config,ttsProvider:'elevenlabs'});assert.ok(!JSON.stringify(core.snapshot()).includes('eleven-secret'));const local=core.settings.voice;
@@ -52,8 +52,8 @@ test('ElevenLabs credentials stay private and settings persist through Core with
   await core.rpc('elevenlabs.credentials',{key:''});assert.equal(core.credentials.key('elevenlabs'),'');assert.equal(core.credentials.key('openai'),'openai-secret');
 });
 test('switching away from ElevenLabs aborts the request and drops queued cloud speech',async t=>{
-  const {Speech}=await import('../broker/tts.ts');const dir=await mkdtemp(join(tmpdir(),'cere-eleven-switch-'));const core=new Core(new Store(dir));t.after(async()=>{await core.close();await rm(dir,{recursive:true,force:true});});
-  await core.speech.close();core.speech=new Speech(()=>core.settings,()=>{},{...process.env,CERE_TTS_DISABLED:'0'});core.speech.indextts=core.indextts;
+  const {Speech}=await import('../broker/tts.ts');const dir=await mkdtemp(join(tmpdir(),'pal-eleven-switch-'));const core=new Core(new Store(dir));t.after(async()=>{await core.close();await rm(dir,{recursive:true,force:true});});
+  await core.speech.close();core.speech=new Speech(()=>core.settings,()=>{},{...process.env,PAL_TTS_DISABLED:'0'});core.speech.indextts=core.indextts;
   let started!:()=>void;const ready=new Promise<void>(r=>started=r);let stopped=false;
   core.speech.elevenlabs={async play(_text:string,signal:AbortSignal){started();await new Promise<void>(resolve=>signal.addEventListener('abort',()=>{stopped=true;resolve();},{once:true}));}} as unknown as ElevenLabs;
   await core.updateSettings({ttsProvider:'elevenlabs',elevenlabs:config,speechEnabled:true,quiet:false});

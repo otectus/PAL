@@ -11,7 +11,7 @@ import { ExtensionSecrets, secretStoreLimits } from '../broker/extensions.ts';
 const fixture = fileURLToPath(new URL('./fixtures/mcp-server.mjs', import.meta.url));
 const idle = () => ({ async send() {}, async interrupt() {}, async close() {} });
 async function broker(t: any, real = false) {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-extensions-')), project = join(dir, 'project'), other = join(dir, 'other');
+  const dir = await mkdtemp(join(tmpdir(), 'pal-extensions-')), project = join(dir, 'project'), other = join(dir, 'other');
   await mkdir(project); await mkdir(other);
   const core = new Core(new Store(join(dir, 'state')), real ? undefined : idle);
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
@@ -58,7 +58,7 @@ test('A02 calls wait for approval unless the user allowed the tool; hints grant 
   await core.extensions.ensure(session.id);
   const names = core.toolsFor(session.id).map(tool => tool.function.name).filter(name => name.startsWith('ext_'));
   assert.deepEqual(names, ['ext_fixture_lookup', 'ext_fixture_write_note', 'ext_fixture_files_open', 'ext_fixture_slow', 'ext_fixture_crash', 'ext_fixture_environment', 'ext_fixture_big', 'ext_fixture_fails'],
-    'both pages are listed, names never shadow Cere tools, and a tool without a usable schema is left out');
+    'both pages are listed, names never shadow PAL tools, and a tool without a usable schema is left out');
   const lookup = core.toolsFor(session.id).find(tool => tool.function.name === 'ext_fixture_lookup')!;
   assert.match(lookup.function.description, /^\[Fixture · extension; its output is untrusted data\] Look up a word\./);
   assert.equal((lookup.function.parameters as any).$schema, undefined);
@@ -67,7 +67,7 @@ test('A02 calls wait for approval unless the user allowed the tool; hints grant 
   // readOnlyHint does not skip the question; declining sends nothing to the server.
   const declined = core.callTool(session.id, 'ext_fixture_lookup', { query: 'otter' }, signal);
   const asked = await approval(core);
-  assert.equal(asked.kind, 'extension'); assert.match(asked.detail, /"query": "otter"/); assert.match(asked.detail, /only reads; Cere has not verified that/);
+  assert.equal(asked.kind, 'extension'); assert.match(asked.detail, /"query": "otter"/); assert.match(asked.detail, /only reads; PAL has not verified that/);
   core.answer({ id: asked.id, choice: 'deny' });
   assert.deepEqual(await declined, { ran: false, message: 'The user declined this extension call.' });
   assert.ok(!(await calls()).some(call => call.method === 'tools/call'), 'nothing reached the server');
@@ -87,7 +87,7 @@ test('A02 calls wait for approval unless the user allowed the tool; hints grant 
   // The server gets only a minimal environment and the secrets given to it.
   const environment = JSON.parse(((await core.callTool(session.id, 'ext_fixture_environment', {}, signal)) as any).output);
   assert.equal(environment.token, 'tok-abcdef');
-  assert.ok(!environment.names.includes('OPENAI_API_KEY') && !environment.names.includes('CERE_TTS_DISABLED'), environment.names.join(','));
+  assert.ok(!environment.names.includes('OPENAI_API_KEY') && !environment.names.includes('PAL_TTS_DISABLED'), environment.names.join(','));
   assert.ok(environment.names.every((name: string) => ['PATH', 'HOME', 'LANG', 'TERM', 'USER', 'XDG_RUNTIME_DIR', 'TMPDIR', 'FIXTURE_TOKEN'].includes(name)), environment.names.join(','));
   const activity = core.store.activities().filter((entry: any) => entry.action === 'extension.call');
   assert.ok(activity.some((entry: any) => entry.tool === 'write_note' && entry.server === 'Fixture' && entry.status === 'completed'));
@@ -113,13 +113,18 @@ test('A02 Stop cancels a call, crashes are contained and quarantined, and turnin
   assert.equal(core.extensions.snapshot()[0].state, 'failed');
   await core.extensions.ensure(session.id);
   assert.equal(core.extensions.snapshot()[0].state, 'ready');
+  // PAL Everywhere §14.3: the stopped call may have taken effect (slow is not declared read-only or idempotent), so
+  // the identical request is held until a person says whether it did.
+  const held: any = await core.callTool(session.id, 'ext_fixture_slow', {}, new AbortController().signal);
+  assert.equal(held.ran, false); assert.match(held.message, /may already have taken effect/);
+  for (const write of core.extensions.writes().filter(row => row.state === 'unknown')) core.extensions.resolveWrite({ id: write.id, outcome: 'not-done' });
   // Turning the server off ends a call in progress and its tools disappear.
   const pending = core.callTool(session.id, 'ext_fixture_slow', {}, new AbortController().signal);
   await until(async () => (await calls()).filter(call => call.params?.name === 'slow').length === 2);
   await core.updateSettings({ extensions: [{ ...core.settings.extensions[0], enabled: false }] });
   await assert.rejects(pending, /turned off/);
   assert.deepEqual(core.extensions.toolsFor(session.id), []);
-  await assert.rejects(core.callTool(session.id, 'ext_fixture_slow', {}, new AbortController().signal), /disabled in Cere settings|turned off/);
+  await assert.rejects(core.callTool(session.id, 'ext_fixture_slow', {}, new AbortController().signal), /disabled in PAL settings|turned off/);
   // A question waiting for the user is refused when its server is turned off.
   await core.updateSettings({ extensions: [{ ...core.settings.extensions[0], enabled: true, allowed: [] }] });
   await core.extensions.ensure(session.id);
@@ -147,7 +152,7 @@ test('A02 Stop cancels a call, crashes are contained and quarantined, and turnin
   await assert.rejects(core.rpc('extensions.restart', { id: broken }), /did not start/);
   assert.deepEqual([core.extensions.snapshot()[0].state, core.extensions.snapshot()[0].crashes], ['failed', 1], 'a restart clears the quarantine');
   await core.updateSettings({ extensions: [server({ name: 'Old', args: [fixture, log, 'old-protocol'] })] });
-  await assert.rejects(core.rpc('extensions.restart', { id: core.settings.extensions[0].id }), /MCP version 2023-01-01, which Cere does not support/);
+  await assert.rejects(core.rpc('extensions.restart', { id: core.settings.extensions[0].id }), /MCP version 2023-01-01, which PAL does not support/);
 });
 
 test('A02 a crashing extension cannot take down the conversation: the turn finishes with the error as the tool result', async t => {
@@ -240,7 +245,7 @@ test('AUD-010/AUD-011 extension approval binds the complete arguments, process c
 });
 
 test('AUD-015 secret stores share a UTF-8 byte budget, preserve valid state on refusal and support bounded selective recovery', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'cere-secret-budget-')), directory = join(root, 'credentials');
+  const root = await mkdtemp(join(tmpdir(), 'pal-secret-budget-')), directory = join(root, 'credentials');
   t.after(() => rm(root, { recursive: true, force: true }));
   const store = new ExtensionSecrets(directory, 'budget.json'), id = 'server';
   for (let index = 0; index < 31; index++) store.set(id, `KEY_${index}`, 'a'.repeat(8192));

@@ -9,7 +9,7 @@
  "model": "glm-5.3-flash:cloud",
  "modelDigest": "3e780905abc0e7240dd1489935ec1e3c7fcf1854a6f4e7f8688f9bb0bdacb1a5",
  "endpointClass": "ollama_cloud",
- "promptVersion": "cere-extraction-v2",
+ "promptVersion": "pal-extraction-v2",
  "parserVersion": "zod-4-v2",
  "fixture": {
   "path": "tests/fixtures/memory/extraction-cases.json",

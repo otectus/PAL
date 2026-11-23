@@ -7,7 +7,7 @@ import QtQuick.Layouts
 ColumnLayout {
     id: named
     objectName: "namedConnections"
-    Layout.fillWidth: true; spacing: 8
+    Layout.fillWidth: true; spacing: Theme.space2
     property var items: []
     property string error: ""
     RpcClient { id: rpc }
@@ -20,11 +20,11 @@ ColumnLayout {
         Rectangle {
             required property var modelData; required property int index
             objectName: "namedConnection_" + index
-            Layout.fillWidth: true; implicitHeight: row.implicitHeight + 20; radius: Theme.radiusControl; color: Theme.raised; border.color: Theme.border
+            Layout.fillWidth: true; implicitHeight: row.implicitHeight + Theme.gutter; radius: Theme.radiusControl; color: Theme.raised; border.color: Theme.border
             RowLayout {
-                id: row; anchors.fill: parent; anchors.margins: 10; spacing: 8
+                id: row; anchors.fill: parent; anchors.margins: Theme.space2; spacing: Theme.space2
                 ColumnLayout {
-                    Layout.fillWidth: true; spacing: 1
+                    Layout.fillWidth: true; spacing: Theme.space1
                     CText { text: modelData.name; font.weight: Font.DemiBold; elide: Text.ElideRight; wrapMode: Text.NoWrap }
                     CText { text: (modelData.kind === "ollama" ? "Ollama · " + modelData.host : "Compatible · " + (modelData.endpoint?.baseUrl || "") + " · processes on " + (modelData.endpoint?.processing || "unknown") + (modelData.endpoint?.requiresKey ? (modelData.keySet ? " · key set" : " · key missing") : ""))
                         + " · " + modelData.conversations + (modelData.conversations === 1 ? " conversation" : " conversations"); color: Theme.muted; font.pixelSize: Theme.caption; elide: Text.ElideMiddle; wrapMode: Text.NoWrap }
@@ -53,13 +53,13 @@ ColumnLayout {
         CComboBox { id: processing; Layout.fillWidth: true; model: ["Processes on this computer", "Processes on my own server", "Processes in a cloud service", "Not sure"]; Accessible.name: "Where it processes requests" }
         CComboBox { id:dialect; visible:!editor.ollama; Layout.fillWidth:true; model:["Chat Completions","Responses"]; Accessible.name:"Memory task protocol" }
         Flow {
-            visible: !editor.ollama; Layout.fillWidth: true; spacing: 12
+            visible: !editor.ollama; Layout.fillWidth: true; spacing: Theme.space3
             CCheckBox { id: needsKey; width: implicitContentWidth + leftPadding + rightPadding; text: "Needs a key" }
             CCheckBox { id: tools; width: implicitContentWidth + leftPadding + rightPadding; text: "Supports tools" }
             CCheckBox { id: images; width: implicitContentWidth + leftPadding + rightPadding; text: "Accepts images" }
         }
         CField { id: key; visible: !editor.ollama && needsKey.checked; Layout.fillWidth: true; echoMode: TextInput.Password; placeholderText: editor.existing?.keySet ? "Leave empty to keep the saved key" : "Key for this address"; Accessible.name: "Endpoint key" }
-        CText { visible: !editor.ollama; text: "What you declare is what Cere sends; it is not verified. Where it processes decides which files and images may go to it."; color: Theme.muted; font.pixelSize: Theme.caption }
+        CText { visible: !editor.ollama; text: "What you declare is what PAL sends; it is not verified. Where it processes decides which files and images may go to it."; color: Theme.muted; font.pixelSize: Theme.caption }
         CText { id: message; visible: !!text; color: Theme.danger; font.pixelSize: Theme.secondary; Layout.fillWidth: true }
         RowLayout {
             Layout.fillWidth: true

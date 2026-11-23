@@ -28,7 +28,7 @@ CDialog {
         model:dialog.listing.rows
         ColumnLayout {
             required property var modelData
-            Layout.fillWidth:true;spacing:5
+            Layout.fillWidth:true;spacing:Theme.space1
             CText { text:modelData.text;font.pixelSize:Theme.secondary }
             RowLayout {
                 Layout.fillWidth:true
@@ -37,7 +37,7 @@ CDialog {
                 CButton { visible:modelData.kind==="saved";text:"Edit";onClicked:{editor.memoryId=modelData.id;editor.revision=modelData.revision;editor.latest=null;memoryText.text=modelData.text;editor.open()} }
                 CButton { text:"Forget";danger:true;enabled:dialog.changeId<0;onClicked:dialog.changeId=App.rpc("memory.forget",{sessionId:dialog.sessionId,id:modelData.id}) }
             }
-            Rectangle { Layout.fillWidth:true;implicitHeight:1;color:Theme.line }
+            Rectangle { Layout.fillWidth:true;implicitHeight:Theme.hairline;color:Theme.line }
         }
     }
     RowLayout {
@@ -60,11 +60,11 @@ CDialog {
         property int latestId:-1
         onOpened:error=""
         CText { text:editor.memoryId?"Edit saved fact":"Remember a fact";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
-        CTextArea { id:memoryText;objectName:"memoryText";Layout.fillWidth:true;Layout.preferredHeight:160;wrapMode:TextEdit.Wrap;selectByMouse:true;color:Theme.text;font.family:Theme.font;Accessible.name:"Memory text" }
+        CTextArea { id:memoryText;objectName:"memoryText";Layout.fillWidth:true;Layout.preferredHeight:Theme.editorMedium;wrapMode:TextEdit.Wrap;selectByMouse:true;color:Theme.text;font.family:Theme.font;Accessible.name:"Memory text" }
         CText { text:memoryText.length+" / 2000 characters";color:Theme.muted;font.pixelSize:Theme.secondary }
         CText { visible:!!editor.error;text:editor.error;color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
         ColumnLayout {
-            objectName:"memoryConflict";visible:!!editor.latest;Layout.fillWidth:true;spacing:6
+            objectName:"memoryConflict";visible:!!editor.latest;Layout.fillWidth:true;spacing:Theme.space2
             CText { text:"This fact changed while you were editing. Your text is kept. The saved version is:";color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
             CText { text:editor.latest?.text||"";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
             CButton { objectName:"memoryUseLatest";text:"Review against the latest version";onClicked:{editor.revision=editor.latest.revision;editor.latest=null;editor.error=""} }
@@ -78,7 +78,7 @@ CDialog {
     CDialog {
         id:clearConfirm
         CText { text:"Clear this project’s memory?";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
-        CText { text:"This suppresses project memory and removes matching source passages from Cere’s managed chat history. Physical deletion from memory indexes continues in the background. Future turns can be remembered while memory is enabled.";color:Theme.muted }
+        CText { text:"This suppresses project memory and removes matching source passages from PAL’s managed chat history. Physical deletion from memory indexes continues in the background. Future turns can be remembered while memory is enabled.";color:Theme.muted }
         RowLayout {
             Layout.fillWidth:true
             CButton { text:"Cancel";Layout.fillWidth:true;onClicked:clearConfirm.close() }

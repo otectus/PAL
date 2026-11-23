@@ -16,7 +16,7 @@ CDialog {
     CText { text:drawer.error;color:Theme.danger;visible:!!drawer.error }
     CText { text:(drawer.context.destination?.provider||"")+" · "+(drawer.context.destination?.model||"")+"\n"+(drawer.context.destination?.cwd||"");color:Theme.accentText }
     CText { text:drawer.context.destination?.host||"";visible:!!text;color:Theme.muted }
-    CText { text:"Cere will attach "+drawer.attachmentIds.length+" selected files and your message." }
+    CText { text:"PAL will attach "+drawer.attachmentIds.length+" selected files and your message." }
     Repeater { model:drawer.context.attachments||[];CText { required property var modelData;text:modelData.name+" · "+Math.ceil(modelData.size/1024)+" KiB";font.pixelSize:Theme.secondary } }
     CText { text:"Your next message";font.weight:Font.DemiBold }
     CText { text:"Approximately "+(drawer.context.estimatedTokens||0)+" text tokens";color:Theme.accentText }
@@ -30,13 +30,13 @@ CDialog {
         model:ContextExplain.planRows(drawer.context.lastPlan)
         RowLayout {
             required property var modelData
-            Layout.fillWidth:true;spacing:8
-            CText { objectName:"planLayer_"+modelData.id;Layout.preferredWidth:200;text:modelData.label;font.pixelSize:Theme.secondary;color:modelData.included?Theme.text:Theme.muted;elide:Text.ElideRight }
-            CText { Layout.preferredWidth:110;text:modelData.size;font.pixelSize:Theme.secondary;color:Theme.muted }
+            Layout.fillWidth:true;spacing:Theme.space2
+            CText { objectName:"planLayer_"+modelData.id;Layout.preferredWidth:Theme.pickerWidth;text:modelData.label;font.pixelSize:Theme.secondary;color:modelData.included?Theme.text:Theme.muted;elide:Text.ElideRight }
+            CText { Layout.preferredWidth:Theme.fieldShort;text:modelData.size;font.pixelSize:Theme.secondary;color:Theme.muted }
             CText { Layout.fillWidth:true;text:modelData.status;font.pixelSize:Theme.caption;color:Theme.muted;wrapMode:Text.Wrap }
         }
     }
-    CText { objectName:"planUnknown";visible:(drawer.context.lastPlan?.unknown||[]).length>0;text:"Not visible to Cere: "+(drawer.context.lastPlan?.unknown||[]).join("; ")+".";font.pixelSize:Theme.secondary;color:Theme.amber;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    CText { objectName:"planUnknown";visible:(drawer.context.lastPlan?.unknown||[]).length>0;text:"Not visible to PAL: "+(drawer.context.lastPlan?.unknown||[]).join("; ")+".";font.pixelSize:Theme.secondary;color:Theme.amber;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CText { visible:!!drawer.context.lastPlan;text:"Sizes are estimates (UTF-8 bytes ÷ 2); the provider counts its own tokens. Supplied context is not proof the model used it.";font.pixelSize:Theme.caption;color:Theme.muted }
     // What automatic recall did for the last turn, as recorded then; opening this runs no recall.
     readonly property var recallText:ContextExplain.describe(drawer.context.recallOutcome||null)
@@ -51,7 +51,7 @@ CDialog {
         model:(drawer.context.webSearches||[]).slice(0,5)
         ColumnLayout {
             required property var modelData
-            Layout.fillWidth:true;spacing:2
+            Layout.fillWidth:true;spacing:Theme.space1
             CText { objectName:"webSearchTrace";Layout.fillWidth:true;text:ContextExplain.searchLine(modelData);font.pixelSize:Theme.secondary;color:modelData.outcome==="ok"?Theme.text:Theme.amber;elide:Text.ElideRight }
             CText { objectName:"webSearchDetail";Layout.fillWidth:true;text:ContextExplain.searchDetail(modelData);visible:!!text;font.pixelSize:Theme.caption;color:Theme.muted;wrapMode:Text.Wrap }
         }

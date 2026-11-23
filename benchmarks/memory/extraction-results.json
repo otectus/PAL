@@ -3,7 +3,7 @@
   "model": "gpt-oss:20b-cloud",
   "modelDigest": "9a01793d9ef8de5309f157c06dbcbadfb598001b4a6f13cbc699cdff5042eaae",
   "baseline": {
-    "promptVersion": "cere-extraction-v1",
+    "promptVersion": "pal-extraction-v1",
     "evaluatedAt": "2026-09-29T20:18:28.615Z",
     "samples": 5,
     "assertionProposals": 5,
@@ -22,7 +22,7 @@
     ]
   },
   "v2": {
-    "promptVersion": "cere-extraction-v2",
+    "promptVersion": "pal-extraction-v2",
     "evaluatedAt": "2026-09-29T20:37:31.400Z",
     "samples": 5,
     "assertionProposals": 5,

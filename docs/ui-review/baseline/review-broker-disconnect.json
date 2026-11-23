@@ -26,7 +26,7 @@
     },
     {
         "check": "turn status after restart",
-        "detail": "interrupted · warning:  · error: Cere restarted. The previous turn was not replayed.",
+        "detail": "interrupted · warning:  · error: PAL restarted. The previous turn was not replayed.",
         "ok": true
     }
 ]

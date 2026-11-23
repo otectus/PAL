@@ -41,7 +41,7 @@ async function codexModels(command: string): Promise<ModelOption[]> {
   const process = new RpcProcess(command, ['app-server'], homedir());
   process.on('fault', () => {});
   try {
-    await process.request('initialize', { clientInfo: { name: 'cere', title: 'Cere', version: buildIdentity().version }, capabilities: { experimentalApi: false } }, 20000);
+    await process.request('initialize', { clientInfo: { name: 'pal', title: 'PAL', version: buildIdentity().version }, capabilities: { experimentalApi: false } }, 20000);
     process.write({ method: 'initialized', params: {} });
     const values: unknown[] = []; let cursor: string | null = null;
     do {
@@ -61,7 +61,7 @@ async function codexModels(command: string): Promise<ModelOption[]> {
 async function claudeModels(command: string): Promise<ModelOption[]> {
   const process = new RpcProcess(command, ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--permission-prompts', 'none'], homedir());
   process.on('fault', () => {});
-  const requestId = `cere-models-${randomUUID()}`;
+  const requestId = `pal-models-${randomUUID()}`;
   try {
     const response = await new Promise<any>((resolve,reject) => {
       const timer=setTimeout(() => { cleanup(); reject(new Error('Claude model discovery timed out')); },20000);
@@ -85,7 +85,7 @@ async function claudeModels(command: string): Promise<ModelOption[]> {
 }
 
 export function discoverProviderModels(provider: Provider, command?: string) {
-  if (provider === 'ollama') return ollamaModels(command || process.env.CERE_OLLAMA_HOST || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434');
+  if (provider === 'ollama') return ollamaModels(command || process.env.PAL_OLLAMA_HOST || process.env.CERE_OLLAMA_HOST || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434');
   if (provider === 'codex') return codexModels(command || providerExecutable('codex'));
   if (provider === 'claude') return claudeModels(command || providerExecutable('claude'));
   if (provider === 'antigravity') return exec(command || providerExecutable('antigravity'), ['models'], {timeout:20000}).then(result=>antigravityModels(result.stdout));

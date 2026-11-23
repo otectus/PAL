@@ -7,14 +7,14 @@ import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
 
 async function fixture(t:any){
-  const dir=await mkdtemp(join(tmpdir(),'cere-delete-'));
+  const dir=await mkdtemp(join(tmpdir(),'pal-delete-'));
   const core=new Core(new Store(dir),()=>({async send(){},async interrupt(){},async close(){}}));
   t.after(async()=>{if(!core.closed)await core.close();await rm(dir,{recursive:true,force:true});});
   await core.memory.ready;return{core,dir};
 }
 const exists=(path:string)=>access(path).then(()=>true,()=>false);
 
-test('deleting a conversation removes everything Cere kept only for it',async t=>{
+test('deleting a conversation removes everything PAL kept only for it',async t=>{
   const {core,dir}=await fixture(t);
   const kept=await core.create({provider:'codex',cwd:dir,trusted:true,title:'Kept conversation'});
   const s=await core.create({provider:'codex',cwd:dir,trusted:true,title:'Delete me'});

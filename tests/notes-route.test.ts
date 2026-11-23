@@ -8,7 +8,7 @@ import {Core} from '../broker/core.ts';
 import {Store} from '../broker/store.ts';
 
 test('AUD-004 notes authority follows the saved host and fresh alias route, including outgoing results',async t=>{
-  const directory=await mkdtemp(join(tmpdir(),'cere-notes-route-'));
+  const directory=await mkdtemp(join(tmpdir(),'pal-notes-route-'));
   let cloud=false;
   async function server(remote:()=>boolean){const instance=createServer((req,res)=>{res.setHeader('content-type','application/json');const model={name:'alias',model:'alias',capabilities:['completion','tools'],...(remote()?{remote_host:'https://cloud.example'}:{})};res.end(JSON.stringify(req.url==='/api/tags'?{models:[model]}:model));});await new Promise<void>(r=>instance.listen(0,'127.0.0.1',r));t.after(()=>{instance.closeAllConnections();instance.close();});return 'http://127.0.0.1:'+(instance.address() as any).port;}
   const local=await server(()=>cloud),remote=await server(()=>true),core=new Core(new Store(join(directory,'state')));

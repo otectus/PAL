@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install Cere's optional Kokoro runtime without changing system Python."""
+"""Install PAL's optional Kokoro runtime without changing system Python."""
 
 import argparse
 import hashlib
@@ -51,7 +51,7 @@ def download(url: str, target: Path, expected: str) -> None:
     with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as temporary:
         temporary_path = Path(temporary.name)
     try:
-        request = urllib.request.Request(url, headers={"User-Agent": "Cere-Kokoro-Setup/1"})
+        request = urllib.request.Request(url, headers={"User-Agent": "PAL-Kokoro-Setup/1"})
         with temporary_path.open("wb") as output, urllib.request.urlopen(request) as response:
             shutil.copyfileobj(response, output)
         if digest(temporary_path) != expected:
@@ -89,7 +89,10 @@ def run(command: list[str], env: dict[str, str]) -> None:
 
 
 def main() -> None:
-    default_root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "cere/kokoro"
+    data = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+    default_root = data / "pal/kokoro"
+    if not default_root.exists() and (data / "cere/kokoro").is_dir():
+        default_root = data / "cere/kokoro"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=default_root)
     parser.add_argument("--precision", choices=tuple(ASSETS), default="fp16", help="fp16 favors voice quality; int8 saves about 50 MB")
@@ -136,7 +139,7 @@ def main() -> None:
         preview_dir = args.preview_dir.expanduser().resolve()
         preview_dir.mkdir(parents=True, exist_ok=True)
         helper = Path(__file__).resolve().parents[1] / "broker/kokoro-synth.py"
-        line = json.dumps({"text": "Hello, I'm Cere. Local voice is ready. Let's make a little trouble."}) + "\n"
+        line = json.dumps({"text": "Hello, I'm PAL. Local voice is ready. Let's make a little trouble."}) + "\n"
         for voice in manifest["voices"]:
             target = preview_dir / f"kokoro-{voice}.wav"
             subprocess.run([str(python), str(helper), "--model", str(model), "--voices", str(voice_data), "--voice", voice, "--speed", "1", "--wav", str(target)], input=line, text=True, check=True, env=environment)

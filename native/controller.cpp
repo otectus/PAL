@@ -1,4 +1,5 @@
 #include "controller.h"
+#include "activitymodel.h"
 #include "avatarpuppet.h"
 #include "avatardefinition.h"
 #include "avatarcatalog.h"
@@ -21,6 +22,7 @@
 #include <QDir>
 #include <QFile>
 #include <QScreen>
+#include <QSettings>
 #include <QClipboard>
 #include <QMimeData>
 #include <QDesktopServices>
@@ -47,6 +49,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include "placement.h"
+#include "avatarstartup.h"
 
 bool Controller::trustedBroker(qintptr descriptor,uint expectedUid){
     struct ucred peer{};socklen_t length=sizeof(peer);
@@ -84,20 +87,22 @@ static bool hyprLua(){static const bool lua=hyprQuery("/eval assert(hl and hl.ds
 static void hyprDispatch(const QByteArray &lua,const QByteArray &legacy){
     hyprQuery(hyprLua()?"/dispatch "+lua:"/dispatch "+legacy);
 }
-// A named runtime rule for one of Cere's own windows; it lasts until the compositor reloads.
+// A named runtime rule for one of PAL's own windows; it lasts until the compositor reloads.
 static void hyprRule(const QByteArray &lua,const QByteArray &legacy){
     hyprQuery(hyprLua()?"/eval "+lua:"/keyword "+legacy);
 }
 
 Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent),m_root(root),m_overlay(overlay) {
-    static const int avatarType=qmlRegisterType<AvatarPuppet>("Cere.Native",1,0,"AvatarPuppet");
+    static const int avatarType=qmlRegisterType<AvatarPuppet>("PAL.Native",1,0,"AvatarPuppet");
     Q_UNUSED(avatarType);
+    static const int activityType=qmlRegisterType<ActivityModel>("PAL.Native",1,0,"ActivityModel");
+    Q_UNUSED(activityType);
     m_replies.setSourceModel(&m_transcript);m_activity.setSourceModel(&m_transcript);
     connect(&m_activity,&QAbstractItemModel::rowsInserted,this,&Controller::activityChanged);
     connect(&m_activity,&QAbstractItemModel::rowsRemoved,this,&Controller::activityChanged);
     connect(&m_activity,&QAbstractItemModel::modelReset,this,&Controller::activityChanged);
     QFile f(m_root+"/assets/motions.json"); if(f.open(QIODevice::ReadOnly))m_animations=QJsonDocument::fromJson(f.readAll()).object().toVariantMap();
-    QFile rigFile(m_root+"/assets/"+m_animations.value("rig","cere-rig.json").toString());
+    QFile rigFile(m_root+"/assets/"+m_animations.value("rig","pal-rig.json").toString());
     if(rigFile.open(QIODevice::ReadOnly))m_animations.insert("puppet",QJsonDocument::fromJson(rigFile.readAll()).object().toVariantMap());
     const auto baseRig=m_animations.value("puppet").toMap();
     const auto resolvedBase=AvatarDefinition::resolve(baseRig);
@@ -132,6 +137,8 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
             check.setDefinition(definition);
             check.setSource(QUrl::fromLocalFile(m_root+"/assets/"+definition.value("texture").toString()));
             if(!check.ready()||!QFileInfo::exists(m_root+"/assets/"+entry.value("portrait").toString()))continue;
+            const auto still = QStringLiteral("/pal/avatar-startup/") + entry.value("id").toString() + ".png";
+            if (QFile::exists(":" + still)) entry.insert("still", QStringLiteral("qrc:") + still);
             entry.insert("puppet",definition);m_avatars.append(entry);
         }
     }
@@ -144,15 +151,15 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
     m_clock.start();
     // Tests shorten these; the defaults tolerate a busy machine without flagging a healthy broker.
     const auto timing=[](const char *name,qint64 fallback){const qint64 value=qEnvironmentVariableIntValue(name);return value>0?value:fallback;};
-    m_liveness.setInterval(int(timing("CERE_UI_PING_MS",5000)));m_unresponsiveMs=timing("CERE_UI_UNRESPONSIVE_MS",15000);m_requestDeadlineMs=timing("CERE_UI_REQUEST_DEADLINE_MS",30*60*1000);
+    m_liveness.setInterval(int(timing("PAL_UI_PING_MS",5000)));m_unresponsiveMs=timing("PAL_UI_UNRESPONSIVE_MS",15000);m_requestDeadlineMs=timing("PAL_UI_REQUEST_DEADLINE_MS",30*60*1000);
     connect(&m_liveness,&QTimer::timeout,this,&Controller::checkLiveness);
     connect(&m_socket,&QLocalSocket::readyRead,this,&Controller::receive);
     connect(&m_socket,&QLocalSocket::connected,this,[this]{
         m_retry.stop();m_buffer.clear();
         // Authenticate the server before any request is written: a socket owned by
-        // another user is never treated as Cere's broker.
+        // another user is never treated as PAL's broker.
         if(!trustedBroker(m_socket.socketDescriptor(),::getuid())){
-            m_socket.abort();notify("Cere refused a broker socket owned by another user.");m_retry.start(1500);return;
+            m_socket.abort();notify("PAL refused a broker socket owned by another user.");m_retry.start(1500);return;
         }
         m_disconnected.invalidate();
         m_responsive=true;m_pingRequest=-1;m_lastInbound.start();m_liveness.start();
@@ -189,6 +196,8 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
                 playMotion(m_successSession==m_tenderSession?"tender":"celebrate");
         }
     });
+    m_quitStopTimer.setSingleShot(true);m_quitStopTimer.setInterval(10000);
+    connect(&m_quitStopTimer,&QTimer::timeout,this,[this]{failQuitStop("PAL could not confirm that every session stopped. PAL is still open so you can retry or keep watching them.");});
     m_roamTimer.setInterval(200);
     connect(&m_roamTimer,&QTimer::timeout,this,&Controller::roam);
     connect(qApp,&QGuiApplication::screenRemoved,this,[this]{stopRoaming(false);m_screen=nullptr;m_placedPosition.clear();syncPet();refreshMotion();});
@@ -199,6 +208,11 @@ Controller::~Controller(){
     QObject::disconnect(&m_socket,nullptr,this,nullptr);
     if(m_overlayProcess){m_overlayProcess->terminate();m_overlayProcess->waitForFinished(2000);}
     if(m_panel)QObject::disconnect(m_panel,nullptr,this,nullptr);
+    if (m_tray) {
+        auto *menu = m_tray->contextMenu();
+        m_tray->setContextMenu(nullptr);
+        delete menu;
+    }
     delete m_petMirror;
     delete m_bubble;m_bubble=nullptr;delete m_panel;m_panel=nullptr;delete m_pet;m_pet=nullptr;
     m_socket.abort();
@@ -229,20 +243,23 @@ void Controller::avatarFailed(const QString &texture,const QString &error){
 }
 QString Controller::assistantName()const{
     const auto name=m_state.value("settings").toMap().value("assistantName").toString().trimmed();
-    return name.isEmpty()?QStringLiteral("Cere"):name;
+    return name.isEmpty()?QStringLiteral("PAL"):name;
 }
 // The same resolution as the broker's paths(), including its private /tmp fallback.
 QString Controller::runtimePath()const{
-    const QString override=qEnvironmentVariable("CERE_RUNTIME_DIR");if(!override.isEmpty())return QDir(override).absolutePath();
+    QString override=qEnvironmentVariable("PAL_RUNTIME_DIR");
+    if(override.isEmpty())override=qEnvironmentVariable("CERE_RUNTIME_DIR");
+    if(!override.isEmpty())return QDir(override).absolutePath();
     const QString runtime=qEnvironmentVariable("XDG_RUNTIME_DIR");
-    return (runtime.isEmpty()?QDir::tempPath()+"/cere-"+QString::number(::getuid()):runtime)+"/cere";
+    return (runtime.isEmpty()?QDir::tempPath()+"/pal-"+QString::number(::getuid()):runtime)+"/pal";
 }
 // The installed service owns the broker, unless an isolated state or runtime directory is in use.
 bool Controller::managedBroker()const{
     const auto userData=QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    const bool installed=(m_root=="/usr/share/cere"&&QFile::exists("/usr/lib/systemd/user/cere-broker.service"))||
-        (m_root==userData+"/cere"&&QFile::exists(userData+"/systemd/user/cere-broker.service"));
-    return installed&&qEnvironmentVariable("CERE_STATE_DIR").isEmpty()&&qEnvironmentVariable("CERE_RUNTIME_DIR").isEmpty();
+    const bool installed=(m_root=="/usr/share/pal"&&QFile::exists("/usr/lib/systemd/user/pal-broker.service"))||
+        (m_root==userData+"/pal"&&QFile::exists(userData+"/systemd/user/pal-broker.service"));
+    return installed&&qEnvironmentVariable("PAL_STATE_DIR").isEmpty()&&qEnvironmentVariable("PAL_RUNTIME_DIR").isEmpty()
+        &&qEnvironmentVariable("CERE_STATE_DIR").isEmpty()&&qEnvironmentVariable("CERE_RUNTIME_DIR").isEmpty();
 }
 // Broker is independent of the UI. Development launches use the same entry point as the service;
 // a second broker for the same runtime waits for the first one's lock and leaves it running.
@@ -255,26 +272,57 @@ void Controller::launchBroker(bool initial){
             // socket retry connects once the broker listens. Only a start the service manager refuses falls
             // through to a direct launch, whose broker would otherwise hold the runtime lock with this
             // process's environment instead of the unit's (no ~/.local/bin, no memory credentials).
-            QProcess service;service.start("systemctl",{"--user","start","--no-block","cere-broker.service"});
+            QProcess service;service.start("systemctl",{"--user","start","--no-block","pal-broker.service"});
             if(service.waitForFinished(3000)&&service.exitStatus()==QProcess::NormalExit&&service.exitCode()==0)return;
-        }else if(QProcess::startDetached("systemctl",{"--user","start","--no-block","cere-broker.service"}))return;
+        }else if(QProcess::startDetached("systemctl",{"--user","start","--no-block","pal-broker.service"}))return;
     }
     QProcess broker;broker.setProgram(QStandardPaths::findExecutable("node"));broker.setArguments({m_root+"/broker/main.ts"});broker.setStandardOutputFile(QProcess::nullDevice());broker.setStandardErrorFile(QProcess::nullDevice());broker.startDetached();
+}
+static QIcon companionTrayIcon() {
+    const QImage face(QStringLiteral(":/pal/brand/pal_face_icon.png"));
+    QIcon icon;
+    // StatusNotifier hosts choose from the pixel sizes advertised by QIcon.
+    for (const int size : {16, 22, 24, 32, 48, 64, 96, 128})
+        icon.addPixmap(QPixmap::fromImage(face.scaled(size, size, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+    return icon;
 }
 void Controller::start(bool show,bool toggle,const QString &conversationFolder){
     m_pendingToggle=toggle;
     m_pendingConversationFolder=conversationFolder;
     if(!m_overlay){
         launchBroker(true);
-        m_overlayProcess=new QProcess(this);m_overlayProcess->setProgram(qEnvironmentVariable("CERE_HOST_EXEC",QCoreApplication::applicationFilePath()));
+        m_overlayProcess=new QProcess(this);m_overlayProcess->setProgram(qEnvironmentVariable("PAL_HOST_EXEC",QCoreApplication::applicationFilePath()));
         QStringList overlayArguments{"--overlay","--root",m_root};if(toggle)overlayArguments<<"--toggle";
         m_overlayProcess->setArguments(overlayArguments);m_overlayProcess->setProcessChannelMode(QProcess::ForwardedChannels);m_overlayProcess->start();
-        m_tray=new QSystemTrayIcon(QGuiApplication::windowIcon(),this);m_tray->setToolTip("Cere · your desktop companion");
-        auto menu=new QMenu();menu->addAction("Open Cere",this,[this]{expand();});menu->addAction("Show / hide",this,[this]{auto s=m_state.value("settings").toMap();rpc("settings.update",{{"hidden",!s.value("hidden").toBool()}});});
-        menu->addAction("Pause AI actions",this,[this]{rpc("settings.update",{{"paused",true}});});
-        menu->addAction("Disable remote access now",this,[this]{rpc("remote.off",{});});
-        menu->addSeparator();menu->addAction("Quit · keep sessions running",this,[this]{quit(false);});menu->addAction("Quit and stop sessions",this,[this]{quit(true);});
-        m_tray->setContextMenu(menu);m_tray->show();connect(m_tray,&QSystemTrayIcon::activated,this,[this](auto reason){if(reason==QSystemTrayIcon::Trigger)expand();});
+        m_tray=new QSystemTrayIcon(companionTrayIcon(),this);m_tray->setToolTip("PAL · your desktop companion");
+        auto *menu = new QMenu();
+        menu->addAction(tr("Open workspace"), this, [this] { expand(); });
+        auto *visibility = menu->addAction(tr("Hide companion"), this, [this] {
+            rpc("settings.update", {{"hidden", !m_state.value("settings").toMap().value("hidden").toBool()}});
+        });
+        menu->addSeparator();
+        auto *pause = menu->addAction(tr("Pause AI actions"), this, [this] {
+            rpc("settings.update", {{"paused", !m_state.value("settings").toMap().value("paused").toBool()}});
+        });
+        auto *remote = menu->addAction(tr("Disable remote access now"), this, [this] { rpc("remote.off", {}); });
+        visibility->setObjectName("trayVisibility");
+        pause->setObjectName("trayPause");
+        const auto refreshActions = [this, visibility, pause, remote] {
+            const auto settings = m_state.value("settings").toMap();
+            visibility->setText(settings.value("hidden").toBool() ? tr("Show companion") : tr("Hide companion"));
+            pause->setText(settings.value("paused").toBool() ? tr("Resume AI actions") : tr("Pause AI actions"));
+            for (auto *action : {visibility, pause, remote}) action->setEnabled(connected());
+        };
+        connect(this, &Controller::stateChanged, menu, refreshActions);
+        refreshActions();
+        menu->addSeparator();
+        menu->addAction(tr("Quit and keep sessions running"), this, [this] { quit(false); });
+        menu->addAction(tr("Quit and stop sessions"), this, [this] { quit(true); });
+        m_tray->setContextMenu(menu);
+        m_tray->show();
+        connect(m_tray, &QSystemTrayIcon::activated, this, [this](auto reason) {
+            if (reason == QSystemTrayIcon::Trigger) expand();
+        });
         if(show||!conversationFolder.isEmpty()) QTimer::singleShot(500,this,[this]{showWorkspace();});
     }
     connectBroker();
@@ -282,7 +330,7 @@ void Controller::start(bool show,bool toggle,const QString &conversationFolder){
 void Controller::connectBroker(){
     if(m_socket.state()==QLocalSocket::ConnectedState||m_socket.state()==QLocalSocket::ConnectingState)return;
     const auto runtime=runtimePath();
-    if(QFileInfo::exists(runtime)&&!privateRuntime(runtime)){notify("Cere's runtime directory is not private to you; refusing to connect.");m_retry.start(5000);return;}
+    if(QFileInfo::exists(runtime)&&!privateRuntime(runtime)){notify("PAL's runtime directory is not private to you; refusing to connect.");m_retry.start(5000);return;}
     m_socket.abort();m_socket.connectToServer(runtime+"/broker.sock");
 }
 void Controller::checkLiveness(){
@@ -303,13 +351,13 @@ void Controller::checkLiveness(){
     QList<int> expired;
     for(auto it=m_requests.cbegin();it!=m_requests.cend();++it)
         if(it.key()!=m_pingRequest&&!longJobs.contains(it->method)&&now-it->sent>=m_requestDeadlineMs)expired<<it.key();
-    if(!expired.isEmpty())endRequests(expired,"Cere did not confirm this in time. It may still complete; nothing will be resent.","deadline");
+    if(!expired.isEmpty())endRequests(expired,"PAL did not confirm this in time. It may still complete; nothing will be resent.","deadline");
     if(m_responsive&&m_lastInbound.elapsed()>=m_unresponsiveMs){
         m_responsive=false;
         QList<int> pending=m_requests.keys();pending.removeAll(m_pingRequest);
-        endRequests(pending,"Cere's session broker stopped responding before confirming this. It may still complete; nothing will be resent.","unresponsive");
+        endRequests(pending,"PAL's session broker stopped responding before confirming this. It may still complete; nothing will be resent.","unresponsive");
         stopRoaming(false);refreshMotion();emit stateChanged();
-        notify("Cere's session broker is not responding. Your drafts stay here.");
+        notify("PAL's session broker is not responding. Your drafts stay here.");
     }
     // One ping at a time, written directly: rpc() refuses new requests while the broker is unresponsive.
     if(m_pingRequest<0){
@@ -325,6 +373,7 @@ void Controller::endRequests(const QList<int> &ids,const QString &message,const 
         m_copies.remove(id);retainDeferredDraft(id);
         // An offline draft whose save went unconfirmed stays held, to be saved again or handed back.
         m_offlineFlushes.remove(id);
+        if(m_quitStopRequests.contains(id))failQuitStop("PAL could not confirm that every session stopped. PAL is still open so you can retry or keep watching them.");
         emit result(id,QVariantMap{{"error",message},{"code","CONNECTION_LOST"},{"reason",reason}});
     }
 }
@@ -332,6 +381,7 @@ void Controller::failPendingRequests(const QString &message){
     const auto pending=std::exchange(m_requests,{});
     // Offline flushes in flight ended with the connection; their conversations may flush again.
     m_messagesRequest=-1;m_olderRequest=-1;m_copies.clear();m_liveMessages.clear();m_offlineFlushes.clear();
+    if(m_stopAndQuit)failQuitStop("PAL could not confirm that every session stopped. PAL is still open so you can retry or keep watching them.");
     for(const int id:m_deferredDrafts.keys())retainDeferredDraft(id);
     for(auto it=pending.cbegin();it!=pending.cend();++it)emit result(it.key(),QVariantMap{{"error",message},{"code","CONNECTION_LOST"}});
 }
@@ -376,7 +426,7 @@ void Controller::openCompanionReply(const QString &replyId){
     }
 }
 int Controller::rpc(const QString &method,const QVariantMap &params){
-    if(!connected()){notify("Cere is reconnecting to her session broker.");return -1;}
+    if(!connected()){notify("PAL is reconnecting to her session broker.");return -1;}
     const int id=++m_sequence;m_requests[id]={method,m_clock.elapsed()};
     m_socket.write(QJsonDocument(QJsonObject{{"id",id},{"method",method},{"params",QJsonObject::fromVariantMap(params)}}).toJson(QJsonDocument::Compact)+'\n');return id;
 }
@@ -385,7 +435,7 @@ void Controller::receive(){
     m_lastInbound.restart();
     if(!m_responsive&&m_socket.state()==QLocalSocket::ConnectedState){
         // Answering again: requests ended meanwhile stay ended; the open transcript is reread.
-        m_responsive=true;emit stateChanged();refreshMotion();reloadMessages();notify("Cere's session broker is responding again.");
+        m_responsive=true;emit stateChanged();refreshMotion();reloadMessages();notify("PAL's session broker is responding again.");
     }
     int newline;
     while((newline=m_buffer.indexOf('\n'))>=0){if(newline>16*1024*1024){m_buffer.clear();m_socket.abort();return;}auto line=m_buffer.left(newline);m_buffer.remove(0,newline+1);auto object=QJsonDocument::fromJson(line).object();
@@ -406,7 +456,9 @@ void Controller::receive(){
                 if(id==m_messagesRequest)m_messagesRequest=-1;
                 if(id==m_olderRequest)m_olderRequest=-1;
                 m_copies.remove(id);retainDeferredDraft(id);
-                notify(error["message"].toString());emit result(id,QVariantMap{{"error",error["message"].toString()},{"code",error["code"].toString()}});continue;
+                if(m_quitStopRequests.contains(id))failQuitStop("PAL could not confirm that every session stopped: "+error["message"].toString());
+                else notify(error["message"].toString());
+                emit result(id,QVariantMap{{"error",error["message"].toString()},{"code",error["code"].toString()}});continue;
             }
             auto value=object["result"].toVariant();
             if(method=="subscribe"||method=="state"){
@@ -428,7 +480,7 @@ void Controller::receive(){
                 }
                 if(method=="subscribe"){
                     flushOfflineDrafts();
-                    // `cere toggle` started this interface: the process that owns the compact panel opens it.
+                    // `pal toggle` started this interface: the process that owns the compact panel opens it.
                     const auto settings=m_state.value("settings").toMap();
                     if(m_pendingToggle&&settings.value("topmost",true).toBool()==m_overlay){
                         if(settings.value("hidden").toBool())rpc("settings.update",{{"hidden",false}});
@@ -488,6 +540,7 @@ void Controller::receive(){
                 else{const int next=rpc("session.messageText",{{"id",copy.value("sessionId")},{"messageId",copy.value("messageId")},{"offset",chunk.value("next")}});if(next>=0)m_copies[next]=copy;}
             }
             if(method=="session.create")select(value.toMap().value("id").toString());
+            confirmQuitStop(id);
             emit result(id,value);
             if(m_deferredDrafts.contains(id)){
                 auto draft=m_deferredDrafts.take(id);
@@ -503,7 +556,8 @@ void Controller::receive(){
                 if(!revision.isValid()||revision!=m_state.value("revision"))applyState(params);
             }
             // The broker dropped message copies this host was too busy to read: reread the open transcript.
-            if(method=="resync")reloadMessages();
+            if(method=="resync"){reloadMessages();emit terminalEvent(QVariantMap{{"kind","resync"}});}
+            if(method=="terminal")emit terminalEvent(params);
             if(method=="message")observeConversation(params);
             if(method=="message"&&params.value("sessionId").toString()==m_selected){
                 // An older revision can arrive after a newer page; it never overwrites it.
@@ -526,7 +580,7 @@ void Controller::receive(){
                 else if(kind=="approval")playMotion("approval");
                 else if(kind=="error")playMotion("error");
                 else if(kind=="timer")playMotion("timer");
-                if(m_tray&&(kind=="approval"||!m_state.value("settings").toMap().value("quiet").toBool()))m_tray->showMessage("Cere",params.value("text").toString(),QSystemTrayIcon::Information,5000);
+                if(m_tray&&(kind=="approval"||!m_state.value("settings").toMap().value("quiet").toBool()))m_tray->showMessage("PAL",params.value("text").toString(),QSystemTrayIcon::Information,5000);
             }
             if(method=="ui"){
                 QString command=params.value("command").toString();bool top=m_state.value("settings").toMap().value("topmost",true).toBool();
@@ -579,11 +633,14 @@ void Controller::applyState(const QVariantMap &state){
         if(!pendingQuestions.contains(it.key())){it=m_questionDrafts.erase(it);draftsChanged=true;}else ++it;
     }
     if(draftsChanged)emit questionDraftsChanged();
-    if(m_tray){QStringList names;for(const auto &device:state.value("remote").toMap().value("connected").toList())names<<device.toMap().value("name").toString();m_tray->setToolTip(names.isEmpty()?"Cere · your desktop companion":"Cere · Remote connected: "+names.join(", "));}
+    if(m_tray){QStringList names;for(const auto &device:state.value("remote").toMap().value("connected").toList())names<<device.toMap().value("name").toString();m_tray->setToolTip(names.isEmpty()?"PAL · your desktop companion":"PAL · Remote connected: "+names.join(", "));}
     m_attention=state.value("attention").toMap();
     const auto moodAttention=m_attention.value(moodOwner()).toMap();
     if(moodAttention.contains("mood"))receiveMood(moodAttention.value("sessionId").toString(),moodAttention.value("mood").toMap());
     if(m_selected.isEmpty()&&!state.value("sessions").toList().isEmpty())select(state.value("sessions").toList().first().toMap().value("id").toString());
+    // A provider's interrupt acknowledgement only means it accepted the request. Stop-and-quit
+    // waits for this authoritative state snapshot to say the affected turn is no longer active.
+    settleQuitStops();
     emit stateChanged();
     if(avatar().value("id")!=oldAvatarId)emit avatarChanged();
     syncPet();
@@ -620,7 +677,7 @@ void Controller::applyTheme(){
     for(const auto role:{QPalette::Text,QPalette::WindowText,QPalette::ButtonText})palette.setColor(QPalette::Disabled,role,color("muted"));
     QApplication::setPalette(palette);
 
-    QIcon icon(m_root+"/assets/cere-emblem.png");
+    QIcon icon(m_root+"/assets/pal-emblem.png");
     {
         // Every selected avatar, including the unmasked default, supplies its
         // live icon. The application emblem remains the missing-art fallback.
@@ -640,7 +697,6 @@ void Controller::applyTheme(){
     QGuiApplication::setWindowIcon(icon);
     for(QQuickView *view:{m_panel,m_pet,m_petMirror.data(),m_bubble})
         if(view)view->setIcon(icon);
-    if(m_tray)m_tray->setIcon(icon);
     emit themeChanged();
 }
 QVariantMap Controller::session()const{for(auto s:m_state.value("sessions").toList())if(s.toMap().value("id").toString()==m_selected)return s.toMap();return {};}
@@ -668,15 +724,18 @@ QQuickView *Controller::view(const QString &file,bool layer,const QString &title
     auto v=new QQuickView(&m_qmlEngine,nullptr);v->setColor(Qt::transparent);v->setResizeMode(QQuickView::SizeRootObjectToView);v->setTitle(title);
     v->rootContext()->setContextProperty("App",this);
     if(layer&&qGuiApp->platformName().startsWith("wayland")){
-        auto shell=LayerShellQt::Window::get(v);shell->setScope(title.startsWith("Cere Pet")?"cere-pet":title=="Cere Approval"?"cere-approval":"cere-panel");shell->setLayer(LayerShellQt::Window::LayerOverlay);shell->setExclusiveZone(-1);
+        auto shell=LayerShellQt::Window::get(v);shell->setScope(title.startsWith("PAL Pet")?"pal-pet":title=="PAL Approval"?"pal-approval":"pal-panel");shell->setLayer(LayerShellQt::Window::LayerOverlay);shell->setExclusiveZone(-1);
         shell->setAnchors(LayerShellQt::Window::Anchors(LayerShellQt::Window::AnchorTop)|LayerShellQt::Window::AnchorLeft);
-        shell->setKeyboardInteractivity(title.startsWith("Cere Pet")?LayerShellQt::Window::KeyboardInteractivityNone:LayerShellQt::Window::KeyboardInteractivityOnDemand);
-        shell->setActivateOnShow(!title.startsWith("Cere Pet")&&title!="Cere Approval");shell->setCloseOnDismissed(false);
-    }else if(title=="Cere Pet")v->setFlags(Qt::Tool|Qt::FramelessWindowHint|Qt::WindowDoesNotAcceptFocus);
-    else if(title=="Cere Panel"||title=="Cere Approval")v->setFlags(Qt::Tool|Qt::FramelessWindowHint);
+        shell->setKeyboardInteractivity(title.startsWith("PAL Pet")?LayerShellQt::Window::KeyboardInteractivityNone:LayerShellQt::Window::KeyboardInteractivityOnDemand);
+        shell->setActivateOnShow(!title.startsWith("PAL Pet")&&title!="PAL Approval");shell->setCloseOnDismissed(false);
+    }else if(title=="PAL Pet")v->setFlags(Qt::Tool|Qt::FramelessWindowHint|Qt::WindowDoesNotAcceptFocus);
+    else if(title=="PAL Panel"||title=="PAL Approval")v->setFlags(Qt::Tool|Qt::FramelessWindowHint);
+    if (file == "Panel.qml") v->setInitialProperties({{"prepareAsynchronously", true}});
     v->setSource(QUrl::fromLocalFile(m_root+"/qml/"+file));
-    if(title=="Cere Pet Mirror"&&v->rootObject())v->rootObject()->setProperty("motionDriver",false);
-    if(title=="Cere"||title=="Cere Panel")connect(v,&QWindow::visibilityChanged,this,[this,v]{
+    if (file == "Panel.qml" && v->rootObject())
+        connect(v->rootObject(), SIGNAL(contentReadyChanged()), this, SLOT(showCompactWhenReady()));
+    if(title=="PAL Pet Mirror"&&v->rootObject())v->rootObject()->setProperty("motionDriver",false);
+    if(title=="PAL"||title=="PAL Panel")connect(v,&QWindow::visibilityChanged,this,[this,v]{
         if(connected())rpc("ui.panel",{{"owner",m_overlay?"overlay":"ui"},{"visible",v->isVisible()&&v->visibility()!=QWindow::Minimized}});
         publishAttention();
         refreshMotion();
@@ -686,8 +745,22 @@ QQuickView *Controller::view(const QString &file,bool layer,const QString &title
 void Controller::syncPet(){
     if(m_state.isEmpty())return;const auto s=m_state.value("settings").toMap();const bool top=s.value("topmost",true).toBool();
     const bool visible=top==m_overlay&&!s.value("hidden").toBool();
-    if(!visible){if(m_pet)m_pet->hide();if(m_panel&&!m_expanded)m_panel->hide();return;}
-    if(!m_pet)m_pet=view("Pet.qml",m_overlay,"Cere Pet");
+    if (!visible) {
+        if (top == m_overlay && !m_pet && !m_petWarmup) {
+            // A hidden companion needs no artwork or window. Compile its QML in the
+            // background so the first tray reveal can use the engine's component cache.
+            m_petWarmup = std::make_unique<QQmlComponent>(&m_qmlEngine,
+                QUrl::fromLocalFile(m_root + "/qml/Pet.qml"), QQmlComponent::Asynchronous);
+        }
+        if (top != m_overlay || (m_pet && m_pet->isVisible())) m_compactShowPending = false;
+        if (m_pet) m_pet->hide();
+        if (m_panel && !m_expanded) m_panel->hide();
+        return;
+    }
+    if (!m_pet) {
+        m_pet = view("Pet.qml", m_overlay, "PAL Pet");
+        m_petWarmup.reset();
+    }
     qreal scale=s.value("scale",1).toDouble();
     const QSize petSize(qRound(192*scale),qRound(208*scale));
     m_pet->setMinimumSize(petSize);m_pet->setMaximumSize(petSize);m_pet->resize(petSize);
@@ -707,9 +780,16 @@ void Controller::syncPet(){
         // A rule installed after mapping is too late for the initial maximized configure.
         // Keep the fixed-size floating companion movable from its first Wayland frame.
         if(!m_overlay&&qGuiApp->platformName().startsWith("wayland")&&!qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE"))
-            hyprRule(R"(hl.window_rule({name="cere-floating-pet",match={title="^Cere Pet$"},float=true,no_initial_focus=true,suppress_event="maximize fullscreen"}))","windowrulev2 float,title:^(Cere Pet)$");
+            hyprRule(R"(hl.window_rule({name="pal-floating-pet",match={title="^PAL Pet$"},float=true,no_initial_focus=true,suppress_event="maximize fullscreen"}))","windowrulev2 float,title:^(PAL Pet)$");
+        if (!m_panel) {
+            // After the pet is on screen, compile and incubate the compact chat in spare frame time.
+            // An earlier click uses the same view, and can still close it while it is loading.
+            connect(m_pet, &QQuickWindow::frameSwapped, this, [this] {
+                if (!m_panel && m_pet->isVisible()) m_panel = view("Panel.qml", m_overlay, "PAL Panel");
+            }, Qt::ConnectionType(Qt::QueuedConnection | Qt::SingleShotConnection));
+        }
         m_pet->show();if(!m_overlay&&qGuiApp->platformName().startsWith("wayland")){
-        QTimer::singleShot(150,this,[this]{hyprDispatch("hl.dsp.window.float({window=\"title:^Cere Pet$\",action=\"set\"})","setfloating title:^Cere Pet$");placePet(m_petPosition,m_screen,false);});
+        QTimer::singleShot(150,this,[this]{hyprDispatch("hl.dsp.window.float({window=\"title:^PAL Pet$\",action=\"set\"})","setfloating title:^PAL Pet$");placePet(m_petPosition,m_screen,false);});
     }}
 }
 void Controller::updateMask(){
@@ -718,89 +798,12 @@ void Controller::updateMask(){
     if(!m_pet||(m_maskSize==m_pet->size()&&m_maskAvatar==identity))return;
     m_maskSize=m_pet->size();
     m_maskAvatar=identity;
-    // This is an input region only, never a visual cutout. Include the envelope
-    // of every pose/transform so animated hair and outstretched hands stay clickable.
-    const auto definition=selected.value("puppet").toMap();
-    const QString atlasPath=m_root+"/assets/"+definition.value("texture").toString();
-    const QImage atlas(atlasPath);
-    AvatarPuppet puppet;
-    puppet.setDefinition(definition);puppet.setSource(QUrl::fromLocalFile(atlasPath));
-    const auto parts=definition.value("parts").toList();
-    const QSize logicalMaskSize(192,208);
-    QVector<QImage> surfaceEnvelopes(parts.size());
-    if(puppet.ready()&&!atlas.isNull()){
-        const auto checkedCrop=[&atlas](const QVariant &value,QRect &crop){
-            const auto values=value.toList();
-            if(values.size()!=4)return false;
-            double numbers[4];
-            for(int i=0;i<4;++i){
-                bool ok=false;numbers[i]=values[i].toDouble(&ok);
-                if(!ok||!std::isfinite(numbers[i])||std::abs(numbers[i]-std::round(numbers[i]))>1e-6)return false;
-            }
-            if(numbers[0]<0||numbers[1]<0||numbers[2]<=0||numbers[3]<=0||
-                numbers[0]+numbers[2]>atlas.width()||numbers[1]+numbers[3]>atlas.height())return false;
-            crop=QRect(qRound(numbers[0]),qRound(numbers[1]),qRound(numbers[2]),qRound(numbers[3]));
-            return atlas.rect().contains(crop);
-        };
-        for(int partIndex=0;partIndex<parts.size();++partIndex){
-            const auto part=parts[partIndex].toMap();
-            if(!part.value("surfaceMotion").toBool())continue;
-            const auto logicalRect=part.value("rect").toList();
-            if(logicalRect.size()!=4)continue;
-            bool widthOk=false,heightOk=false;
-            const double width=logicalRect[2].toDouble(&widthOk),height=logicalRect[3].toDouble(&heightOk);
-            if(!widthOk||!heightOk||!std::isfinite(width)||!std::isfinite(height)||width<=0||height<=0)continue;
-            const QSize envelopeSize(std::clamp(int(std::ceil(width)),1,logicalMaskSize.width()),
-                                     std::clamp(int(std::ceil(height)),1,logicalMaskSize.height()));
-            QImage envelope(envelopeSize,QImage::Format_ARGB32_Premultiplied);envelope.fill(Qt::transparent);
-            QPainter envelopePainter(&envelope);envelopePainter.setRenderHint(QPainter::SmoothPixmapTransform);
-            bool drewCrop=false;
-            const auto addCrop=[&](const QVariant &value){
-                QRect crop;
-                if(!checkedCrop(value,crop))return;
-                envelopePainter.drawImage(QRectF(QPointF(0,0),QSizeF(envelopeSize)),atlas,crop);drewCrop=true;
-            };
-            addCrop(part.value("sourceRect"));
-            for(const auto &frameValue:part.value("surfaceFrames").toList())addCrop(frameValue.toMap().value("sourceRect"));
-            envelopePainter.end();
-            if(drewCrop)surfaceEnvelopes[partIndex]=envelope;
-        }
+    QImage mask(":/pal/avatar-startup/" + identity + "-mask.png");
+    if (mask.isNull()) {
+        // A custom data root can add an avatar after this executable was built.
+        const auto definition = selected.value("puppet").toMap();
+        mask = AvatarStartup::render(definition, m_root + "/assets/" + definition.value("texture").toString()).mask;
     }
-    QImage mask(logicalMaskSize,QImage::Format_ARGB32_Premultiplied);mask.fill(Qt::transparent);
-    QPainter painter(&mask);
-    const auto poses=definition.value("poses").toMap();
-    for(const auto &value:poses){
-        puppet.setPose(value.toMap().value("joints").toMap());
-        const auto bones=puppet.boneTransforms();
-        // Carrying rotates around the grab point. Cover every pivot within the
-        // artwork, as well as the ordinary bottom-center resting pivot.
-        for(const QPointF pivot:{QPointF(0,0),QPointF(192,0),QPointF(0,208),QPointF(192,208),QPointF(96,208)})for(int angle:{-7,0,7}){
-            painter.save();
-            painter.translate(3.84+pivot.x()*.96,3.32+pivot.y()*.96);painter.rotate(angle);
-            painter.translate(-pivot.x()*.96,-pivot.y()*.96);painter.scale(.96,.96);
-            for(int partIndex=0;partIndex<parts.size();++partIndex){
-                const auto part=parts[partIndex].toMap();
-                const auto matrix=bones.value(part.value("bone").toString()).toList();
-                const auto source=part.value("sourceRect").toList(),rect=part.value("rect").toList();
-                const QImage &surfaceEnvelope=surfaceEnvelopes[partIndex];
-                if(matrix.size()!=6||rect.size()!=4||(surfaceEnvelope.isNull()&&source.size()!=4))continue;
-                painter.save();
-                painter.setTransform(QTransform(matrix[0].toDouble(),matrix[2].toDouble(),
-                    matrix[1].toDouble(),matrix[3].toDouble(),matrix[4].toDouble(),matrix[5].toDouble()),true);
-                painter.rotate(part.value("rotation").toDouble());
-                const QRectF target(rect[0].toDouble(),rect[1].toDouble(),rect[2].toDouble(),rect[3].toDouble());
-                const QRect crop(source[0].toInt(),source[1].toInt(),source[2].toInt(),source[3].toInt());
-                if(part.value("mirrorX").toBool()){
-                    painter.translate(target.center().x()*2,0);painter.scale(-1,1);
-                }
-                if(surfaceEnvelope.isNull())painter.drawImage(target,atlas,crop);
-                else painter.drawImage(target,surfaceEnvelope);
-                painter.restore();
-            }
-            painter.restore();
-        }
-    }
-    painter.end();
     mask=mask.scaled(m_pet->width(),m_pet->height(),Qt::IgnoreAspectRatio,Qt::SmoothTransformation);
     QRegion region;
     for(int y=0;y<mask.height();++y){
@@ -834,7 +837,7 @@ void Controller::placePet(QPoint global,QScreen *screen,bool persist,bool roamin
     if(const QSize size=m_pet->minimumSize();!size.isEmpty()&&m_pet->size()!=size)m_pet->resize(size);
     if(m_overlay&&qGuiApp->platformName().startsWith("wayland")){
         auto shell=LayerShellQt::Window::get(m_pet);shell->setScreen(screen);shell->setDesiredSize(m_pet->size());shell->setMargins(QMargins(global.x()-g.x(),global.y()-g.y(),0,0));
-    }else {m_pet->setPosition(global);if(m_pet->isVisible()&&qGuiApp->platformName().startsWith("wayland"))hyprDispatch(QString("hl.dsp.window.move({window=\"title:^Cere Pet$\",x=%1,y=%2,relative=false})").arg(global.x()).arg(global.y()).toUtf8(),QString("movewindowpixel exact %1 %2,title:^Cere Pet$").arg(global.x()).arg(global.y()).toUtf8());}
+    }else {m_pet->setPosition(global);if(m_pet->isVisible()&&qGuiApp->platformName().startsWith("wayland"))hyprDispatch(QString("hl.dsp.window.move({window=\"title:^PAL Pet$\",x=%1,y=%2,relative=false})").arg(global.x()).arg(global.y()).toUtf8(),QString("movewindowpixel exact %1 %2,title:^PAL Pet$").arg(global.x()).arg(global.y()).toUtf8());}
     if(persist){QVariantMap p{{"output",screen->name()},{"x",double(global.x()-g.x())/std::max(1,g.width()-m_pet->width())},{"y",double(global.y()-g.y())/std::max(1,g.height()-m_pet->height())}};rpc("settings.update",{{"position",p}});m_pendingPosition=p;}
     syncPetMirror(roaming);
     if(m_panel&&m_panel->isVisible()&&!m_expanded)positionPanel();
@@ -851,7 +854,7 @@ void Controller::syncPetMirror(bool roaming){
     }
     if(!other){if(m_petMirror)m_petMirror->hide();return;}
     if(!m_petMirror){
-        m_petMirror=view("Pet.qml",true,"Cere Pet Mirror");m_petMirror->setFlag(Qt::WindowTransparentForInput);
+        m_petMirror=view("Pet.qml",true,"PAL Pet Mirror");m_petMirror->setFlag(Qt::WindowTransparentForInput);
         if(m_petMirror->rootObject()&&m_pet->rootObject())
             m_petMirror->rootObject()->setProperty("motionSource",m_pet->rootObject()->property("animationPlayer"));
     }
@@ -906,12 +909,21 @@ void Controller::dockPet(const QString &edge){
 }
 void Controller::resizePet(qreal factor){rpc("settings.update",{{"scale",std::clamp(factor,.5,3.)}});}
 void Controller::togglePanel(){
-    if(m_panel&&m_panel->isVisible()){closePanel();return;}
+    if(m_compactShowPending || (m_panel&&m_panel->isVisible())){closePanel();return;}
     if(m_panel&&m_expanded){emit flushDrafts();delete m_panel;m_panel=nullptr;}
-    m_expanded=false;if(!m_panel)m_panel=view("Panel.qml",m_overlay,"Cere Panel");
+    m_expanded=false;if(!m_panel)m_panel=view("Panel.qml",m_overlay,"PAL Panel");
     stopRoaming(true);
+    m_compactShowPending = true;
+    preview("listen");
+    showCompactWhenReady();
+}
+void Controller::showCompactWhenReady() {
+    if (!m_compactShowPending || m_expanded || !m_panel || !m_panel->rootObject()
+            || !m_panel->rootObject()->property("contentReady").toBool()) return;
+    m_compactShowPending = false;
+    // Map only when the composer and its keyboard target exist.
     // One placement rectangle sizes and positions the panel, so short outputs stay valid.
-    m_panel->resize(Placement::compactPanel(m_screen?m_screen->availableGeometry():QRect(0,0,464,912),m_petPosition,m_pet?m_pet->size():QSize(192,208),QSize(440,860)).size());positionPanel();m_panel->show();m_panel->requestActivate();floatPanel();refreshMotion();preview("listen");
+    m_panel->resize(Placement::compactPanel(m_screen?m_screen->availableGeometry():QRect(0,0,464,912),m_petPosition,m_pet?m_pet->size():QSize(192,208),QSize(440,860)).size());positionPanel();m_panel->show();m_panel->requestActivate();floatPanel();refreshMotion();
 }
 void Controller::positionPanel(){if(!m_panel||m_expanded||!m_screen)return;auto g=m_screen->geometry();const auto rect=Placement::compactPanel(m_screen->availableGeometry(),m_petPosition,m_pet?m_pet->size():QSize(192,208),QSize(440,860));
     const bool layer=m_overlay&&qGuiApp->platformName().startsWith("wayland");
@@ -924,14 +936,14 @@ void Controller::positionPanel(){if(!m_panel||m_expanded||!m_screen)return;auto 
     if(layer){auto shell=LayerShellQt::Window::get(m_panel);shell->setScreen(m_screen);shell->setDesiredSize(m_panel->size());shell->setMargins({x-g.x(),y-g.y(),0,0});return;}
     m_panel->setPosition(x,y);
     if(m_panel->isVisible()&&qGuiApp->platformName().startsWith("wayland")&&!qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE"))
-        hyprDispatch(QString("hl.dsp.window.move({window=\"title:^Cere Panel$\",x=%1,y=%2,relative=false})").arg(x).arg(y).toUtf8(),QString("movewindowpixel exact %1 %2,title:^Cere Panel$").arg(x).arg(y).toUtf8());
+        hyprDispatch(QString("hl.dsp.window.move({window=\"title:^PAL Panel$\",x=%1,y=%2,relative=false})").arg(x).arg(y).toUtf8(),QString("movewindowpixel exact %1 %2,title:^PAL Panel$").arg(x).arg(y).toUtf8());
 }
 // Without always-on-top the compact panel is a normal window; Hyprland would otherwise tile it.
 void Controller::floatPanel(){
     if(m_overlay||m_expanded||!m_panel||!qGuiApp->platformName().startsWith("wayland")||qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE"))return;
     QTimer::singleShot(100,this,[this]{
         if(!m_panel||m_expanded||!m_panel->isVisible())return;
-        hyprDispatch("hl.dsp.window.float({window=\"title:^Cere Panel$\",action=\"set\"})","setfloating title:^Cere Panel$");
+        hyprDispatch("hl.dsp.window.float({window=\"title:^PAL Panel$\",action=\"set\"})","setfloating title:^PAL Panel$");
         positionPanel();
     });
 }
@@ -948,7 +960,7 @@ void Controller::syncApprovalBubble(){
     if(m_bubble&&m_bubble->rootObject())m_bubble->rootObject()->setProperty("panelOpen",panelVisible);
     if(!show){if(m_bubble)m_bubble->hide();return;}
     if(!m_bubble){
-        m_bubble=view("ApprovalBubble.qml",m_overlay,"Cere Approval");
+        m_bubble=view("ApprovalBubble.qml",m_overlay,"PAL Approval");
         m_bubble->setTransientParent(m_pet);
         // A compositor close/minimize must not strand an unresolved request.
         // Queue this so intentional hides can finish updating panel visibility first.
@@ -969,11 +981,11 @@ void Controller::syncApprovalBubble(){
     if(!m_bubble->isVisible()||m_bubble->visibility()==QWindow::Minimized){
         // Hyprland focuses every new window; this one must open without taking the keyboard.
         if(!m_overlay&&qGuiApp->platformName().startsWith("wayland")&&!qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE"))
-            hyprRule("hl.window_rule({name=\"cere-approval-bubble\",match={title=\"^Cere Approval$\"},no_initial_focus=true})","windowrulev2 noinitialfocus,title:^(Cere Approval)$");
+            hyprRule("hl.window_rule({name=\"pal-approval-bubble\",match={title=\"^PAL Approval$\"},no_initial_focus=true})","windowrulev2 noinitialfocus,title:^(PAL Approval)$");
         m_bubble->showNormal();
         if(!m_overlay&&qGuiApp->platformName().startsWith("wayland"))QTimer::singleShot(100,this,[this]{
             if(!m_bubble||!m_bubble->isVisible())return;
-            hyprDispatch("hl.dsp.window.float({window=\"title:^Cere Approval$\",action=\"set\"})","setfloating title:^Cere Approval$");
+            hyprDispatch("hl.dsp.window.float({window=\"title:^PAL Approval$\",action=\"set\"})","setfloating title:^PAL Approval$");
             positionApprovalBubble();
         });
     }
@@ -1001,18 +1013,18 @@ void Controller::positionApprovalBubble(){
         const auto origin=m_screen->geometry().topLeft();shell->setMargins({x-origin.x(),y-origin.y(),0,0});
     }else{
         m_bubble->setPosition(x,y);
-        if(m_bubble->isVisible()&&qGuiApp->platformName().startsWith("wayland"))hyprDispatch(QString("hl.dsp.window.move({window=\"title:^Cere Approval$\",x=%1,y=%2,relative=false})").arg(x).arg(y).toUtf8(),QString("movewindowpixel exact %1 %2,title:^Cere Approval$").arg(x).arg(y).toUtf8());
+        if(m_bubble->isVisible()&&qGuiApp->platformName().startsWith("wayland"))hyprDispatch(QString("hl.dsp.window.move({window=\"title:^PAL Approval$\",x=%1,y=%2,relative=false})").arg(x).arg(y).toUtf8(),QString("movewindowpixel exact %1 %2,title:^PAL Approval$").arg(x).arg(y).toUtf8());
     }
 }
-void Controller::closePanel(){emit flushDrafts();if(m_panel)m_panel->hide();refreshMotion();}
-void Controller::restorePanel(){if(!m_panel){togglePanel();return;}m_panel->show();m_panel->requestActivate();floatPanel();refreshMotion();}
+void Controller::closePanel(){m_compactShowPending=false;emit flushDrafts();if(m_panel)m_panel->hide();refreshMotion();}
+void Controller::restorePanel(){if(m_compactShowPending)return;if(!m_panel||(!m_expanded&&!m_panel->isVisible())){togglePanel();return;}m_panel->show();m_panel->requestActivate();floatPanel();refreshMotion();}
 void Controller::expand(){
     emit flushDrafts();
     if(connected()){rpc("ui.expand");return;}
     // Without the broker the interface process opens its own workspace; the overlay asks it to.
     if(!m_overlay){showWorkspace();return;}
     if(signalInterface(runtimePath(),SIGUSR1)){closePanel();return;}
-    notify("Cere is reconnecting to her session broker.");
+    notify("PAL is reconnecting to her session broker.");
 }
 void Controller::showWorkspaceLocally(){if(!m_overlay)showWorkspace();}
 void Controller::showNewConversation(const QString &folder){
@@ -1021,8 +1033,8 @@ void Controller::showNewConversation(const QString &folder){
 }
 bool Controller::signalInterface(const QString &runtime,int signal){
     QLockFile lock(runtime+"/ui.lock");qint64 pid=0;QString host,application;
-    if(!lock.getLockInfo(&pid,&host,&application)||pid<=1||pid==QCoreApplication::applicationPid()||host!=QSysInfo::machineHostName()||application!="cere")return false;
-    // A recycled process ID never receives the signal: it must still be this user's Cere.
+    if(!lock.getLockInfo(&pid,&host,&application)||pid<=1||pid==QCoreApplication::applicationPid()||host!=QSysInfo::machineHostName()||application!="pal")return false;
+    // A recycled process ID never receives the signal: it must still be this user's PAL.
     const QFileInfo process("/proc/"+QString::number(pid));
     if(!process.exists()||process.ownerId()!=::getuid()||QFileInfo(process.filePath()+"/exe").symLinkTarget()!=QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath())return false;
     return ::kill(pid_t(pid),signal)==0;
@@ -1048,18 +1060,92 @@ void Controller::flushOfflineDrafts(){
         sendHeldDraft(it.value());
     }
 }
-void Controller::showWorkspace(){stopRoaming(true);if(m_panel&&!m_expanded){emit flushDrafts();delete m_panel;m_panel=nullptr;}m_expanded=true;if(!m_panel){m_panel=view("Workspace.qml",false,"Cere");m_panel->resize(1040,780);m_panel->setMinimumSize({720,520});connect(m_panel,&QWindow::visibleChanged,this,[this]{refreshMotion();});}m_panel->show();m_panel->requestActivate();refreshMotion();preview("listen");}
+QUrl Controller::layoutSettingsUrl() const {
+    QString directory = qEnvironmentVariable("PAL_STATE_DIR");
+    if (directory.isEmpty()) directory = qEnvironmentVariable("CERE_STATE_DIR");
+    if (directory.isEmpty()) {
+        const auto state = QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation);
+        directory = state + "/pal";
+        const auto current = directory + "/desktop-layout.ini";
+        const auto legacy = state + "/cere/desktop-layout.ini";
+        if (!QFile::exists(current) && QFile::exists(legacy)) {
+            QDir().mkpath(directory);
+            QFile::copy(legacy, current);
+        }
+    }
+    return QUrl::fromLocalFile(directory + "/desktop-layout.ini");
+}
+
+void Controller::showWorkspace() {
+    m_compactShowPending = false;
+    stopRoaming(true);
+    if (m_panel && !m_expanded) {
+        emit flushDrafts();
+        delete m_panel;
+        m_panel = nullptr;
+    }
+    m_expanded = true;
+    if (!m_panel) {
+        auto *window = view("Workspace.qml", false, "PAL");
+        m_panel = window;
+        // Store logical size only. The compositor places toplevels and owns tiling.
+        auto *layout = new QSettings(layoutSettingsUrl().toLocalFile(), QSettings::IniFormat, window);
+        const QSize minimum(720, 520);
+        const auto limitMinimum = [window, minimum](QScreen *screen) {
+            window->setMinimumSize(screen ? minimum.boundedTo(screen->availableSize()) : minimum);
+        };
+        limitMinimum(window->screen());
+        connect(window, &QWindow::screenChanged, window, limitMinimum);
+        auto size = layout->value("workspace/size", QSize(1040, 780)).toSize();
+        size = size.expandedTo(window->minimumSize());
+        if (window->screen()) size = size.boundedTo(window->screen()->availableSize());
+        window->resize(size);
+        if (layout->value("workspace/maximized", false).toBool()) window->setWindowState(Qt::WindowMaximized);
+        auto *saveSize = new QTimer(window);
+        saveSize->setInterval(200);
+        saveSize->setSingleShot(true);
+        const auto rememberSize = [window, layout] {
+            if (window->windowState() == Qt::WindowNoState)
+                layout->setValue("workspace/size", window->size());
+        };
+        connect(window, &QWindow::widthChanged, saveSize, [saveSize] { saveSize->start(); });
+        connect(window, &QWindow::heightChanged, saveSize, [saveSize] { saveSize->start(); });
+        connect(saveSize, &QTimer::timeout, window, rememberSize);
+        connect(window, &QWindow::windowStateChanged, layout, [layout](Qt::WindowState state) {
+            if (state == Qt::WindowMaximized || state == Qt::WindowNoState)
+                layout->setValue("workspace/maximized", state == Qt::WindowMaximized);
+        });
+        connect(window, &QWindow::visibleChanged, this, [this, rememberSize](bool visible) {
+            if (!visible) rememberSize();
+            refreshMotion();
+        });
+    }
+    m_panel->setVisible(true);
+    m_panel->requestActivate();
+    refreshMotion();
+    preview("listen");
+}
 void Controller::copy(const QString &text){QGuiApplication::clipboard()->setText(text);notify("Copied to clipboard");preview("copy");}
 void Controller::openPath(const QString &path){QDesktopServices::openUrl(QUrl::fromLocalFile(path));}
 // Prose may break a long URL or path anywhere, but a table column keeps its widest word, as
 // with word wrapping: columns grow toward their natural width as the view allows, and a table
 // that still does not fit scrolls horizontally instead of crushing words into letters.
-static void fitTable(QTextTable *table,const QFont &base,qreal available){
+static void fitTable(QTextTable *table,const QFont &base,qreal available,const QVariantMap &theme,qreal spacing){
     static const QRegularExpression space("\\s+");
+    // Qt's default Markdown grid uses platform gray, even on dark character palettes.
+    auto format = table->format();
+    format.setBorderCollapse(true);
+    format.setBorder(1);
+    format.setBorderBrush(QColor(theme.value("line").toString()));
+    format.setBackground(QColor(theme.value("surface").toString()));
+    format.setCellPadding(spacing);
+    format.setCellSpacing(0);
+    format.setTopMargin(spacing);
+    format.setBottomMargin(spacing);
     const int columns=table->columns();
     QList<qreal> least(columns,0),natural(columns,0);
     for(int row=0;row<table->rows();++row)for(int column=0;column<columns;++column){
-        const auto cell=table->cellAt(row,column);
+        auto cell=table->cellAt(row,column);
         if(!cell.isValid()||cell.column()!=column||cell.columnSpan()!=1)continue;
         for(auto it=cell.begin();!it.atEnd();++it){
             const auto block=it.currentBlock();qreal line=0;
@@ -1072,7 +1158,6 @@ static void fitTable(QTextTable *table,const QFont &base,qreal available){
             natural[column]=std::max(natural[column],line);
         }
     }
-    auto format=table->format();
     const qreal chrome=2*(format.cellPadding()+format.border())+format.cellSpacing()+2;
     qreal leastSum=0,naturalSum=0;
     for(int column=0;column<columns;++column){natural[column]=std::max(natural[column],least[column]);leastSum+=least[column]+chrome;naturalSum+=natural[column]+chrome;}
@@ -1081,10 +1166,32 @@ static void fitTable(QTextTable *table,const QFont &base,qreal available){
         const qreal share=naturalSum<=available?1:leastSum>=available?0:(available-leastSum)/std::max<qreal>(1,naturalSum-leastSum);
         widths<<QTextLength(QTextLength::FixedLength,std::ceil(least[column]+(natural[column]-least[column])*share)+chrome);
     }
-    if(format.columnWidthConstraints()!=widths){format.setColumnWidthConstraints(widths);table->setFormat(format);}
+    format.setColumnWidthConstraints(widths);
+    if (table->format() != format) table->setFormat(format);
 }
-void Controller::formatMessage(QQuickTextDocument *quickDocument,qreal proseWidth){
-    if(!quickDocument)return;
+static bool codeBlock(const QTextBlock &block) {
+    if (!block.isValid()) return false;
+    const auto format = block.blockFormat();
+    return format.hasProperty(QTextFormat::BlockCodeFence) || format.hasProperty(QTextFormat::BlockCodeLanguage);
+}
+
+QString Controller::messageCodeAt(QQuickTextDocument *quickDocument, int position) const {
+    if (!quickDocument) return {};
+    auto block = quickDocument->textDocument()->findBlock(position);
+    if (!codeBlock(block)) return {};
+    while (codeBlock(block.previous())) block = block.previous();
+    QStringList lines;
+    while (codeBlock(block)) {
+        lines.append(block.text());
+        block = block.next();
+    }
+    return lines.join('\n');
+}
+
+QVariantList Controller::formatMessage(QQuickTextDocument *quickDocument, qreal proseWidth, qreal spacing,
+                                       qreal headerHeight, qreal lineHeight) {
+    if (!quickDocument) return {};
+    QVariantList codeHeaders;
     auto document=quickDocument->textDocument();
     // A wide table or code block widens the whole document; a right margin keeps every other
     // block at the visible width so reading never needs horizontal scrolling.
@@ -1094,12 +1201,26 @@ void Controller::formatMessage(QQuickTextDocument *quickDocument,qreal proseWidt
     QTextCursor edit(document);edit.beginEditBlock();
     for(auto block=document->begin();block.isValid();block=block.next()){
         auto format=block.blockFormat();
-        const bool code=format.hasProperty(QTextFormat::BlockCodeFence)||format.hasProperty(QTextFormat::BlockCodeLanguage);
-        format.setTopMargin(block==document->begin()?0:code||block.textList()?2:format.headingLevel()?12:8);
-        format.setBottomMargin(code?2:0);
-        if(code){format.setBackground(QColor(m_theme.value("codeSurface").toString()));format.setLeftMargin(8);format.setRightMargin(8);}
-        else if(!QTextCursor(block).currentTable())format.setRightMargin(overflow);
-        QTextCursor cursor(block);cursor.setBlockFormat(format);
+        const bool code=codeBlock(block);
+        const bool inTable=QTextCursor(block).currentTable()!=nullptr;
+        const bool firstCodeLine = code && !codeBlock(block.previous());
+        if (firstCodeLine) {
+            codeHeaders.append(QVariantMap{{"position", block.position()},
+                {"language", format.stringProperty(QTextFormat::BlockCodeLanguage)}});
+        }
+        qreal gap = block == document->begin() || inTable || code || block.textList() ? 0 : spacing;
+        if (format.headingLevel() && block != document->begin()) gap = spacing * 2;
+        format.setTopMargin(gap + (firstCodeLine ? headerHeight : 0));
+        format.setLineHeight(100 * lineHeight, QTextBlockFormat::ProportionalHeight);
+        format.setBottomMargin(0);
+        if (code) {
+            format.setBackground(QColor(m_theme.value("codeSurface").toString()));
+            format.setNonBreakableLines(true);
+            format.setLeftMargin(spacing);
+            format.setRightMargin(spacing);
+        }
+        else if(!inTable)format.setRightMargin(overflow);
+        if (block.blockFormat() != format) { QTextCursor cursor(block);cursor.setBlockFormat(format); }
         // Markdown anchors keep an explicit foreground from their first parse.
         // Changing TextArea.palette.link alone leaves old replies in the old colour.
         for(auto it=block.begin();!it.atEnd();++it){
@@ -1111,8 +1232,9 @@ void Controller::formatMessage(QQuickTextDocument *quickDocument,qreal proseWidt
     // Collect ranges before editing: merging adjacent fragments invalidates their iterators.
     QTextCharFormat link;link.setForeground(linkColor);
     for(const auto &[position,length]:links){QTextCursor cursor(document);cursor.setPosition(position);cursor.setPosition(position+length,QTextCursor::KeepAnchor);cursor.mergeCharFormat(link);}
-    if(proseWidth>0)for(auto frame:document->rootFrame()->childFrames())if(auto table=qobject_cast<QTextTable*>(frame))fitTable(table,document->defaultFont(),proseWidth);
+    if(proseWidth>0)for(auto frame:document->rootFrame()->childFrames())if(auto table=qobject_cast<QTextTable*>(frame))fitTable(table,document->defaultFont(),proseWidth,m_theme,spacing);
     edit.endEditBlock();
+    return codeHeaders;
 }
 void Controller::openMessageLink(const QString &link,const QString &directory){
     if(link.startsWith('#'))return;
@@ -1171,15 +1293,15 @@ QVariantMap Controller::clipboardContent(){
         if(image.isNull()){result["error"]="The clipboard image could not be read.";return result;}
         if(qint64(image.width())*qint64(image.height())>40000000){result["error"]="The clipboard image is too large to attach.";return result;}
         const QString runtime=runtimePath();
-        if(!QFileInfo(runtime).isDir()||!privateRuntime(runtime)){result["error"]="Cere's private runtime directory is unavailable.";return result;}
+        if(!QFileInfo(runtime).isDir()||!privateRuntime(runtime)){result["error"]="PAL's private runtime directory is unavailable.";return result;}
         const QString directory=runtime+"/clipboard";
         if(!QDir().mkpath(directory)||!QFile::setPermissions(directory,QFileDevice::ReadOwner|QFileDevice::WriteOwner|QFileDevice::ExeOwner)){
-            result["error"]="Cere could not prepare the clipboard image.";return result;
+            result["error"]="PAL could not prepare the clipboard image.";return result;
         }
         const QString path=directory+"/"+QUuid::createUuid().toString(QUuid::WithoutBraces)+".png";
         QSaveFile file(path);file.setDirectWriteFallback(false);
         if(!file.open(QIODevice::WriteOnly)||!file.setPermissions(QFileDevice::ReadOwner|QFileDevice::WriteOwner)||!image.save(&file,"PNG")||!file.commit()){
-            file.cancelWriting();result["error"]="Cere could not save the clipboard image.";return result;
+            file.cancelWriting();result["error"]="PAL could not save the clipboard image.";return result;
         }
         QFile::setPermissions(path,QFileDevice::ReadOwner|QFileDevice::WriteOwner);
         if(QFileInfo(path).size()>20*1024*1024){QFile::remove(path);result["error"]="The clipboard image is larger than 20 MiB.";return result;}
@@ -1203,7 +1325,7 @@ QString Controller::chooseSavePath(const QString &suggestedName){
 QString Controller::chooseWorkflow(){return QFileDialog::getOpenFileName(nullptr,"Import a ComfyUI workflow (Export (API))",QDir::homePath(),"ComfyUI API workflow (*.json)");}
 QString Controller::saveTextAs(const QString &suggestedName,const QString &text){
     // The dialog confirms overwriting; QSaveFile replaces the file only once the whole text is written.
-    const auto filter=suggestedName.endsWith(".json")?QStringLiteral("Cere package (*.json)"):suggestedName.endsWith(".md")?QStringLiteral("Markdown (*.md);;Text (*.txt)"):QStringLiteral("Text (*.txt);;Markdown (*.md)");
+    const auto filter=suggestedName.endsWith(".json")?QStringLiteral("PAL package (*.json)"):suggestedName.endsWith(".md")?QStringLiteral("Markdown (*.md);;Text (*.txt)"):QStringLiteral("Text (*.txt);;Markdown (*.md)");
     const auto path=QFileDialog::getSaveFileName(nullptr,"Save a copy",QDir::home().filePath(suggestedName),filter);
     if(path.isEmpty())return {};
     QSaveFile file(path);
@@ -1211,7 +1333,53 @@ QString Controller::saveTextAs(const QString &suggestedName,const QString &text)
     return path;
 }
 void Controller::notify(const QString &text){m_toast=text;emit toastChanged();m_toastTimer.start(8000);}
-void Controller::quit(bool stopTasks){emit flushDrafts();if(m_overlay){rpc("ui.quit",{{"stopTasks",stopTasks}});return;}if(stopTasks)for(auto s:m_state.value("sessions").toList())rpc("session.stop",{{"id",s.toMap().value("id")}});m_socket.flush();QTimer::singleShot(150,qApp,&QCoreApplication::quit);}
+void Controller::confirmQuitStop(int request){
+    if(!m_quitStopRequests.remove(request))return;
+    settleQuitStops();
+}
+void Controller::settleQuitStops(){
+    if(!m_stopAndQuit)return;
+    if(!m_quitStopRequests.isEmpty())return;
+    static const QSet<QString> active{QStringLiteral("starting"),QStringLiteral("working"),QStringLiteral("waiting"),QStringLiteral("stopping")};
+    for(auto it=m_quitStopSessions.begin();it!=m_quitStopSessions.end();){
+        bool stillActive=false;
+        for(const auto &entry:m_state.value("sessions").toList()){
+            const auto session=entry.toMap();
+            if(session.value("id").toString()==*it){stillActive=active.contains(session.value("status").toString());break;}
+        }
+        if(stillActive)++it;else it=m_quitStopSessions.erase(it);
+    }
+    if(!m_quitStopSessions.isEmpty())return;
+    m_quitStopTimer.stop();
+    QCoreApplication::quit();
+}
+void Controller::failQuitStop(const QString &message){
+    if(!m_stopAndQuit)return;
+    m_stopAndQuit=false;m_quitStopRequests.clear();m_quitStopSessions.clear();m_quitStopTimer.stop();notify(message);
+}
+void Controller::quit(bool stopTasks){
+    emit flushDrafts();
+    if(m_overlay){rpc("ui.quit",{{"stopTasks",stopTasks}});return;}
+    if(!stopTasks){QCoreApplication::quit();return;}
+    if(m_stopAndQuit)return;
+    if(!connected()){notify("PAL could not confirm that every session stopped while reconnecting. PAL is still open so you can retry.");return;}
+    static const QSet<QString> active{QStringLiteral("starting"),QStringLiteral("working"),QStringLiteral("waiting"),QStringLiteral("stopping")};
+    QStringList activeSessions;
+    for(const auto &entry:m_state.value("sessions").toList()){
+        const auto session=entry.toMap();
+        if(!active.contains(session.value("status").toString()))continue;
+        activeSessions<<session.value("id").toString();
+    }
+    if(activeSessions.isEmpty()){QCoreApplication::quit();return;}
+    m_stopAndQuit=true;
+    for(const auto &id:activeSessions){
+        const int request=rpc("session.stop",{{"id",id}});
+        if(request<0){failQuitStop("PAL could not confirm that every session stopped. PAL is still open so you can retry.");return;}
+        m_quitStopRequests.insert(request);m_quitStopSessions.insert(id);
+    }
+    if(m_quitStopRequests.isEmpty()){QCoreApplication::quit();return;}
+    m_socket.flush();m_quitStopTimer.start();
+}
 void Controller::refreshMotion(){
     syncApprovalBubble();
     const auto settings=m_state.value("settings").toMap();
@@ -1429,7 +1597,10 @@ void Controller::followMouse(){
         if(left!=m_roamLeft){m_roamLeft=left;refreshMotion();}
     }
 }
-bool Controller::autostartEnabled()const{return QFile::exists(QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)+"/autostart/cere.desktop");}
+bool Controller::autostartEnabled()const{
+    const auto directory=QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)+"/autostart/";
+    return QFile::exists(directory+"pal.desktop")||QFile::exists(directory+"cere.desktop");
+}
 static QString desktopExecArgument(QString value){
     // Desktop Entry Exec is not shell syntax: percent starts a field code even inside quotes.
     if(value.contains('\n')||value.contains('\r'))return {};
@@ -1440,9 +1611,12 @@ static QString desktopExecArgument(QString value){
 }
 bool Controller::setAutostart(bool enabled){
     const QString dir=QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)+"/autostart";
-    const QString path=dir+"/cere.desktop";
+    const QString path=dir+"/pal.desktop";
+    const QString legacy=dir+"/cere.desktop";
     if(!enabled){
-        if(!QFile::exists(path)||QFile::remove(path)){emit autostartChanged();return true;}
+        const bool currentRemoved=!QFile::exists(path)||QFile::remove(path);
+        const bool legacyRemoved=!QFile::exists(legacy)||QFile::remove(legacy);
+        if(currentRemoved&&legacyRemoved){emit autostartChanged();return true;}
         notify("Could not remove login startup");return false;
     }
     if(!QDir().mkpath(dir)){notify("Could not create login startup directory");return false;}
@@ -1453,9 +1627,10 @@ bool Controller::setAutostart(bool enabled){
     if(executable.isEmpty()||root.isEmpty()){notify("Login startup path cannot contain a newline");return false;}
     if(program.contains('%')||program.contains('=')){
         // Resolve a fixed program first; pass the actual binary and its arguments as distinct argv.
-        executable="/bin/sh -c "+desktopExecArgument("exec \"$@\"")+" cere "+executable;
+        executable="/bin/sh -c "+desktopExecArgument("exec \"$@\"")+" pal "+executable;
     }
-    const QString entry=QString("[Desktop Entry]\nType=Application\nName=Cere\nExec=%1 --root %2\nIcon=cere\nTerminal=false\n").arg(executable,root);
+    const QString entry=QString("[Desktop Entry]\nType=Application\nName=PAL\nExec=%1 --root %2\nIcon=pal\nTerminal=false\n").arg(executable,root);
     if(file.write(entry.toUtf8())!=entry.toUtf8().size()||!file.commit()){notify("Could not update login startup");return false;}
+    if(QFile::exists(legacy)&&!QFile::remove(legacy)){notify("PAL was enabled at login, but the legacy Cere startup entry could not be removed.");}
     emit autostartChanged();return true;
 }

@@ -13,7 +13,7 @@ import { abortableDelay } from '../broker/abortable.ts';
 
 const idle = () => ({ async send() {}, async interrupt() {}, async close() {} });
 async function broker(t: any) {
-  const root = await mkdtemp(join(tmpdir(), 'cere-jobs-'));
+  const root = await mkdtemp(join(tmpdir(), 'pal-jobs-'));
   const core = new Core(new Store(join(root, 'state')), idle);
   t.after(async () => { await core.close(); await rm(root, { recursive: true, force: true }); });
   return { root, core };
@@ -114,7 +114,7 @@ test('A04 indexing waits while a reply is generated, and a download is listed an
 });
 
 test('A04 transcribing a file runs whisper at background priority; dictation keeps normal priority', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'cere-jobs-nice-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await mkdtemp(join(tmpdir(), 'pal-jobs-nice-')); t.after(() => rm(root, { recursive: true, force: true }));
   // A whisper stand-in whose transcript is its own CPU priority.
   const whisper = join(root, 'whisper.mjs');
   await writeFile(whisper, `#!${process.execPath}\nimport { writeFileSync } from 'node:fs';\nimport { getPriority } from 'node:os';\nconst args = process.argv.slice(2);\nwriteFileSync(args[args.indexOf('--output-file') + 1] + '.txt', 'priority ' + getPriority());\n`, { mode: 0o755 });

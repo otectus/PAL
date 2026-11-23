@@ -15,6 +15,9 @@ Rectangle {
     // Every surface shows who is asking: a response answers exactly this requester.
     property var requester: (App.state.sessions || []).find(s => s.id === card.approval.sessionId) || null
     readonly property var requestingAgent: (requester?.agents || []).find(agent => agent.id === card.approval.nativeThreadId) || null
+    Accessible.role: Accessible.Grouping
+    Accessible.name: card.isQuestion ? "Question requiring your response" : "Permission request"
+    Accessible.description: card.approval.title || ""
 
     function cloneAnswers(source) {
         const result = {}
@@ -96,6 +99,12 @@ Rectangle {
         error = ""
         return true
     }
+    function resultError(value) {
+        const failure=value?.error
+        if(!failure)return ""
+        if(typeof failure==="string")return failure
+        return String(failure.message||failure.code||"The response could not be sent.")
+    }
     function submit(choice) {
         if (requestId >= 0 || !App.connected) return
         if (choice === "answer" && !validateAnswers()) return
@@ -121,29 +130,29 @@ Rectangle {
         function onResult(id, value) {
             if (id === card.requestId) {
                 card.requestId = -1
-                card.error = value?.error || ""
+                card.error = card.resultError(value)
             }
         }
     }
 
-    color: Theme.approvalSurface
-    border.color: Theme.approvalBorder
-    radius: Theme.radiusControl
-    implicitHeight: contents.implicitHeight + 24
+    color: card.isQuestion ? Theme.questionSurface : Theme.approvalSurface
+    border.color: card.isQuestion ? Theme.activeBorder : Theme.approvalBorder
+    radius: Theme.radiusCard
+    implicitHeight: contents.implicitHeight + Theme.space6
 
     ColumnLayout {
         id: contents
         anchors.fill: parent
-        anchors.margins: 12
-        spacing: 8
+        anchors.margins: Theme.space4
+        spacing: Theme.space3
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: Theme.space2
             Rectangle {
                 Layout.alignment: Qt.AlignTop
-                Layout.preferredWidth: badge.implicitWidth + 12
-                Layout.preferredHeight: 22
+                Layout.preferredWidth: badge.implicitWidth + Theme.space3
+                Layout.preferredHeight: Theme.iconSize
                 radius: Theme.radiusChip
                 color: card.isQuestion ? Theme.questionBadge : Theme.permissionBadge
                 border.color: card.isQuestion ? Theme.accentText : Theme.amber
@@ -166,13 +175,13 @@ Rectangle {
                 sessionId: card.requester ? card.requester.id : ""
                 title: card.requester ? card.requester.title : ""
                 cwd: card.requester ? card.requester.cwd : ""
-                fallback: card.approval.sessionId ? "Ended conversation · " + card.approval.sessionId.slice(0, 8) : "Cere desktop · manual request"
+                fallback: card.approval.sessionId ? "Ended conversation · " + card.approval.sessionId.slice(0, 8) : "PAL desktop · manual request"
             }
             CButton {
                 Layout.alignment: Qt.AlignTop
                 visible: !!card.requester && App.selectedId !== card.approval.sessionId
                 text: "Open"
-                implicitHeight: 28
+                implicitHeight: Theme.compactHeight
                 help: "Open the requesting conversation"
                 onClicked: App.selectedId = card.approval.sessionId
             }
@@ -199,8 +208,10 @@ Rectangle {
             visible: !!card.approval.image
             source: card.approval.image ? "file://" + card.approval.image : ""
             Layout.fillWidth: true
-            Layout.preferredHeight: 160
+            Layout.preferredHeight: Theme.editorMedium
             fillMode: Image.PreserveAspectFit
+            Accessible.role: Accessible.Graphic
+            Accessible.name: "Image included with this request"
         }
         ColumnLayout {
             visible: !!card.approval.url
@@ -213,11 +224,12 @@ Rectangle {
             id: details
             visible: !!card.approval.detail
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(130, detailText.implicitHeight)
+            Layout.preferredHeight: Math.min(Theme.detailHeight, detailText.implicitHeight)
             clip: true
             contentWidth: availableWidth
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ScrollBar.vertical: CScrollBar {}
+            background: Rectangle { color: Theme.codeSurface; radius: Theme.radiusControl; border.color: Theme.line }
             TextArea {
                 id: detailText
                 text: card.approval.detail || ""
@@ -226,8 +238,11 @@ Rectangle {
                 wrapMode: TextEdit.Wrap
                 color: Theme.text
                 font.pixelSize: Theme.caption
-                font.family: "monospace"
+                font.family: Theme.mono
+                selectionColor: Theme.selectionFill
+                selectedTextColor: Theme.selectionInk
                 background: null
+                padding: Theme.space2
             }
         }
 
@@ -241,17 +256,18 @@ Rectangle {
                 readonly property string questionId: String(question.id)
                 readonly property var options: question.options || []
                 readonly property bool showOther: question.allowOther !== false
+                ButtonGroup { id: singleChoice; exclusive: true }
                 Layout.fillWidth: true
-                implicitHeight: questionContents.implicitHeight + 20
+                implicitHeight: questionContents.implicitHeight + Theme.gutter
                 radius: Theme.radiusControl
-                color: Theme.questionSurface
-                border.color: card.validationErrors[questionId] ? Theme.danger : Theme.border
+                color: Theme.surface
+                border.color: card.validationErrors[questionId] ? Theme.danger : Theme.line
 
                 ColumnLayout {
                     id: questionContents
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 7
+                    anchors.margins: Theme.space3
+                    spacing: Theme.space2
                     RowLayout {
                         Layout.fillWidth: true
                         CText {
@@ -292,18 +308,20 @@ Rectangle {
                             required property var modelData
                             readonly property string label: card.optionLabel(modelData)
                             Layout.fillWidth: true
-                            spacing: 2
+                            spacing: Theme.space1
                             CCheckBox {
                                 objectName: "question_" + card.approvalId + "_" + questionBody.questionId + "_" + label
                                 Layout.fillWidth: true
                                 text: label
+                                ButtonGroup.group: questionBody.question.multiSelect === true ? null : singleChoice
+                                Accessible.role: questionBody.question.multiSelect === true ? Accessible.CheckBox : Accessible.RadioButton
                                 checked: card.answerValues(questionBody.questionId).indexOf(label) >= 0
                                 onClicked: card.toggleOption(questionBody.question, label, checked)
                             }
                             CText {
                                 visible: typeof modelData !== "string" && !!modelData.description
                                 Layout.fillWidth: true
-                                Layout.leftMargin: 34
+                                Layout.leftMargin: Theme.space6
                                 text: typeof modelData === "string" ? "" : modelData.description || ""
                                 color: Theme.muted
                                 font.pixelSize: Theme.caption
@@ -321,11 +339,17 @@ Rectangle {
                         Accessible.name: questionBody.question.question
                         text: card.otherValue(questionBody.question)
                         onTextEdited: card.setOther(questionBody.question, text)
+                        Keys.onPressed: event => {
+                            if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && (event.modifiers & Qt.ControlModifier) && (card.approval.choices || []).includes("answer")) {
+                                card.submit("answer")
+                                event.accepted = true
+                            }
+                        }
                     }
                     ScrollView {
                         visible: questionBody.showOther && questionBody.question.isSecret !== true
                         Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(130, Math.max(64, writtenAnswer.contentHeight + 20))
+                        Layout.preferredHeight: Math.min(Theme.detailHeight, Math.max(2 * Theme.compactHeight, writtenAnswer.contentHeight + Theme.gutter))
                         clip: true
                         contentWidth: availableWidth
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
@@ -343,6 +367,12 @@ Rectangle {
                             selectByMouse: true
                             Accessible.name: questionBody.question.question
                             onTextChanged: if (activeFocus && text !== card.otherValue(questionBody.question)) card.setOther(questionBody.question, text)
+                            Keys.onPressed: event => {
+                                if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && (event.modifiers & Qt.ControlModifier) && (card.approval.choices || []).includes("answer")) {
+                                    card.submit("answer")
+                                    event.accepted = true
+                                }
+                            }
                         }
                     }
                     CText {
@@ -366,7 +396,7 @@ Rectangle {
         }
         Flow {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: Theme.space2
             Repeater {
                 model: card.approval.choices || []
                 CButton {

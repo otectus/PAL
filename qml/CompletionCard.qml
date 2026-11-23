@@ -4,7 +4,7 @@ import QtQuick.Layouts
 ColumnLayout {
     id: card
     property var completion: ({})
-    spacing: 10
+    spacing: Theme.space2
     SessionIdentity {
         objectName: "completionRequester"
         Layout.fillWidth: true

@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import type { Socket } from "node:net";
 const require = createRequire(import.meta.url);
 const locations = [
-  new URL("../native/cere-peercred.node", import.meta.url),
-  new URL("../build/cere-peercred.node", import.meta.url),
+  new URL("../native/pal-peercred.node", import.meta.url),
+  new URL("../build/pal-peercred.node", import.meta.url),
 ];
 const path = locations.map((url) => fileURLToPath(url)).find(existsSync);
 const native = path ? require(path) : undefined;
@@ -25,7 +25,7 @@ export function sameUserPeer(socket: Socket) {
  */
 export function trustedServer(socket: Socket, expectedUid = process.getuid?.()) {
   const fd = (socket as any)._handle?.fd;
-  if (!native) throw new Error("Cere peer credential helper is missing. Run npm run build before connecting to Cere.");
+  if (!native) throw new Error("PAL peer credential helper is missing. Run npm run build before connecting to PAL.");
   if (!Number.isInteger(fd)) return false;
   try {
     return native.credentials(fd).uid === expectedUid;
@@ -36,6 +36,6 @@ export function trustedServer(socket: Socket, expectedUid = process.getuid?.()) 
 export function requirePeerCredentials() {
   if (!native)
     throw new Error(
-      "Cere peer credential helper is missing. Run npm run build before starting the broker.",
+      "PAL peer credential helper is missing. Run npm run build before starting the broker.",
     );
 }

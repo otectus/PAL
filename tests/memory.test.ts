@@ -9,7 +9,7 @@ import { span } from "../broker/graph-memory/ontology.ts";
 import { relationalRank, ftsQuery } from "../broker/graph-memory/ranking.ts";
 const date = (s: string) => Date.parse(s + "T00:00:00-04:00") * 1000;
 function fixture(t: any) {
-  const directory = mkdtempSync(join(tmpdir(), "cere-graph-"));
+  const directory = mkdtempSync(join(tmpdir(), "pal-graph-"));
   const c = new Canonical(directory);
   t.after(() => {
     c.close();

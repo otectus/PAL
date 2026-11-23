@@ -10,7 +10,7 @@ import { httpMcpFixture } from './fixtures/mcp-http-server.ts';
 
 const idle = () => ({ async send() {}, async interrupt() {}, async close() {} });
 async function broker(t: any, token?: string) {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-mcp-http-')), project = join(dir, 'project');
+  const dir = await mkdtemp(join(tmpdir(), 'pal-mcp-http-')), project = join(dir, 'project');
   await mkdir(project);
   const fixture = await httpMcpFixture({ token });
   const core = new Core(new Store(join(dir, 'state')), idle);

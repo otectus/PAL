@@ -21,7 +21,7 @@ function session(provider: Provider, id: string, cwd: string, host?: string): Se
 }
 
 async function fixture(t: TestContext) {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-shared-memory-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-shared-memory-'));
   const server = createServer(async (req, res: ServerResponse) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
@@ -138,7 +138,7 @@ test('retention expiry retires recalled packets without ending live turns; a for
   await f.memory.forget(codex, saved.id);
   assert.equal(turn.aborted, true);
   assert.equal((turn.reason as any).code, 'MEMORY_INVALIDATED');
-  assert.match((turn.reason as Error).message, /^Memory changed while Cere was replying\. Send your message again\.$/);
+  assert.match((turn.reason as Error).message, /^Memory changed while PAL was replying\. Send your message again\.$/);
   assert.equal(work.aborted, true);
   assert.equal(f.memory.controller.signal.aborted, false, 'the next turn starts with a fresh signal');
 });

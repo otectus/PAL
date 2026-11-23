@@ -1,4 +1,4 @@
-name: Cere desktop checks
+name: PAL desktop checks
 on:
   pull_request:
     paths-ignore: ['mobile/**', 'docs/**', '**/*.md']
@@ -17,7 +17,7 @@ jobs:
     name: Broker, contract and Node tests
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    # Cere targets Arch's current toolchain; the Node tests need no Qt.
+    # PAL targets Arch's current toolchain; the Node tests need no Qt.
     container: archlinux:base-devel
     steps:
       - name: Install test dependencies (root)
@@ -37,7 +37,7 @@ jobs:
       - name: Build the Node-API modules the tests load
         run: tools/ci-user.sh run tools/build-node-addons.sh
       - name: Node tests (npm test, with a JUnit report)
-        run: tools/ci-user.sh run env CERE_TTS_DISABLED=1 node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/node-tests.xml tests/*.test.ts
+        run: tools/ci-user.sh run env PAL_TTS_DISABLED=1 node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/node-tests.xml tests/*.test.ts
       - name: Test report
         if: ${{ !cancelled() }}
         run: node tools/ci-test-report.mjs reports >> "$GITHUB_STEP_SUMMARY"
@@ -52,7 +52,7 @@ jobs:
     name: Native build and QML component tests
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    # Cere targets Arch's current Qt and layer-shell-qt, which Ubuntu does not ship.
+    # PAL targets Arch's current Qt and layer-shell-qt, which Ubuntu does not ship.
     container: archlinux:base-devel
     steps:
       - name: Install build and test dependencies (root)
@@ -100,7 +100,7 @@ jobs:
         env:
           QT_QUICK_BACKEND: software
           QT_QUICK_CONTROLS_STYLE: Basic
-          CERE_TTS_DISABLED: '1'
+          PAL_TTS_DISABLED: '1'
           # connectedSurfacePoses deliberately validates every avatar, scale and route. Keep
           # QtTest's per-function watchdog above the observed slow-CPU duration; the job timeout
           # remains the outer bound for the whole gate.
@@ -111,10 +111,10 @@ jobs:
         # container job, so the path is set here.
         run: |
           export QT_QPA_PLATFORM="offscreen:configfile=$GITHUB_WORKSPACE/tests/fixtures/offscreen-scales.json"
-          tools/ci-user.sh run ./build/cere-ui-check -functions > "$RUNNER_TEMP/ui-functions"
+          tools/ci-user.sh run ./build/pal-ui-check -functions > "$RUNNER_TEMP/ui-functions"
           mapfile -t slots < <(sed -n 's/()$//p' "$RUNNER_TEMP/ui-functions" | grep -v '^review')
           test "${#slots[@]}" -gt 0
-          tools/ci-user.sh run ./build/cere-ui-check -o "$GITHUB_WORKSPACE/reports/ui-check.xml,junitxml" -o -,txt "${slots[@]}" reviewSurfacesAtScale
+          tools/ci-user.sh run ./build/pal-ui-check -o "$GITHUB_WORKSPACE/reports/ui-check.xml,junitxml" -o -,txt "${slots[@]}" reviewSurfacesAtScale
       - name: Test report
         if: ${{ !cancelled() }}
         run: node tools/ci-test-report.mjs reports >> "$GITHUB_STEP_SUMMARY"
@@ -127,7 +127,7 @@ jobs:
           retention-days: 14
   desktop:
     # The single required result: every gate above must have succeeded.
-    name: Cere desktop checks
+    name: PAL desktop checks
     if: ${{ always() }}
     needs: [broker, native, interface]
     runs-on: ubuntu-24.04

@@ -11,7 +11,7 @@ import { WebSearch } from '../broker/web.ts';
 // bytes, never wall-clock time, so a slow machine cannot make them flaky.
 const idle = () => ({ async send() {}, async interrupt() {}, async close() {} });
 async function broker(t: any) {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-work-budget-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-work-budget-'));
   const core = new Core(new Store(dir), idle);
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   await core.memory.ready;
@@ -69,7 +69,7 @@ test('Q07 the Context payload is bounded by fixed per-conversation histories', a
 test('M04 memory packing keeps whole items inside the budget, even when the best match alone is too large', async t => {
   const { Canonical } = await import('../broker/graph-memory/canonical.ts');
   const { mkdtempSync, rmSync } = await import('node:fs');
-  const directory = mkdtempSync(join(tmpdir(), 'cere-packing-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pal-packing-'));
   const c = new Canonical(directory);
   t.after(() => { c.close(); rmSync(directory, { recursive: true, force: true }); });
   const scope = c.registerScope({ key: 'packing', label: 'Packing' }).id;

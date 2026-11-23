@@ -328,7 +328,7 @@ for(const id of ids){
  await sharp(atlas,{raw:{width:atlasW,height:atlasH,channels:4}}).png().toFile(packedPath+'.tmp');
  await rename(packedPath+'.tmp',packedPath);
  await writeFile(`assets/${id}-surface-rig.json`,JSON.stringify(rig,null,2)+'\n');
- if(id==='cere_default'){const base=JSON.parse(await readFile('assets/cere-rig.json','utf8'));await writeFile('assets/cere-rig.json',JSON.stringify({...base,...rig},null,2)+'\n');}
+ if(id==='pal_classic'){const base=JSON.parse(await readFile('assets/pal-rig.json','utf8'));await writeFile('assets/pal-rig.json',JSON.stringify({...base,...rig},null,2)+'\n');}
  await writeFile(`${dir}/registration.json`,JSON.stringify(registration,null,2)+'\n');
  console.log(`${id}: ${frames.length} frames, ${atlasW}x${atlasH}, grounded at ${ground}`);
 }

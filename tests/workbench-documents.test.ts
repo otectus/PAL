@@ -9,24 +9,7 @@ import { parseCsv, parseXml } from '../broker/artifacts/extract-worker.ts';
 import { call, skipWithoutHelper, until, workbenchFixture } from './fixtures/workbench.ts';
 import { png } from './fixtures/image-backends.ts';
 
-/** A two-page PDF: page 1 has text, page 2 only a drawn rectangle (what a scan looks like to a text extractor). */
-function pdf() {
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 7 0 R >> >> >>',
-    null, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 6 0 R /Resources << >> >>', null,
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-  ];
-  const stream = (body: string) => `<< /Length ${body.length} >>\nstream\n${body}\nendstream`;
-  objects[3] = stream('BT /F1 18 Tf 20 120 Td (Quarterly revenue rose) Tj ET');
-  objects[5] = stream('0 0 1 rg 20 20 200 100 re f');
-  let out = '%PDF-1.4\n'; const offsets: number[] = [];
-  objects.forEach((object, index) => { offsets.push(out.length); out += `${index + 1} 0 obj\n${object}\nendobj\n`; });
-  const xref = out.length;
-  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n` + offsets.map(offset => String(offset).padStart(10, '0') + ' 00000 n \n').join('') + `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  return Buffer.from(out, 'latin1');
-}
+import { pdf } from './fixtures/document.ts';
 const docx = () => zipFilesAsync([
   { name: '[Content_Types].xml', data: Buffer.from('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>') },
   { name: 'word/document.xml', data: Buffer.from('<?xml version="1.0"?><w:document xmlns:w="w"><w:body><w:p><w:r><w:t>Project brief</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Budget: 5 &amp; counting</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Item</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Cost</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Paint</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>40</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>') },

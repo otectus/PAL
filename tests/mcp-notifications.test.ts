@@ -10,7 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { JsonLines } from '../broker/wire.ts';
 
 test('MCP observes a tool change across large projected snapshots without settings', { timeout: 20_000 }, async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'cere-mcp-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pal-mcp-'));
   let watch: Socket | undefined, granted = false, reads = 0;
   const seen: any[] = [];
   const server = createServer(socket => {
@@ -28,7 +28,7 @@ test('MCP observes a tool change across large projected snapshots without settin
   });
   await new Promise<void>(ready => server.listen(join(directory, 'broker.sock'), ready));
   const child = spawn(process.execPath, [resolve('broker/mcp.ts')], {
-    env: { ...process.env, CERE_RUNTIME_DIR: directory, CERE_SESSION_TOKEN: 'fixture' }, stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, PAL_RUNTIME_DIR: directory, PAL_SESSION_TOKEN: 'fixture' }, stdio: ['pipe', 'pipe', 'pipe'],
   });
   const closed = once(child, 'close');
   t.after(async () => { child.stdin.end(); child.kill(); await closed; watch?.destroy(); await new Promise<void>(done => server.close(() => done())); await rm(directory, { recursive: true, force: true }); });

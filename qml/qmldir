@@ -1,4 +1,4 @@
-module Cere
+module PAL
 singleton Theme 1.0 Theme.qml
 singleton AvatarCatalog 1.0 AvatarCatalog.qml
 

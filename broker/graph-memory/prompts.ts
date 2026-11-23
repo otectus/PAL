@@ -1,7 +1,7 @@
 /**
  * Retrieval prompts that embedding models were trained with. A query and a stored passage
  * are embedded differently, and a model used without its prompts ranks noticeably worse: on
- * Cere's own conversations, prompting nomic-embed-text-v2-moe moved the median rank of each
+ * PAL's own conversations, prompting nomic-embed-text-v2-moe moved the median rank of each
  * question's answer from 9 to 6.
  *
  * - nomic-embed-text (every version): https://huggingface.co/nomic-ai/nomic-embed-text-v2-moe

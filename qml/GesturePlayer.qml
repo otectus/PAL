@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Window
-import Cere.Native 1.0
+import PAL.Native 1.0
 import "Motion.js" as Motion
 import "SurfaceMotion.js" as SurfaceMotion
 
@@ -153,9 +153,21 @@ Item {
                    ? Math.max(-7, Math.min(7, player.visual.angle * (.35 + .65 * player.carried)))
                    : player.visual.angle
         }
+        Image {
+            anchors.fill: parent
+            source: player.avatar.still || ""
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+            mipmap: true
+            asynchronous: true
+            visible: source !== "" && !puppetView.ready
+        }
         AvatarPuppet {
             id: puppetView
             objectName: "avatarPuppet"
+            // The atlas expands to roughly 250 MiB. Keep that work off the GUI
+            // thread, while the registered neutral still remains visible.
+            asynchronous: true
             anchors.fill: parent
             source: App.assetPath + player.puppet.texture
             definition: player.puppet
@@ -174,7 +186,7 @@ Item {
     EmoticonBadge {
         id: badge
         anchors.top: parent.top; anchors.right: parent.right
-        anchors.topMargin: 3; anchors.rightMargin: Math.max(4,parent.width * .07)
+        anchors.topMargin: Theme.space1; anchors.rightMargin: Math.max(Theme.space1,parent.width * .07)
         unit: Math.max(.8,Math.min(1.5,player.width/192))
         snapshot: App.state
         sharedMoods: player.followAppMotion ? App.conversationMoods : null

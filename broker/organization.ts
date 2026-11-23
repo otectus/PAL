@@ -115,7 +115,7 @@ export class Organization {
       if(p.bookmarked)this.store.db.prepare('INSERT OR IGNORE INTO message_bookmarks VALUES (?,?,?)').run(m.id,m.sessionId,Date.now());
       else this.store.db.prepare('DELETE FROM message_bookmarks WHERE message_id=?').run(m.id);
     } else if(method==='navigation.record'||method==='navigation.favorite') {
-      if(typeof p.id!=='string'||p.id.length>1024||!/^(session|folder|settings|page|action|app|window|script|project):/.test(p.id))throw new Error('Invalid command');
+      if(typeof p.id!=='string'||p.id.length>1024||!/^(session|folder|settings|page|action|app|window|script|project|workbench|workflow):/.test(p.id))throw new Error('Invalid command');
       if(p.id.startsWith('session:')&&this.store.temporary(p.id.slice(8)))return true;
       const navigation=this.store.get<{favorites:string[];recents:string[]}>('navigation',{favorites:[],recents:[]});
       if(method==='navigation.record')navigation.recents=[p.id,...navigation.recents.filter(id=>id!==p.id)].slice(0,30);

@@ -9,7 +9,7 @@
  "model": "nemotron-3-super:cloud",
  "modelDigest": "c6398e09afd407f9988333b6e48629c0afb143c1116f5f79e877552b68a684e4",
  "endpointClass": "ollama_cloud",
- "promptVersion": "cere-extraction-v2",
+ "promptVersion": "pal-extraction-v2",
  "parserVersion": "zod-4-v2",
  "fixture": {
   "path": "tests/fixtures/memory/extraction-cases.json",

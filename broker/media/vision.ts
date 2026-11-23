@@ -142,7 +142,7 @@ export async function ocr(image: Buffer, languages: string, signal: AbortSignal)
     if (confidence >= 0) entry.confidence.push(confidence);
     lines.set(key, entry);
   }
-  // Tesseract's own word confidences are reported as given; Cere computes no confidence of its own.
+  // Tesseract's own word confidences are reported as given; PAL computes no confidence of its own.
   return [...lines.values()].map(entry => ({ text: entry.text.join(' '), box: { left: entry.left, top: entry.top, width: entry.right - entry.left, height: entry.bottom - entry.top },
     ...(entry.confidence.length ? { tesseractConfidence: Math.round(entry.confidence.reduce((a, b) => a + b, 0) / entry.confidence.length) } : {}) }));
 }

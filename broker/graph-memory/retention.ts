@@ -55,6 +55,26 @@ const overlayDeadline = (baseline: number | null, protections: (number | null)[]
   return finite.length ? Math.max(...finite) : null;
 };
 
+/**
+ * How many witnesses a restated record keeps, besides those that must stay. Each restatement attaches
+ * one; without a bound a habitually repeated claim would outgrow what a review may read (16 pieces of
+ * evidence). Four recent independent sources are enough for review and keep the record's support
+ * following its latest mentions.
+ */
+export const restatementSupportLimit = 4;
+
+/**
+ * The support a restated record keeps: every witness in `keep` (the new one, and any a hold protects,
+ * so a hold never loses what it was protecting), then the most recently recorded others, at most
+ * `limit` in all unless `keep` alone is larger. Order is preserved.
+ */
+export function restatedSupport<T extends Record<string, any>>(supports: T[], keep: Set<string>, limit = restatementSupportLimit): T[] {
+  const kept = new Set<string>(supports.filter((item) => keep.has(item.id)).map((item) => item.id));
+  for (const item of supports.filter((item) => !keep.has(item.id)).sort((a, b) => Number(b.revision) - Number(a.revision) || String(b.id).localeCompare(String(a.id))))
+    if (kept.size < limit) kept.add(item.id);
+  return supports.filter((item) => kept.has(item.id));
+}
+
 /** An expiry is inactive at equality everywhere; callers capture nowUs once. */
 export const retentionDeadlineActive = (expiresAtUs: number | null, nowUs: number) =>
   expiresAtUs === null || expiresAtUs > nowUs;
@@ -84,8 +104,11 @@ export function activeRetentionHolds(
 }
 
 /**
- * The sole retention calculation used by cleanup, recall and forecasts. Scope,
- * valid time, trust and route authorization deliberately remain outside it.
+ * The sole record-level retention decision: expiry (Canonical.expire, through
+ * storageEnded), recall (hydrateArtifact) and forecasts all ask it. Which excerpts
+ * outlive their raw turn is decided per piece of evidence (retainedEvidenceIds)
+ * from the same holds and accepted status. Scope, valid time, trust and route
+ * authorization deliberately remain outside it.
  */
 export function planRetention(
   store: RetentionReader,

@@ -7,7 +7,7 @@ import {createHash} from 'node:crypto';
 import {Canonical} from '../../broker/graph-memory/canonical.ts';
 const [kind,path]=process.argv.slice(2);
 if(!path||!['longmemeval','locomo'].includes(kind))throw new Error('Usage: evaluate-long-recall.ts longmemeval|locomo DATASET.json');
-const data=readFileSync(path),records=JSON.parse(data.toString()),dir=mkdtempSync(join(tmpdir(),'cere-long-recall-')),store=new Canonical(dir);
+const data=readFileSync(path),records=JSON.parse(data.toString()),dir=mkdtempSync(join(tmpdir(),'pal-long-recall-')),store=new Canonical(dir);
 try{
   store.policyUpdate({policy:{enabled:true}});
   const ranks:number[]=[],sourceIds:string[]=[];

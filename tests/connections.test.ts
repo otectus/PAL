@@ -10,7 +10,7 @@ import { workbenchFixture } from './fixtures/workbench.ts';
 const idle = () => ({ async send() {}, async interrupt() {}, async close() {} });
 
 test('11.1 the Settings host and endpoint become named connections once, with the same destinations and no keys in SQLite', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-connections-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-connections-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const store = new Store(join(dir, 'state'));
   store.set('settings', { ...store.settings(), ollama: { host: 'http://127.0.0.1:11434', model: '' }, compatible: { ...store.settings().compatible, baseUrl: 'http://127.0.0.1:1234/v1', label: 'LM Studio', requiresKey: true, processing: 'local' } });
@@ -28,7 +28,7 @@ test('11.1 the Settings host and endpoint become named connections once, with th
 });
 
 test('11.1 a conversation binds to its connection: another endpoint’s key and declarations, unaffected by later Settings edits; moving is reviewed', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'cere-connections-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-connections-'));
   const core = new Core(new Store(join(dir, 'state')), idle);
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   await core.updateSettings({ compatible: { baseUrl: 'http://127.0.0.1:1234/v1', label: 'Local', requiresKey: false, tools: false } });
@@ -63,7 +63,7 @@ test('11.1 an Ollama connection sets the conversation’s host and lists that ho
 
 test('11.1 a restore keeps saved connections, and a conversation whose connection is gone is refused rather than redirected', async t => {
   const { activatePendingRecovery } = await import('../broker/recovery.ts');
-  const dir = await mkdtemp(join(tmpdir(), 'cere-connections-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-connections-'));
   let core = new Core(new Store(join(dir, 'state')), idle);
   let previous = '';
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); if (previous) await rm(previous, { recursive: true, force: true }); });

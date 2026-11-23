@@ -238,7 +238,7 @@ function probes(c: Canonical, cases: Case[], plan: ReturnType<typeof load>) {
 
 export async function runCanonical(options: { directory?: string; cases?: Case[] } = {}) {
   const cases: Case[] = options.cases ?? JSON.parse(await readFile(new URL('../../tests/fixtures/memory/retrieval-cases.json', import.meta.url), 'utf8')).cases;
-  const directory = options.directory ?? await mkdtemp(join(tmpdir(), 'cere-canonical-bench-'));
+  const directory = options.directory ?? await mkdtemp(join(tmpdir(), 'pal-canonical-bench-'));
   const c = new Canonical(directory);
   try {
     const started = performance.now(), plan = load(c, cases), loadMs = performance.now() - started;

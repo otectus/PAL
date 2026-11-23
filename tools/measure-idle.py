@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read resource usage of this workspace's running Cere processes for 60 seconds."""
+"""Read resource usage of this workspace's running PAL processes for 60 seconds."""
 from pathlib import Path
 import json, os, time
 root = Path(__file__).resolve().parents[1]
@@ -10,7 +10,7 @@ def sample():
             continue
         try:
             args = (p/'cmdline').read_bytes().split(b'\0')
-            if not args or not (args[0].decode() in [str(root/'build/cere'), './build/cere'] or (str(root/'broker/main.ts').encode() in args)):
+            if not args or not (args[0].decode() in [str(root/'build/pal'), './build/pal'] or (str(root/'broker/main.ts').encode() in args)):
                 continue
             stat = (p/'stat').read_text().rsplit(')', 1)[1].split()
             rss = pss = 0

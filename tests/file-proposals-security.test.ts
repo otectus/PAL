@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { apply, propose, proposalLimits } from '../broker/file-proposals.ts';
 
 async function fixture(t: any) {
-  const root = await mkdtemp(join(tmpdir(), 'cere-file-proposals-')), vault = join(root, 'vault'), backups = join(root, 'backups');
+  const root = await mkdtemp(join(tmpdir(), 'pal-file-proposals-')), vault = join(root, 'vault'), backups = join(root, 'backups');
   await mkdir(vault);
   t.after(() => rm(root, { recursive: true, force: true }));
   return { root, vault, backups };
@@ -40,7 +40,7 @@ test('AUD-007 commit validation, external changes and symlink swaps fail closed 
   const revoked = await propose({ root: vault, path: 'note.md', content: 'reviewed', sessionId: 's' });
   await assert.rejects(apply(revoked, backups, () => { throw new Error('Vault authority changed'); }), /authority changed/);
   assert.equal(await readFile(target, 'utf8'), 'base');
-  assert.ok(!(await readdir(vault)).some(name => name.includes('.cere-')));
+  assert.ok(!(await readdir(vault)).some(name => name.includes('.pal-')));
 
   const externallyChanged = await propose({ root: vault, path: 'note.md', content: 'reviewed', sessionId: 's' });
   let checks = 0;
@@ -48,7 +48,7 @@ test('AUD-007 commit validation, external changes and symlink swaps fail closed 
     if (++checks === 1) await writeFile(target, 'external');
   }), (error: any) => error.code === 'STALE_BASE');
   assert.equal(await readFile(target, 'utf8'), 'external');
-  assert.ok(!(await readdir(vault)).some(name => name.includes('.cere-')));
+  assert.ok(!(await readdir(vault)).some(name => name.includes('.pal-')));
 
   const outside = join(root, 'outside.md');
   await writeFile(target, 'base'); await writeFile(outside, 'outside');
@@ -57,7 +57,7 @@ test('AUD-007 commit validation, external changes and symlink swaps fail closed 
     await rm(target); await symlink(outside, target);
   }), /Linked files cannot be edited/);
   assert.equal(await readFile(outside, 'utf8'), 'outside');
-  assert.ok(!(await readdir(vault)).some(name => name.includes('.cere-')));
+  assert.ok(!(await readdir(vault)).some(name => name.includes('.pal-')));
 });
 
 test('AUD-011 file proposals reject incomplete previews and bind the reviewed content to a digest', async t => {

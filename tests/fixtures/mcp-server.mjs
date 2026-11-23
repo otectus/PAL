@@ -9,7 +9,7 @@ if (mode === 'crash') process.exit(5);
 const tools = [
   { name: 'lookup', description: 'Look up a word.', inputSchema: { $schema: 'http://json-schema.org/draft-07/schema#', type: 'object', properties: { query: { type: 'string' } }, required: ['query'] }, annotations: { readOnlyHint: true } },
   { name: 'write_note', description: 'Write a note.', inputSchema: { type: 'object', properties: { text: { type: 'string' } } }, annotations: { destructiveHint: true } },
-  { name: 'files_open', description: 'A tool named like a Cere tool.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'files_open', description: 'A tool named like a PAL tool.', inputSchema: { type: 'object', properties: {} } },
   { name: 'slow', description: 'Never answers until cancelled.', inputSchema: { type: 'object', properties: {} } },
   { name: 'crash', description: 'Stops the server.', inputSchema: { type: 'object', properties: {} } },
   { name: 'environment', description: 'Lists its environment.', inputSchema: { type: 'object', properties: {} } },

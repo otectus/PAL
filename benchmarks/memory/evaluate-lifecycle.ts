@@ -28,7 +28,7 @@ const queries = [
 function option(name: string) { const index = process.argv.indexOf(name); return index >= 0 ? process.argv[index + 1] : undefined; }
 const model = option('--local-model'), output = option('--output');
 if (!model || /[\x00-\x1f\x7f]/u.test(model)) throw new Error('Usage: node benchmarks/memory/evaluate-lifecycle.ts --local-model MODEL [--output REPORT.json]');
-const host = process.env.CERE_OLLAMA_HOST || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
+const host = process.env.PAL_OLLAMA_HOST || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
 const binding: TaskModelBinding = { connectionRef: 'default:ollama', modelId: model };
 const router = new TaskModelRouter({
   resolver: new TaskConnectionResolver({ credentials: { key: () => '' }, readConnection: () => { throw new Error('This benchmark uses only the explicit local Ollama route'); }, defaultOllamaHost: () => host }),
@@ -155,7 +155,7 @@ const report = {
   schemaVersion: 1,
   evaluation: 'disposable synthetic lifecycle ablation with a real local Ollama model; no production memory or cloud API',
   generatedAt: new Date().toISOString(),
-  fixtureVersion: 'cere-lifecycle-small-v1',
+  fixtureVersion: 'pal-lifecycle-small-v1',
   route: firstRoute ? { connectionRef: firstRoute.connectionRef, adapterId: firstRoute.adapterId, configuredModel: firstRoute.modelId, returnedModel: firstOutput?.model,
     modelVersion: firstOutput?.modelVersion ?? firstRoute.modelVersion ?? null, modelDigest: firstOutput?.modelDigest ?? firstRoute.modelDigest ?? null,
     processing: firstRoute.processing, connectionRevision: firstRoute.connectionRevision, fingerprint: firstRoute.fingerprint, outputMode: firstOutput?.outputMode } : { configuredModel: model, processing: 'unverified', error: 'No model call completed' },
@@ -172,7 +172,7 @@ const report = {
   actualActions: fixtures.map(item => ({ id: item.id, baseline: baselineActions.get(item.id), preservationOnly: preservationActions.get(item.id), guardedExperimental: guardedActions.get(item.id) })),
   limitations: [
     'The four short English fixtures are synthetic and do not measure production precision, multilingual quality, calibration, or long-context behavior.',
-    'Guarded acceptance is an experimental policy simulation in this disposable benchmark; it does not mutate Cere settings or production memory.',
+    'Guarded acceptance is an experimental policy simulation in this disposable benchmark; it does not mutate PAL settings or production memory.',
     'Preservation bytes count exact UTF-8 source passages retained by the simulated action, not SQLite page, index, WAL, backup, or embedding storage.',
     'Lexical and value-prior ranks are deterministic simulations; the optional reranker is one bounded local-model call and falls back to value-prior order on invalid output.',
     'A successful structured-output route probe or this small lifecycle run does not establish factual reliability for other models or tasks.',

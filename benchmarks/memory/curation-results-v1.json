@@ -1,7 +1,7 @@
 {
   "desktop": "0.1.6",
   "start_commit": "67e54613646efc17575096dafff4552e89b786b0",
-  "assessment_contract": "cere-assessment-2",
+  "assessment_contract": "pal-assessment-2",
   "heldout": {
     "qualified": false,
     "profile": "synthetic_smoke",
@@ -103,7 +103,7 @@
         "elapsed_ms": 8580
       }
     ],
-    "dataset": "cere-curation-synthetic-1",
+    "dataset": "pal-curation-synthetic-1",
     "model": "hf.co/empero-ai/Qwen3.8-4B-Distill-GGUF:Q8_0",
     "model_version": "hf.co/empero-ai/Qwen3.8-4B-Distill-GGUF:Q8_0",
     "model_digest": "2f028bd499903c94579b0d0f4db80d12ca81b6d28ce7978867980248d51404e4",
@@ -297,7 +297,7 @@
     }
   },
   "simulated_lifecycle": {
-    "fixtureVersion": "cere-lifecycle-small-v1",
+    "fixtureVersion": "pal-lifecycle-small-v1",
     "route": {
       "connectionRef": "default:ollama",
       "adapterId": "ollama",
@@ -629,7 +629,7 @@
     "totalLatencyMs": 38642,
     "limitations": [
       "The four short English fixtures are synthetic and do not measure production precision, multilingual quality, calibration, or long-context behavior.",
-      "Guarded acceptance is an experimental policy simulation in this disposable benchmark; it does not mutate Cere settings or production memory.",
+      "Guarded acceptance is an experimental policy simulation in this disposable benchmark; it does not mutate PAL settings or production memory.",
       "Preservation bytes count exact UTF-8 source passages retained by the simulated action, not SQLite page, index, WAL, backup, or embedding storage.",
       "Lexical and value-prior ranks are deterministic simulations; the optional reranker is one bounded local-model call and falls back to value-prior order on invalid output.",
       "A successful structured-output route probe or this small lifecycle run does not establish factual reliability for other models or tasks."

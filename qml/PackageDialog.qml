@@ -6,7 +6,7 @@ import QtQuick.Layouts
 // Importing shows what is new or changed first; nothing is saved until the reviewed preview is imported.
 CDialog {
     id:packages;objectName:"packageDialog"
-    width:Math.min(600,parent?parent.width-32:600)
+    preferredWidth:Theme.dialogWide
     property string mode:"export"
     property var styles:[]
     property var recipes:[]
@@ -29,7 +29,7 @@ CDialog {
     CText { text:packages.mode==="export"?"Export styles and recipes":"Import a package";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
     CText { text:"Packages hold style text, traits, limits and recipe definitions only. They never include API keys, permissions, project grants, bindings or checkpoints.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     ColumnLayout {
-        visible:packages.mode==="export";Layout.fillWidth:true;spacing:6
+        visible:packages.mode==="export";Layout.fillWidth:true;spacing:Theme.space2
         CText { text:"Saved styles";font.weight:Font.DemiBold }
         CText { visible:packages.styles.length===0;text:"No saved styles.";color:Theme.muted;font.pixelSize:Theme.secondary }
         Repeater { model:packages.styles;CCheckBox { required property var modelData;required property int index;objectName:"packageStyle_"+index;text:modelData.label;checked:!!packages.chosen["style:"+modelData.id];onToggled:packages.toggle("style:"+modelData.id,checked) } }
@@ -39,7 +39,7 @@ CDialog {
         CButton { objectName:"packageExportSave";text:packages.request>=0?"Preparing…":"Save package as…";primary:true;Layout.fillWidth:true;enabled:App.connected&&packages.request<0&&packages.chosenCount>0;onClicked:packages.call("packages.export",{profiles:packages.ids("style:"),recipes:packages.ids("recipe:")}) }
     }
     ColumnLayout {
-        visible:packages.mode==="import"&&!!packages.preview;Layout.fillWidth:true;spacing:6
+        visible:packages.mode==="import"&&!!packages.preview;Layout.fillWidth:true;spacing:Theme.space2
         Repeater {
             model:packages.preview?(packages.preview.profiles||[]).map(item=>({kind:"Style",name:item.label,action:item.action})).concat((packages.preview.recipes||[]).map(item=>({kind:"Recipe",name:item.name,action:item.action}))):[]
             RowLayout {

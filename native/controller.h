@@ -6,6 +6,7 @@
 #include <QTimer>
 #include <QQuickView>
 #include <QQmlEngine>
+#include <QQmlComponent>
 #include <QProcess>
 #include <QSystemTrayIcon>
 #include <QPointer>
@@ -13,6 +14,7 @@
 #include <QElapsedTimer>
 #include <QSortFilterProxyModel>
 #include <QSet>
+#include <memory>
 #include "motion.h"
 #include "follow.h"
 class QQuickTextDocument;
@@ -63,6 +65,7 @@ class Controller : public QObject {
     // The socket is open but the broker has not answered for a while (frozen, overloaded).
     Q_PROPERTY(bool brokerUnresponsive READ brokerUnresponsive NOTIFY stateChanged)
     Q_PROPERTY(bool overlay READ overlay CONSTANT)
+    Q_PROPERTY(QUrl layoutSettingsUrl READ layoutSettingsUrl CONSTANT)
     Q_PROPERTY(QString assetPath READ assetPath CONSTANT)
     Q_PROPERTY(QVariantMap animations READ animations CONSTANT)
     Q_PROPERTY(QVariantList avatars READ avatars CONSTANT)
@@ -97,6 +100,7 @@ public:
     bool connected() const { return m_socket.state()==QLocalSocket::ConnectedState&&m_responsive; }
     bool brokerUnresponsive() const { return m_socket.state()==QLocalSocket::ConnectedState&&!m_responsive; }
     bool overlay() const { return m_overlay; }
+    QUrl layoutSettingsUrl() const;
     QString assetPath() const;
     QVariantMap animations() const { return m_animations; }
     QVariantList avatars() const { return m_avatars; }
@@ -145,7 +149,8 @@ public:
     Q_INVOKABLE void openPath(const QString &path);
     Q_INVOKABLE void openMessageLink(const QString &link, const QString &directory);
     // proseWidth: the visible width; paragraphs wrap there even when a table or code block is wider.
-    Q_INVOKABLE void formatMessage(QQuickTextDocument *document, qreal proseWidth=0);
+    Q_INVOKABLE QString messageCodeAt(QQuickTextDocument *document, int position) const;
+    Q_INVOKABLE QVariantList formatMessage(QQuickTextDocument *document, qreal proseWidth, qreal spacing, qreal headerHeight, qreal lineHeight);
     Q_INVOKABLE QString chooseFolder();
     Q_INVOKABLE QString chooseImage();
     Q_INVOKABLE QString chooseFile();
@@ -185,7 +190,7 @@ public:
     Q_INVOKABLE void setBubbleFocusable(bool focusable);
     // The pet's current logical placement in global coordinates (diagnostics and tests).
     QPoint petPosition() const { return m_petPosition; }
-    // toggle: open (or close) the compact panel once connected, as `cere toggle` does.
+    // toggle: open (or close) the compact panel once connected, as `pal toggle` does.
     void start(bool show, bool toggle=false, const QString &conversationFolder={});
     // Shows the workspace in this process even while the broker is unreachable.
     void showWorkspaceLocally();
@@ -210,6 +215,8 @@ signals:
     void themeChanged();
     void motionDynamicsChanged();
     void result(int id, const QVariant &value);
+    // A broker terminal frame (screen delta, state, scroll); {kind:"resync"} when held frames were dropped.
+    void terminalEvent(const QVariantMap &event);
     // Editors persist unsaved text before a window hides, expands or quits.
     void flushDrafts();
     void attachmentRequested(const QString &path);
@@ -217,6 +224,7 @@ signals:
 private:
     // Pet and output-seam mirror share QML values and one animation sample.
     QQmlEngine m_qmlEngine;
+    std::unique_ptr<QQmlComponent> m_petWarmup;
     QString m_root, m_selected, m_toast, m_motion="idle";
     QString m_pendingConversationFolder;
     bool m_overlay, m_expanded=false, m_dragging=false, m_roamStep=false, m_petHovered=false;
@@ -272,6 +280,15 @@ private:
     void settleOrPersist();
     QTimer m_retry, m_toastTimer, m_roamTimer, m_motionTimer, m_idleTimer;
     QTimer m_successTimer;
+    // "Stop sessions and quit" remains open until every stop request is confirmed. A timeout or
+    // lost broker leaves the interface available instead of claiming that provider work stopped.
+    QTimer m_quitStopTimer;
+    bool m_stopAndQuit=false;
+    QSet<int> m_quitStopRequests;
+    QSet<QString> m_quitStopSessions;
+    void confirmQuitStop(int request);
+    void settleQuitStops();
+    void failQuitStop(const QString &message);
     QString m_successSession;
     MotionDirector m_director;
     quint64 m_motionRevision=0, m_motionToken=0;
@@ -292,6 +309,7 @@ private:
     QHash<QString,QString> m_cuedMessages;
     QString m_tenderSession;
     QQuickView *m_pet=nullptr, *m_panel=nullptr, *m_bubble=nullptr;
+    bool m_compactShowPending = false;
     QSystemTrayIcon *m_tray=nullptr;
     QProcess *m_overlayProcess=nullptr;
     QPoint m_dragOffset, m_petPosition;
@@ -311,6 +329,7 @@ private:
     void receive();
     void applyState(const QVariantMap &state);
     void syncPet();
+    Q_SLOT void showCompactWhenReady();
     void placePet(QPoint global, QScreen *screen, bool persist, bool roaming=false);
     void syncPetMirror(bool roaming);
     void reloadMessages();

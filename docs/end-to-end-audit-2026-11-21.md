@@ -1,0 +1,79 @@
+# PAL desktop, broker and Android audit
+
+The review covers the working tree on `ui-overhaul` at `dd82dae`, including the existing uncommitted owner-phone and desktop work. The table records observations made before changing application source or tests. Paths and line numbers refer to that baseline. Raw local evidence is under `build/e2e-audit/`.
+
+## Workflow review
+
+| User workflow | Entry points and result |
+| --- | --- |
+| Pair and reconnect | Qt RemoteSettings and the Android pairing screen exchange an offer, signed response and matching words. Pairing, Identity and MobileGateway establish the pinned connection. Android negotiates its role, opens a snapshot, restores its selected conversation and reconciles its command IDs. |
+| Start, hand off, send and stream | NewSession, Chat and Android conversations select a project and provider. Core owns the draft, provider dispatch, transcript and turn outcome. Desktop receives snapshots and upserts through Fanout and Controller. Android receives scoped summaries, hydrated drafts, transcript pages and revisioned upserts. |
+| Tool execution, approvals and recovery | The approval screens answer broker-owned requests. Code Lab, terminals, Workbench and transfers track work independently of the screen. Stop, grant changes, disconnect and shutdown must each preserve the appropriate outcome without dispatching an action twice. |
+| Platform integrations | Reviewed the Qt/Wayland launcher, native helpers, shell reporters, package/build paths, Android Gradle variants, Keystore, gateway contract and CI. The feature matrix and mobile security and setup documents establish intended differences for limited phones, observers and older clients. Documented future items in `docs/PAL-EVERYWHERE.md` remain roadmap work. |
+
+The source inventory included 190 broker files, 120 QML files, 38 native files, 123 mobile files, five protocol files, ten packaging files and 184 test files. Manual tracing concentrated on the workflows above. Compilation, protocol conformance, source checks and automated suites covered the wider tree. A limited phone still uses restricted launch, an observer still has read, stop and deny access, and older clients must negotiate owner support before owner actions become available.
+
+## Findings recorded before repair
+
+| ID | User impact and location | Supporting evidence |
+| --- | --- | --- |
+| 1 | A full-access phone creates a handoff with an empty draft. `broker/remote/parity.ts:25`, `router.ts:245` | The handoff passes a reviewed draft to the creation path, which supplies only authority as initial state. A paired fixture read back an empty string in `routes-before.log`. |
+| 2 | A phone can report that a configured named API account lacks a key, or refuse creation because an unrelated default endpoint is unset. `broker/remote/router.ts:115,131,250` | Desktop Core selects the credential by connection and origin. The gateway checks only origin, and owner creation checks the default route first. The same paired fixture could create the local conversation and could not create its phone equivalent. |
+| 3 | A partial-feature owner client is offered operations it cannot implement. `broker/remote/server.ts:261`, `schemas.ts:132` | The gateway reads the owner-policy bit but ignores the rest of the negotiated features in its operation filter. `negotiation-before.log` counted 169 operations from unrequested families. |
+| 4 | Desktop demotion leaves phone-owned terminal processes and control leases running. Owner view and staging state can survive scope changes. `broker/remote/server.ts:51,350,449` | Self-demotion invokes terminal cleanup and desktop demotion skips it. The mobile security contract requires both to stop terminals the phone started. |
+| 5 | Concurrent commits install the same upload twice. A broker restart loses the in-memory upload index and leaves the private staging files behind. Expired committed records never leave the map. `broker/remote/transfers.ts:49,144` | A temporary-store probe observed two installations from overlapping commits and an orphaned staged file after reconstructing the service. See `transfers-before.log`. |
+| 6 | Six successful artifact downloads can exhaust the phone's download allowance for 30 minutes. An interrupted Workbench upload loses its resume handle. `OwnerApi.kt:53,78` | Cleanup only runs on download chunk errors. The upload helper discards its transfer ID on an exception. Ordinary chat attachments already retain their ID and offset. |
+| 7 | A duplicate unconfirmed phone command can appear successful and retire an approval. `PALRepository.kt:1099`, `Conversation.kt:9` | The existing gateway tests return a ledger envelope for a retained uncertain command. The phone treats a non-send response as success regardless of that envelope, and checks only the status word for sends. |
+| 8 | The phone records a cursor acknowledgment before the request succeeds. `PALRepository.kt:1620` | A lost acknowledgment suppresses another attempt at the same cursor. Reconnection still fetches an authoritative snapshot. |
+| 9 | An older terminal snapshot or create result can replace the desktop user's newer selection. `qml/TerminalPane.qml:31,52` | The RPC scope is constant and the success callbacks apply without checking the selection. |
+| 10 | Stop sessions and quit exits with no confirmation from the broker. `native/controller.cpp:1330` | The client exits on a 150 ms timer even if stop requests failed or were never received. |
+| 11 | A headless Canvas preview can wait indefinitely on a desktop keyring dialog. `broker/canvas.ts:117` | The private desktop timed out after 90 s while Chrome activated SystemPrompter. The same preview and annotation test passed in four seconds with a private-profile browser launch adjustment (`canvas-keyring-check.log`). |
+| 12 | A Code Lab run can start after cancellation during staging. `broker/execution/runner.ts:74,91`, `execution/codelab.ts:83` | The signal can already be aborted when the spawn listener is registered. In the full suite a run was persisted as running after shutdown (`suite.log`). |
+| 13 | Shell integration tests send events to the wrong socket when a PAL runtime is set. `tests/telemetry-shells.py:24` | The reporter and wrapper honor PAL_RUNTIME_DIR before XDG_RUNTIME_DIR. The fixture inherits the former and listens under the latter. A repeat reported zero Fish events. |
+| 14 | The erasure regression can fail before it tests erasure. `tests/context-plan.test.ts:116` | The fixture assumes turn one remains in a bounded newest-first excerpt after seven turns. The baseline output contained turn four instead. |
+
+The full pre-repair Node run passed 1,052 of 1,059 tests, with five failures, one timeout and one skip. Desktop compilation, both TypeScript configurations, the generated protocol check and the Android JVM test tasks passed at baseline. The Stop timing test passed on repeat. No production change was based solely on that timing assertion.
+
+## Additional finding during recovery verification
+
+Stopping a conversation and deleting it before the fallback timer expired crashed the broker and disconnected its other clients. The timer in `broker/core.ts:1155` performed a required lookup of the deleted session. It also identified work by conversation alone, allowing an old deadline to act on a later turn. The isolated normal RPC workflow exited with “Session no longer exists” in `stop-delete-before.log`.
+
+Code Lab lost output errors in `broker/execution/codelab.ts:94,108`. The outer error handler did not await finalization, and the per-file installer swallowed errors. A run that produced an unreadable image could appear successful and silently omit the file. The regression writes both a truncated PNG and a valid text file, then checks the failed operation, visible error and retained valid output. See `output-check.log`.
+
+The host-command stop regression intermittently reported survivors. The host path in `broker/execution/codelab.ts:204` checked the process group as soon as the shell closed. That probe counts zombies on Linux, can precede live children exiting, and leaves a later unconditional kill timer active. The existing cancellation regression failed in `complete-suite.log`.
+
+An owner phone's native history list and import used the availability of the limited-phone Claude launch policy as a prerequisite in `broker/remote/parity.ts`. That hid desktop-eligible history from owners and imported it without recording the owner execution policy. The paired regression sets restricted Claude support unavailable, lists a fixture history as owner, imports it and checks the resulting desktop policy.
+
+Two semantic-recall regressions in `tests/knowledge.test.ts` used the normal 500 ms foreground deadline while asserting exact semantic ranking. Under concurrent builds they could observe the intentional keyword fallback. The tests now request a five-second budget for those two scenarios. Separate tests retain the foreground deadline and assert partial coverage during an actual projection timeout. All 17 knowledge tests passed together in `semantic-repaired.log`.
+
+The image restart fixtures in `tests/workbench-images.test.ts:195,294` opened a second Core and registered its cleanup after the fixture had registered removal of the state directory. The full run reported ENOTEMPTY for the profile, and the image worker still held the deleted session database and a live graph database. The fixture ComfyUI also retained two 100-second job timers after its tests finished, as shown by the handle stacks in `image-handles.log`. The restart checks now close each reopened broker before profile cleanup, and the fixture clears scheduled jobs on finish, interrupt and shutdown.
+
+## Repairs
+
+- The gateway uses the selected connection and its credentials for remote API access. Owner creation, handoff and native history import follow the desktop execution policy. Feature negotiation now filters advertised operations, request dispatch and feature-specific events.
+- Role and scope changes stop phone-owned terminals, release control and clear desktop-view and transfer state. Concurrent commits of the same upload share one result. Quotas include work already in progress, expiry drops old receipts, and gateway startup removes unreachable staging.
+- The Android repository checks command receipts before retiring an approval or send. Failed cursor acknowledgments can be retried. The Work screen releases transfer slots after successful downloads, cancellation and failed integrity checks and can continue a reselected upload against the same paired device and grant. Acknowledgments belong to the current connection, so restoring a sealed cursor from disk does not mark it received by the desktop.
+- Desktop terminal results belong to the selection that requested them. Quit waits for stop receipts and terminal session state. A stop deadline belongs to its originating turn, including when the conversation is deleted.
+- Canvas starts its ephemeral browser with a noninteractive password store and bounds browser requests. Code Lab rechecks cancellation before spawning and records output errors. Host commands use the shared process-group termination routine.
+- Shell telemetry and continuity-erasure regressions now use their own socket location and observable retained turn. Their original failures and reruns are in `suite.log`, `baseline-rechecks.log` and `repairs-tap.log`.
+
+## Verification
+
+All paths below are relative to the checkout. Broker and desktop interaction tests used a private network, compositor, session bus and profile. Android ran with disposable API 30 and API 35 system images, an isolated broker and a fixture Ollama server.
+
+| Check | Command and evidence |
+| --- | --- |
+| Broker and protocol compilation | `npm run typecheck`, `npx --no-install tsc --noEmit -p tsconfig.mobile.json` and `node tools/mobile-contract.ts --check` passed. |
+| Focused interruption and file recovery | Signed owner-gateway, Canvas, telemetry and continuity checks passed together, 54/54 in `build/e2e-audit/repairs-tap.log`. The stale stop timer and related core/Workbench checks passed 47/47 in `stop-repair.log`. All seven Code Lab checks passed in `output-check.log`. |
+| Android build, tests and lint | From `mobile/android`, `./gradlew --offline --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug` passed. JUnit reported 28 protocol, 77 data and 13 app tests, all passed. Debug lint reported zero errors, 33 warnings and one hint. See `build/e2e-audit/final-android.log` and `mobile/android/app/build/reports/lint-results-debug.txt`. |
+| Paired Android sessions | `node tools/mobile-paired-check.ts --serial emulator-5588 --pairing manual` on API 30 and `--serial emulator-5586 --pairing network` on API 35 each reached 5/5 checkpoints. Both tested SAS confirmation, pinned TLS, a synthetic send and reply, revision-bound pin/archive and disconnect/reconnect. The desktop transcript contained the send once. Exact APK hashes and outcomes are in `build/e2e-audit/phone30-verified/paired/summary.json` and `phone35-verified/paired/summary.json`. |
+| Android screens | Android 11 instrumentation ran `PairingSmokeTest`, `ConversationContentTest` and `CompatibilityScreensTest` against the final debug APK. All 20 passed. See `build/e2e-audit/phone30-verified/compose-instrumentation.log`. |
+| Desktop build and UI | `cmake --build build --parallel 4` built the desktop. The final native application and UI driver were rebuilt with `ninja -C build pal pal-ui-check`. Eight distinct UI scenarios passed, including Workbench, frozen-broker recovery, draft switching, stop-and-quit, provider setup and permissions. See `build/e2e-audit/desktop-repair/ui.txt`, `desktop-final-guard/ui.txt` and `desktop-api/ui.txt`. All 44 QML assertions and test setup/cleanup cases passed in `qml-final.log`, including delivery of late terminal snapshot and create replies. |
+| Native CTest | All six registered targets passed across the focused CTest runs. The four fast targets cover geometry registration, motion, avatar catalog and QML. The OpenGL and software renderer checks both passed in `build/e2e-audit/avatar-renderer.log`. The final QML check is in `qml-final.log`. |
+| Packaged desktop | `python3 tools/install-user.py --prefix "$PWD/build/e2e-audit/stage"` installed the final working tree to a local staging directory. Its launcher opened a mapped PAL window, and its broker answered IPC, started with remote access disabled, and saved and hydrated a draft. See `build/e2e-audit/installed-final.log`. `node tools/check-install.ts "$PWD/build/e2e-audit/stage"` reported only the modified-source build identity. See `stage-integrity-final.log`. |
+
+The final private-desktop command `node --import ./tests/fixtures/memory-environment.ts --test --test-concurrency=4 --test-timeout=180000 tests/*.test.ts` ran 1,066 tests. It passed 1,065 with zero failures or cancellations and skipped the opt-in installed IndexTTS integration. See `build/e2e-audit/final-verification.log`. The image restart cleanup that had previously returned ENOTEMPTY completed in this run.
+
+### Coverage limits
+
+The product builds exercised here were the Linux Qt desktop and Android debug application. Provider and payment-dependent operations used fixtures. Physical phone biometrics, camera QR scanning, a real Wi-Fi handover, live provider accounts, signed release distribution and the optional multilingual IndexTTS runtime were outside the runtime evidence. Workbench file reselection resumes within the same Android process while its paired grant and temporary transfer remain valid. A broker restart discards incomplete staging. No source changes were released or installed into the active user profile.

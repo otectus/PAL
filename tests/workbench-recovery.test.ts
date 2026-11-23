@@ -24,7 +24,11 @@ async function populated(t: any) {
 
 test('DA13 backups carry conversation files with verified bytes; folder access, changes and runs stay behind', { skip: skipWithoutHelper }, async t => {
   const { f, session, picture, note, edited } = await populated(t);
+  assert.equal((await f.core.rpc('recovery.status')).lastBackupAt, null);
   const backup = await f.core.rpc('recovery.backup', { includeContent: true });
+  assert.equal((await f.core.rpc('recovery.status')).lastBackupAt, backup.manifest.created);
+  f.core.store.set('recovery.lastBackupAt', 0);
+  assert.equal((await f.core.rpc('recovery.status')).lastBackupAt, backup.manifest.created, 'an older backup is visible without the timestamp marker');
   assert.equal(backup.manifest.artifacts, 3, 'two imports and one edited version');
   assert.equal(backup.manifest.artifactBytes, true);
   const objects = await readdir(join(backup.directory, 'artifacts'));

@@ -80,7 +80,7 @@ export async function apiModels(provider: ApiProvider, access: ApiAccess): Promi
       // Google states inputTokenLimit/outputTokenLimit; Anthropic states max_input_tokens/max_tokens.
       const input = provider === 'google' ? entry.inputTokenLimit : provider === 'anthropic' ? entry.max_input_tokens : undefined;
       const output = provider === 'google' ? entry.outputTokenLimit : provider === 'anthropic' ? entry.max_tokens : undefined;
-      // A compatible endpoint's limits are the ones the user declared; its catalog states none Cere relies on.
+      // A compatible endpoint's limits are the ones the user declared; its catalog states none PAL relies on.
       const declared = provider === 'compatible' ? access.endpoint?.() : undefined;
       const context = declared ? declared.contextLength : input, ceiling = declared ? declared.maxOutputTokens : output;
       models.push({ id, displayName: entry.display_name || entry.displayName || id, description: entry.description || apiLabel(provider, access), efforts: [], defaultEffort:'', isDefault:false, cloud:true,
@@ -180,7 +180,7 @@ export class ApiAdapter extends OllamaAdapter {
     const endpoint=this.endpoint();
     if (this.provider!=='compatible') return ['The API provider may add its own system and safety instructions'];
     return ['The endpoint, and any proxy behind it, may add its own instructions or route to another model',
-      endpoint?.contextLength ? `Context window of ${endpoint.contextLength.toLocaleString('en-US')} tokens as you declared it; not verified` : `Context window not declared; Cere assumes ${compatibleContextFallback.toLocaleString('en-US')} tokens`,
+      endpoint?.contextLength ? `Context window of ${endpoint.contextLength.toLocaleString('en-US')} tokens as you declared it; not verified` : `Context window not declared; PAL assumes ${compatibleContextFallback.toLocaleString('en-US')} tokens`,
       'Tool, image, streaming and usage support are as you declared them; not verified'];
   }
   override async preflight(images: string[], _signal: AbortSignal) {
@@ -232,7 +232,7 @@ export class ApiAdapter extends OllamaAdapter {
       const retryId=randomUUID();
       const access={...this.access,retry:{...this.access.retry,onRetry:(notice:import('./http-retry.ts').RetryNotice)=>{
         this.access.retry?.onRetry?.(notice);
-        this.hooks.event({type:'tool',id:retryId,text:`${this.label}: HTTP ${notice.status}. Retry ${notice.attempt}/${notice.maxRetries} in ${(notice.delayMs/1000).toFixed(1)}s.`});
+        this.hooks.event({type:'tool',id:retryId,text:`${this.label}: HTTP ${notice.status}. Retry ${notice.attempt}/${notice.maxRetries} in ${(notice.delayMs/1000).toFixed(1)}s.`,data:{notice:true}});
       }}};
       const response=await request(provider,access,path,combined,body,acceptance);
       acceptance.onAccepted?.();
@@ -274,7 +274,7 @@ export class ApiAdapter extends OllamaAdapter {
         // Calls keep the endpoint's IDs; a call without one gets an ID so its result can be matched.
         const calls=chat.calls.filter(call=>call&&call.name).map(call=>({...call,id:call.id||'call_'+randomUUID().replaceAll('-','').slice(0,24)}));
         reply.providerData=[{role:'assistant',content:reply.content||null,...(calls.length?{tool_calls:calls.map(call=>({id:call.id,type:'function',function:{name:call.name,arguments:call.args}}))}:{})}];
-        // Usage is recorded only when declared and actually reported; Cere never estimates cost.
+        // Usage is recorded only when declared and actually reported; PAL never estimates cost.
         const usage=this.endpoint()?.usage?chat.usage:undefined;
         if(usage&&(Number.isSafeInteger(usage.prompt_tokens)||Number.isSafeInteger(usage.completion_tokens)))this.reportedUsage={...(Number.isSafeInteger(usage.prompt_tokens)?{inputTokens:usage.prompt_tokens}:{}),...(Number.isSafeInteger(usage.completion_tokens)?{outputTokens:usage.completion_tokens}:{}),source:this.label};
         done=true;
@@ -284,7 +284,7 @@ export class ApiAdapter extends OllamaAdapter {
         // The visible answer and the model's history agree: both keep the text it wrote.
         if(!reply.content)throw new Error(`${this.label} reached this model’s output limit before writing an answer. Ask a narrower question or choose a model with a larger output limit.`);
         reply.providerData=truncatedProviderData(provider,reply.providerData||[]);
-        this.hooks.event({type:'message',id,text:reply.content+'\n\n*[Stopped at this model’s output limit. Ask Cere to continue.]*',data:{sources:[...sources]}});
+        this.hooks.event({type:'message',id,text:reply.content+'\n\n*[Stopped at this model’s output limit. Ask PAL to continue.]*',data:{sources:[...sources]}});
         reply.sourceId=`${this.session.id}:${id}`;
         return reply;
       }

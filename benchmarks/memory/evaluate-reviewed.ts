@@ -18,7 +18,7 @@ function claim(value: Row): Row {
 
 export async function evaluateReviewed(options: { directory?: string; fixture?: Row } = {}) {
   const fixture = options.fixture ?? JSON.parse(await readFile(new URL('../../tests/fixtures/memory/review-cases.json', import.meta.url), 'utf8'));
-  const directory = options.directory ?? await mkdtemp(join(tmpdir(), 'cere-memory-review-'));
+  const directory = options.directory ?? await mkdtemp(join(tmpdir(), 'pal-memory-review-'));
   const c = new Canonical(directory), scopes = new Map<string, string>();
   const results: Row[] = [], statuses = { expected: 0, correct: 0, accepted: 0, candidate: 0, disputed: 0, rejected: 0 };
   let qualityChecks = 0, qualityPassed = 0, restoredErasure = true;

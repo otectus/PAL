@@ -8,35 +8,53 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- PAL Everywhere §16.1: push-to-talk notes on phones with full access; never recorded in the background. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <queries>
+        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
+    </queries>
+
     <application
-        android:name=".CereApp"
+        android:name=".PALApp"
         android:allowBackup="false"
         android:supportsRtl="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
-        android:label="Cere Mobile"
-        android:theme="@style/Theme.Cere"
+        android:label="PAL Mobile"
+        android:theme="@style/Theme.PAL"
         android:usesCleartextTraffic="false">
         <!-- singleTop: shares and notification taps reach the open activity instead of stacking copies. -->
         <!-- adjustResize: the app pads for the keyboard itself, so the window must not also be panned. -->
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:windowSoftInputMode="adjustResize">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="image/*" />
             </intent-filter>
+            <!-- PAL Everywhere §14.1: a tool server sign-in started on this phone returns here (RFC 8252 private-use
+                 scheme). PKCE keeps the verifier on the desktop, so a code another app intercepts is useless. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="dev.otectus.cere.mobile" />
+            </intent-filter>
         </activity>
+        <!-- Keep the published launcher component so pinned home-screen shortcuts survive an upgrade. -->
+        <activity-alias android:name="dev.otectus.cere.mobile.MainActivity"
+            android:targetActivity=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
         <service
             android:name=".MonitoringService"
             android:exported="false"

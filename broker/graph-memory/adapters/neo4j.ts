@@ -207,7 +207,7 @@ export class Neo4jGraphRepository implements GraphRepository {
     return result.records.length ? integer(result.records[0].get('watermark')) : 0;
   }
 
-  /** Publication is serialized by Cere; this fence scrubs active and retired generations. */
+  /** Publication is serialized by PAL; this fence scrubs active and retired generations. */
   async eraseAllGenerations(ids: string[], erasureEpoch: number): Promise<void> {
     if(!ids.length)return;
     const session=this.driver.session({database:this.database});
