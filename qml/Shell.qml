@@ -231,7 +231,7 @@ Rectangle {
                         }
                     }
                     SidebarTab {
-                        objectName: "sidebarWorkflows"; label: qsTr("Project workflows"); iconName: "workflow"
+                        objectName: "sidebarWorkflows"; label: qsTr("Workflows"); iconName: "workflow"
                         iconOnly: shell.rail; primary: shell.page === 5
                         onClicked: shell.showWorkflows(0)
                     }
