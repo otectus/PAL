@@ -312,6 +312,11 @@ private:
     bool m_compactShowPending = false;
     QSystemTrayIcon *m_tray=nullptr;
     QProcess *m_overlayProcess=nullptr;
+    QTimer m_overlayRestartTimer;
+    QElapsedTimer m_overlayUptime;
+    QList<int> m_overlayRestartDelays{250,1000,4000};
+    int m_overlayRestartAttempts=0;
+    bool m_stoppingOverlay=false;
     QPoint m_dragOffset, m_petPosition;
     // The saved position, scale and output area last applied to the pet, and a position this host
     // saved that the broker has not echoed yet. Unrelated or stale state updates leave the pet alone.
@@ -321,6 +326,9 @@ private:
     QSize m_maskSize;
     QPointer<QScreen> m_screen;
     void connectBroker();
+    void launchOverlay(bool toggle);
+    void scheduleOverlayRestart();
+    void stopOverlay();
     bool managedBroker() const;
     void launchBroker(bool initial);
     void flushOfflineDrafts();

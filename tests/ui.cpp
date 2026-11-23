@@ -257,6 +257,70 @@ private slots:
         visibility->trigger();
         QTRY_COMPARE(visibility->text(), QString("Hide companion"));
     }
+    void overlayChildRecoveryIsBoundedAndOneShot(){
+        const auto previousHost=qgetenv("PAL_HOST_EXEC");
+        const auto previousLog=qgetenv("PAL_OVERLAY_TEST_LOG");
+        const auto previousMode=qgetenv("PAL_OVERLAY_TEST_MODE");
+        const auto restoreEnvironment=qScopeGuard([&]{
+            if(previousHost.isNull())qunsetenv("PAL_HOST_EXEC");else qputenv("PAL_HOST_EXEC",previousHost);
+            if(previousLog.isNull())qunsetenv("PAL_OVERLAY_TEST_LOG");else qputenv("PAL_OVERLAY_TEST_LOG",previousLog);
+            if(previousMode.isNull())qunsetenv("PAL_OVERLAY_TEST_MODE");else qputenv("PAL_OVERLAY_TEST_MODE",previousMode);
+        });
+        const auto fixture=data.path()+"/overlay-child";
+        writeFile(fixture,R"PAL(#!/bin/sh
+printf '%s\n' "$*" >> "$PAL_OVERLAY_TEST_LOG"
+case "${PAL_OVERLAY_TEST_MODE:-healthy}" in
+  once) [ "$(wc -l < "$PAL_OVERLAY_TEST_LOG")" -gt 1 ] && exit 0 ;;
+  healthy) exit 0 ;;
+  hold) trap 'exit 0' TERM INT; while :; do sleep 1; done ;;
+esac
+kill -KILL $$
+)PAL");
+        QVERIFY(QFile::setPermissions(fixture,QFileDevice::ReadOwner|QFileDevice::WriteOwner|QFileDevice::ExeOwner));
+        qputenv("PAL_HOST_EXEC",fixture.toUtf8());
+
+        const auto launches=[&](const QString &log){
+            QFile file(log);if(!file.open(QIODevice::ReadOnly))return QStringList{};
+            return QString::fromUtf8(file.readAll()).split('\n',Qt::SkipEmptyParts);
+        };
+        const auto run=[&](const QByteArray &mode,const QString &log,int expected){
+            qputenv("PAL_OVERLAY_TEST_MODE",mode);qputenv("PAL_OVERLAY_TEST_LOG",log.toUtf8());
+            Controller supervised(PAL_SOURCE_DIR,false);
+            supervised.m_overlayRestartDelays={20,40,80};
+            supervised.start(false,true);
+            QTRY_COMPARE_WITH_TIMEOUT(launches(log).size(),expected,3000);
+            QTest::qWait(250);
+            const auto calls=launches(log);QCOMPARE(calls.size(),expected);
+            QVERIFY(calls.first().contains("--toggle"));
+            for(int i=1;i<calls.size();++i)QVERIFY2(!calls.at(i).contains("--toggle"),qPrintable(calls.at(i)));
+        };
+
+        // An overlay that wins no instance lock exits successfully; it is healthy coordination,
+        // not a failure to supervise. A crash is recovered, while a crash loop gets only 3 retries.
+        run("healthy",data.path()+"/overlay-healthy.log",1);
+        run("once",data.path()+"/overlay-once.log",2);
+        run("always",data.path()+"/overlay-always.log",4);
+
+        const auto intentionalLog=data.path()+"/overlay-intentional.log";
+        qputenv("PAL_OVERLAY_TEST_MODE","hold");qputenv("PAL_OVERLAY_TEST_LOG",intentionalLog.toUtf8());
+        {
+            Controller supervised(PAL_SOURCE_DIR,false);
+            supervised.m_overlayRestartDelays={20,40,80};supervised.start(false,true);
+            QTRY_COMPARE_WITH_TIMEOUT(launches(intentionalLog).size(),1,3000);
+        }
+        QTest::qWait(150);QCOMPARE(launches(intentionalLog).size(),1);
+
+        // Destroying the supervisor while its delayed recovery is pending must cancel that job;
+        // nothing may dereference the old controller or leak a replacement into another test job.
+        const auto teardownLog=data.path()+"/overlay-teardown.log";
+        qputenv("PAL_OVERLAY_TEST_MODE","always");qputenv("PAL_OVERLAY_TEST_LOG",teardownLog.toUtf8());
+        {
+            Controller supervised(PAL_SOURCE_DIR,false);
+            supervised.m_overlayRestartDelays={1000};supervised.start(false,true);
+            QTRY_COMPARE_WITH_TIMEOUT(launches(teardownLog).size(),1,500);
+        }
+        QTest::qWait(1100);QCOMPARE(launches(teardownLog).size(),1);
+    }
     void startupEntryTracksSuccessfulWrites(){
         const auto previous=qgetenv("XDG_CONFIG_HOME");
         const auto restore=qScopeGuard([&]{if(previous.isNull())qunsetenv("XDG_CONFIG_HOME");else qputenv("XDG_CONFIG_HOME",previous);});
@@ -2762,7 +2826,7 @@ Unicode: café ✦ 日本語
         QProcess *spawnedOverlay=nullptr;
         const auto restoreOverlay=qScopeGuard([&]{
             compositorOverlay.reset();
-            if(spawnedOverlay)spawnedOverlay->start();
+            if(spawnedOverlay)app->launchOverlay(false);
         });
         Controller *petApp=app.get();
         const bool layerSurface=liveHyprland();
@@ -2803,8 +2867,7 @@ Unicode: café ✦ 日本語
             // below is needed for Qt pointer assertions, so suspend that test
             // child to avoid two surfaces fighting for the same broker/seat.
             for(auto process:app->findChildren<QProcess*>())if(process->arguments().contains("--overlay")){
-                spawnedOverlay=process;process->terminate();
-                if(!process->waitForFinished(3000)){process->kill();QVERIFY(process->waitForFinished(3000));}
+                spawnedOverlay=process;app->stopOverlay();
                 break;
             }
             compositorOverlay=std::make_unique<Controller>(PAL_SOURCE_DIR,true);
@@ -3224,7 +3287,7 @@ Unicode: café ✦ 日本語
         QProcess *spawnedOverlay=nullptr;
         const auto restoreOverlay=qScopeGuard([&]{
             compositorOverlay.reset();
-            if(spawnedOverlay)spawnedOverlay->start();
+            if(spawnedOverlay)app->launchOverlay(false);
         });
         Controller *petApp=app.get();
         const bool layerSurface=liveHyprland();
@@ -3239,8 +3302,7 @@ Unicode: café ✦ 日本語
         QVERIFY(!call("settings.update",{{"avatar","pal_classic"},{"topmost",layerSurface},{"quiet",false},{"reducedMotion",false},{"motionIntensity",1.0},{"scale",1.0},{"roaming",false}}).contains("error"));
         if(layerSurface){
             for(auto process:app->findChildren<QProcess*>())if(process->arguments().contains("--overlay")){
-                spawnedOverlay=process;process->terminate();
-                if(!process->waitForFinished(3000)){process->kill();QVERIFY(process->waitForFinished(3000));}
+                spawnedOverlay=process;app->stopOverlay();
                 break;
             }
             compositorOverlay=std::make_unique<Controller>(PAL_SOURCE_DIR,true);

@@ -198,6 +198,8 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
     });
     m_quitStopTimer.setSingleShot(true);m_quitStopTimer.setInterval(10000);
     connect(&m_quitStopTimer,&QTimer::timeout,this,[this]{failQuitStop("PAL could not confirm that every session stopped. PAL is still open so you can retry or keep watching them.");});
+    m_overlayRestartTimer.setSingleShot(true);
+    connect(&m_overlayRestartTimer,&QTimer::timeout,this,[this]{launchOverlay(false);});
     m_roamTimer.setInterval(200);
     connect(&m_roamTimer,&QTimer::timeout,this,&Controller::roam);
     connect(qApp,&QGuiApplication::screenRemoved,this,[this]{stopRoaming(false);m_screen=nullptr;m_placedPosition.clear();syncPet();refreshMotion();});
@@ -206,7 +208,7 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
 Controller::~Controller(){
     m_retry.stop();m_roamTimer.stop();m_motionTimer.stop();m_idleTimer.stop();m_toastTimer.stop();m_successTimer.stop();m_liveness.stop();
     QObject::disconnect(&m_socket,nullptr,this,nullptr);
-    if(m_overlayProcess){m_overlayProcess->terminate();m_overlayProcess->waitForFinished(2000);}
+    stopOverlay();
     if(m_panel)QObject::disconnect(m_panel,nullptr,this,nullptr);
     if (m_tray) {
         auto *menu = m_tray->contextMenu();
@@ -286,14 +288,57 @@ static QIcon companionTrayIcon() {
         icon.addPixmap(QPixmap::fromImage(face.scaled(size, size, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
     return icon;
 }
+void Controller::launchOverlay(bool toggle){
+    if(!m_overlayProcess||m_overlayProcess->state()!=QProcess::NotRunning)return;
+    m_overlayRestartTimer.stop();m_stoppingOverlay=false;
+    QStringList arguments{"--overlay","--root",m_root};
+    // `--toggle` is a one-shot request from the invoking CLI. A recovered host subscribes to the
+    // same broker state, but must not replay that user action and close a panel the first host opened.
+    if(toggle)arguments<<"--toggle";
+    m_overlayProcess->setArguments(arguments);
+    m_overlayUptime.invalidate();
+    m_overlayProcess->start();
+}
+void Controller::scheduleOverlayRestart(){
+    if(m_stoppingOverlay||!m_overlayProcess||m_overlayRestartTimer.isActive())return;
+    // A host which stayed up for a minute was not part of the previous crash burst. Each burst is
+    // still bounded: after three failed recoveries the workspace stays alive without spinning.
+    if(m_overlayUptime.isValid()&&m_overlayUptime.elapsed()>=60000)m_overlayRestartAttempts=0;
+    const int retryLimit=int(m_overlayRestartDelays.size());
+    if(m_overlayRestartAttempts>=retryLimit){
+        qCritical("PAL overlay stopped repeatedly; leaving the workspace running without further automatic restarts.");
+        return;
+    }
+    const int delay=m_overlayRestartDelays.at(m_overlayRestartAttempts++);
+    qWarning("PAL overlay stopped unexpectedly; restarting in %d ms (attempt %d of %d).",
+             delay,m_overlayRestartAttempts,retryLimit);
+    m_overlayRestartTimer.start(delay);
+}
+void Controller::stopOverlay(){
+    m_stoppingOverlay=true;m_overlayRestartTimer.stop();
+    if(!m_overlayProcess||m_overlayProcess->state()==QProcess::NotRunning)return;
+    m_overlayProcess->terminate();
+    if(!m_overlayProcess->waitForFinished(2000)){
+        m_overlayProcess->kill();m_overlayProcess->waitForFinished(1000);
+    }
+}
 void Controller::start(bool show,bool toggle,const QString &conversationFolder){
     m_pendingToggle=toggle;
     m_pendingConversationFolder=conversationFolder;
     if(!m_overlay){
         launchBroker(true);
         m_overlayProcess=new QProcess(this);m_overlayProcess->setProgram(qEnvironmentVariable("PAL_HOST_EXEC",QCoreApplication::applicationFilePath()));
-        QStringList overlayArguments{"--overlay","--root",m_root};if(toggle)overlayArguments<<"--toggle";
-        m_overlayProcess->setArguments(overlayArguments);m_overlayProcess->setProcessChannelMode(QProcess::ForwardedChannels);m_overlayProcess->start();
+        m_overlayProcess->setProcessChannelMode(QProcess::ForwardedChannels);
+        connect(m_overlayProcess,&QProcess::started,this,[this]{m_overlayUptime.start();});
+        connect(m_overlayProcess,&QProcess::finished,this,[this](int exitCode,QProcess::ExitStatus status){
+            if(m_stoppingOverlay||(status==QProcess::NormalExit&&exitCode==0))return;
+            scheduleOverlayRestart();
+        });
+        connect(m_overlayProcess,&QProcess::errorOccurred,this,[this](QProcess::ProcessError error){
+            // Crashes also emit finished(); a process which could not start does not.
+            if(error==QProcess::FailedToStart)scheduleOverlayRestart();
+        });
+        launchOverlay(toggle);
         m_tray=new QSystemTrayIcon(companionTrayIcon(),this);m_tray->setToolTip("PAL · your desktop companion");
         auto *menu = new QMenu();
         menu->addAction(tr("Open workspace"), this, [this] { expand(); });

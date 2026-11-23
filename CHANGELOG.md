@@ -17,6 +17,10 @@ Notable changes to PAL, the desktop application and its broker, and to PAL Mobil
 - **Companion artwork.** The white robot is the new default. The previous outfit is available as **PAL (Classic)** among the 24 avatar choices.
 - **Mobile header.** The number beneath **PAL** now comes from the installed Android app. Pairing with a desktop still named “Cere” no longer puts that name in the header.
 
+### Fixed
+
+- The desktop restores the companion if its overlay crashes. Reinstalling PAL also keeps the Wayland libraries used by the running workspace and avatar available until they exit.
+
 ## [0.1.6] - 2026-11-21
 
 - Desktop memory can review project facts, decisions and preferences with a separately selected model. Settings support Preview, Assisted and Automatic modes, local and remote Ollama, native APIs and saved compatible endpoints.
