@@ -10,13 +10,20 @@ const activities = [...(declared?.[1] || '').matchAll(/'(\w+)'/g)].map(match => 
 // view falls back to a vague status there, as an unlabelled "recalling" would have.
 test('every session activity has a label in each desktop view and in PAL Mobile', () => {
   assert.ok(activities.includes('recalling') && activities.length >= 8, activities.join(', '));
+  // The phone maps activities to string resources in one `when (session.activity)` block; only that
+  // block counts, so an agent or connection state with the same name elsewhere cannot stand in.
   const views = [
-    ['qml/Chat.qml', (a: string) => `case "${a}":`],
-    ['qml/ActivityPanel.qml', (a: string) => `case "${a}":`],
-    ['qml/SessionList.qml', (a: string) => `case"${a}":`],
-    ['mobile/android/app/src/main/kotlin/dev/otectus/pal/mobile/InteractionState.kt', (a: string) => `session.activity == "${a}"`],
+    ['qml/Chat.qml', (a: string) => `case "${a}":`, ''],
+    ['qml/ActivityPanel.qml', (a: string) => `case "${a}":`, ''],
+    ['qml/SessionList.qml', (a: string) => `case"${a}":`, ''],
+    ['mobile/android/app/src/main/kotlin/dev/otectus/pal/mobile/InteractionState.kt', (a: string) => `"${a}" -> R.string.`, 'when (session.activity) {'],
   ] as const;
-  const missing = views.flatMap(([path, label]) => { const source = read(path); return activities.filter(a => !source.includes(label(a))).map(a => `${path}: ${a}`); });
+  const scope = (source: string, block: string) => {
+    if (!block) return source;
+    const start = source.indexOf(block);
+    return start < 0 ? '' : source.slice(start, source.indexOf('else ->', start));
+  };
+  const missing = views.flatMap(([path, label, block]) => { const source = scope(read(path), block); return activities.filter(a => !source.includes(label(a))).map(a => `${path}: ${a}`); });
   assert.deepEqual(missing, []);
 });
 

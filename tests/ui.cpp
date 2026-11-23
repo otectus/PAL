@@ -1870,6 +1870,13 @@ Unicode: café ✦ 日本語
         QVERIFY(body->property("readOnly").toBool());QVERIFY(body->property("selectByMouse").toBool());
         QVERIFY(QMetaObject::invokeMethod(body,"selectAll"));
         QVERIFY(body->property("selectedText").toString().contains("Markdown heading"));
+        // The reply is taller than the transcript, which follows its end. A reader reaches the
+        // header's Copy by scrolling up, which releases following; a programmatic jump does not,
+        // and following pulls it back to the latest output.
+        auto list=item("messageList");QVERIFY(list);
+        QTest::wheelEvent(window,list->mapToScene(QPointF(list->width()/2,list->height()/2)),QPoint(0,120));
+        QTRY_VERIFY(!item("chatView")->property("follow").toBool());
+        QTRY_VERIFY(!list->property("moving").toBool());
         click("copyMessage_markdown");QCOMPARE(QGuiApplication::clipboard()->text(),markdown);
         QVERIFY(QMetaObject::invokeMethod(body,"deselect"));
         capture("markdown-formatted");
@@ -6406,6 +6413,19 @@ Flickable {
         QTRY_VERIFY_WITH_TIMEOUT(item("codeLabSample") && item("codeLabSample")->isVisible(), 5000);
         QVERIFY(click("codeLabSample"));
         QTRY_VERIFY_WITH_TIMEOUT(item("codeLabCode") && item("codeLabCode")->property("text").toString().contains("savefig"), 6000);
+        // A real run needs the confined Python sandbox and the sample's plotting package. Where
+        // either is missing (CI containers cannot create the sandbox's namespaces), the pane must
+        // say why and offer no Run; the broker's Code Lab tests skip there for the same reason.
+        const auto lab = call("codelab.status", {{"sessionId", session}});
+        const auto unavailable = !lab.value("available").toBool() ? lab.value("problem").toString()
+            : !lab.value("runtime").toMap().value("packages").toMap().contains("matplotlib") ? QString("the desktop Python has no matplotlib") : QString();
+        if (!unavailable.isEmpty()) {
+            if (!lab.value("available").toBool()) {
+                QTRY_VERIFY_WITH_TIMEOUT(item("codeLabStatus") && item("codeLabStatus")->property("text").toString() == unavailable, 5000);
+                QVERIFY(!item("codeLabRun")->isEnabled());
+            }
+            QSKIP(qPrintable("Code Lab cannot run the sample here: " + unavailable));
+        }
         QTRY_VERIFY_WITH_TIMEOUT(item("codeLabRun")->isEnabled(), 5000);
         QVERIFY(click("codeLabRun"));
         QVariantMap chart;

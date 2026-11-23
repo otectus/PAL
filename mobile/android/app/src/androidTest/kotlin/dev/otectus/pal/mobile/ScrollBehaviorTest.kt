@@ -23,6 +23,7 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -122,13 +123,14 @@ class ScrollBehaviorTest {
             }
         }
 
-        val pane = compose.onNode(androidx.compose.ui.test.SemanticsMatcher.expectValue(SemanticsProperties.PaneTitle, "Dismissible sheet"))
         compose.onNodeWithText("Dismissible sheet").assertIsDisplayed()
-        val paneTop = pane.bounds().top
+        // Start on the handle itself. The handle is 48 dp tall, so a fixed pixel offset above the
+        // sheet content lands on the scrim on a low-density screen and drags nothing.
+        val handle = compose.onNode(hasContentDescription("Drag handle")).bounds()
         compose.onAllNodes(androidx.compose.ui.test.isRoot())[1].performTouchInput {
             swipe(
-                start = Offset(center.x, paneTop - 50f),
-                end = Offset(center.x, center.y + 500f),
+                start = handle.center,
+                end = Offset(handle.center.x, center.y + 500f),
                 durationMillis = 600,
             )
         }
