@@ -21,11 +21,11 @@ class OwnerUploadResumeTest {
     @Test fun aLostStatusReplyRetainsTheVerifiedOffsetOnlyForTheSameGrant() = runBlocking {
         OwnerUploadResumes.keep(key, "transfer")
         try {
-            val error = runCatching { OwnerUploadResumes.resume(key) { throw IOException("offline") } }.exceptionOrNull()
+            val error = runCatching { OwnerUploadResumes.resume(key, Int::toString) { throw IOException("offline") } }.exceptionOrNull()
             assertEquals(IOException::class.java, error?.javaClass)
-            assertNull(OwnerUploadResumes.resume(key.copy(scope = "2")) { error("Unexpected lookup") })
-            assertNull(OwnerUploadResumes.resume(key.copy(deviceId = "different")) { error("Unexpected lookup") })
-            assertEquals(receipt("transfer"), OwnerUploadResumes.resume(key) { receipt(it) })
+            assertNull(OwnerUploadResumes.resume(key.copy(scope = "2"), Int::toString) { error("Unexpected lookup") })
+            assertNull(OwnerUploadResumes.resume(key.copy(deviceId = "different"), Int::toString) { error("Unexpected lookup") })
+            assertEquals(receipt("transfer"), OwnerUploadResumes.resume(key, Int::toString) { receipt(it) })
         } finally {
             OwnerUploadResumes.remove(key, "transfer")
         }
@@ -36,7 +36,7 @@ class OwnerUploadResumeTest {
         val leases = mutableSetOf<String>()
         suspend fun fetch(id: String, digest: String) = readDownload(
             buildJsonObject { put("transferId", id); put("size", bytes.size); put("sha256", digest); put("chunk", 2) },
-            { _, _ -> }, { _, offset, count -> bytes.copyOfRange(offset.toInt(), offset.toInt() + count) }
+            Int::toString, { _, _ -> }, { _, offset, count -> bytes.copyOfRange(offset.toInt(), offset.toInt() + count) }
         ) { released -> check(leases.remove(released)) }
         repeat(7) { index ->
             val id = "read-$index"
@@ -44,18 +44,18 @@ class OwnerUploadResumeTest {
             assertEquals("file", String(fetch(id, sha256Hex(bytes))))
         }
         leases.add("damaged")
-        assertEquals(true, runCatching { fetch("damaged", "bad-digest") }.isFailure)
+        assertEquals(R.string.download_wrong_digest.toString(), runCatching { fetch("damaged", "bad-digest") }.exceptionOrNull()?.message)
         assertEquals(emptySet<String>(), leases)
     }
 
     @Test fun expiredUploadsCanRestartAndLateCleanupCannotDiscardAnotherUpload() = runBlocking {
         OwnerUploadResumes.keep(key, "old")
-        assertNull(OwnerUploadResumes.resume(key) { throw RemoteRequestException("ATTACHMENT_INVALID", "Expired") })
-        assertNull(OwnerUploadResumes.resume(key) { error("An expired handle was retained") })
+        assertNull(OwnerUploadResumes.resume(key, Int::toString) { throw RemoteRequestException("ATTACHMENT_INVALID", "Expired") })
+        assertNull(OwnerUploadResumes.resume(key, Int::toString) { error("An expired handle was retained") })
         OwnerUploadResumes.keep(key, "new")
         OwnerUploadResumes.remove(key, "old")
         try {
-            assertEquals(receipt("new"), OwnerUploadResumes.resume(key) { receipt(it) })
+            assertEquals(receipt("new"), OwnerUploadResumes.resume(key, Int::toString) { receipt(it) })
         } finally {
             OwnerUploadResumes.remove(key, "new")
         }

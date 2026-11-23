@@ -91,7 +91,7 @@ internal fun AnnotateImage(preview: Bitmap, width: Int, height: Int, onCancel: (
                     TextButton({ marks = marks.dropLast(1) }, enabled = marks.isNotEmpty()) { Text(stringResource(R.string.annotation_undo)) }
                 }
                 FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PALLayout.small, Alignment.End)) {
-                    TextButton(onCancel) { Text(stringResource(R.string.annotation_cancel)) }
+                    TextButton(onCancel) { Text(stringResource(R.string.action_cancel)) }
                     Button({
                         // The layer at the original's size: transparent, with the strokes scaled from image coordinates.
                         val layer = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)

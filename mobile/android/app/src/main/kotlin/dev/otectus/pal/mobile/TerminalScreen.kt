@@ -320,7 +320,7 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
         }
         (actionError ?: error ?: notice)?.let { Text(it, Modifier.padding(horizontal = PALLayout.groupGap), color = if (actionError != null || error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
         current.str("note")?.let { Text(it, Modifier.padding(horizontal = PALLayout.groupGap), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-        current.obj("stopReport")?.let { report -> Text(stringResource(R.string.terminal_stopped_processes, report.int("signalled") ?: 0) + ((report.int("remaining") ?: 0).takeIf { it > 0 }?.let { strings.getString(R.string.terminal_did_not_stop, it) } ?: stringResource(R.string.terminal_none_remain)), Modifier.padding(horizontal = PALLayout.groupGap), style = MaterialTheme.typography.bodySmall) }
+        current.obj("stopReport")?.let { report -> Text(stringResource(R.string.stopped_processes_summary, report.int("signalled") ?: 0, report.int("remaining") ?: 0), Modifier.padding(horizontal = PALLayout.groupGap), style = MaterialTheme.typography.bodySmall) }
         val colors = MaterialTheme.colorScheme
         Box(Modifier.weight(1f).fillMaxWidth().background(colors.surfaceContainerHighest).onSizeChanged { size = it.width to it.height }
             .focusRequester(focus).focusable()

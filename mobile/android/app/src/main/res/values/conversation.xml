@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="conversation_activity">Activity</string>
-    <string name="conversation_refresh">Refresh</string>
-    <string name="conversation_close">Close</string>
     <string name="conversation_no_activity">No activity for this conversation.</string>
     <plurals name="conversation_subagents">
         <item quantity="one">%1$d subagent</item>
@@ -65,7 +63,7 @@
     <string name="conversation_style_value">%1$s · %2$s</string>
     <string name="conversation_no_style">No style · %1$s</string>
     <string name="conversation_posture">Posture: %1$s</string>
-    <string name="conversation_posture_pinned"> · pinned to this conversation</string>
+    <string name="conversation_posture_pinned">Posture: %1$s · pinned to this conversation</string>
     <string name="conversation_standing_instructions">This conversation also has standing instructions.</string>
 
     <string name="conversation_results_schedules">Results and schedules</string>
@@ -156,7 +154,6 @@
     <string name="conversation_requests_answered">All requests have been answered.</string>
     <string name="conversation_remove_attachment_question">Remove %1$s?</string>
     <string name="conversation_remove_attachment_body">It leaves this conversation’s draft on the desktop too, and is not sent. The original file on the PC is not changed.</string>
-    <string name="conversation_remove">Remove</string>
     <string name="conversation_keep">Keep</string>
 
     <string name="conversation_private_image_decode_failed">The private image copy could not be decoded</string>
@@ -172,7 +169,6 @@
     <string name="conversation_preview_permission_needed">Viewing images from the desktop needs the preview permission for this phone.</string>
     <string name="conversation_image_size">Image · %1$d KiB</string>
     <string name="conversation_text_file_size">Text file · %1$d KiB</string>
-    <string name="conversation_done">Done</string>
     <string name="conversation_remove_from_draft">Remove from draft</string>
 
     <string name="conversation_provider_activity">Provider activity</string>

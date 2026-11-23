@@ -123,7 +123,7 @@ internal fun CompanionHeader(connection: ConnectionState, connectionText: String
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.groupGap)) {
                     Image(painterResource(R.drawable.pal_face_icon), null, Modifier.size(PALLayout.portrait))
                     Column(Modifier.weight(1f)) {
-                        Text("PAL", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.pal_name), style = MaterialTheme.typography.titleMedium)
                         Text(version, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Icon(if (retry) Icons.Default.Refresh else Icons.Default.Info, null)
@@ -139,7 +139,7 @@ internal fun CompanionHeader(connection: ConnectionState, connectionText: String
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             Image(painterResource(R.drawable.pal_face_icon), null, Modifier.size(PALLayout.portrait))
             Column(Modifier.weight(1f).padding(vertical = PALLayout.tight)) {
-                Text("PAL", style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.pal_name), style = MaterialTheme.typography.titleLarge)
                 Text(version, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }

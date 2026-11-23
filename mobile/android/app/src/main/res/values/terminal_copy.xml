@@ -11,7 +11,6 @@
     <string name="terminal_is_typing_in_this_terminal">%1$s is typing in this terminal.</string>
     <string name="terminal_keep_running">Keep running</string>
     <string name="terminal_new">New %1$s</string>
-    <string name="terminal_none_remain">; none remain</string>
     <string name="terminal_on_desktop_account">On %1$s · %2$s · desktop account · %3$s</string>
     <string name="terminal_paste">Paste</string>
     <string name="terminal_resume_typing">Resume typing</string>
@@ -20,7 +19,6 @@
     <string name="terminal_start_a_terminal_on_the_desktop">Start a terminal on the desktop</string>
     <string name="terminal_stop_terminal">Stop terminal</string>
     <string name="terminal_stop_this_terminal">Stop this terminal?</string>
-    <string name="terminal_stopped_processes">Stopped %1$s processes</string>
     <string name="terminal_take_control">Take control</string>
     <string name="terminal_take_control_of_the_desktop_terminal">Take control of the desktop terminal</string>
     <string name="terminal_take_control_to_type_here">Take control to type here.</string>
@@ -37,7 +35,6 @@
     <string name="terminal_another_device">another device</string>
     <string name="terminal_another_phone">Another phone</string>
     <string name="terminal_check_who_controls_the_terminal_before_trying_again">. Check who controls the terminal before trying again.</string>
-    <string name="terminal_did_not_stop">; %1$d did not stop</string>
     <string name="terminal_including">, including %1$s</string>
     <string name="terminal_running">" · running %1$s"</string>
     <string name="terminal_terminal_screen">"Terminal screen: "</string>

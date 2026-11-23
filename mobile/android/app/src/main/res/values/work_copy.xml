@@ -37,7 +37,6 @@
     <string name="work_downloads_are_verified_against_the_desktops_copy_before">Downloads are verified against the desktop\'s copy before they are kept. Files you save go where you choose with Android\'s file picker.</string>
     <string name="work_draw_on_it">Draw on it</string>
     <string name="work_earlier">Earlier</string>
-    <string name="work_edit">Edit</string>
     <string name="work_editable">" · editable"</string>
     <string name="work_enable">Enable</string>
     <string name="work_end_now">End now</string>
@@ -104,12 +103,10 @@
     <string name="work_run_commands">Run commands</string>
     <string name="work_run_commands_as_your_desktop_account">Run commands as your desktop account?</string>
     <string name="work_runs_in_this_conversation">Runs in this conversation</string>
-    <string name="work_save">Save</string>
     <string name="work_save_note">Save note</string>
     <string name="work_saved_notes">Saved notes</string>
     <string name="work_saved_on_the_desktop_revision">Saved on the desktop · revision %1$s</string>
     <string name="work_scratchpad">Scratchpad · %1$s</string>
-    <string name="work_search">Search</string>
     <string name="work_search_in_this_folder">Search in this folder</string>
     <string name="work_send_a_file_from_this_phone">Send a file from this phone</string>
     <string name="work_share_as_markdown">Share as Markdown</string>
@@ -172,7 +169,6 @@
     <string name="work_let_the_model_edit_for_30_minutes">Let the model edit %1$s for 30 minutes</string>
     <string name="work_literature">Literature</string>
     <string name="work_matrix">Matrix</string>
-    <string name="work_missing">" · %1$d missing"</string>
     <string name="work_monitoring_turned_off">Monitoring turned off</string>
     <string name="work_note_saved">Note saved</string>
     <string name="work_offer_to_the_model">Offer %1$s to the model</string>

@@ -201,7 +201,7 @@ internal fun VoiceBar(repository: PALRepository, sessionId: String, messages: Li
                 Text(stringResource(R.string.voice_microphone_on), Modifier.semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.error)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                     Text("%d:%02d".format(elapsed / 60, elapsed % 60), Modifier.weight(1f))
-                    FilledTonalButton({ transcribe() }) { Text(stringResource(R.string.voice_done)) }
+                    FilledTonalButton({ transcribe() }) { Text(stringResource(R.string.action_done)) }
                     IconButton({ recorder.cancel(); state = "idle" }) { Icon(Icons.Default.Close, stringResource(R.string.voice_discard_the_recording)) }
                 }
             }

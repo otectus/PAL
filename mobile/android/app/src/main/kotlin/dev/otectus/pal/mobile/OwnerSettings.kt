@@ -185,7 +185,7 @@ private fun ConfirmRemoval(label: String, name: String, effect: String, enabled:
     TextButton({ open = true }, enabled = enabled) { Text("$label…") }
     if (open) AlertDialog({ open = false }, title = { Text("$label $name?") }, text = { Text(effect) },
         confirmButton = { Button({ open = false; remove() }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(label) } },
-        dismissButton = { TextButton({ open = false }) { Text(stringResource(R.string.annotation_cancel)) } })
+        dismissButton = { TextButton({ open = false }) { Text(stringResource(R.string.action_cancel)) } })
 }
 
 @Composable
@@ -225,7 +225,7 @@ private fun AccessPanel(repository: PALRepository, state: MobileState, activity:
             else -> strings.getString(R.string.computer_desktop_offline)
         }
         Text(title, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium)
-        val lastRole = when (state.permissions.str("role")) { "owner" -> "Full access"; "limited" -> "Limited access"; "observer" -> strings.getString(R.string.computer_observer); else -> null }
+        val lastRole = when (state.permissions.str("role")) { "owner" -> strings.getString(R.string.full_access); "limited" -> strings.getString(R.string.limited_access); "observer" -> strings.getString(R.string.computer_observer); else -> null }
         lastRole?.let { role ->
             val time = offline?.lastVerifiedAt?.let { java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it)) }
             Text(stringResource(R.string.computer_last_known_access, role) + time?.let { " · $it" }.orEmpty())
@@ -262,7 +262,7 @@ private fun AccessPanel(repository: PALRepository, state: MobileState, activity:
         confirmButton = { Button({ confirmLimit = false; scope.launch {
             ownerCall { repository.mutate("devices.setSelfRole", buildJsonObject { put("role", "limited"); put("expectedScopeVersion", info?.obj("device")?.str("scopeVersion") ?: "0") }) }
                 .onSuccess { feedback(strings.getString(R.string.computer_this_phone_now_has_limited_access)) }.onFailure { failure(it.message ?: strings.getString(R.string.computer_could_not_change_access)) }
-        } }) { Text(stringResource(R.string.computer_limit_access)) } }, dismissButton = { TextButton({ confirmLimit = false }) { Text(stringResource(R.string.annotation_cancel)) } })
+        } }) { Text(stringResource(R.string.computer_limit_access)) } }, dismissButton = { TextButton({ confirmLimit = false }) { Text(stringResource(R.string.action_cancel)) } })
 }
 
 @Composable
@@ -277,7 +277,7 @@ private fun DevicesSection(repository: PALRepository, state: MobileState, activi
         val role = device.str("role")
         Column {
             Text(device.str("name").orEmpty() + if (device.isTrue("self")) stringResource(R.string.computer_this_phone) else "", style = MaterialTheme.typography.titleSmall)
-            Text(listOf(when (role) { "owner" -> "Full access"; "observer" -> strings.getString(R.string.computer_observer); else -> "Limited access" }, if (device.str("lifetime") == "until-revoked") strings.getString(R.string.computer_until_revoked) else "expires", if (device.str("actionAuthentication") == "trusted-device") strings.getString(R.string.computer_trusted_phone) else strings.getString(R.string.computer_fingerprint_or_pin)).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+            Text(listOf(when (role) { "owner" -> strings.getString(R.string.full_access); "observer" -> strings.getString(R.string.computer_observer); else -> strings.getString(R.string.limited_access) }, if (device.str("lifetime") == "until-revoked") strings.getString(R.string.computer_until_revoked) else strings.getString(R.string.access_expires), if (device.str("actionAuthentication") == "trusted-device") strings.getString(R.string.computer_trusted_phone) else strings.getString(R.string.computer_fingerprint_or_pin)).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
             if (!device.isTrue("self")) Row(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                 if (role == "owner" || role == "limited") TextButton({ scope.launch {
                     ownerCall { signed(activity, repository, "owner.devices.setRole", buildJsonObject { put("deviceId", device.str("id").orEmpty()); put("role", if (role == "owner") "limited" else "observer"); put("expectedScopeVersion", device.str("scopeVersion") ?: "0") }, strings.getString(R.string.computer_reduce_s_access, device.str("name"))) }
@@ -425,8 +425,8 @@ private fun UsageSection(repository: PALRepository, activity: FragmentActivity, 
     FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { listOf(7, 30, 90).forEach { d -> FilterChip(days == d, { days = d }, { Text(stringResource(R.string.computer_days, d)) }) } }
     val value = summary ?: return Text(stringResource(R.string.transcript_loading_full_message))
     val totals = value.obj("totals"); val currency = value.str("currency").orEmpty()
-    Text(stringResource(R.string.computer_requests_in_out_tokens_reported, totals?.num("calls") ?: 0, totals?.num("inputTokens") ?: 0, totals?.num("outputTokens") ?: 0) + ((totals?.num("images") ?: 0).takeIf { it > 0 }?.let { strings.getString(R.string.computer_images, it) } ?: ""))
-    Text(strings.getString(R.string.computer_priced_cost_2f_s, (totals?.get("cost") as? JsonPrimitive)?.doubleOrNull ?: 0.0, currency) + ((totals?.num("unpriced") ?: 0).takeIf { it > 0 }?.let { strings.getString(R.string.computer_unpriced_2, it) } ?: ""), style = MaterialTheme.typography.bodySmall)
+    Text(stringResource(R.string.computer_requests_in_out_tokens_reported, totals?.num("calls") ?: 0, totals?.num("inputTokens") ?: 0, totals?.num("outputTokens") ?: 0) + ((totals?.num("images") ?: 0).takeIf { it > 0 }?.let { " · " + strings.getQuantityString(R.plurals.usage_image_count, it.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), it) } ?: ""))
+    Text(strings.getString(R.string.computer_priced_cost_2f_s, (totals?.get("cost") as? JsonPrimitive)?.doubleOrNull ?: 0.0, currency) + ((totals?.num("unpriced") ?: 0).takeIf { it > 0 }?.let { " · " + strings.getString(R.string.unpriced_usage, it) } ?: ""), style = MaterialTheme.typography.bodySmall)
     Text(stringResource(R.string.computer_reported_estimated_unknown_subscription, totals?.num("reported") ?: 0, totals?.num("estimated") ?: 0, totals?.num("unknown") ?: 0, totals?.num("subscription") ?: 0), style = MaterialTheme.typography.bodySmall)
     (value["warnings"] as? JsonArray)?.forEach { Text(it.jsonPrimitive.contentOrNull.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
     value.list("byProvider").take(8).forEach { row -> Text("${row.str("key")} · ${row.num("calls")} · " + if ((row.num("priced") ?: 0) > 0) "%.2f %s".format((row["cost"] as? JsonPrimitive)?.doubleOrNull ?: 0.0, currency) else stringResource(R.string.computer_unpriced), style = MaterialTheme.typography.bodySmall) }
@@ -519,7 +519,7 @@ private fun SkillsSection(repository: PALRepository, activity: FragmentActivity,
                     .onSuccess { feedback(strings.getString(R.string.computer_is_on, version?.str("name"))); review = null; load() }.onFailure { failure(it.message ?: "") }
             } }) { Text(stringResource(R.string.computer_enable_this_version)) }
             else TextButton({ scope.launch { ownerCall { repository.mutate("owner.skills.disable", buildJsonObject { put("versionId", version.str("id").orEmpty()) }) }.onSuccess { review = null; load() }.onFailure { failure(it.message ?: "") } } }) { Text(stringResource(R.string.computer_turn_off)) }
-        }, dismissButton = { TextButton({ review = null }) { Text(stringResource(R.string.mobile_close)) } })
+        }, dismissButton = { TextButton({ review = null }) { Text(stringResource(R.string.action_close)) } })
     }
 }
 
@@ -561,7 +561,7 @@ private fun CollectionsSection(repository: PALRepository, state: MobileState, ac
                 ownerCall { signed(activity, repository, "owner.collections.delete", buildJsonObject {
                     put("id", selected.str("id").orEmpty()); put("expectedRevision", selected.str("revision") ?: "0"); put("confirmed", true)
                 }, strings.getString(R.string.computer_delete_and_its_index, nameToDelete)) }.onSuccess { feedback(strings.getString(R.string.computer_deleted, nameToDelete)); load() }.onFailure { failure(it.message.orEmpty()) }
-            } }) { Text(stringResource(R.string.computer_delete_collection)) } }, dismissButton = { TextButton({ deleting = null }) { Text(stringResource(R.string.annotation_cancel)) } })
+            } }) { Text(stringResource(R.string.computer_delete_collection)) } }, dismissButton = { TextButton({ deleting = null }) { Text(stringResource(R.string.action_cancel)) } })
     }
     OutlinedTextField(source, { source = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.computer_desktop_file_or_folder_absolute_path_or_a)) })
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
@@ -609,7 +609,7 @@ private fun ToolServersSection(repository: PALRepository, activity: FragmentActi
                     .onFailure { failure(it.message ?: "") }
             } }, enabled = server.isTrue("enabled")) { Text(if (id == resultServer && resultText != null) stringResource(R.string.computer_sign_in_again) else stringResource(R.string.computer_sign_in)) }
             if (oauth?.isTrue("signedIn") == true) TextButton({ scope.launch { ownerCall { signed(activity, repository, "owner.extensions.oauthSignOut", buildJsonObject { put("id", id) }, strings.getString(R.string.computer_sign_out_of, name)) }.onSuccess { resultServer = id; resultText = strings.getString(R.string.computer_signed_out_of, name); load() }.onFailure { failure(it.message ?: "") } } }) { Text(stringResource(R.string.computer_sign_out)) }
-            TextButton({ scope.launch { ownerCall { repository.mutate("owner.extensions.restart", buildJsonObject { put("id", id) }, strings.getString(R.string.computer_start_2, name)) }.onSuccess { load() }.onFailure { failure(it.message ?: ""); load() } } }, enabled = server.isTrue("enabled")) { Text(if (server.str("state") == "ready") stringResource(R.string.computer_restart) else stringResource(R.string.computer_start)) }
+            TextButton({ scope.launch { ownerCall { repository.mutate("owner.extensions.restart", buildJsonObject { put("id", id) }, strings.getString(R.string.computer_start_2, name)) }.onSuccess { load() }.onFailure { failure(it.message ?: ""); load() } } }, enabled = server.isTrue("enabled")) { Text(if (server.str("state") == "ready") stringResource(R.string.computer_restart) else stringResource(R.string.action_start)) }
         }
     }
     if (writes.isNotEmpty()) {
@@ -663,7 +663,7 @@ private fun ToolServersSection(repository: PALRepository, activity: FragmentActi
         }
         Row(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             TextButton({ preview = null }) { Text(stringResource(R.string.go_back)) }
-            Button({ scope.launch { ownerCall { signed(activity, repository, "owner.extensions.importApply", buildJsonObject { put("token", reviewed.str("token").orEmpty()); put("names", JsonArray(chosen.map { JsonPrimitive(it) })) }, strings.getString(R.string.computer_add_tool_servers_to_the_desktop_turned_off, chosen.size)) }.onSuccess { preview = null; importText = ""; feedback(strings.getString(R.string.computer_added_turned_off_review_each_one_before_turning)); load() }.onFailure { failure(it.message ?: "") } } }, enabled = chosen.isNotEmpty()) { Text(stringResource(R.string.computer_add_turned_off)) }
+            Button({ scope.launch { ownerCall { signed(activity, repository, "owner.extensions.importApply", buildJsonObject { put("token", reviewed.str("token").orEmpty()); put("names", JsonArray(chosen.map { JsonPrimitive(it) })) }, strings.getQuantityString(R.plurals.server_count_action, chosen.size, chosen.size)) }.onSuccess { preview = null; importText = ""; feedback(strings.getString(R.string.computer_added_turned_off_review_each_one_before_turning)); load() }.onFailure { failure(it.message ?: "") } } }, enabled = chosen.isNotEmpty()) { Text(stringResource(R.string.computer_add_turned_off)) }
         }
     }
 }
@@ -724,7 +724,7 @@ private fun SetupsSection(repository: PALRepository, state: MobileState, activit
             text = { Text("“" + setup.str("name").orEmpty() + stringResource(R.string.computer_will_open_a_new_conversation_in) + folder.trim() +
                 stringResource(R.string.computer_its_model_can_run_commands_as_your_desktop)) },
             confirmButton = { Button({ startReview = null; startConversation(setup) }) { Text(stringResource(R.string.computer_start_with_host_commands_2)) } },
-            dismissButton = { TextButton({ startReview = null }) { Text(stringResource(R.string.annotation_cancel)) } })
+            dismissButton = { TextButton({ startReview = null }) { Text(stringResource(R.string.action_cancel)) } })
     }
     preview?.let { reviewed ->
         AlertDialog({ preview = null }, title = { Text(stringResource(R.string.computer_apply, reviewed.obj("setup")?.str("name").orEmpty())) }, text = {
@@ -749,7 +749,7 @@ private fun SetupsSection(repository: PALRepository, state: MobileState, activit
         }, confirmButton = { Button({ scope.launch {
             ownerCall { signed(activity, repository, "owner.setups.apply", buildJsonObject { put("token", reviewed.str("token").orEmpty()) }, strings.getString(R.string.computer_apply_to_this_conversation, reviewed.obj("setup")?.str("name"))) }
                 .onSuccess { preview = null; feedback(strings.getString(R.string.computer_applied)) }.onFailure { failure(it.message ?: ""); preview = null }
-        } }, enabled = reviewed.list("changes").isNotEmpty()) { Text(stringResource(R.string.computer_apply_2)) } }, dismissButton = { TextButton({ preview = null }) { Text(stringResource(R.string.annotation_cancel)) } })
+        } }, enabled = reviewed.list("changes").isNotEmpty()) { Text(stringResource(R.string.computer_apply_2)) } }, dismissButton = { TextButton({ preview = null }) { Text(stringResource(R.string.action_cancel)) } })
     }
 }
 
@@ -767,12 +767,12 @@ private fun SpecialistsSection(repository: PALRepository, activity: FragmentActi
     data?.list("specialists")?.forEach { item ->
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("${item.str("name")} · ${roles?.str(item.str("role").orEmpty()) ?: item.str("role")}" + (item.str("model")?.let { " · $it" } ?: ""), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-            if (!item.isTrue("builtin")) ConfirmRemoval(stringResource(R.string.computer_delete_3), item.str("name").orEmpty(), stringResource(R.string.computer_this_specialist_will_no_longer_be_available_to)) { scope.launch { ownerCall { signed(activity, repository, "owner.specialists.delete", buildJsonObject { put("id", item.str("id").orEmpty()) }, strings.getString(R.string.computer_delete_the_specialist, item.str("name"))) }.onSuccess { load() }.onFailure { failure(it.message ?: "") } } }
+            if (!item.isTrue("builtin")) ConfirmRemoval(stringResource(R.string.action_delete), item.str("name").orEmpty(), stringResource(R.string.computer_this_specialist_will_no_longer_be_available_to)) { scope.launch { ownerCall { signed(activity, repository, "owner.specialists.delete", buildJsonObject { put("id", item.str("id").orEmpty()) }, strings.getString(R.string.computer_delete_the_specialist, item.str("name"))) }.onSuccess { load() }.onFailure { failure(it.message ?: "") } } }
         }
     }
     Text(stringResource(R.string.computer_at_most_this_many_run_at_once_in), style = MaterialTheme.typography.bodySmall)
     Row(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
-        (1..4).forEach { count -> FilterChip(data?.int("concurrency") == count, { scope.launch { ownerCall { signed(activity, repository, "owner.specialists.setConcurrency", buildJsonObject { put("concurrency", count) }, strings.getString(R.string.computer_run_up_to_specialists_at_once, count)) }.onSuccess { load() }.onFailure { failure(it.message ?: "") } } }, { Text("$count") }) }
+        (1..4).forEach { count -> FilterChip(data?.int("concurrency") == count, { scope.launch { ownerCall { signed(activity, repository, "owner.specialists.setConcurrency", buildJsonObject { put("concurrency", count) }, strings.getQuantityString(R.plurals.specialist_limit, count, count)) }.onSuccess { load() }.onFailure { failure(it.message ?: "") } } }, { Text("$count") }) }
     }
     OutlinedTextField(name, { name = it.take(60) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.computer_new_specialist_name)) })
     FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { roles?.keys?.forEach { id -> FilterChip(role == id, { role = id }, { Text(roles.str(id).orEmpty()) }) } }
@@ -802,7 +802,7 @@ private fun ScriptsSection(repository: PALRepository, activity: FragmentActivity
     scripts.forEach { script ->
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text(script.str("name").orEmpty()); Text("${script.str("executable")} ${(script["args"] as? JsonArray).orEmpty().joinToString(" ") { it.jsonPrimitive.content }} · ${script.str("cwd")}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
-            ConfirmRemoval(stringResource(R.string.mobile_remove), script.str("name").orEmpty(), stringResource(R.string.computer_this_removes_the_saved_script_from_pal_on)) { save(scripts.filter { it.str("id") != script.str("id") }, strings.getString(R.string.computer_remove, script.str("name"))) }
+            ConfirmRemoval(stringResource(R.string.action_remove), script.str("name").orEmpty(), stringResource(R.string.computer_this_removes_the_saved_script_from_pal_on)) { save(scripts.filter { it.str("id") != script.str("id") }, strings.getString(R.string.computer_remove, script.str("name"))) }
         }
     }
     OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.computer_name)) })
@@ -841,8 +841,8 @@ private fun SchedulesSection(repository: PALRepository, state: MobileState, acti
             Column(Modifier.weight(1f)) {
                 Text(label)
                 val timing = if (whenObj?.str("kind") == "folder") strings.getString(R.string.computer_when_files_change_in, whenObj.str("path")) + (if (schedule.obj("pending") != null) strings.getString(R.string.computer_changes_waiting) else "")
-                    else schedule.num("next")?.let { "Next: " + java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(it)) } ?: strings.getString(R.string.computer_no_next_run)
-                Text((if (schedule.isTrue("enabled")) timing else stringResource(R.string.computer_paused)) + (schedule.obj("lastRun")?.let { " · last: ${it.str("outcome")}" + (it.str("reason")?.let { reason -> " ($reason)" } ?: "") } ?: "") +
+                    else schedule.num("next")?.let { strings.getString(R.string.next_schedule, java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(it))) } ?: strings.getString(R.string.computer_no_next_run)
+                Text((if (schedule.isTrue("enabled")) timing else stringResource(R.string.computer_paused)) + (schedule.obj("lastRun")?.let { " · " + strings.getString(R.string.last_schedule, it.str("outcome").orEmpty()) + (it.str("reason")?.let { reason -> " ($reason)" } ?: "") } ?: "") +
                     (if (by?.str("kind") == "device") stringResource(R.string.computer_authorized_from, by.str("name").orEmpty()) else stringResource(R.string.computer_authorized_on_the_desktop)), style = MaterialTheme.typography.bodySmall)
             }
             Switch(schedule.isTrue("enabled"), { enabled -> scope.launch {
@@ -858,8 +858,8 @@ private fun SchedulesSection(repository: PALRepository, state: MobileState, acti
                 confirmButton = { Button({ adopting = false; scope.launch {
                     ownerCall { signed(activity, repository, "owner.schedules.adopt", buildJsonObject { put("id", id) }, strings.getString(R.string.computer_make_the_desktop_the_authorizer_of, label)) }
                         .onSuccess { feedback(strings.getString(R.string.computer_authorized_on_the_desktop_2)); load() }.onFailure { failure(it.message.orEmpty()) }
-                } }) { Text(stringResource(R.string.computer_transfer_authorization_2)) } }, dismissButton = { TextButton({ adopting = false }) { Text(stringResource(R.string.annotation_cancel)) } })
-            ConfirmRemoval(stringResource(R.string.computer_delete_3), label, stringResource(R.string.computer_this_routine_will_no_longer_run_its_previous)) { scope.launch {
+                } }) { Text(stringResource(R.string.computer_transfer_authorization_2)) } }, dismissButton = { TextButton({ adopting = false }) { Text(stringResource(R.string.action_cancel)) } })
+            ConfirmRemoval(stringResource(R.string.action_delete), label, stringResource(R.string.computer_this_routine_will_no_longer_run_its_previous)) { scope.launch {
                 ownerCall { signed(activity, repository, "owner.schedules.delete", buildJsonObject { put("id", id) }, strings.getString(R.string.computer_delete_the_routine, label)) }.onSuccess { load() }.onFailure { failure(it.message ?: "") }
             } }
         }
@@ -941,7 +941,7 @@ private fun RoutineCreator(repository: PALRepository, state: MobileState, activi
         if (kind == "folder" && folder.isNotBlank()) Text(stringResource(R.string.computer_watch) + folder.trim() + stringResource(R.string.computer_after) + quiet + stringResource(R.string.computer_seconds_without_a_change))
         LabeledCheck(stringResource(R.string.computer_it_may_run_while_i_am_away_permission), unattended) { unattended = it }
         Row(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
-            TextButton(done) { Text(stringResource(R.string.annotation_cancel)) }
+            TextButton(done) { Text(stringResource(R.string.action_cancel)) }
             Button({ scope.launch {
                 val whenValue = buildJsonObject {
                     put("kind", kind)

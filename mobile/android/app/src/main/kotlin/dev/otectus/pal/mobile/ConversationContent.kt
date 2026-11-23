@@ -91,8 +91,10 @@ internal fun ConversationTimeline(
     LaunchedEffect(tail?.id, tail?.revision, busy, status, statusText, follow, viewportHeight, hasOlder, tailHeight, statusHeight) {
         if (follow) {
             val expectedItems = conversation.size + (if (hasOlder) 1 else 0) + (if (conversation.isEmpty()) 1 else 0) + 1
-            snapshotFlow { list.layoutInfo.totalItemsCount }.first { it == expectedItems }
-            list.scrollToItem(expectedItems - 1)
+            snapshotFlow { list.layoutInfo.totalItemsCount == expectedItems && !list.isScrollInProgress }.first { it }
+            // Anchor the next layout at the bottom. Starting a scroll mutation here makes
+            // isScrollInProgress treat the transcript's own correction as reader input.
+            list.requestScrollToItem(expectedItems - 1, statusHeight)
             seenTailId = tail?.id
             seenRevision = tail?.revision
         }
@@ -125,7 +127,12 @@ internal fun ConversationTimeline(
         if (!wasBusy && busy) stoppingObserved = status == "stopping"
         else if (busy && status == "stopping") stoppingObserved = true
         if (wasBusy && !busy) {
-            completionMessage = if (stoppingObserved) R.string.transcript_stopped else R.string.transcript_complete
+            completionMessage = when {
+                status == "error" || status == "failed" -> R.string.transcript_failed
+                stoppingObserved -> R.string.transcript_stopped
+                status == "interrupted" || status == "disconnected" -> R.string.transcript_interrupted
+                else -> R.string.transcript_complete
+            }
             stoppingObserved = false
         } else if (busy) {
             // A new turn supersedes any completion that is still being announced.
@@ -284,10 +291,10 @@ internal fun ActivityPanel(
                 Text(stringResource(R.string.conversation_activity), Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineSmall)
             }
             TextButton(onRefresh, enabled = !loading, modifier = Modifier.heightIn(min = PALLayout.target)) {
-                Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(PALLayout.tight)); Text(stringResource(R.string.conversation_refresh))
+                Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(PALLayout.tight)); Text(stringResource(R.string.action_refresh))
             }
             TextButton(onDismiss, modifier = Modifier.heightIn(min = PALLayout.target)) {
-                Icon(Icons.Default.Close, null); Spacer(Modifier.width(PALLayout.tight)); Text(stringResource(R.string.conversation_close))
+                Icon(Icons.Default.Close, null); Spacer(Modifier.width(PALLayout.tight)); Text(stringResource(R.string.action_close))
             }
         }
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())

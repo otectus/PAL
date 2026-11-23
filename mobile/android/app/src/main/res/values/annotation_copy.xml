@@ -1,5 +1,4 @@
 <resources>
-    <string name="annotation_cancel">Cancel</string>
     <string name="annotation_draw_on_the_image">Draw on the image</string>
     <string name="annotation_save_as_a_new_version">Save as a new version</string>
     <string name="annotation_thick">Thick</string>

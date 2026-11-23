@@ -190,14 +190,14 @@ internal fun UnreadableCacheScreen(repository: PALRepository, activity: Fragment
                 Text(stringResource(R.string.mobile_removing_the_unreadable_cache_is_the_only_recovery), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Button({ confirm = true }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_remove_and_pair_again)) }
             } else {
-                Button(repository::retry, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_retry)) }
+                Button(repository::retry, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.action_retry)) }
             }
         }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text(stringResource(R.string.mobile_remove_unreadable_data)) },
         text = { Text(stringResource(R.string.mobile_pal_mobile_cannot_read_its_private_data_on)) },
-        confirmButton = { Button({ confirm = false; activity.lifecycleScope.launch { runCatching { repository.discardUnreadableCache() } } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_remove)) } },
-        dismissButton = { TextButton({ confirm = false }) { Text(stringResource(R.string.annotation_cancel)) } })
+        confirmButton = { Button({ confirm = false; activity.lifecycleScope.launch { runCatching { repository.discardUnreadableCache() } } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.action_remove)) } },
+        dismissButton = { TextButton({ confirm = false }) { Text(stringResource(R.string.action_cancel)) } })
 }
 
 @Composable
@@ -219,7 +219,7 @@ internal fun BlockedScreen(repository: PALRepository, state: MobileState, activi
             }
             Text(if (blocked.repair) stringResource(R.string.mobile_pairing_needs_attention) else stringResource(R.string.mobile_cant_connect_to_the_desktop), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.semantics { heading() })
             SecureStatusPanel(if (blocked.repair) stringResource(R.string.mobile_secure_connection_needs_repair) else stringResource(R.string.mobile_desktop_unavailable), blocked.reason, tone = SecureTone.Attention)
-            Button(repository::retry, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.mobile_retry)) }
+            Button(repository::retry, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.action_retry)) }
             if (blocked.repair) {
                 if (state.pendingCommands.isNotEmpty()) {
                     OutlinedPanel(stringResource(R.string.mobile_check_before_repairing)) {
@@ -237,8 +237,8 @@ internal fun BlockedScreen(repository: PALRepository, state: MobileState, activi
     }
     if (confirmForget) AlertDialog(onDismissRequest = { confirmForget = false }, title = { Text(stringResource(R.string.mobile_remove_this_pairing)) },
         text = { Text(stringResource(R.string.mobile_this_erases_this_phones_encrypted_conversations_drafts_images)) },
-        confirmButton = { Button({ confirmForget = false; activity.lifecycleScope.launch { repository.forget() } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_remove)) } },
-        dismissButton = { TextButton({ confirmForget = false }) { Text(stringResource(R.string.annotation_cancel)) } })
+        confirmButton = { Button({ confirmForget = false; activity.lifecycleScope.launch { repository.forget() } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.action_remove)) } },
+        dismissButton = { TextButton({ confirmForget = false }) { Text(stringResource(R.string.action_cancel)) } })
 }
 
 @Composable
@@ -262,7 +262,7 @@ private fun PairingScreen(
     var savePrompt by remember { mutableStateOf<CompletedPairing?>(null) }
     val result = state.stagedPairing
     var unstaged by remember { mutableStateOf<CompletedPairing?>(null) }
-    var deviceName by rememberSaveable { mutableStateOf(Build.MODEL.take(48).ifBlank { "Android phone" }) }
+    var deviceName by rememberSaveable { mutableStateOf(Build.MODEL.take(48).ifBlank { strings.getString(R.string.generic_android_phone) }) }
     val returning by repository.pairingReturn.collectAsStateWithLifecycle()
     BackHandler(enabled = scan) { scan = false }
     BackHandler(enabled = !scan && (enteringOffer && result == null || onCancel != null)) {
@@ -621,7 +621,7 @@ private fun ShareTargetDialog(repository: PALRepository, state: MobileState, uri
             }
             importing = false
             if (failures.isEmpty()) opened(session.id)
-            else { error = (if (added > 0) strings.getString(R.string.mobile_added_of_images, added, uris.size) else "") + failures.distinct().joinToString(" "); if (added > 0) partial = session.id }
+            else { error = if (added > 0) strings.getString(R.string.transfer_images_error, added, uris.size, failures.distinct().joinToString(" ")) else failures.distinct().joinToString(" "); if (added > 0) partial = session.id }
         }
     }
     AlertDialog(onDismissRequest = { if (!importing) dismiss() }, title = { Text(if (uris.size == 1) stringResource(R.string.mobile_add_the_image_to_a_conversation) else stringResource(R.string.mobile_add_images_to_a_conversation, uris.size)) }, text = {
@@ -637,7 +637,7 @@ private fun ShareTargetDialog(repository: PALRepository, state: MobileState, uri
             if (importing) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
-    }, confirmButton = { partial?.let { id -> Button({ opened(id) }) { Text(stringResource(R.string.mobile_open_conversation)) } } }, dismissButton = { TextButton(dismiss, enabled = !importing) { Text(if (partial != null) stringResource(R.string.mobile_close) else stringResource(R.string.annotation_cancel)) } })
+    }, confirmButton = { partial?.let { id -> Button({ opened(id) }) { Text(stringResource(R.string.mobile_open_conversation)) } } }, dismissButton = { TextButton(dismiss, enabled = !importing) { Text(if (partial != null) stringResource(R.string.action_close) else stringResource(R.string.action_cancel)) } })
 }
 
 @Composable
@@ -846,7 +846,7 @@ private fun CreateSessionSheet(repository: PALRepository, state: MobileState, ac
                 Text(if (showUnavailable) stringResource(R.string.mobile_hide_unavailable_providers) else stringResource(R.string.mobile_unavailable_providers, unavailable.size))
             }
             if (showUnavailable) unavailable.forEach { (id, value) ->
-                Text("${state.traits(id).label} · ${value.jsonObject["remoteUnavailableReason"]?.jsonPrimitive?.contentOrNull ?: "Enable access on the desktop"}",
+                Text("${state.traits(id).label} · ${value.jsonObject["remoteUnavailableReason"]?.jsonPrimitive?.contentOrNull ?: stringResource(R.string.enable_provider_access)}",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -1161,7 +1161,7 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
                     }
                 }
                 if (waitingApprovals.isNotEmpty()) {
-                    TextButton({ activityOpen = false; reviewOpen = true }, modifier = Modifier.fillMaxWidth()) { Text("${waitingApprovals.first().title}${if (waitingApprovals.size > 1) " (+${waitingApprovals.size - 1})" else ""} · Review", maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                    TextButton({ activityOpen = false; reviewOpen = true }, modifier = Modifier.fillMaxWidth()) { Text(if (waitingApprovals.size > 1) stringResource(R.string.review_other_requests, waitingApprovals.first().title, waitingApprovals.size - 1) else stringResource(R.string.review_one_request, waitingApprovals.first().title), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 }
                 session.workbenchNote?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(horizontal = PALLayout.gutter, vertical = PALLayout.tight)) }
                 (error ?: state.lastError)?.let { Row(Modifier.fillMaxWidth().padding(horizontal = PALLayout.groupGap), verticalAlignment = Alignment.CenterVertically) {
@@ -1176,7 +1176,7 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
                     if (state.supports("sessions.stop")) OutlinedButton(onClick = {
                         scope.launch { runCatching { repository.mutate("sessions.stop", buildJsonObject { put("sessionId", session.id) }, session.title) }.onFailure { error = it.message } }
                     }, enabled = !stopPending && session.status != "stopping") {
-                        Text(stringResource(if (stopPending || session.status == "stopping") R.string.transcript_stopping else R.string.transcript_stop))
+                        Text(stringResource(if (stopPending || session.status == "stopping") R.string.transcript_stopping else R.string.action_stop))
                     }
                 }
                 if (state.connection !is ConnectionState.Online) ConnectionRecovery(state, repository::retry)
@@ -1262,7 +1262,7 @@ private fun ChatScreen(repository: PALRepository, state: MobileState, session: S
             text = { Text(stringResource(R.string.conversation_remove_attachment_body)) },
             confirmButton = { TextButton({ desktopRemoveId = null; scope.launch { runCatching { repository.removeDesktopAttachment(session.id, attachment.id) }.onFailure { failure ->
                 error = failure.message; if ((failure as? RemoteRequestException)?.code == "REVISION_CONFLICT") repository.selectSession(session.id) } } },
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.conversation_remove)) } },
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.action_remove)) } },
             dismissButton = { TextButton({ desktopRemoveId = null }) { Text(stringResource(R.string.conversation_keep)) } })
     }
     val reviewingAttachment = attachments.firstOrNull { it.id == attachmentReviewId }
@@ -1284,9 +1284,11 @@ internal fun decodeForDisplay(bytes: ByteArray, maxSide: Int): android.graphics.
 @Composable
 private fun AttachmentReviewDialog(repository: PALRepository, attachment: LocalAttachment, onKeep: () -> Unit, onRemove: () -> Unit, onDismiss: () -> Unit) {
     val decodeFailure = stringResource(R.string.conversation_private_image_decode_failed)
+    var previewAttempt by remember(attachment.id) { mutableIntStateOf(0) }
     var bitmap by remember(attachment.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
     var error by remember(attachment.id) { mutableStateOf<String?>(null) }
-    LaunchedEffect(attachment.id) {
+    LaunchedEffect(attachment.id, previewAttempt) {
+        error = null
         try {
             val bytes = repository.attachmentPreview(attachment.id)
             bitmap = withContext(Dispatchers.Default) { decodeForDisplay(bytes, 2048) } ?: error(decodeFailure)
@@ -1295,14 +1297,17 @@ private fun AttachmentReviewDialog(repository: PALRepository, attachment: LocalA
     AlertDialog(onDismissRequest = onDismiss, title = { Text(stringResource(R.string.conversation_review_image)) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             Text(stringResource(R.string.conversation_private_image_disclosure), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            bitmap?.let { Image(it.asImageBitmap(), contentDescription = stringResource(R.string.conversation_selected_image), modifier = Modifier.fillMaxWidth().heightIn(max = PALLayout.previewHeight).clip(MaterialTheme.shapes.medium), contentScale = ContentScale.Fit) }
-            if (bitmap == null && error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            ReviewImage(bitmap, stringResource(R.string.conversation_selected_image), error == null,
+                attachment.width.toFloat() / attachment.height.coerceAtLeast(1))
+            error?.let {
+                Text(it, color = MaterialTheme.colorScheme.error)
+                TextButton({ previewAttempt++ }) { Text(stringResource(R.string.photo_preview_retry)) }
+            }
             Text(stringResource(R.string.image_dimensions_size, attachment.width, attachment.height, attachment.size / 1024), style = MaterialTheme.typography.bodySmall)
         }
     }, confirmButton = { Button(onKeep, enabled = bitmap != null, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.conversation_keep_for_message)) } }, dismissButton = {
         FlowRow { TextButton(onDismiss, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.conversation_review_later)) }; TextButton(onRemove,
-            modifier = Modifier.heightIn(min = PALLayout.target), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.conversation_remove)) } }
+            modifier = Modifier.heightIn(min = PALLayout.target), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.action_remove)) } }
     })
 }
 
@@ -1311,10 +1316,12 @@ private fun AttachmentReviewDialog(repository: PALRepository, attachment: LocalA
 private fun DesktopAttachmentDialog(repository: PALRepository, state: MobileState, sessionId: String, attachment: DraftAttachment, onRemove: () -> Unit, onDismiss: () -> Unit) {
     val decodeFailure = stringResource(R.string.conversation_preview_decode_failed)
     val previewable = attachment.kind != "image" || state.supports("attachments.read")
+    var previewAttempt by remember(attachment.id) { mutableIntStateOf(0) }
     var bitmap by remember(attachment.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
     var text by remember(attachment.id) { mutableStateOf<DesktopAttachmentPreview.Text?>(null) }
     var error by remember(attachment.id) { mutableStateOf<String?>(null) }
-    LaunchedEffect(attachment.id, previewable) {
+    LaunchedEffect(attachment.id, previewable, previewAttempt) {
+        error = null
         if (!previewable) return@LaunchedEffect
         try {
             when (val preview = repository.desktopAttachmentPreview(sessionId, attachment.id)) {
@@ -1326,17 +1333,20 @@ private fun DesktopAttachmentDialog(repository: PALRepository, state: MobileStat
     AlertDialog(onDismissRequest = onDismiss, title = { Text(attachment.name, maxLines = 2, overflow = TextOverflow.Ellipsis) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             Text(stringResource(R.string.conversation_desktop_attachment_disclosure), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            bitmap?.let { Image(it.asImageBitmap(), contentDescription = stringResource(R.string.conversation_attachment_preview, attachment.name), modifier = Modifier.fillMaxWidth().heightIn(max = PALLayout.previewHeight).clip(MaterialTheme.shapes.medium), contentScale = ContentScale.Fit) }
+            if (previewable && attachment.kind == "image") ReviewImage(bitmap, stringResource(R.string.conversation_attachment_preview, attachment.name), error == null)
             text?.let { preview ->
                 SelectionContainer { Text(preview.text, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
                 if (preview.truncated) Text(stringResource(R.string.conversation_preview_truncated), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
             }
             if (!previewable) Text(stringResource(R.string.conversation_preview_permission_needed), style = MaterialTheme.typography.bodySmall)
-            else if (bitmap == null && text == null && error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            else if (attachment.kind != "image" && text == null && error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+            error?.let {
+                Text(it, color = MaterialTheme.colorScheme.error)
+                TextButton({ previewAttempt++ }) { Text(stringResource(R.string.photo_preview_retry)) }
+            }
             Text(stringResource(if (attachment.kind == "image") R.string.conversation_image_size else R.string.conversation_text_file_size, attachment.size / 1024), style = MaterialTheme.typography.bodySmall)
         }
-    }, confirmButton = { Button(onDismiss, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.conversation_done)) } }, dismissButton = {
+    }, confirmButton = { Button(onDismiss, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.action_done)) } }, dismissButton = {
         TextButton(onRemove, enabled = state.supports("drafts.put"), modifier = Modifier.heightIn(min = PALLayout.target),
             colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.conversation_remove_from_draft)) }
     })
@@ -1416,7 +1426,7 @@ private fun ConnectionDetails(repository: PALRepository, state: MobileState) {
                 SelectionContainer { Column(verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                     Text(stringResource(R.string.mobile_pal_mobile_channel, app.versionName, app.versionCode, app.channel), style = MaterialTheme.typography.bodySmall)
                     Text(desktopBuild, style = MaterialTheme.typography.bodySmall)
-                    Text(stringResource(R.string.mobile_protocol, ConnectionDiagnostics.protocolText(build)) + (online?.let { strings.getString(R.string.mobile_features_operations, it.features.size, it.operations.size) } ?: ""), style = MaterialTheme.typography.bodySmall)
+                    Text(if (online == null) stringResource(R.string.mobile_protocol, ConnectionDiagnostics.protocolText(build)) else stringResource(R.string.features_and_ops, stringResource(R.string.mobile_protocol, ConnectionDiagnostics.protocolText(build)), online.features.size, online.operations.size), style = MaterialTheme.typography.bodySmall)
                     Text(stringResource(R.string.mobile_providers_usable_from_this_phone_of, usable, state.providers.size), style = MaterialTheme.typography.bodySmall)
                     Text(stringResource(R.string.mobile_last_synchronized, repository.lastSynchronizedAt()?.let { time.format(java.util.Date(it)) } ?: "never"), style = MaterialTheme.typography.bodySmall)
                 } }
@@ -1476,7 +1486,7 @@ private fun PinnedReplies(repository: PALRepository, state: MobileState, session
                 items!!.isEmpty() -> item { Text(stringResource(R.string.mobile_no_pinned_replies_yet_pin_a_reply_with)) }
                 else -> items(items!!, key = { it.id }) { message -> MessageBubble(repository, state, message.copy(bookmarked = true)) }
             }
-            item { TextButton({ refresh++ }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(PALLayout.small)); Text(stringResource(R.string.desktop_refresh)) } }
+            item { TextButton({ refresh++ }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(PALLayout.small)); Text(stringResource(R.string.action_refresh)) } }
         }
     }
 }
@@ -1651,7 +1661,7 @@ private fun ApprovalCard(repository: PALRepository, state: MobileState, activity
             val deny = choice == "deny" || choice == "cancel"
             val label = when (choice) {
                 "deny" -> stringResource(R.string.notice_deny)
-                "cancel" -> stringResource(R.string.annotation_cancel)
+                "cancel" -> stringResource(R.string.action_cancel)
                 "allow" -> stringResource(when {
                     approval.kind == "image" -> R.string.allow_image
                     approval.url != null -> R.string.mobile_ive_completed_it
@@ -1687,7 +1697,7 @@ private fun ApprovalCard(repository: PALRepository, state: MobileState, activity
 @Composable
 private fun QuestionField(question: ApprovalQuestion, index: Int, count: Int, answers: List<String>, error: String?, update: (List<String>) -> Unit) {
     val other = questionOtherValue(question, answers)
-    OutlinedPanel(stringResource(R.string.mobile_question_of, index + 1, count, if (question.required) "Required" else "Optional")) {
+    OutlinedPanel(stringResource(R.string.mobile_question_of, index + 1, count, stringResource(if (question.required) R.string.question_required else R.string.question_optional))) {
         question.header?.let { Text(it, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
         Text(question.question, style = MaterialTheme.typography.bodyLarge, fontWeight = if (question.header == null) FontWeight.Medium else FontWeight.Normal)
         question.options.forEach { option ->
@@ -1786,7 +1796,7 @@ private fun MemoryScreen(repository: PALRepository, state: MobileState, activity
         health?.let { value -> item { MemoryHealthLine(value) } }
         if (sessions.isEmpty()) item { OutlinedPanel(stringResource(R.string.mobile_no_conversations)) { Text(stringResource(R.string.mobile_create_or_open_a_conversation_in_an_approved), color = MaterialTheme.colorScheme.onSurfaceVariant) } }
         else item { Text(stringResource(R.string.mobile_session), fontWeight = FontWeight.Medium); FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { sessions.forEach { session -> val project = state.projects.firstOrNull { it.id == session.projectId }; FilterChip(sessionId == session.id, { sessionId = session.id; offset = 0 }, { Column { Text(session.title); Text(project?.name ?: session.project.orEmpty(), style = MaterialTheme.typography.labelSmall) } }) } }; sessions.firstOrNull { it.id == sessionId }?.let { session -> val project = state.projects.firstOrNull { it.id == session.projectId }; OutlinedPanel(project?.name ?: stringResource(R.string.mobile_approved_project)) { SelectionContainer { Text(project?.path ?: session.project ?: stringResource(R.string.desktop_path_unavailable), style = MaterialTheme.typography.bodySmall) }; Text(stringResource(R.string.mobile_ollama, session.ollamaHost.ifBlank { state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: strings.getString(R.string.mobile_host_unavailable) }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
-        if (state.supports("memory.list")) item { Text(stringResource(R.string.mobile_browse), style = MaterialTheme.typography.titleMedium); FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { listOf("saved" to strings.getString(R.string.mobile_saved), "conversation" to "Conversation", "assertions" to strings.getString(R.string.mobile_assertions), "episodes" to strings.getString(R.string.mobile_episodes), "entities" to strings.getString(R.string.mobile_entities)).forEach { (id,label) -> FilterChip(kind == id, { kind = id; offset = 0 }, { Text(label) }) } }; Row(verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(filter, { filter = it }, placeholder = { Text(stringResource(R.string.mobile_find_text_in_memory)) }, singleLine = true, modifier = Modifier.weight(1f)); Spacer(Modifier.width(PALLayout.small)); OutlinedButton({ offset = 0; list() }, enabled = !loading) { Text(stringResource(R.string.mobile_find)) } } }
+        if (state.supports("memory.list")) item { Text(stringResource(R.string.mobile_browse), style = MaterialTheme.typography.titleMedium); FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { listOf("saved" to strings.getString(R.string.mobile_saved), "conversation" to stringResource(R.string.current_conversation), "assertions" to strings.getString(R.string.mobile_assertions), "episodes" to strings.getString(R.string.mobile_episodes), "entities" to strings.getString(R.string.mobile_entities)).forEach { (id,label) -> FilterChip(kind == id, { kind = id; offset = 0 }, { Text(label) }) } }; Row(verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(filter, { filter = it }, placeholder = { Text(stringResource(R.string.mobile_find_text_in_memory)) }, singleLine = true, modifier = Modifier.weight(1f)); Spacer(Modifier.width(PALLayout.small)); OutlinedButton({ offset = 0; list() }, enabled = !loading) { Text(stringResource(R.string.mobile_find)) } } }
         if (state.supports("memory.retrieve")) item { Text(stringResource(R.string.mobile_recall), style = MaterialTheme.typography.titleMedium); Row(verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(query, { query = it.take(1000) }, placeholder = { Text(stringResource(R.string.mobile_ask_what_pal_remembers)) }, singleLine = true, modifier = Modifier.weight(1f)); Spacer(Modifier.width(PALLayout.small)); OutlinedButton(::retrieve, enabled = query.isNotBlank() && !loading) { Text(stringResource(R.string.mobile_recall)) } } }
         if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
@@ -1811,7 +1821,7 @@ private fun MemoryScreen(repository: PALRepository, state: MobileState, activity
         } }
         if (state.supports("memory.forgetPreview") && state.supports("memory.clear") && sessions.isNotEmpty()) item { OutlinedButton({ clearProject = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.mobile_clear_this_projects_memory)) } }
     }
-    if (adding) { var text by rememberSaveable { mutableStateOf("") }; var saveError by remember { mutableStateOf<String?>(null) }; AlertDialog(onDismissRequest = { adding = false }, title = { Text(stringResource(R.string.mobile_remember_a_fact)) }, text = { Column(verticalArrangement = Arrangement.spacedBy(PALLayout.small)) { OutlinedTextField(text, { text = it.take(MEMORY_FACT_LIMIT) }, minLines = 5, label = { Text(stringResource(R.string.mobile_fact)) }, modifier = Modifier.fillMaxWidth()); Text(stringResource(R.string.mobile_characters, text.length, MEMORY_FACT_LIMIT), color = MaterialTheme.colorScheme.onSurfaceVariant); saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) } } }, confirmButton = { Button({ scope.launch { runCatching { val action = repository.prepareAction("memory.save", buildJsonObject { put("sessionId", sessionId); put("text", text.trim()) }); authenticate(activity, strings.getString(R.string.mobile_save_this_memory), action, repository, { adding = false; offset = 0; list() }, { saveError = it }) }.onFailure { saveError = it.message } } }, enabled = text.isNotBlank()) { Text(stringResource(R.string.mobile_review_save)) } }, dismissButton = { TextButton({ adding = false }) { Text(stringResource(R.string.annotation_cancel)) } }) }
+    if (adding) { var text by rememberSaveable { mutableStateOf("") }; var saveError by remember { mutableStateOf<String?>(null) }; AlertDialog(onDismissRequest = { adding = false }, title = { Text(stringResource(R.string.mobile_remember_a_fact)) }, text = { Column(verticalArrangement = Arrangement.spacedBy(PALLayout.small)) { OutlinedTextField(text, { text = it.take(MEMORY_FACT_LIMIT) }, minLines = 5, label = { Text(stringResource(R.string.mobile_fact)) }, modifier = Modifier.fillMaxWidth()); Text(stringResource(R.string.mobile_characters, text.length, MEMORY_FACT_LIMIT), color = MaterialTheme.colorScheme.onSurfaceVariant); saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) } } }, confirmButton = { Button({ scope.launch { runCatching { val action = repository.prepareAction("memory.save", buildJsonObject { put("sessionId", sessionId); put("text", text.trim()) }); authenticate(activity, strings.getString(R.string.mobile_save_this_memory), action, repository, { adding = false; offset = 0; list() }, { saveError = it }) }.onFailure { saveError = it.message } } }, enabled = text.isNotBlank()) { Text(stringResource(R.string.mobile_review_save)) } }, dismissButton = { TextButton({ adding = false }) { Text(stringResource(R.string.action_cancel)) } }) }
     if (managing) managedRecord?.let { record -> MemoryRecordSheet(repository, state, activity, sessionId, record, { managing = false; managedRecord = null }, { list() }, kind, rows) }
     if (clearProject) MemoryRecordSheet(repository, state, activity, sessionId, null, { clearProject = false }, { list() })
 }
@@ -1957,7 +1967,7 @@ private fun SettingsScreen(
           }
         }
     }
-    if (confirmForget) AlertDialog(onDismissRequest = { confirmForget = false }, title = { Text(stringResource(R.string.mobile_forget_desktop)) }, text = { Text(stringResource(R.string.mobile_this_removes_the_encrypted_cache_drafts_and_both)) }, confirmButton = { Button({ confirmForget = false; activity.lifecycleScope.launch { repository.forget() } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_forget)) } }, dismissButton = { TextButton({ confirmForget = false }) { Text(stringResource(R.string.annotation_cancel)) } })
+    if (confirmForget) AlertDialog(onDismissRequest = { confirmForget = false }, title = { Text(stringResource(R.string.mobile_forget_desktop)) }, text = { Text(stringResource(R.string.mobile_this_removes_the_encrypted_cache_drafts_and_both)) }, confirmButton = { Button({ confirmForget = false; activity.lifecycleScope.launch { repository.forget() } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_forget)) } }, dismissButton = { TextButton({ confirmForget = false }) { Text(stringResource(R.string.action_cancel)) } })
 }
 
 @Composable
@@ -2030,7 +2040,7 @@ private fun PermissionReductionPanel(repository: PALRepository, state: MobileSta
         scope.launch { runCatching { repository.mutate("permissions.reduce", params) }
             .onSuccess { onFeedback(strings.getString(R.string.mobile_access_reduced_reconnecting_with_the_new_grants)) }
             .onFailure { failure -> if (failure is CommandPendingException) onFeedback(strings.getString(R.string.mobile_access_reduction_is_pending_desktop_reconciliation)) else onError(failure.message) } }
-    }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_reduce_access_reconnect)) } }, dismissButton = { TextButton({ review = false }) { Text(stringResource(R.string.annotation_cancel)) } })
+    }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.mobile_reduce_access_reconnect)) } }, dismissButton = { TextButton({ review = false }) { Text(stringResource(R.string.action_cancel)) } })
 }
 
 @Composable private fun MemoryRow(row: JsonObject, manage: (() -> Unit)? = null) { OutlinedPanel(row["text"]?.jsonPrimitive?.contentOrNull ?: row["name"]?.jsonPrimitive?.contentOrNull ?: stringResource(R.string.mobile_memory_record)) { val detail = listOfNotNull(row["kind"]?.jsonPrimitive?.contentOrNull, row["status"]?.jsonPrimitive?.contentOrNull, row["state"]?.jsonPrimitive?.contentOrNull, row["updated"]?.jsonPrimitive?.contentOrNull).joinToString(" · "); if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant); val remaining = JsonObject(row.filterKeys { it !in setOf("id","text","name","kind","status","state","updated","revision") }); if (remaining.isNotEmpty()) StructuredObject(remaining); manage?.let { OutlinedButton(it) { Text(stringResource(R.string.mobile_inspect_or_forget)) } } } }

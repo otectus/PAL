@@ -16,11 +16,8 @@
     <string name="approval_destination">Link to open</string>
     <string name="allow_image">Allow sharing this capture</string>
     <string name="connection_recovery_title">Connect to your desktop</string>
-    <string name="session_tools">Conversation tools</string>
     <string name="library_project_provider">%1$s · %2$s</string>
     <string name="restore_loading">Opening saved conversations…</string>
-    <string name="current_request_count">Requests waiting for review</string>
-    <string name="approval_review_needed">A request needs review</string>
     <string name="pal_name" translatable="false">PAL</string>
     <string name="mark_red">Red</string>
     <string name="mark_yellow">Yellow</string>
@@ -134,7 +131,6 @@
     <string name="memory_embeddings_failed">Memory embeddings are failing. You can keep chatting and check Health on the desktop.</string>
     <string name="memory_extraction_embeddings_failed">Memory extraction and embeddings are failing. You can keep chatting and check Health on the desktop.</string>
     <string name="model_access_failed">Couldn’t load model access from the desktop.</string>
-    <string name="action_stop_media">Stop</string>
     <string name="scoped_access">Scoped</string>
     <plurals name="session_inputs">
         <item quantity="one">Waiting for input</item>
@@ -165,4 +161,56 @@
     <string name="media_muted_volume">Volume %1$d%% · Muted</string>
     <string name="timer_soon">soon</string>
     <string name="image_dimensions_size">%1$d × %2$d · %3$d KiB</string>
+    <string name="current_conversation">Conversation</string>
+    <string name="question_required">Required</string>
+    <string name="question_optional">Optional</string>
+    <string name="enable_provider_access">Enable access on the desktop</string>
+    <string name="media_player_target">the desktop player</string>
+    <string name="full_access">Full access</string>
+    <string name="limited_access">Limited access</string>
+    <string name="access_expires">expires</string>
+    <string name="review_one_request">%1$s · Review</string>
+    <string name="review_other_requests">%1$s (+%2$d) · Review</string>
+    <string name="next_schedule">Next run %1$s</string>
+    <string name="last_schedule">Last run %1$s</string>
+    <string name="excluded_evidence">[%1$s] Excluded · %2$s</string>
+    <string name="normal_evidence">[%1$s] %2$s</string>
+    <string name="stale_source">Out of date</string>
+    <string name="previous_snapshot">%1$s · %2$s · earlier snapshot</string>
+    <string name="current_snapshot">%1$s · %2$s</string>
+    <string name="unavailable_desktop_transfer">The desktop is unavailable. Reconnect and try again.</string>
+    <string name="upload_not_started">The desktop did not start the upload. Try again.</string>
+    <string name="send_named_file">Send %1$s to the desktop</string>
+    <string name="unexpected_transfer_position">The desktop reported an unexpected upload position. Select the file again.</string>
+    <string name="library_preview_unavailable">Couldn’t display this preview. Try loading it again.</string>
+    <string name="snapshot_update_current">No newer compatible development snapshot found.</string>
+    <string name="stable_update_current">No newer compatible mobile release found.</string>
+    <string name="snapshot_update_available">A newer PAL Mobile development snapshot is available.</string>
+    <string name="stable_update_available">A newer PAL Mobile release is available.</string>
+    <string name="column_missing">Missing values · %1$d</string>
+    <string name="column_example">Example · %1$s</string>
+    <string name="features_and_ops">%1$s · Features %2$d · Operations %3$d</string>
+    <string name="transfer_images_error">Added %1$d of %2$d. %3$s</string>
+    <string name="unpriced_usage">Unpriced · %1$d</string>
+    <string name="stopped_processes_summary">Processes stopped · %1$d. Still running · %2$d.</string>
+    <string name="image_private_details">%1$d × %2$d · %3$d KiB · private copy optimized</string>
+    <string name="photo_preview_retry">Retry preview</string>
+    <plurals name="server_count_action">
+        <item quantity="one">Add %1$d tool server to the desktop, turned off</item>
+        <item quantity="other">Add %1$d tool servers to the desktop, turned off</item>
+    </plurals>
+    <plurals name="specialist_limit">
+        <item quantity="one">Run up to %1$d specialist at once</item>
+        <item quantity="other">Run up to %1$d specialists at once</item>
+    </plurals>
+    <plurals name="usage_image_count">
+        <item quantity="one">%1$d image</item>
+        <item quantity="other">%1$d images</item>
+    </plurals>
+    <string name="transfer_wrong_upload">The desktop returned a different upload. Select the file again to start over.</string>
+    <string name="download_not_started">The desktop did not start the download. Try again.</string>
+    <string name="download_too_large">This file is larger than this phone can download at once (100 MB).</string>
+    <string name="download_wrong_length">The desktop returned an unexpected download length. Try downloading the file again.</string>
+    <string name="download_wrong_digest">The downloaded file does not match the desktop’s copy. Nothing was saved. Try downloading it again.</string>
+    <string name="generic_android_phone">Android phone</string>
 </resources>

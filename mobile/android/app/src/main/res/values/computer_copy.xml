@@ -53,7 +53,6 @@
     <string name="computer_days">%1$s days</string>
     <string name="computer_delete">Delete…</string>
     <string name="computer_delete_2">Delete %1$s?</string>
-    <string name="computer_delete_3">Delete</string>
     <string name="computer_delete_collection">Delete collection</string>
     <string name="computer_deleted">Deleted %1$s</string>
     <string name="computer_desktop_actions_control_permitted_apps_and_devices_without">Desktop actions · control permitted apps and devices without asking</string>
@@ -198,7 +197,6 @@
     <string name="computer_specialists_have_no_tools_and_change_nothing_a">Specialists have no tools and change nothing; a document editor\'s edits arrive as a change set to review. Their runs appear under Work › Runs.</string>
     <string name="computer_standing_instructions_changed">Standing instructions changed</string>
     <string name="computer_standing_instructions_will_change">Standing instructions will change</string>
-    <string name="computer_start">Start</string>
     <string name="computer_start_power_session">Start power session</string>
     <string name="computer_start_with_host_commands">Start with Host commands?</string>
     <string name="computer_start_with_host_commands_2">Start with Host commands</string>
@@ -248,7 +246,6 @@
     <string name="computer_add_the_saved_script">Add the saved script %1$s</string>
     <string name="computer_add_the_specialist">Add the specialist %1$s</string>
     <string name="computer_add_to">Add %1$s to %2$s</string>
-    <string name="computer_add_tool_servers_to_the_desktop_turned_off">Add %1$d tool servers to the desktop, turned off</string>
     <string name="computer_apply_to_this_conversation">Apply %1$s to this conversation</string>
     <string name="computer_back_up_pal_on_the_desktop">Back up PAL on the desktop</string>
     <string name="computer_change_working_profile_to">Change working profile to %1$s</string>
@@ -274,7 +271,6 @@
     <string name="computer_fingerprint_or_pin">fingerprint or PIN</string>
     <string name="computer_fri">Fri</string>
     <string name="computer_google_ai_api">Google AI API</string>
-    <string name="computer_images">" · %1$d images"</string>
     <string name="computer_import_a_skill">Import a skill</string>
     <string name="computer_index_2">Index %1$s</string>
     <string name="computer_it_did_not_take_effect">It did not take effect</string>
@@ -298,7 +294,6 @@
     <string name="computer_remove_the_monthly_limit_2">Remove the monthly limit</string>
     <string name="computer_resume">Resume %1$s</string>
     <string name="computer_revoke">Revoke %1$s</string>
-    <string name="computer_run_up_to_specialists_at_once">Run up to %1$d specialists at once</string>
     <string name="computer_sat">Sat</string>
     <string name="computer_save_the_key_on_the_desktop">Save the %1$s key on the desktop</string>
     <string name="computer_schedule_to_run_while_you_are_away">Schedule %1$s to run while you are away</string>
@@ -314,7 +309,6 @@
     <string name="computer_thu">Thu</string>
     <string name="computer_trusted_phone">trusted phone</string>
     <string name="computer_tue">Tue</string>
-    <string name="computer_unpriced_2">" (+%1$d unpriced)"</string>
     <string name="computer_until_revoked">until revoked</string>
     <string name="computer_use_everywhere_2">Use %1$s everywhere</string>
     <string name="computer_use_in_this_project">Use %1$s in this project</string>

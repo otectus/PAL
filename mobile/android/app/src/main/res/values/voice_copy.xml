@@ -2,7 +2,6 @@
     <string name="voice_allow_the_microphone_to_talk_to_pal">Allow the microphone to talk to PAL</string>
     <string name="voice_connecting_to_phone_speech">Connecting to phone speech…</string>
     <string name="voice_discard_the_recording">Discard the recording</string>
-    <string name="voice_done">Done</string>
     <string name="voice_microphone_on">Microphone on</string>
     <string name="voice_no_speech_was_recognized">No speech was recognized</string>
     <string name="voice_nothing_was_recorded">Nothing was recorded</string>

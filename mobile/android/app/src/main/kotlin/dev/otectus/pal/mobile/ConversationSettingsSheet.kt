@@ -208,7 +208,7 @@ internal fun ConversationStyleContent(behavior: ConversationBehavior) {
         val profile = behavior.profile?.label?.takeIf(String::isNotBlank)
         Text(if (profile != null) stringResource(R.string.conversation_style_value, profile, where) else stringResource(R.string.conversation_no_style, where))
         behavior.posture?.takeIf { it.label.isNotBlank() }?.let { posture ->
-            Text(stringResource(R.string.conversation_posture, posture.label) + if (posture.pinned) stringResource(R.string.conversation_posture_pinned) else "", style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(if (posture.pinned) R.string.conversation_posture_pinned else R.string.conversation_posture, posture.label), style = MaterialTheme.typography.bodySmall)
         }
         if (behavior.standingInstructions) Text(stringResource(R.string.conversation_standing_instructions), style = MaterialTheme.typography.bodySmall)
         behavior.warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) }
@@ -238,7 +238,7 @@ private fun ConversationWork(repository: PALRepository, state: MobileState, sess
         }
     }
     AncillarySection(stringResource(R.string.conversation_results_schedules), stringResource(R.string.conversation_results_hint)) {
-        TextButton({ if (open) refresh++ else open = true }, enabled = !loading, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(if (open) R.string.conversation_refresh else R.string.conversation_show)) }
+        TextButton({ if (open) refresh++ else open = true }, enabled = !loading, modifier = Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(if (open) R.string.action_refresh else R.string.conversation_show)) }
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (open) {
             error?.let { AncillaryFeedback(it, error = true) }

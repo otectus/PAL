@@ -1,6 +1,9 @@
 package dev.otectus.pal.mobile
 
 import androidx.annotation.StringRes
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -34,8 +37,8 @@ internal fun LocalAttachmentCard(
     val discarded = attachment.remoteAttachmentId != null && (attachment.remoteExpiresAt ?: Long.MAX_VALUE) <= now
     AttachmentCard(
         name = attachment.displayName,
-        detail = stringResource(R.string.transcript_image_details, attachment.width, attachment.height, attachment.size / 1024) +
-            if (attachment.transformed) stringResource(R.string.transcript_image_optimized) else "",
+        detail = stringResource(if (attachment.transformed) R.string.image_private_details else R.string.transcript_image_details,
+            attachment.width, attachment.height, attachment.size / 1024),
         icon = { Icon(Icons.Default.Info, null, Modifier.size(PALLayout.icon)) },
     ) {
         if (!discarded && attachment.committedOffset > 0 && !attachment.readyAt(now) && attachment.size > 0) {
@@ -109,6 +112,18 @@ private fun AttachmentCard(
                 }
             }
             content()
+        }
+    }
+}
+
+/** Reserve the viewing area before decoding so loading and retry do not move the dialog actions. */
+@Composable
+internal fun ReviewImage(bitmap: android.graphics.Bitmap?, description: String, loading: Boolean, aspect: Float = 1.5f) {
+    Surface(modifier = Modifier.fillMaxWidth().heightIn(max = PALLayout.previewHeight).aspectRatio(aspect.coerceIn(0.75f, 2.5f)),
+        shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainer) {
+        Box(contentAlignment = Alignment.Center) {
+            if (bitmap != null) Image(bitmap.asImageBitmap(), description, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+            else if (loading) CircularProgressIndicator(Modifier.size(PALLayout.icon))
         }
     }
 }

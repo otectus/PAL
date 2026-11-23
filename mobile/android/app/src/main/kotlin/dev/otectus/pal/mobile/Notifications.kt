@@ -88,8 +88,8 @@ internal object PALNotifications {
     fun notice(context: Context, notice: DesktopNotice): Pair<Int, Notification>? {
         val (channel, title, text) = when (notice.kind) {
             "complete" -> Triple(COMPLETIONS, context.getString(R.string.notice_reply_ready), notice.title ?: context.getString(R.string.notice_a_conversation_finished))
-            "error" -> Triple(PROBLEMS, context.getString(R.string.notice_a_conversation_reported_a_problem), context.getString(R.string.notice_open_pal_to_review_activity, notice.title ?: "Conversation"))
-            "interrupted" -> Triple(PROBLEMS, context.getString(R.string.notice_a_conversation_stopped), notice.title ?: "Conversation")
+            "error" -> Triple(PROBLEMS, context.getString(R.string.notice_a_conversation_reported_a_problem), context.getString(R.string.notice_open_pal_to_review_activity, notice.title ?: context.getString(R.string.current_conversation)))
+            "interrupted" -> Triple(PROBLEMS, context.getString(R.string.notice_a_conversation_stopped), notice.title ?: context.getString(R.string.current_conversation))
             "timer" -> Triple(TIMERS, context.getString(R.string.desktop_timer), notice.label ?: context.getString(R.string.notice_your_desktop_timer_finished))
             else -> return null
         }

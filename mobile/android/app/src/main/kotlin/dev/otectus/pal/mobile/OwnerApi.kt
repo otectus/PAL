@@ -80,7 +80,7 @@ internal object OwnerUploadResumes {
         return null
     }
 
-    suspend fun resume(key: OwnerUploadKey, status: suspend (String) -> JsonObject): JsonObject? {
+    suspend fun resume(key: OwnerUploadKey, errorText: (Int) -> String, status: suspend (String) -> JsonObject): JsonObject? {
         val id = retained(key) ?: return null
         val receipt = try {
             status(id)
@@ -93,7 +93,7 @@ internal object OwnerUploadResumes {
         if (receipt.str("transferId") != id || receipt.str("sha256") != key.sha256 ||
             receipt.num("size") != key.size.toLong() || offset == null || offset !in 0L..key.size.toLong()) {
             remove(key, id)
-            error("The desktop returned a different upload. Select the file again to start over.")
+            error(errorText(R.string.transfer_wrong_upload))
         }
         return receipt
     }
@@ -103,33 +103,34 @@ internal object OwnerUploadResumes {
  * Downloads one artifact version from the desktop, chunk by chunk, and keeps it only when its SHA-256 matches the
  * digest the desktop stated for that immutable version. [variant] "preview" is a reduced image; "original" the file.
  */
-internal suspend fun downloadArtifact(repository: PALRepository, sessionId: String, artifactId: String, versionId: String?, variant: String, progress: (Long, Long) -> Unit = { _, _ -> }): Pair<JsonObject, ByteArray> {
+internal suspend fun downloadArtifact(resources: android.content.res.Resources, repository: PALRepository, sessionId: String, artifactId: String, versionId: String?, variant: String, progress: (Long, Long) -> Unit = { _, _ -> }): Pair<JsonObject, ByteArray> {
     val info = repository.read("transfers.download", buildJsonObject { put("sessionId", sessionId); put("artifactId", artifactId); versionId?.let { put("versionId", it) }; put("variant", variant) }) as JsonObject
-    return info to readDownload(info, progress, repository::readTransferChunk) { id ->
+    return info to readDownload(info, resources::getString, progress, repository::readTransferChunk) { id ->
         repository.mutate("transfers.abort", buildJsonObject { put("transferId", id) })
     }
 }
 
 internal suspend fun readDownload(
     info: JsonObject,
+    errorText: (Int) -> String,
     progress: (Long, Long) -> Unit,
     read: suspend (String, Long, Int) -> ByteArray,
     release: suspend (String) -> Unit
 ): ByteArray {
-    val id = info.str("transferId") ?: error("The desktop did not start the download")
+    val id = info.str("transferId") ?: error(errorText(R.string.download_not_started))
     try {
         val size = info.num("size") ?: 0; val chunk = (info.int("chunk") ?: 256 * 1024).coerceIn(1, 256 * 1024)
-        require(size in 0..MAX_DOWNLOAD_BYTES) { "This file is larger than this phone downloads at once (100 MB)." }
+        require(size in 0..MAX_DOWNLOAD_BYTES) { errorText(R.string.download_too_large) }
         val out = ByteArrayOutputStream(size.toInt())
         var offset = 0L
         while (offset < size) {
             val length = minOf(chunk.toLong(), size - offset).toInt()
             val part = read(id, offset, length)
-            require(part.size in 1..length) { "The desktop returned an unexpected download length" }
+            require(part.size in 1..length) { errorText(R.string.download_wrong_length) }
             out.write(part); offset += part.size; progress(offset, size)
         }
         val bytes = out.toByteArray()
-        require(sha256Hex(bytes) == info.str("sha256")) { "The downloaded file does not match the desktop's copy. Nothing was saved." }
+        require(sha256Hex(bytes) == info.str("sha256")) { errorText(R.string.download_wrong_digest) }
         return bytes
     } finally {
         // A completed read, an oversize rejection, integrity failure, or cancellation all
@@ -147,16 +148,16 @@ internal suspend fun uploadToDesktop(activity: FragmentActivity, repository: PAL
     purpose: String = "artifact", destinations: Pair<Boolean, Boolean>? = null, progress: (Long, Long) -> Unit = { _, _ -> }): JsonObject {
     val state = repository.state.value
     val digest = sha256Hex(bytes)
-    val online = state.connection as? dev.otectus.pal.mobile.data.ConnectionState.Online ?: error("The desktop is unavailable")
-    val desktop = state.desktop ?: error("The desktop is unavailable")
+    val online = state.connection as? dev.otectus.pal.mobile.data.ConnectionState.Online ?: error(activity.getString(R.string.unavailable_desktop_transfer))
+    val desktop = state.desktop ?: error(activity.getString(R.string.unavailable_desktop_transfer))
     val key = OwnerUploadKey(desktop.desktopId, desktop.deviceId, online.scopeVersion, sessionId, purpose, name.take(200), mime, bytes.size, digest)
-    val resumed = OwnerUploadResumes.resume(key) { transferId ->
+    val resumed = OwnerUploadResumes.resume(key, activity::getString) { transferId ->
         repository.request("transfers.status", buildJsonObject { put("transferId", transferId) }) as JsonObject
     }
     val begun = resumed ?: signed(activity, repository, "transfers.upload", buildJsonObject {
         put("sessionId", sessionId); put("name", name.take(200)); put("mime", mime); put("size", bytes.size); put("sha256", digest); put("purpose", purpose)
-    }, "Send $name to the desktop") as JsonObject
-    val id = begun.str("transferId") ?: error("The desktop did not start the upload")
+    }, activity.getString(R.string.send_named_file, name)) as JsonObject
+    val id = begun.str("transferId") ?: error(activity.getString(R.string.upload_not_started))
     val chunk = (begun.int("chunk") ?: 256 * 1024).coerceIn(1, 256 * 1024)
     var offset = begun.num("offset") ?: 0
     var commitStarted = false
@@ -164,7 +165,7 @@ internal suspend fun uploadToDesktop(activity: FragmentActivity, repository: PAL
         while (offset < bytes.size) {
             val count = minOf(chunk.toLong(), bytes.size - offset).toInt()
             val next = repository.sendTransferChunk(id, offset, bytes, offset.toInt(), count)
-            require(next == offset + count) { "The desktop reported an unexpected upload position" }
+            require(next == offset + count) { activity.getString(R.string.unexpected_transfer_position) }
             offset = next
             progress(offset, bytes.size.toLong())
         }

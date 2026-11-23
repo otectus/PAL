@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -165,7 +166,7 @@ private fun ModelFamilies(repository: PALRepository, activity: FragmentActivity,
         if (error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
         else {
             AncillaryFeedback(error.orEmpty(), error = true)
-            TextButton({ loadAttempt++ }) { Text(stringResource(R.string.mobile_retry)) }
+            TextButton({ loadAttempt++ }) { Text(stringResource(R.string.action_retry)) }
         }
         return
     }
@@ -212,7 +213,7 @@ private fun ModelFamilies(repository: PALRepository, activity: FragmentActivity,
             Text(when { hostRuleLoading -> stringResource(R.string.work_checking_this_conversations_approval_rule); hostAutomatic == true -> stringResource(R.string.work_current_rule_commands_may_run_automatically_under_this); hostAutomatic == false -> stringResource(R.string.work_current_rule_each_command_asks_before_it_runs); else -> stringResource(R.string.work_the_current_approval_rule_could_not_be_read) }, fontWeight = FontWeight.SemiBold)
         } },
         confirmButton = { Button({ confirmHost = false; update("host", strings.getString(R.string.work_host_commands)) }, enabled = !hostRuleLoading) { Text(stringResource(R.string.work_turn_on_host_commands)) } },
-        dismissButton = { TextButton({ confirmHost = false }) { Text(stringResource(R.string.annotation_cancel)) } },
+        dismissButton = { TextButton({ confirmHost = false }) { Text(stringResource(R.string.action_cancel)) } },
     )
 }
 
@@ -253,7 +254,7 @@ private fun ConversationActions(repository: PALRepository, activity: FragmentAct
     }
     error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
     if (confirmDelete) AlertDialog({ confirmDelete = false }, title = { Text(stringResource(R.string.computer_delete_2, session.title)) }, text = { Text(stringResource(R.string.work_the_conversation_its_files_in_pal_and_its)) },
-        confirmButton = { Button({ confirmDelete = false; scope.launch { runCatching { signed(activity, repository, "owner.sessions.delete", buildJsonObject { put("sessionId", session.id); put("expectedRevision", session.revision) }, strings.getString(R.string.work_delete, session.title)) }.onFailure { error = it.message } } }) { Text(stringResource(R.string.computer_delete_3)) } },
+        confirmButton = { Button({ confirmDelete = false; scope.launch { runCatching { signed(activity, repository, "owner.sessions.delete", buildJsonObject { put("sessionId", session.id); put("expectedRevision", session.revision) }, strings.getString(R.string.work_delete, session.title)) }.onFailure { error = it.message } } }) { Text(stringResource(R.string.action_delete)) } },
         dismissButton = { TextButton({ confirmDelete = false }) { Text(stringResource(R.string.work_keep_it)) } })
 }
 
@@ -325,7 +326,7 @@ private fun FilesTab(repository: PALRepository, state: MobileState, activity: Fr
                             if (query.isBlank()) { matches = null; return@launch }
                             runCatching { repository.read("workbench.files.search", buildJsonObject { put("sessionId", sessionId); put("rootId", rootId); put("path", path); put("query", query) }) as JsonObject }
                                 .onSuccess { matches = it.list("matches") }.onFailure { error = it.message }
-                        } }) { Icon(Icons.Default.Search, stringResource(R.string.work_search)) }
+                        } }) { Icon(Icons.Default.Search, stringResource(R.string.action_search)) }
                     })
                 }
             }
@@ -394,7 +395,7 @@ private fun FolderChooser(repository: PALRepository, start: String?, dismiss: ()
     LaunchedEffect(Unit) { go(start) }
     Column(Modifier.fillMaxSize().padding(PALLayout.groupGap), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(dismiss) { Icon(Icons.Default.Close, stringResource(R.string.annotation_cancel)) }
+            IconButton(dismiss) { Icon(Icons.Default.Close, stringResource(R.string.action_cancel)) }
             Text(stringResource(R.string.work_choose_a_folder_on_the_desktop), style = MaterialTheme.typography.titleMedium)
         }
         val current = listing
@@ -444,7 +445,7 @@ private fun FileView(repository: PALRepository, activity: FragmentActivity, sess
         Row(Modifier.padding(horizontal = PALLayout.tight), verticalAlignment = Alignment.CenterVertically) {
             IconButton(close) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.work_back_to_the_folder)) }
             Text(file.substringAfterLast('/'), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 1)
-            if (editable && !editing) TextButton({ editing = true; draft = text?.str("text").orEmpty() }) { Text(stringResource(R.string.work_edit)) }
+            if (editable && !editing) TextButton({ editing = true; draft = text?.str("text").orEmpty() }) { Text(stringResource(R.string.action_edit)) }
             if (text?.str("text") != null && !editing) TextButton({ translating = true }) { Text(stringResource(R.string.work_translate)) }
             if (Regex("\\.(csv|tsv)$", RegexOption.IGNORE_CASE).containsMatchIn(file)) TextButton({ scope.launch {
                 runCatching { repository.read("owner.tables.preview", buildJsonObject { put("sessionId", sessionId); put("rootId", rootId); put("path", file) }) as JsonObject }.onSuccess { table = it }.onFailure { error = it.message }
@@ -453,10 +454,10 @@ private fun FileView(repository: PALRepository, activity: FragmentActivity, sess
         // §15.2: what a table holds before it is analyzed: columns, types, missing values, problems.
         table?.let { preview -> AlertDialog({ table = null }, title = { Text(stringResource(R.string.work_rows, preview.num("rows") ?: 0)) }, text = {
             Column(verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
-                preview.list("columns").forEach { column -> Text("${column.str("name")} · ${column.str("type")}" + (column.num("missing")?.takeIf { it > 0 }?.let { strings.getString(R.string.work_missing, it) } ?: "") + (column.str("example")?.let { " · e.g. $it" } ?: ""), style = MaterialTheme.typography.bodySmall) }
+                preview.list("columns").forEach { column -> Text("${column.str("name")} · ${column.str("type")}" + (column.num("missing")?.takeIf { it > 0 }?.let { " · " + strings.getString(R.string.column_missing, it) } ?: "") + (column.str("example")?.let { " · " + strings.getString(R.string.column_example, it) } ?: ""), style = MaterialTheme.typography.bodySmall) }
                 (preview["problems"] as? JsonArray)?.forEach { Text(it.jsonPrimitive.content, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             }
-        }, confirmButton = { TextButton({ table = null }) { Text(stringResource(R.string.mobile_close)) } }) }
+        }, confirmButton = { TextButton({ table = null }) { Text(stringResource(R.string.action_close)) } }) }
         // §16.3: the translation is a new linked file in this conversation's Library; this file is not changed.
         if (translating) AlertDialog({ translating = false }, title = { Text(stringResource(R.string.work_translate_2, file.substringAfterLast('/'))) }, text = {
             Column(verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
@@ -469,7 +470,7 @@ private fun FileView(repository: PALRepository, activity: FragmentActivity, sess
             val pairs = glossary.lines().mapNotNull { line -> line.split('=', limit = 2).takeIf { it.size == 2 && it[0].isNotBlank() }?.let { buildJsonObject { put("source", it[0].trim()); put("target", it[1].trim()) } } }
             runCatching { repository.mutate("owner.translate", buildJsonObject { put("sessionId", sessionId); put("targetLanguage", language.trim()); put("input", buildJsonObject { put("kind", "file"); put("rootId", rootId); put("path", file) }); if (pairs.isNotEmpty()) put("glossary", JsonArray(pairs)) }, strings.getString(R.string.work_translate_2, file)) as JsonObject }
                 .onSuccess { result -> info = result.str("summary"); if (result.str("status") != "completed") { error = result.str("summary"); info = null } }.onFailure { error = it.message; info = null }
-        } }, enabled = language.isNotBlank()) { Text(stringResource(R.string.work_translate)) } }, dismissButton = { TextButton({ translating = false }) { Text(stringResource(R.string.annotation_cancel)) } })
+        } }, enabled = language.isNotBlank()) { Text(stringResource(R.string.work_translate)) } }, dismissButton = { TextButton({ translating = false }) { Text(stringResource(R.string.action_cancel)) } })
         Text("${root?.str("path").orEmpty()}/$file", Modifier.padding(horizontal = PALLayout.groupGap), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Status(error, info)
         if (editing) {
@@ -489,7 +490,7 @@ private fun FileView(repository: PALRepository, activity: FragmentActivity, sess
                             .onFailure { error = it.message + strings.getString(R.string.work_reload_to_see_the_desktops_current_version_your) }
                         saving = false
                     }
-                }, enabled = !saving) { Text(if (saving) stringResource(R.string.computer_saving) else stringResource(R.string.work_save)) }
+                }, enabled = !saving) { Text(if (saving) stringResource(R.string.computer_saving) else stringResource(R.string.action_save)) }
             }
         } else {
             OutlinedTextField(find, { find = it }, Modifier.fillMaxWidth().padding(horizontal = PALLayout.small), singleLine = true, placeholder = { Text(stringResource(R.string.work_find_in_this_file)) })
@@ -528,6 +529,7 @@ private fun ChangesTab(repository: PALRepository, state: MobileState, activity: 
     fun open(id: String) = scope.launch { runCatching { repository.read("workbench.changes.review", buildJsonObject { put("sessionId", sessionId); put("changeSetId", id) }) as JsonObject }.onSuccess { review = it }.onFailure { error = it.message } }
     LaunchedEffect(sessionId) { load() }
     LaunchedEffect(state.cursor) { load() }
+    BackHandler(enabled = review != null) { review = null; load() }
     val current = review
     if (current != null) {
         val id = current.str("id").orEmpty(); val status = current.str("status").orEmpty()
@@ -615,8 +617,11 @@ private fun LibraryTab(repository: PALRepository, state: MobileState, activity: 
             val id = item.str("id") ?: item.str("artifactId") ?: continue
             if (thumbs.containsKey(id)) continue
             runCatching { repository.read("workbench.artifacts.thumbnail", buildJsonObject { put("sessionId", sessionId); put("artifactId", id); put("size", 192) }) as JsonObject }.getOrNull()?.str("data")?.let { data ->
-                val bytes = Base64.decode(data.substringAfter("base64,"), Base64.DEFAULT)
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { bitmap -> thumbs = thumbs + (id to bitmap) }
+                val image = withContext(Dispatchers.Default) {
+                    val bytes = Base64.decode(data.substringAfter("base64,"), Base64.DEFAULT)
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                }
+                image?.let { bitmap -> thumbs = thumbs + (id to bitmap) }
             }
         }
     }
@@ -642,6 +647,9 @@ private fun LibraryTab(repository: PALRepository, state: MobileState, activity: 
             } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Throwable) { error = failure.message }
             progress = null
         }
+    }
+    BackHandler(enabled = selected != null) {
+        if (annotating) annotating = false else { selected = null; preview = null }
     }
     val current = selected
     if (current != null) {
@@ -671,10 +679,13 @@ private fun LibraryTab(repository: PALRepository, state: MobileState, activity: 
             FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                 if (latest?.str("kind") == "image" && preview != null && dims != null) OutlinedButton({ annotating = true }) { Text(stringResource(R.string.work_draw_on_it)) }
                 if (latest?.str("kind") in setOf("image", "plot")) OutlinedButton({ scope.launch {
-                    runCatching { downloadArtifact(repository, sessionId, id, null, "preview") }.onSuccess { (_, bytes) -> preview = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }.onFailure { error = it.message }
+                    runCatching {
+                        val (_, bytes) = downloadArtifact(strings, repository, sessionId, id, null, "preview")
+                        withContext(Dispatchers.Default) { decodeForDisplay(bytes, 2048) } ?: error(strings.getString(R.string.library_preview_unavailable))
+                    }.onSuccess { image -> if (selected === current) preview = image }.onFailure { if (selected === current) error = it.message }
                 } }) { Text(stringResource(R.string.work_show_preview)) }
                 Button({ progress = 0f; scope.launch {
-                    runCatching { downloadArtifact(repository, sessionId, id, null, "original") { done, total -> progress = done.toFloat() / total.coerceAtLeast(1) } }
+                    runCatching { downloadArtifact(strings, repository, sessionId, id, null, "original") { done, total -> progress = done.toFloat() / total.coerceAtLeast(1) } }
                         .onSuccess { (meta, bytes) -> pendingSave = (meta.str("name") ?: "download") to bytes; save.launch(meta.str("name") ?: "download") }.onFailure { error = it.message }
                     progress = null } }) { Text(stringResource(R.string.work_download_original)) }
                 OutlinedButton({ scope.launch { runCatching { repository.mutate("workbench.artifacts.useInDraft", buildJsonObject { put("sessionId", sessionId); put("artifactId", id) }) }.onSuccess { info = strings.getString(R.string.work_added_to_the_conversations_desktop_draft) }.onFailure { error = it.message } } }) { Text(stringResource(R.string.work_use_in_draft)) }
@@ -698,7 +709,7 @@ private fun LibraryTab(repository: PALRepository, state: MobileState, activity: 
             val id = item.str("id") ?: item.str("artifactId").orEmpty(); val latest = item.obj("latest")
             ListItem(headlineContent = { Text(item.str("name") ?: latest?.str("name").orEmpty(), maxLines = 1) },
                 supportingContent = { Text("${latest?.str("kind").orEmpty()} · ${byteSize(latest?.num("bytes"))}" + if (item.isTrue("pinned")) stringResource(R.string.work_pinned) else "") },
-                leadingContent = { thumbs[id]?.let { Image(it.asImageBitmap(), null, Modifier.size(PALLayout.target)) } ?: Icon(Icons.Default.Star, null) },
+                leadingContent = { Box(Modifier.size(PALLayout.target), contentAlignment = Alignment.Center) { thumbs[id]?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize()) } ?: Icon(Icons.Default.Star, null) } },
                 modifier = Modifier.clickable { selected = item; preview = null; error = null; info = null })
         }
     }
@@ -757,13 +768,13 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
             ListItem(headlineContent = { Text(run.str("label") ?: run.str("kind").orEmpty(), maxLines = 2) },
                 supportingContent = { Text(runState(state) + (run.str("message")?.let { " · $it" } ?: "")) },
                 trailingContent = {
-                    if (state in setOf("running", "queued", "dispatching", "awaiting_approval")) TextButton({ scope.launch { runCatching { repository.mutate("workbench.operations.cancel", buildJsonObject { put("sessionId", sessionId); put("operationId", id) }) }.onSuccess { load() }.onFailure { error = it.message } } }) { Text(stringResource(R.string.annotation_cancel)) }
+                    if (state in setOf("running", "queued", "dispatching", "awaiting_approval")) TextButton({ scope.launch { runCatching { repository.mutate("workbench.operations.cancel", buildJsonObject { put("sessionId", sessionId); put("operationId", id) }) }.onSuccess { load() }.onFailure { error = it.message } } }) { Text(stringResource(R.string.action_cancel)) }
                 })
         }
     }
     confirmBilling?.let { message ->
         AlertDialog({ confirmBilling = null }, title = { Text(stringResource(R.string.work_this_image_service_may_bill_you)) }, text = { Text(message) },
-            confirmButton = { Button({ confirmBilling = null; generate(true) }) { Text(stringResource(R.string.work_continue)) } }, dismissButton = { TextButton({ confirmBilling = null }) { Text(stringResource(R.string.annotation_cancel)) } })
+            confirmButton = { Button({ confirmBilling = null; generate(true) }) { Text(stringResource(R.string.work_continue)) } }, dismissButton = { TextButton({ confirmBilling = null }) { Text(stringResource(R.string.action_cancel)) } })
     }
 }
 
@@ -914,7 +925,7 @@ private fun ResearchTab(repository: PALRepository, state: MobileState, activity:
                     if (stateName in working) OutlinedButton({ runAction("owner.research.pause", strings.getString(R.string.work_research_paused)) }) { Text(stringResource(R.string.work_pause)) }
                     if (stateName in working || stateName == "paused") OutlinedButton({ runAction("owner.research.stop", strings.getString(R.string.work_research_finished_with_the_evidence_collected)) }) { Text(stringResource(R.string.work_finish)) }
                     if (stateName == "paused" || stateName == "stopped" || stateName == "partial") OutlinedButton({ runAction("owner.research.continue", strings.getString(R.string.work_continue_research), true) { if (focus.isNotBlank()) put("focus", focus.trim()) } }) { Text(stringResource(R.string.work_continue)) }
-                    if (stateName !in working && stateName != "paused") OutlinedButton({ runAction("owner.research.refresh", strings.getString(R.string.work_refresh_research), true) }) { Text(stringResource(R.string.desktop_refresh)) }
+                    if (stateName !in working && stateName != "paused") OutlinedButton({ runAction("owner.research.refresh", strings.getString(R.string.work_refresh_research), true) }) { Text(stringResource(R.string.action_refresh)) }
                     if (detail.list("evidence").isNotEmpty() && stateName !in working) OutlinedButton({ runAction("owner.research.resynthesize", strings.getString(R.string.work_rewrite_report), true) }) { Text(stringResource(R.string.work_rewrite)) }
                 }
                 detail.str("note")?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
@@ -984,8 +995,8 @@ internal fun LazyListScope.researchResultItems(
     items(detail.list("evidence"), key = { "e" + it.str("id") }) { evidence ->
         val status = evidence.str("status")
         Column {
-            ListItem(headlineContent = { Text("[${evidence.str("id")}] " + (if (status == "excluded") "Excluded · " else "") + (evidence.str("title") ?: evidence.str("url").orEmpty()), maxLines = 2) },
-                supportingContent = { Text(listOfNotNull(evidence.str("kind"), evidence.str("location"), evidence.str("retrievedAt"), if (evidence.isTrue("stale")) "stale" else null).joinToString(" · "), maxLines = 2) },
+            ListItem(headlineContent = { Text(stringResource(if (status == "excluded") R.string.excluded_evidence else R.string.normal_evidence, evidence.str("id").orEmpty(), evidence.str("title") ?: evidence.str("url").orEmpty()), maxLines = 2) },
+                supportingContent = { Text(listOfNotNull(evidence.str("kind"), evidence.str("location"), evidence.str("retrievedAt"), if (evidence.isTrue("stale")) stringResource(R.string.stale_source) else null).joinToString(" · "), maxLines = 2) },
                 trailingContent = { if (status != "excluded" && detail.str("state") !in working) TextButton({ onExclude(evidence.str("id").orEmpty()) }) { Text(stringResource(R.string.exclude_research_source)) } })
             evidence.list("passages").forEach { passage ->
                 val passageId = passage.str("id").orEmpty()
@@ -1023,7 +1034,10 @@ private fun CanvasTab(repository: PALRepository, state: MobileState, activity: F
     suspend fun refresh() {
         val current = id ?: return
         runCatching { repository.request("canvas.frame", buildJsonObject { put("sessionId", sessionId); put("id", current) }) as JsonObject }.onSuccess { value ->
-            val bytes = Base64.decode(value.str("data").orEmpty().substringAfter("base64,"), Base64.DEFAULT); frame = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            frame = withContext(Dispatchers.Default) {
+                val bytes = Base64.decode(value.str("data").orEmpty().substringAfter("base64,"), Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }
         }.onFailure { error = it.message; if (it.message?.contains("closed") == true) preview = null }
         runCatching { repository.request("canvas.console", buildJsonObject { put("sessionId", sessionId); put("id", current) }) }.onSuccess { consoleLines = it.objects().takeLast(6) }
         runCatching { repository.request("canvas.annotations", buildJsonObject { put("sessionId", sessionId); put("id", current) }) }.onSuccess { annotations = it.objects() }
@@ -1079,7 +1093,7 @@ private fun CanvasTab(repository: PALRepository, state: MobileState, activity: F
                     FilterChip(annotate, { annotate = !annotate }, { Text(if (annotate) stringResource(R.string.work_tap_an_element) else stringResource(R.string.work_annotate)) })
                     if (annotate) AssistChip({ pending = .5f to .5f }, { Text(stringResource(R.string.work_pin_at_center)) })
                     AssistChip({ scope.launch { runCatching { repository.mutate("canvas.reload", buildJsonObject { put("sessionId", sessionId); put("id", id) }) as JsonObject }.onSuccess { preview = it; refresh() }.onFailure { error = it.message } } }, { Text(stringResource(R.string.work_reload)) })
-                    AssistChip({ scope.launch { runCatching { repository.mutate("canvas.close", buildJsonObject { put("sessionId", sessionId); put("id", id) }) }; preview = null; frame = null } }, { Text(stringResource(R.string.mobile_close)) })
+                    AssistChip({ scope.launch { runCatching { repository.mutate("canvas.close", buildJsonObject { put("sessionId", sessionId); put("id", id) }) }; preview = null; frame = null } }, { Text(stringResource(R.string.action_close)) })
                 }
             }
             item {
@@ -1103,7 +1117,7 @@ private fun CanvasTab(repository: PALRepository, state: MobileState, activity: F
                 Text(stringResource(R.string.work_saved_notes), Modifier.semantics { heading() }, style = MaterialTheme.typography.titleSmall)
                 annotations.forEach { annotation ->
                     val box = annotation.obj("box")
-                    Text("${annotation.str("note").orEmpty()} · ${annotation.str("selector").orEmpty()}${if (annotation.isTrue("current")) "" else " · earlier snapshot"}", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(if (annotation.isTrue("current")) R.string.current_snapshot else R.string.previous_snapshot, annotation.str("note").orEmpty(), annotation.str("selector").orEmpty()), style = MaterialTheme.typography.bodySmall)
                     if (box != null) Text(stringResource(R.string.work_at, box.int("x") ?: box.num("x") ?: 0, box.int("y") ?: box.num("y") ?: 0), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -1128,7 +1142,7 @@ private fun CanvasTab(repository: PALRepository, state: MobileState, activity: F
                     .onSuccess { saved -> error = null; info = strings.getString(R.string.work_saved_note_at_across_down, (x * 100).toInt(), (y * 100).toInt()); annotations = annotations + saved; pending = null; note = "" }
                     .onFailure { error = it.message }
             } }, enabled = note.isNotBlank()) { Text(stringResource(R.string.work_pin_note)) } },
-            dismissButton = { TextButton({ pending = null; note = "" }) { Text(stringResource(R.string.annotation_cancel)) } },
+            dismissButton = { TextButton({ pending = null; note = "" }) { Text(stringResource(R.string.action_cancel)) } },
         )
     }
 }
@@ -1213,7 +1227,7 @@ private fun NotesTab(repository: PALRepository, state: MobileState, sessionId: S
                 }
             }
             Status(error.takeIf { conflictRevision == null }, null)
-            if (error != null && conflictRevision == null) TextButton({ error = null; if (mountedReady) scope.launch { save() } else refreshKey++ }) { Text(stringResource(R.string.mobile_retry)) }
+            if (error != null && conflictRevision == null) TextButton({ error = null; if (mountedReady) scope.launch { save() } else refreshKey++ }) { Text(stringResource(R.string.action_retry)) }
         }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {

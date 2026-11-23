@@ -132,7 +132,7 @@ internal fun DesktopScreen(repository: PALRepository, state: MobileState, activi
         item { FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PALLayout.groupGap), verticalArrangement = Arrangement.spacedBy(PALLayout.small), itemVerticalAlignment = Alignment.CenterVertically) {
             PageTitle(stringResource(R.string.nav_desktop), Modifier.weight(1f))
             OutlinedButton(::refresh, enabled = !loading && pendingAction == null && state.connection is ConnectionState.Online,
-                modifier = Modifier.heightIn(min = PALLayout.target)) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(PALLayout.small)); Text(if (loading) stringResource(R.string.desktop_loading) else stringResource(R.string.desktop_refresh)) }
+                modifier = Modifier.heightIn(min = PALLayout.target)) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(PALLayout.small)); Text(if (loading) stringResource(R.string.desktop_loading) else stringResource(R.string.action_refresh)) }
         } }
         if (state.owner) item(key = "view-desktop") { ViewDesktopPanel(repository, state, activity) }
         item { FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) { state.projects.forEach { option -> FilterChip(projectId == option.id, { projectId = option.id }, { Column { Text(option.name); Text(option.path ?: stringResource(R.string.desktop_path_unavailable), style = MaterialTheme.typography.labelSmall) } }, enabled = canAct) } } }
@@ -165,7 +165,7 @@ internal fun DesktopScreen(repository: PALRepository, state: MobileState, activi
 
         if (audio?.flag("available") == true) item { Panel(stringResource(R.string.desktop_sound)) {
             val level = volume ?: (audio.text("percent")?.toFloatOrNull() ?: 0f)
-            Text(if (audio.flag("muted")) stringResource(R.string.media_muted_volume, level.toInt()) else stringResource(R.string.desktop_volume, level.toInt(), ""), color = MaterialTheme.colorScheme.primary)
+            Text(if (audio.flag("muted")) stringResource(R.string.media_muted_volume, level.toInt()) else stringResource(R.string.desktop_volume, level.toInt()), color = MaterialTheme.colorScheme.primary)
             // The volume is sent once, when the finger lifts, as one signed action.
             Slider(level, { volume = it }, valueRange = 0f..100f, steps = 19, enabled = canAct && "audio.volume" in actionNames,
                 onValueChangeFinished = { val percent = (volume ?: level).toInt(); execute("audio.volume", buildJsonObject { put("percent", percent) }, strings.getString(R.string.desktop_set_desktop_volume_to, percent)) })
@@ -174,8 +174,8 @@ internal fun DesktopScreen(repository: PALRepository, state: MobileState, activi
         if (media?.flag("available") == true) item { Panel(stringResource(R.string.desktop_playback)) {
             Text(listOfNotNull(media.text("name"), media.text("status")).joinToString(" · "), color = MaterialTheme.colorScheme.primary)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
-                listOf(Triple("Previous", stringResource(R.string.mobile_previous), "canPrevious"), Triple("PlayPause", if (media.text("status") == "Playing") strings.getString(R.string.work_pause) else strings.getString(R.string.desktop_play), "canPlayPause"), Triple("Next", stringResource(R.string.mobile_next), "canNext"), Triple("Stop", stringResource(R.string.action_stop_media), "canStop")).forEach { (command, label, capability) ->
-                    OutlinedButton({ execute("media.control", buildJsonObject { put("command", command); media.text("player")?.let { put("player", it) } }, strings.getString(R.string.desktop_on, label, media.text("name") ?: "the desktop player")) },
+                listOf(Triple("Previous", stringResource(R.string.mobile_previous), "canPrevious"), Triple("PlayPause", if (media.text("status") == "Playing") strings.getString(R.string.work_pause) else strings.getString(R.string.desktop_play), "canPlayPause"), Triple("Next", stringResource(R.string.mobile_next), "canNext"), Triple("Stop", stringResource(R.string.action_stop), "canStop")).forEach { (command, label, capability) ->
+                    OutlinedButton({ execute("media.control", buildJsonObject { put("command", command); media.text("player")?.let { put("player", it) } }, strings.getString(R.string.desktop_on, label, media.text("name") ?: strings.getString(R.string.media_player_target))) },
                         enabled = canAct && "media.control" in actionNames && media.flag(capability)) { Text(label) }
                 }
             }
@@ -325,7 +325,7 @@ private fun CapturePanel(repository: PALRepository, state: MobileState, activity
                         { result -> scope.launch { runCatching { repository.adoptCapture(chosen, result.jsonObject, reviewed) }.onFailure { error = it.message }; captureId?.let { runCatching { repository.captureStatus(it) } }; busy = false } }, { error = it; busy = false }, boundProjectId = project.id)
                 }, enabled = enabled && !busy && target != null) { Text(stringResource(R.string.desktop_review_attach)) }
             }
-            if (captureId != null && captureState in setOf("capturing", "editing", "ready")) TextButton({ scope.launch { busy = true; runCatching { repository.discardCapture(captureId) }.onFailure { error = it.message }; busy = false } }, enabled = enabled && !busy) { Text(if (captureState == "ready") stringResource(R.string.desktop_discard) else stringResource(R.string.annotation_cancel)) }
+            if (captureId != null && captureState in setOf("capturing", "editing", "ready")) TextButton({ scope.launch { busy = true; runCatching { repository.discardCapture(captureId) }.onFailure { error = it.message }; busy = false } }, enabled = enabled && !busy) { Text(if (captureState == "ready") stringResource(R.string.desktop_discard) else stringResource(R.string.action_cancel)) }
         }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }

@@ -74,7 +74,7 @@ internal fun AncillarySheetScaffold(
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            TextButton(onDismiss, enabled = !busy, modifier = Modifier.heightIn(min = touchTarget)) { Text(stringResource(R.string.mobile_close)) }
+            TextButton(onDismiss, enabled = !busy, modifier = Modifier.heightIn(min = touchTarget)) { Text(stringResource(R.string.action_close)) }
         }
     }
     @Composable fun Footer() {
@@ -381,7 +381,7 @@ fun MobileMaintenanceSection() {
     }
     suspend fun check() {
         busy = true; release = null
-        runCatching { checkMobileRelease(context) }.onSuccess { release = it; status = if (it == null) strings.getString(R.string.sheet_no_newer_compatible_found, if (development) "development snapshot" else "mobile release") else strings.getString(R.string.sheet_a_newer_pal_mobile_is_available, if (development) "development snapshot" else "release") }.onFailure { status = strings.getString(R.string.sheet_update_check_unavailable_chat_is_unaffected) }
+        runCatching { checkMobileRelease(context) }.onSuccess { release = it; status = if (it == null) strings.getString(if (development) R.string.snapshot_update_current else R.string.stable_update_current) else strings.getString(if (development) R.string.snapshot_update_available else R.string.stable_update_available) }.onFailure { status = strings.getString(R.string.sheet_update_check_unavailable_chat_is_unaffected) }
         busy = false
     }
     LaunchedEffect(Unit) {

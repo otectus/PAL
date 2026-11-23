@@ -6,9 +6,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertContentDescriptionEquals
-import androidx.compose.ui.test.assertDoesNotExist
-import androidx.compose.ui.test.assertExists
-import androidx.compose.ui.test.fetchSemanticsNode
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -38,6 +35,7 @@ class ConversationTimelineRegressionTest {
             busy.value = false
             status.value = "idle"
         }
+        compose.mainClock.advanceTimeBy(64)
         compose.onNodeWithText("Response complete").assertExists()
         compose.mainClock.advanceTimeBy(1_000)
         compose.runOnIdle { status.value = "interrupted" }
@@ -73,6 +71,7 @@ class ConversationTimelineRegressionTest {
         compose.mainClock.autoAdvance = false
 
         compose.runOnIdle { busy.value = false }
+        compose.mainClock.advanceTimeBy(64)
 
         compose.onNodeWithTag("conversationCompletionAnnouncement")
             .assertContentDescriptionEquals("Response complete")
@@ -124,13 +123,32 @@ class ConversationTimelineRegressionTest {
         compose.mainClock.autoAdvance = false
 
         compose.runOnIdle { status.value = "stopping" }
+        compose.mainClock.advanceTimeBy(64)
         compose.runOnIdle {
             status.value = "interrupted"
             busy.value = false
         }
 
+        compose.mainClock.advanceTimeBy(64)
         compose.onNodeWithTag("conversationCompletionAnnouncement")
             .assertContentDescriptionEquals("Turn stopped")
+    }
+
+    @Test
+    fun interruptedReplyWithoutObservedStopHasItsOwnAnnouncement() {
+        val busy = mutableStateOf(true)
+        compose.setContent {
+            MaterialTheme {
+                ConversationTimeline(listOf(message("answer")), busy.value,
+                    if (busy.value) "working" else "interrupted") { Text(it.text) }
+            }
+        }
+        compose.waitForIdle()
+        compose.mainClock.autoAdvance = false
+        compose.runOnIdle { busy.value = false }
+        compose.mainClock.advanceTimeBy(64)
+        compose.onNodeWithTag("conversationCompletionAnnouncement")
+            .assertContentDescriptionEquals("Response interrupted")
     }
 
     private fun message(id: String, text: String = "A response") = Message(

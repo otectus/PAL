@@ -7,7 +7,6 @@
     <string name="transcript_waiting">Waiting for a decision on the desktop…</string>
     <string name="transcript_starting">Starting the provider…</string>
     <string name="transcript_stopping">Stopping…</string>
-    <string name="transcript_stop">Stop</string>
     <string name="transcript_working">Working on it…</string>
     <string name="transcript_complete">Response complete</string>
     <string name="transcript_stopped">Turn stopped</string>
@@ -42,7 +41,6 @@
     <string name="markdown_table_description">Table. Rows, %1$d. Columns, %2$d.</string>
 
     <string name="transcript_image_details">%1$d×%2$d · %3$d KiB</string>
-    <string name="transcript_image_optimized"> · private copy optimized</string>
     <string name="transcript_upload_percent">%1$d%% received by desktop</string>
     <string name="transcript_upload_expired">The desktop discarded this upload. Upload it again.</string>
     <string name="transcript_review_attachment">Review</string>
@@ -53,4 +51,6 @@
     <string name="transcript_desktop_image_details">Image · %1$d KiB</string>
     <string name="transcript_desktop_file_details">Text file · %1$d KiB</string>
     <string name="transcript_remove_desktop_attachment">Remove %1$s from the draft</string>
+    <string name="transcript_interrupted">Response interrupted</string>
+    <string name="transcript_failed">Response failed</string>
 </resources>

@@ -46,7 +46,6 @@
     <string name="desktop_path_unavailable">Path unavailable</string>
     <string name="desktop_playback">Playback</string>
     <string name="desktop_ready_to_review">Ready to review</string>
-    <string name="desktop_refresh">Refresh</string>
     <string name="desktop_refreshing_desktop_controls">Refreshing desktop controls…</string>
     <string name="desktop_review_attach">Review &amp; attach</string>
     <string name="desktop_review_move">Review &amp; move</string>
@@ -70,7 +69,7 @@
     <string name="desktop_unmute">Unmute</string>
     <string name="desktop_untitled">Untitled</string>
     <string name="desktop_verified_checkout">" · verified checkout"</string>
-    <string name="desktop_volume">Volume %1$s%%%2$s</string>
+    <string name="desktop_volume">Volume %1$d%%</string>
     <string name="desktop_waiting_for_the_capture_to_be_saved_in">Waiting for the capture to be saved in Satty on the desktop…</string>
     <string name="desktop_windows">Windows</string>
     <string name="desktop_working_in_this_project_now">Working in this project now · %1$s</string>
