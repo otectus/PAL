@@ -863,6 +863,12 @@ kill -KILL $$
         QVERIFY2(!created.contains("error"),qPrintable(created.value("error").toString()));
         app->select(created.value("id").toString());click("tab_Chat");
         QVERIFY(!call("session.send",{{"id",app->selectedId()},{"text","completion-model-switch"}}).contains("error"));
+        // The send returns before the turn starts, so "idle" alone can still be the earlier state, and
+        // the transcript and the session state (with the thread's nativeId) arrive separately. Take
+        // the baseline only once the reply, the thread and the finished turn are all visible.
+        auto replied=[&]{for(const auto &m:app->messages())if(m.toMap().value("text").toString().contains("completion-model-switch finished."))return true;return false;};
+        QTRY_VERIFY(replied());
+        QTRY_VERIFY(!app->session().value("nativeId").toString().isEmpty());
         QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
         QTRY_VERIFY(app->transcript()->rowCount()>1);
         const auto rows=app->transcript()->rowCount();const auto nativeId=app->session().value("nativeId").toString();
