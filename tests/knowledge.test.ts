@@ -277,6 +277,29 @@ test('extraction model defaults, persists, and switches the model dispatched by 
   assert.equal(core.settings.memory.extractionModel, 'nemotron-3-super');
 });
 
+test('memory extraction uses a chosen account of its own provider, follows the account, and keeps it from being removed', async t => {
+  const { core } = await fixture(t);
+  const claude: any = await core.rpc('connections.save', { kind: 'anthropic', name: 'Work Claude' });
+  const gemini: any = await core.rpc('connections.save', { kind: 'google', name: 'Work Gemini' });
+  await core.updateSettings({ memory: { extractionProvider: 'anthropic', extractionModel: 'claude-haiku-4-5' } });
+  await core.updateSettings({ memory: { extractionConnectionId: claude.id } });
+  await core.memory.configure();
+  assert.equal(core.memory.service.configuration.extraction_connection_id, claude.id);
+  const before = structuredClone(core.settings.memory);
+  // Another provider's account, an Ollama computer and an unknown ID are all refused, and nothing changes.
+  for (const extractionConnectionId of [gemini.id, '00000000-0000-4000-8000-000000000000', 7]) await assert.rejects(core.updateSettings({ memory: { extractionConnectionId } } as any));
+  assert.deepEqual(core.settings.memory, before);
+  await assert.rejects(core.rpc('connections.remove', { id: claude.id }), /memory extraction account/);
+  // The account is resolved afresh after it is edited.
+  core.memory.service.extractor = {} as any;
+  await core.rpc('connections.save', { id: claude.id, expectedRevision: claude.revision, name: 'Renamed Claude' });
+  assert.equal(core.memory.service.extractor, undefined);
+  // Another provider starts on its own default key.
+  await core.updateSettings({ memory: { extractionProvider: 'google', extractionModel: 'gemini-2.5-flash' } });
+  assert.equal(core.settings.memory.extractionConnectionId, undefined);
+  assert.equal((await core.rpc('connections.remove', { id: claude.id })) !== undefined, true);
+});
+
 test('memory API provider settings validate atomically and persist independently of chat', async t => {
   const { core, directory } = await fixture(t);
   await core.updateSettings({ memory: { extractionProvider: 'anthropic', extractionModel: 'claude-haiku-4-5', embeddingProvider: 'google', model: 'gemini-embedding-001', allowCloudEmbedding: true } });

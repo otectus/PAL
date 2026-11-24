@@ -23,6 +23,7 @@ import {
   claimSchema,
   witnessSchema,
   policySchema,
+  storedPolicy,
   parse,
   safeText,
   fail,
@@ -1778,6 +1779,7 @@ export class Canonical {
       "recent_session_id",
       "relevance_floor",
       "semantic_floor",
+      "lexical_scale",
       "review_order","review_revision","review_pool",
       "max_items",
     ]);
@@ -1794,6 +1796,8 @@ export class Canonical {
     // Automatic recall keeps only matches that clear a relevance floor; an explicit search lists
     // weaker matches too, best first. A caller may ask for the floor alone.
     const floor = p.relevance_floor === true || automatic;
+    if (p.task_id && !this.one("SELECT id FROM tasks WHERE id=? AND scope_id IN (SELECT value FROM json_each(?)) AND erased=0", p.task_id, lookupScopes).id)
+      fail("INVALID_ARGUMENT", "Task binding is not in this scope");
     const text = safeText(p.text || "memory", 1000),
       route = p.model_route || "local",
       k = this.knowledge(p),
@@ -1938,7 +1942,7 @@ export class Canonical {
       lexical: string[] = [],
       // bm25() is negative; results come best first, so the first match below the floor ends the list.
       lexicalMinimum = floor
-        ? lexicalFloor(this.one("SELECT COUNT(*) AS n FROM retrieval_documents").n)
+        ? lexicalFloor(this.one("SELECT COUNT(*) AS n FROM retrieval_documents").n) * Math.max(1, Math.min(4, Number(p.lexical_scale) || 1))
         : -Infinity;
     if (fts)
       for (const a of this.all(
@@ -2089,7 +2093,10 @@ export class Canonical {
     const eligibleRanks=new Set(ranks.map(r=>r[0]));
     const reranked=review.mode==='automatic'&&review.rerank&&p.review_revision===this.curation.revision()&&Array.isArray(p.review_order)
       ?p.review_order.slice(0,40).filter((id:string)=>eligibleRanks.has(id)):[];
-    const ordered = [...new Set([...pinned,...reranked, ...ranks.map((r) => r[0])])].slice(
+    // Within what matched, records from the task this conversation is bound to come first; nothing is added or hidden.
+    const linked = p.task_id ? this.taskArtifacts(p.task_id) : new Set<string>();
+    const merged = [...new Set([...reranked, ...ranks.map((r) => r[0])])];
+    const ordered = [...new Set([...pinned, ...merged.filter((id) => linked.has(id)), ...merged.filter((id) => !linked.has(id))])].slice(
       0,
       80,
     );
@@ -2211,6 +2218,7 @@ export class Canonical {
         sessionId: a.session_id,
         score: ranks.find((r) => r[0] === aid)?.[1] || 1,
         revision: a.content_revision,
+        matched: lexical.includes(aid) ? (semantic.includes(aid) ? "both" : "words") : semantic.includes(aid) ? "meaning" : "link",
       });
     }
     if (performance.now() > deadline) coverage.push("deadline_partial");
@@ -3004,7 +3012,7 @@ export class Canonical {
         apply_existing: manifest.applies_to === "existing_and_future" ? 1 : 0, selection: p.selection, created_revision: revision,
         completed_revision: null, undone_revision: null, changed_records: 0 });
       this.policy = manifest.next_policy;
-      this.setMeta("policy", this.policy); this.setMeta("policy_epoch", this.epoch("policy") + 1);
+      this.setMeta("policy", storedPolicy(this.policy)); this.setMeta("policy_epoch", this.epoch("policy") + 1);
       this.reconcileExtraction();
       this.events.push({ type: "invalidate", cause: "policy", policy_epoch: this.epoch("policy"), erasure_epoch: this.epoch("erasure"), revision });
       return this.applyRetentionPolicyBatch(id, revision);
@@ -3021,7 +3029,7 @@ export class Canonical {
       if (!change.id) fail("NOT_FOUND", "Retention policy change is unavailable");
       const previous = JSON.parse(change.previous_policy), next = JSON.parse(change.next_policy);
       if (stableJSON(this.policy) === stableJSON(next)) {
-        this.policy = previous; this.setMeta("policy", previous); this.setMeta("policy_epoch", this.epoch("policy") + 1); this.reconcileExtraction();
+        this.policy = previous; this.setMeta("policy", storedPolicy(previous)); this.setMeta("policy_epoch", this.epoch("policy") + 1); this.reconcileExtraction();
         this.events.push({ type: "invalidate", cause: "policy", policy_epoch: this.epoch("policy"), erasure_epoch: this.epoch("erasure"), revision });
       } else if (!this.one("SELECT 1 AS n FROM retention_deadline_changes WHERE change_id=? AND undone_revision IS NOT NULL LIMIT 1", change.id).n)
         fail("REVISION_CONFLICT", "A later policy change must be resolved before undo");
@@ -3675,7 +3683,7 @@ export class Canonical {
     const next = parse(policySchema, { ...this.policy, ...p.policy });
     return this.tx(() => {
       this.policy = next;
-      this.setMeta("policy", next);
+      this.setMeta("policy", storedPolicy(next));
       this.setMeta("policy_epoch", this.epoch("policy") + 1);
       // Stale in-flight work stays rejected by its epoch; retained eligible sources are
       // rescheduled under the new policy instead of being stranded as revoked.
@@ -4858,6 +4866,18 @@ export class Canonical {
         members: this.identityClasses().members(left.id) };
     });
   }
+  /** Identity decisions in a scope, newest first, with the names they join and the statement each rests on. */
+  identityList(p: Row) {
+    strict(p, ["scope_id", "entity_id"]);
+    this.scope(p.scope_id);
+    const rows = this.all(
+      "SELECT i.id,i.left_id,i.right_id,i.decision,i.revision,i.reverted_revision,i.evidence_id,l.name AS left_name,r.name AS right_name,l.type AS type FROM identity_links i JOIN entities l ON l.id=i.left_id JOIN entities r ON r.id=i.right_id WHERE l.scope_id=? AND l.erased=0 AND r.erased=0 AND (?='' OR i.left_id=? OR i.right_id=?) ORDER BY i.revision DESC LIMIT 100",
+      p.scope_id, p.entity_id || "", p.entity_id || "", p.entity_id || "",
+    );
+    const classes = this.identityClasses();
+    return { decisions: rows.map((row) => ({ id: row.id, left: { id: row.left_id, name: row.left_name }, right: { id: row.right_id, name: row.right_name }, type: row.type, decision: row.decision, revision: row.revision, reverted: row.reverted_revision !== null,
+      witness: this.one("SELECT witness FROM evidence WHERE id=?", row.evidence_id).witness ?? "", effective: row.reverted_revision === null && row.decision === "same" && classes.members(row.left_id).includes(row.right_id) })) };
+  }
   /**
    * The entities recall treats as one: those joined by live "same" decisions, in the order they were
    * made. A live "not same" decision is a hard constraint: no chain of "same" links may join that pair,
@@ -4878,6 +4898,31 @@ export class Canonical {
     }
     const ids = [...new Set(links.flatMap((link) => [link.left_id, link.right_id]))];
     return { members: (id: string) => { if (!parent.size) return [id]; const root = find(id); const members = ids.filter((other) => find(other) === root); return members.length ? [id, ...members.filter((other) => other !== id)].slice(0, 16) : [id]; } };
+  }
+  /**
+   * Mirrors one project task (a capsule task the person bound a conversation to), so that conversation's
+   * observations are threaded by it. The task's text stays with the project; only its binding and status are here.
+   */
+  taskEnsure(p: Row) {
+    strict(p, ["scope_id", "binding", "status"]);
+    this.scope(p.scope_id);
+    if (typeof p.binding !== "string" || !/^capsule:[0-9a-f]{32}:[0-9a-f-]{36}$/.test(p.binding)) fail("INVALID_ARGUMENT", "Unknown task binding");
+    if (!["accepted", "active", "done", "dropped"].includes(p.status)) fail("INVALID_ARGUMENT", "Unknown task status");
+    const known = this.one("SELECT * FROM tasks WHERE scope_id=? AND binding=? AND erased=0", p.scope_id, p.binding);
+    if (known.id && known.status === p.status) return { id: known.id, status: known.status, revision: known.revision };
+    return this.tx((r) => {
+      if (known.id) this.run("UPDATE tasks SET status=?,revision=? WHERE id=?", p.status, r, known.id);
+      const id = known.id || uuid();
+      if (!known.id) this.insert("tasks", { id, scope_id: p.scope_id, binding: p.binding, status: p.status, revision: r, erased: 0 });
+      return { id, status: p.status, revision: r };
+    });
+  }
+  /** Artifacts recorded while working on a task: what was said in it, what was learned from that, and its episodes. */
+  private taskArtifacts(taskId: string) {
+    return new Set<string>(this.all(
+      `SELECT a.id FROM events e JOIN artifacts a ON a.record_id=e.observation_id WHERE e.task_id=?
+       UNION SELECT a.id FROM events e JOIN evidence v ON v.observation_id=e.observation_id JOIN assertion_evidence x ON x.evidence_id=v.id JOIN artifacts a ON a.record_id=x.version_id WHERE e.task_id=?
+       UNION SELECT a.id FROM episodes s JOIN artifacts a ON a.record_id=s.id WHERE s.thread_id=?`, taskId, taskId, taskId).map((row) => String(row.id)));
   }
   async call(method: string, p: Row = {}): Promise<any> {
     // Remote inspection/erasure shares the canonical semantics, with a bounded
@@ -4914,6 +4959,10 @@ export class Canonical {
         return this.readjudicate(p);
       case "identity":
         return this.identity(p);
+      case "identity_list":
+        return this.identityList(p);
+      case "task_ensure":
+        return this.taskEnsure(p);
       case "pin":
         return this.pin(p);
       case "unpin":

@@ -25,7 +25,7 @@ const transitions: Record<OperationState, OperationState[]> = {
   cancel_requested: ['cancelled', 'unknown', 'completed', 'failed'],
   completed: [], failed: [], cancelled: [], declined: [], expired: [], interrupted: [], unknown: ['completed', 'failed'],
 };
-export type OperationKind = 'image.generate' | 'image.edit' | 'image.transform' | 'vision.analyze' | 'ocr' | 'extraction' | 'codelab.run' | 'command.run' | 'command.host' | 'specialist.run' | 'export';
+export type OperationKind = 'video.generate' | 'music.generate' | 'image.generate' | 'image.edit' | 'image.transform' | 'vision.analyze' | 'ocr' | 'extraction' | 'codelab.run' | 'command.run' | 'command.host' | 'specialist.run' | 'export';
 export type Operation = {
   id: string; sessionId: string; turnId?: string; parentId?: string; groupId?: string;
   kind: OperationKind; origin: 'model' | 'user' | 'schedule'; label: string;
@@ -158,6 +158,8 @@ export class OperationStore {
     const reconcile: Operation[] = [];
     for (const operation of this.active()) {
       if ((operation.state === 'running' || operation.state === 'dispatching' || operation.state === 'cancel_requested') && operation.remoteId && queryable(operation)) { reconcile.push(this.update(operation.id, { details: { ...operation.details, reconciling: true } })); continue; }
+      // A recorded provider handle is sufficient to resume polling without submitting another paid request.
+      if (operation.remoteId && operation.state==='running' && ['video.generate','music.generate'].includes(operation.kind)) continue;
       // A host command ran as the desktop account outside any sandbox: it may have been stopped with PAL or still be running.
       if (operation.kind === 'command.host' && ['running', 'cancel_requested'].includes(operation.state)) { this.transition(operation.id, 'unknown', { recovery: 'PAL restarted while this command was running as your desktop account. It may have been stopped or may have finished; it was not run again. Check its effects before running it again.' }); continue; }
       if (operation.state === 'dispatching' || operation.state === 'cancel_requested' || (operation.state === 'running' && operation.backend && operation.backend.route !== 'local' && !['image.transform', 'codelab.run', 'command.run', 'command.host', 'extraction'].includes(operation.kind)))

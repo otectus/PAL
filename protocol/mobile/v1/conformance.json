@@ -44,11 +44,17 @@
           "sessions.routeRevision",
           "models.listing",
           "workbench.takeover",
+          "time.context.v1",
+          "wake.v1",
           "owner.policy.v1",
           "workbench.remote.v1",
           "artifacts.transfer.v1",
           "settings.owner.v1",
-          "terminal.v1"
+          "terminal.v1",
+          "realtime.audio.v1",
+          "provider.inference.v1",
+          "provider.bridge.v1",
+          "provider.collections.v1"
         ],
         "operations": [
           "sync.open",
@@ -76,6 +82,9 @@
           "messages.bookmark",
           "messages.bookmarks",
           "sessions.behavior",
+          "time.now",
+          "time.elapsed",
+          "sessions.timeZone",
           "workflows.status",
           "workflows.pauseSchedule",
           "desktop.portrait",
@@ -93,6 +102,9 @@
           "permissions.reduce",
           "devices.self",
           "devices.selfRevoke",
+          "wake.status",
+          "wake.register",
+          "wake.clear",
           "settings.get",
           "settings.patch",
           "client.features",
@@ -147,6 +159,7 @@
                 "self": true
               },
               "queuedCount": 0,
+              "pendingUpdates": 0,
               "canQueue": false,
               "canConfigure": false,
               "pinned": false,
@@ -168,6 +181,7 @@
                   "updated": 0
                 }
               ],
+              "timeZone": null,
               "tools": false,
               "workbenchFamilies": [],
               "workbenchTakeover": null
@@ -205,6 +219,7 @@
           "providers": {
             "codex": {
               "available": true,
+              "connections": [],
               "models": [
                 {
                   "id": "fixture-model",
@@ -216,11 +231,13 @@
                     }
                   ],
                   "defaultEffort": "low",
-                  "isDefault": true
+                  "isDefault": true,
+                  "description": ""
                 }
               ],
               "modelsStatus": "ready",
               "remoteExecution": true,
+              "defaultRemoteExecution": true,
               "traits": {
                 "label": "Codex",
                 "kind": "cli",
@@ -229,20 +246,25 @@
                 "effort": true,
                 "images": "yes",
                 "tools": "native",
-                "toolCalling": "native",
                 "webSearch": false,
+                "importHistory": true,
+                "resume": true,
                 "queue": false,
                 "configure": true,
                 "billed": false,
-                "remoteNote": "Runs in Codex’s restricted sandbox; its permission requests come to you."
+                "remote": "restricted",
+                "remoteNote": "Runs in Codex’s restricted sandbox; its permission requests come to you.",
+                "toolCalling": "native"
               }
             },
             "claude": {
               "available": false,
+              "connections": [],
               "models": [],
               "modelsStatus": "unavailable",
               "remoteExecution": false,
               "remoteUnavailableReason": "Claude Code is not available on the desktop.",
+              "defaultRemoteExecution": false,
               "traits": {
                 "label": "Claude Code",
                 "kind": "cli",
@@ -251,20 +273,25 @@
                 "effort": true,
                 "images": "yes",
                 "tools": "native",
-                "toolCalling": "native",
                 "webSearch": false,
+                "importHistory": true,
+                "resume": true,
                 "queue": false,
                 "configure": true,
                 "billed": false,
-                "remoteNote": "Runs only with a Claude Code that supports restricted mode; file tools stay in the project and code-running tools are off."
+                "remote": "restricted",
+                "remoteNote": "Runs only with a Claude Code that supports restricted mode; file tools stay in the project and code-running tools are off.",
+                "toolCalling": "native"
               }
             },
             "ollama": {
               "available": false,
+              "connections": [],
               "models": [],
               "modelsStatus": "error",
               "remoteExecution": true,
               "remoteUnavailableReason": "Ollama is unavailable on the desktop. Refresh models after checking the configured server.",
+              "defaultRemoteExecution": true,
               "traits": {
                 "label": "Ollama",
                 "kind": "local",
@@ -273,12 +300,15 @@
                 "effort": false,
                 "images": "per-model",
                 "tools": "cere",
-                "toolCalling": "per-model",
                 "webSearch": true,
+                "importHistory": false,
+                "resume": false,
                 "queue": true,
                 "configure": true,
                 "billed": false,
-                "remoteNote": "Runs on the desktop’s granted Ollama server with PAL’s tools limited to this phone’s grants."
+                "remote": "restricted",
+                "remoteNote": "Runs on the desktop’s granted Ollama server with PAL’s tools limited to this phone’s grants.",
+                "toolCalling": "per-model"
               }
             }
           },
@@ -328,6 +358,13 @@
             "personality": "",
             "revision": "1",
             "showMemoryCitations": false,
+            "time": {
+              "enabled": true,
+              "conversationTiming": true,
+              "zoneMode": "automatic",
+              "fixedZone": null,
+              "clockFormat": "system"
+            },
             "webSearch": {
               "enabled": false,
               "provider": "auto"
@@ -431,6 +468,7 @@
                 "self": true
               },
               "queuedCount": 0,
+              "pendingUpdates": 0,
               "canQueue": false,
               "canConfigure": false,
               "pinned": false,
@@ -452,6 +490,7 @@
                   "updated": 0
                 }
               ],
+              "timeZone": null,
               "tools": false,
               "workbenchFamilies": [],
               "workbenchTakeover": null
@@ -499,6 +538,7 @@
                 "self": true
               },
               "queuedCount": 0,
+              "pendingUpdates": 0,
               "canQueue": false,
               "canConfigure": false,
               "pinned": false,
@@ -520,6 +560,7 @@
                   "updated": 0
                 }
               ],
+              "timeZone": null,
               "tools": false,
               "workbenchFamilies": [],
               "workbenchTakeover": null
@@ -562,6 +603,7 @@
             "self": true
           },
           "queuedCount": 0,
+          "pendingUpdates": 0,
           "canQueue": false,
           "canConfigure": false,
           "pinned": false,
@@ -583,6 +625,7 @@
               "updated": 0
             }
           ],
+          "timeZone": null,
           "tools": false,
           "workbenchFamilies": [],
           "workbenchTakeover": null
@@ -790,6 +833,13 @@
           "personality": "",
           "revision": "1",
           "showMemoryCitations": false,
+          "time": {
+            "enabled": true,
+            "conversationTiming": true,
+            "zoneMode": "automatic",
+            "fixedZone": null,
+            "clockFormat": "system"
+          },
           "webSearch": {
             "enabled": false,
             "provider": "auto"
@@ -968,6 +1018,7 @@
             "self": true
           },
           "queuedCount": 0,
+          "pendingUpdates": 0,
           "canQueue": false,
           "canConfigure": false,
           "pinned": false,
@@ -998,6 +1049,7 @@
               "updated": 0
             }
           ],
+          "timeZone": null,
           "tools": false,
           "workbenchFamilies": [],
           "workbenchTakeover": null
@@ -1116,12 +1168,106 @@
       }
     },
     {
+      "name": "time.now",
+      "decode": "TimeSnapshot",
+      "frame": {
+        "v": 1,
+        "type": "response",
+        "id": "<uuid:36>",
+        "result": {
+          "schema": 1,
+          "sampledAtMs": 0,
+          "utcIso": "2026-11-21T16:30:00.000Z",
+          "localIso": "2026-11-21T11:30:00-05:00",
+          "timeZone": "America/New_York",
+          "zoneSource": "explicit-query",
+          "localDate": "2026-11-21",
+          "localTime": "11:30:00",
+          "weekday": "Saturday",
+          "offsetSeconds": -18000,
+          "clockSource": "broker-system",
+          "clockStatus": "normal",
+          "clockRevision": 1,
+          "enabled": true,
+          "conversationTiming": true
+        }
+      }
+    },
+    {
+      "name": "time.now in another zone",
+      "decode": "TimeSnapshot",
+      "frame": {
+        "v": 1,
+        "type": "response",
+        "id": "<uuid:37>",
+        "result": {
+          "schema": 1,
+          "sampledAtMs": 0,
+          "utcIso": "2026-11-21T16:30:00.000Z",
+          "localIso": "2026-11-21T22:15:00+05:45",
+          "timeZone": "Asia/Kathmandu",
+          "zoneSource": "explicit-query",
+          "localDate": "2026-11-21",
+          "localTime": "22:15:00",
+          "weekday": "Saturday",
+          "offsetSeconds": 20700,
+          "clockSource": "broker-system",
+          "clockStatus": "normal",
+          "clockRevision": 1,
+          "enabled": true,
+          "conversationTiming": true
+        }
+      }
+    },
+    {
+      "name": "time.elapsed",
+      "decode": "ElapsedResult",
+      "frame": {
+        "v": 1,
+        "type": "response",
+        "id": "<uuid:38>",
+        "result": {
+          "schema": 1,
+          "anchorKind": "message",
+          "anchorId": "11111111-1111-4111-8111-000000000006",
+          "anchor": "This message’s transcript time.",
+          "toMs": 0,
+          "includesInactivity": true,
+          "includesSuspend": null,
+          "status": "available",
+          "fromMs": 0,
+          "durationMs": 3600000,
+          "basis": "wall-clock-estimate"
+        }
+      }
+    },
+    {
+      "name": "time.elapsed unknown",
+      "decode": "ElapsedResult",
+      "frame": {
+        "v": 1,
+        "type": "response",
+        "id": "<uuid:39>",
+        "result": {
+          "schema": 1,
+          "anchorKind": "message",
+          "anchor": "No such message in this conversation.",
+          "toMs": 0,
+          "includesInactivity": true,
+          "includesSuspend": null,
+          "status": "unknown",
+          "basis": "unknown",
+          "reason": "anchor_unavailable"
+        }
+      }
+    },
+    {
       "name": "error SCOPE_DENIED",
       "decode": "Error",
       "frame": {
         "v": 1,
         "type": "response",
-        "id": "<uuid:36>",
+        "id": "<uuid:40>",
         "error": {
           "code": "SCOPE_DENIED",
           "message": "Session is not available to this device.",
@@ -1135,7 +1281,7 @@
       "frame": {
         "v": 1,
         "type": "response",
-        "id": "<uuid:37>",
+        "id": "<uuid:41>",
         "error": {
           "code": "REVISION_CONFLICT",
           "message": "Session changed. Review its current title.",
@@ -1149,7 +1295,7 @@
       "frame": {
         "v": 1,
         "type": "response",
-        "id": "<uuid:38>",
+        "id": "<uuid:42>",
         "error": {
           "code": "INVALID_ARGUMENT",
           "message": "Unknown mobile operation.",
@@ -1163,7 +1309,7 @@
       "frame": {
         "v": 1,
         "type": "event",
-        "eventId": "<uuid:39>",
+        "eventId": "<uuid:43>",
         "cursor": "<digest:3>",
         "name": "message.upsert",
         "resourceRevision": "1",
@@ -1185,7 +1331,7 @@
       "frame": {
         "v": 1,
         "type": "event",
-        "eventId": "<uuid:40>",
+        "eventId": "<uuid:44>",
         "cursor": "<digest:4>",
         "name": "notice",
         "resourceRevision": "1",
@@ -1202,7 +1348,7 @@
       "frame": {
         "v": 1,
         "type": "event",
-        "eventId": "<uuid:41>",
+        "eventId": "<uuid:45>",
         "cursor": "<cursor>",
         "name": "snapshot.changed",
         "resourceRevision": "1",

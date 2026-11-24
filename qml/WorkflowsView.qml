@@ -165,6 +165,7 @@ ColumnLayout {
                             CButton { objectName:"taskAccept_"+taskCard.index;visible:taskCard.modelData.state==="proposed";text:"Accept";primary:true;enabled:workflow.requestId<0;onClicked:workflow.transition(taskCard.modelData,"accepted") }
                             CButton { objectName:"taskStart_"+taskCard.index;visible:taskCard.modelData.state==="accepted";text:"Start";enabled:workflow.requestId<0;onClicked:workflow.transition(taskCard.modelData,"active") }
                             CButton { objectName:"taskPause_"+taskCard.index;visible:taskCard.modelData.state==="active";text:"Pause";enabled:workflow.requestId<0;onClicked:workflow.transition(taskCard.modelData,"accepted") }
+                            CButton { objectName:"taskWorkOn_"+taskCard.index;visible:(taskCard.modelData.state==="accepted"||taskCard.modelData.state==="active")&&!!App.selectedId&&App.session.temporary!==true;text:App.session.task?.id===taskCard.modelData.id?"Stop working on this here":"Work on this here";help:"Threads this conversation’s memories by the task, so they come first here";enabled:workflow.requestId<0;onClicked:App.rpc("capsules.workOn",{sessionId:App.selectedId,taskId:App.session.task?.id===taskCard.modelData.id?null:taskCard.modelData.id}) }
                             CButton { objectName:"taskDone_"+taskCard.index;visible:taskCard.modelData.state==="accepted"||taskCard.modelData.state==="active";text:"Done…";enabled:workflow.requestId<0;onClicked:workflow.openDone(taskCard.modelData) }
                             CButton { objectName:"taskReopen_"+taskCard.index;visible:taskCard.modelData.state==="done"||taskCard.modelData.state==="dropped";text:taskCard.modelData.state==="done"?"Reopen":"Restore";quiet:true;enabled:workflow.requestId<0;onClicked:workflow.transition(taskCard.modelData,"accepted") }
                             CButton { objectName:"taskDrop_"+taskCard.index;visible:["proposed","accepted","active"].indexOf(taskCard.modelData.state)>=0;text:taskCard.modelData.state==="proposed"?"Reject":"Drop";quiet:true;enabled:workflow.requestId<0;onClicked:workflow.transition(taskCard.modelData,"dropped") }
@@ -308,6 +309,7 @@ ColumnLayout {
                                 +(modelData.authorizedBy&&modelData.authorizedBy.kind==="device"?" · authorized from "+modelData.authorizedBy.name:"")
                                 +(modelData.authorizedBy&&modelData.authorizedBy.kind==="desktop"?" · Authorized by this computer":"")
                                 +(modelData.lastRun?" · last "+modelData.lastRun.outcome+(modelData.lastRun.reason?": "+modelData.lastRun.reason:""):"")
+                                +(modelData.delivery?" · result to "+(modelData.delivery.target.kind==="mail"?modelData.delivery.target.to.join(", "):modelData.delivery.target.repo+" #"+modelData.delivery.target.number)+(modelData.lastDelivery&&modelData.lastDelivery.state!=="sent"?" (last one not delivered"+(modelData.lastDelivery.reason?": "+modelData.lastDelivery.reason:"")+")":""):"")
                         }
                     }
                     // §17.1: a routine authorized from a phone pauses if that phone is removed, unless it is handed to the desktop.
@@ -461,6 +463,12 @@ ColumnLayout {
         readonly property var kinds:[{id:"daily",label:"Every day"},{id:"weekdays",label:"Weekdays"},{id:"weekly",label:"Chosen days"},{id:"once",label:"Once"},{id:"folder",label:"When files change in a folder"}]
         readonly property var dayNames:["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
         property var days:[1]
+        // Where the result goes besides its conversation: only an account that may write, and only what is named here.
+        property var destinations:[]
+        RpcClient { id:deliveryRpc }
+        onOpened:{destinations=[];if((App.state.accounts?.signedIn||0)>0)deliveryRpc.call("accounts.list",{},value=>{if(value.error)return;const found=[];for(const account of value.accounts||[]){if((account.access||{}).mail==="write")found.push({account:account,kind:"mail",label:"Mail it from "+account.login});if((account.access||{}).github==="write")found.push({account:account,kind:"github",label:"Comment on a GitHub issue as "+account.login})}destinations=found})}
+        readonly property var destination:scheduleDelivery.currentIndex>0?destinations[scheduleDelivery.currentIndex-1]||null:null
+        function delivery(){if(!destination)return {};const issue=/^\s*([^\s#]+\/[^\s#]+)\s*#?\s*(\d+)\s*$/.exec(scheduleTarget.text);return {delivery:{accountId:destination.account.id,target:destination.kind==="mail"?{kind:"mail",to:scheduleTarget.text.split(/[,;\s]+/).filter(item=>item.length)}:{kind:"github",repo:issue?issue[1]:scheduleTarget.text.trim(),number:issue?parseInt(issue[2]):0}}}}
         CText { text:"Schedule this reviewed recipe";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
         CText { visible:scheduleKind.currentIndex!==4;text:"At each time PAL checks that the recipe, its inputs, the conversation settings and the permission switches are exactly as reviewed now. Any change pauses the schedule. "+(scheduleCatchUp.checked?"If a time is missed while PAL is not running, it runs once when this computer returns.":"If a time is missed while PAL is not running, PAL reports it and skips that run.");color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
         CField { id:scheduleLabel;objectName:"scheduleFormLabel";Layout.fillWidth:true;placeholderText:"Name";maximumLength:80;Accessible.name:"Schedule name" }
@@ -482,6 +490,9 @@ ColumnLayout {
             Repeater { model:7;CCheckBox { required property int index;text:scheduleDialog.dayNames[index];checked:scheduleDialog.days.indexOf(index)>=0;onToggled:scheduleDialog.days=checked?scheduleDialog.days.concat([index]):scheduleDialog.days.filter(day=>day!==index) } }
         }
         CField { id:scheduleDate;visible:scheduleKind.currentIndex===3;Layout.fillWidth:true;placeholderText:"Date, YYYY-MM-DD";Accessible.name:"Date" }
+        CComboBox { id:scheduleDelivery;objectName:"scheduleDelivery";visible:scheduleDialog.destinations.length>0;Layout.fillWidth:true;model:["Keep the result in its conversation"].concat(scheduleDialog.destinations.map(item=>item.label));Accessible.name:"Where the result goes" }
+        CField { id:scheduleTarget;objectName:"scheduleTarget";visible:!!scheduleDialog.destination;Layout.fillWidth:true;placeholderText:scheduleDialog.destination?.kind==="github"?"Issue, for example owner/name #12":"Email addresses, up to five";Accessible.name:"Recipients of the result" }
+        CText { visible:!!scheduleDialog.destination;text:"Each result is sent there without asking again, as "+(scheduleDialog.destination?.account.login||"")+". It is recorded in Accounts › Drafts.";color:Theme.amber;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
         CCheckBox { id:scheduleUnattended;objectName:"scheduleFormUnattended";text:"It may run while I am away; permission questions wait for me" }
         CText { objectName:"scheduleFormError";visible:!!workflow.error&&scheduleDialog.opened;text:workflow.error;color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
         RowLayout {
@@ -493,7 +504,7 @@ ColumnLayout {
                     const kind=scheduleDialog.kinds[scheduleKind.currentIndex].id,when=kind==="folder"?{kind:kind,path:scheduleFolder.text.trim(),quietSeconds:parseInt(scheduleQuiet.text)||30}:{kind:kind,time:scheduleTime.text.trim()}
                     if(kind==="weekly")when.days=scheduleDialog.days
                     if(kind==="once")when.date=scheduleDate.text.trim()
-                    workflow.call("schedules.create",Object.assign({previewToken:workflow.preview.token,label:scheduleLabel.text.trim(),when:when,unattended:true},scheduleCatchUp.checked&&kind!=="folder"?{missed:"once"}:{}))
+                    workflow.call("schedules.create",Object.assign({previewToken:workflow.preview.token,label:scheduleLabel.text.trim(),when:when,unattended:true},scheduleCatchUp.checked&&kind!=="folder"?{missed:"once"}:{},scheduleDialog.delivery()))
                 }
             }
         }

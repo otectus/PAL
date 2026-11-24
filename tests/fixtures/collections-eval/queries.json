@@ -1,0 +1,149 @@
+{
+ "comment": "Questions with the files that answer them. 'location' is what the excerpt must point at; 'conflict' means both files must be given and marked; an empty 'sources' means nothing answers it.",
+ "queries": [
+  {
+   "q": "How long are database backups kept?",
+   "sources": [
+    "policy/backups.md",
+    "policy/archive/backups-2024.md"
+   ],
+   "location": "lines",
+   "conflict": true
+  },
+  {
+   "q": "When are weekly snapshots copied to the second site?",
+   "sources": [
+    "policy/backups.md"
+   ],
+   "location": "lines"
+  },
+  {
+   "q": "How fast must the on-call engineer answer a page?",
+   "sources": [
+    "policy/oncall.md|policy/copy/oncall.md"
+   ],
+   "location": "line"
+  },
+  {
+   "q": "When does the on-call handover happen?",
+   "sources": [
+    "policy/oncall.md|policy/copy/oncall.md"
+   ],
+   "location": "line"
+  },
+  {
+   "q": "How often are signing keys rotated?",
+   "sources": [
+    "policy/secrets.md"
+   ],
+   "location": "line"
+  },
+  {
+   "q": "May secrets be written to logs?",
+   "sources": [
+    "policy/secrets.md",
+    "policy/secrets-faq.md"
+   ],
+   "conflict": true
+  },
+  {
+   "q": "Who signs the release tag?",
+   "sources": [
+    "release/checklist.md"
+   ],
+   "location": "lines"
+  },
+  {
+   "q": "Which release removed the legacy importer?",
+   "sources": [
+    "release/versions.txt"
+   ],
+   "location": "lines"
+  },
+  {
+   "q": "What is the ceiling of backoff_delay?",
+   "sources": [
+    "src/retry.py"
+   ],
+   "location": "lines"
+  },
+  {
+   "q": "How many attempts does run_with_retry make?",
+   "sources": [
+    "src/retry.py"
+   ],
+   "location": "lines"
+  },
+  {
+   "q": "Which worker pool do enterprise tenants use?",
+   "sources": [
+    "src/tenant.ts"
+   ],
+   "location": "lines"
+  },
+  {
+   "q": "What is idle_timeout_seconds set to?",
+   "sources": [
+    "config/service.toml"
+   ],
+   "location": "lines"
+  },
+  {
+   "q": "What is the queue-depth alert threshold?",
+   "sources": [
+    "config/alerts.yaml"
+   ],
+   "location": "lines"
+  },
+  {
+   "q": "What support does the enterprise plan include?",
+   "sources": [
+    "data/plans.csv"
+   ]
+  },
+  {
+   "q": "What is the capacity of the Stockholm region?",
+   "sources": [
+    "data/regions.json"
+   ]
+  },
+  {
+   "q": "Why did the importer outage begin?",
+   "sources": [
+    "media/retro.vtt"
+   ],
+   "location": "time 0:05"
+  },
+  {
+   "q": "What is the daily meal allowance in Switzerland?",
+   "sources": [
+    "handbook/travel.md"
+   ],
+   "location": "line"
+  },
+  {
+   "q": "What is the refund limit in the expense handbook?",
+   "sources": [
+    "handbook/expenses.pdf"
+   ],
+   "location": "page 2",
+   "needs": "pdf"
+  },
+  {
+   "q": "What colour is the visitor badge?",
+   "sources": []
+  },
+  {
+   "q": "Which espresso machine is in the kitchen?",
+   "sources": []
+  },
+  {
+   "q": "How many parking spaces does the garage have?",
+   "sources": []
+  },
+  {
+   "q": "What is the name of the ship's captain?",
+   "sources": []
+  }
+ ]
+}

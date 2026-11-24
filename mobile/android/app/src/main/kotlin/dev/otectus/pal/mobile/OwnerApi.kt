@@ -3,6 +3,7 @@ package dev.otectus.pal.mobile
 import androidx.fragment.app.FragmentActivity
 import dev.otectus.pal.mobile.data.RemoteRequestException
 import dev.otectus.pal.mobile.data.PALRepository
+import dev.otectus.pal.mobile.data.PreparedAction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -41,6 +42,14 @@ internal fun JsonElement?.objects(): List<JsonObject> = (this as? JsonArray)?.ma
 internal suspend fun signed(activity: FragmentActivity, repository: PALRepository, method: String, params: JsonObject, title: String): JsonElement =
     suspendCancellableCoroutine { continuation ->
         signedReview(activity, repository, method, params, title,
+            { result -> if (continuation.isActive) continuation.resume(result) },
+            { message -> if (continuation.isActive) continuation.resumeWithException(IllegalStateException(message)) })
+    }
+
+/** Completes an already reviewed action through the same trusted/biometric owner flow as other phone actions. */
+internal suspend fun authenticated(activity: FragmentActivity, repository: PALRepository, action: PreparedAction, title: String): JsonElement =
+    suspendCancellableCoroutine { continuation ->
+        authenticate(activity, title, action, repository,
             { result -> if (continuation.isActive) continuation.resume(result) },
             { message -> if (continuation.isActive) continuation.resumeWithException(IllegalStateException(message)) })
     }
@@ -110,6 +119,16 @@ internal suspend fun downloadArtifact(resources: android.content.res.Resources, 
     }
 }
 
+/** A recording in a private file of its own; nothing is left behind when it does not match the desktop's copy. */
+internal suspend fun downloadRecording(context: android.content.Context, repository: PALRepository, sessionId: String, artifactId: String, versionId: String, progress: (Long, Long) -> Unit): java.io.File {
+    val info = repository.read("transfers.download", buildJsonObject { put("sessionId", sessionId); put("artifactId", artifactId); put("versionId", versionId); put("variant", "original") }) as JsonObject
+    val file = java.io.File(java.io.File(context.cacheDir, "media").also { it.mkdirs() }, java.util.UUID.randomUUID().toString())
+    try {
+        withContext(kotlinx.coroutines.Dispatchers.IO) { file.outputStream().buffered().use { sink -> readDownloadTo(sink, info, context.resources::getString, progress, repository::readTransferChunk) { id -> repository.mutate("transfers.abort", buildJsonObject { put("transferId", id) }) } } }
+        return file
+    } catch (failure: Throwable) { file.delete(); throw failure }
+}
+
 internal suspend fun readDownload(
     info: JsonObject,
     errorText: (Int) -> String,
@@ -117,21 +136,33 @@ internal suspend fun readDownload(
     read: suspend (String, Long, Int) -> ByteArray,
     release: suspend (String) -> Unit
 ): ByteArray {
+    val out = ByteArrayOutputStream((info.num("size") ?: 0).coerceIn(0, MAX_DOWNLOAD_BYTES).toInt())
+    readDownloadTo(out, info, errorText, progress, read, release)
+    return out.toByteArray()
+}
+
+/** The same verified download into [sink]; the caller keeps nothing of it when this throws. */
+internal suspend fun readDownloadTo(
+    sink: java.io.OutputStream,
+    info: JsonObject,
+    errorText: (Int) -> String,
+    progress: (Long, Long) -> Unit,
+    read: suspend (String, Long, Int) -> ByteArray,
+    release: suspend (String) -> Unit
+) {
     val id = info.str("transferId") ?: error(errorText(R.string.download_not_started))
     try {
         val size = info.num("size") ?: 0; val chunk = (info.int("chunk") ?: 256 * 1024).coerceIn(1, 256 * 1024)
         require(size in 0..MAX_DOWNLOAD_BYTES) { errorText(R.string.download_too_large) }
-        val out = ByteArrayOutputStream(size.toInt())
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
         var offset = 0L
         while (offset < size) {
             val length = minOf(chunk.toLong(), size - offset).toInt()
             val part = read(id, offset, length)
             require(part.size in 1..length) { errorText(R.string.download_wrong_length) }
-            out.write(part); offset += part.size; progress(offset, size)
+            sink.write(part); digest.update(part); offset += part.size; progress(offset, size)
         }
-        val bytes = out.toByteArray()
-        require(sha256Hex(bytes) == info.str("sha256")) { errorText(R.string.download_wrong_digest) }
-        return bytes
+        require(digest.digest().joinToString("") { "%02x".format(it) } == info.str("sha256")) { errorText(R.string.download_wrong_digest) }
     } finally {
         // A completed read, an oversize rejection, integrity failure, or cancellation all
         // release the server-side slot. Do this outside cancellation, but never block exit.

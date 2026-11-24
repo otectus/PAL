@@ -22,7 +22,7 @@ Item {
         if (!sessionId) { sets = []; detail = null; return }
         rpc.call("changes.list", { sessionId: sessionId }, value => {
             if (value.error) { error = value.error; return }
-            sets = value
+            sets = value; refreshTrash()
             const wanted = WorkbenchState.changeSetFor(sessionId) || (sets.find(s => s.status === "pending") || sets[0] || {}).id
             if (wanted) open(wanted)
         })
@@ -57,8 +57,15 @@ Item {
         })
     }
     function decline() { working = true; rpc.call("changes.decline", { id: detail.id }, value => { working = false; if (value.error) error = value.error; else { open(detail.id); refresh() } }) }
+    // Files and folders PAL moved to its trash for this conversation; restoring is a reviewed change like any other.
+    property var trash: []
+    function refreshTrash() {
+        if (!sessionId) { trash = []; return }
+        rpc.call("changes.trash", { sessionId: sessionId }, value => { review.trash = value.error ? [] : (value || []).filter(item => item.state !== "restored") })
+    }
+    function undoSet(id) { working = true; error = ""; rpc.call("changes.undo", { id: id }, value => { working = false; if (value.error) error = value.error; else { notice = (value.conflicts || []).join("\n"); refresh(); open(value.id) } }) }
     function undo() { working = true; rpc.call("changes.undo", { id: detail.id }, value => { working = false; if (value.error) error = value.error; else { notice = (value.conflicts || []).join("\n"); refresh(); open(value.id) } }) }
-    onSessionIdChanged: { sets = []; detail = null; selected = ({}); error = ""; notice = ""; working = false; refresh() }
+    onSessionIdChanged: { sets = []; trash = []; detail = null; selected = ({}); error = ""; notice = ""; working = false; refresh() }
     Component.onCompleted: refresh()
     Connections { target: WorkbenchState; function onReviewsChanged() { const wanted = WorkbenchState.changeSetFor(review.sessionId); if (wanted && (!review.detail || review.detail.id !== wanted)) review.open(wanted) } }
     Connections { target: App; function onStateChanged() { const pending = (App.state.workbench?.pendingChanges || []).filter(p => p.sessionId === review.sessionId).length; if (pending !== review.pendingCount) { review.pendingCount = pending; review.refresh() } } }
@@ -142,6 +149,45 @@ Item {
             CButton { objectName: "changeAcceptSelected"; visible: !!review.detail && review.detail.status === "pending"; text: "Accept selected (" + review.chosen().length + ")"; enabled: !!review.detail && review.detail.approvable && !review.working && review.chosen().length > 0 && review.chosen().length < review.detail.operations.length; onClicked: review.accept(false) }
             CButton { objectName: "changeReject"; visible: !!review.detail && review.detail.status === "pending"; text: "Reject"; danger: true; enabled: !review.working; onClicked: review.decline() }
             CButton { objectName: "changeUndo"; visible: !!review.detail && ["applied", "partial"].indexOf(review.detail.status) >= 0; text: "Undo…"; enabled: !review.working; help: "Prepares the reverse changes for review; nothing newer is overwritten"; onClicked: review.undo() }
+        }
+        CSection {
+            objectName: "changeTrash"
+            visible: review.trash.length > 0
+            title: "Trash"
+            hint: review.trash.length + (review.trash.length === 1 ? " item" : " items")
+            expanded: false
+            description: "Removed files stay in PAL’s trash until you delete them here. Restore prepares the reverse of the change that removed them, for review."
+            Repeater {
+                model: review.trash
+                RowLayout {
+                    id: trashRow
+                    required property var modelData
+                    required property int index
+                    Layout.fillWidth: true; spacing: Theme.space2
+                    ColumnLayout {
+                        Layout.fillWidth: true; spacing: 0
+                        CText { text: trashRow.modelData.path; elide: Text.ElideMiddle; wrapMode: Text.NoWrap }
+                        CText { text: (trashRow.modelData.type === "directory" ? "Folder" : "File") + " · " + new Date(trashRow.modelData.at).toLocaleString(Qt.locale(), Locale.ShortFormat) + (trashRow.modelData.state === "trashing" ? " · was being moved when PAL stopped" : ""); color: Theme.muted; font.pixelSize: Theme.caption; elide: Text.ElideRight; wrapMode: Text.NoWrap }
+                    }
+                    CButton { objectName: "trashRestore_" + trashRow.index; text: "Restore…"; quiet: true; implicitHeight: Theme.compactHeight; enabled: !review.working && App.connected; Accessible.name: "Restore " + trashRow.modelData.path; onClicked: review.undoSet(trashRow.modelData.changeSetId) }
+                    CButton { objectName: "trashPurge_" + trashRow.index; text: "Delete…"; quiet: true; danger: true; implicitHeight: Theme.compactHeight; enabled: !review.working && App.connected; Accessible.name: "Delete " + trashRow.modelData.path + " permanently"; onClicked: purgeDialog.openFor(trashRow.modelData) }
+                }
+            }
+        }
+    }
+    CDialog {
+        id: purgeDialog; objectName: "purgeDialog"
+        property var item: ({})
+        property string problem: ""
+        function openFor(value) { item = value; problem = ""; open() }
+        CText { text: "Delete permanently?"; font.pixelSize: Theme.title; font.weight: Font.DemiBold }
+        CText { text: (purgeDialog.item.path || "") + " will be removed from PAL’s trash. It cannot be restored afterwards."; wrapMode: Text.Wrap }
+        CText { visible: !!purgeDialog.problem; text: purgeDialog.problem; color: Theme.danger; font.pixelSize: Theme.secondary; Accessible.role: Accessible.AlertMessage }
+        RowLayout {
+            Layout.fillWidth: true; spacing: Theme.space2
+            CButton { Layout.fillWidth: true; text: "Cancel"; onClicked: purgeDialog.close() }
+            CButton { objectName: "purgeConfirm"; Layout.fillWidth: true; text: "Delete permanently"; danger: true; enabled: App.connected
+                onClicked: rpc.call("changes.purge", { sessionId: review.sessionId, trashId: purgeDialog.item.id, confirmed: true }, value => { if (value.error) { purgeDialog.problem = String(value.error.message || value.error); return } purgeDialog.close(); review.refreshTrash() }) }
         }
     }
 }

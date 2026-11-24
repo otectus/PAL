@@ -78,6 +78,11 @@ ColumnLayout {
         ToolServers {}
     }
     CSection {
+        title:"Service manifests"
+        description:"Name the tool of a reviewed tool server that provides a service, such as search. A manifest adds no code and no permission."
+        ServiceManifests {}
+    }
+    CSection {
         title:"Custom tools"
         description:"One HTTP request or one program, with inputs the model may fill in."
         CustomTools {}

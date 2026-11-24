@@ -6,6 +6,7 @@ import type { Core } from './core.ts';
 import type { Session } from './types.ts';
 import { busy, remoteError, type RemoteExecution } from './execution.ts';
 import { validConstraints } from './web-plan.ts';
+import type { Acceptance } from './temporal-context.ts';
 
 type Entry = { params: any; execution?: RemoteExecution; configRevision: string; provenance?: RemoteExecution; messageId: string; text: string };
 
@@ -23,6 +24,8 @@ export class SendQueue {
   }
   add(p: any, execution?: RemoteExecution, check?:()=>void, accepted?:()=>void): Promise<{queued:true;turnId:string}> {
     const id=p.id, epoch=this.epochs.get(id)||0;
+    // Received now, whatever happens before it is sent: "tomorrow" keeps meaning the day after this moment.
+    const timing:Acceptance=p.timing||this.core.temporal.accept(this.core.store.session(id),execution?'human-mobile':'human-desktop',{device:p.clientContext?.timeZone});
     const pending=(this.admissions.get(id)||Promise.resolve()).catch(()=>{}).then(async()=>{
       const validate=()=>{
         if(this.core.closed || this.core.recovery.pending || (this.epochs.get(id)||0)!==epoch)throw new Error('Sending was cancelled. Your draft is retained.');
@@ -54,14 +57,16 @@ export class SendQueue {
       if(images.length+attached.images.length>4)throw new Error('Attach at most four images');
       const session=validate(), messageId=randomUUID(), turnId=p.turnId||randomUUID();
       const text=p.text+(attached.assets.length?'\n\nAttached files: '+attached.assets.map(a=>a.name).join(', '):'')+(images.length?'\n\nAttached: '+images.join(', '):'');
-      const entry:Entry={params:{id,text:p.text,attachmentIds:attached.assets.map(a=>a.id),images,webSearch:p.webSearch,...(p.posture!==undefined?{posture:p.posture}:{}),...(p.webConstraints!==undefined?{webConstraints:validConstraints(p.webConstraints)}:{}),turnId,queuedMessageId:messageId,expectedConfigRevision:session.configRevision||'0'},
+      const entry:Entry={params:{id,text:p.text,attachmentIds:attached.assets.map(a=>a.id),images,webSearch:p.webSearch,...(p.posture!==undefined?{posture:p.posture}:{}),...(p.webConstraints!==undefined?{webConstraints:validConstraints(p.webConstraints)}:{}),turnId,queuedMessageId:messageId,expectedConfigRevision:session.configRevision||'0',timing:this.core.temporal.queuedAcceptance(timing)},
         execution:execution?structuredClone(execution):undefined,provenance:session.remote?structuredClone(session.remote):undefined,configRevision:session.configRevision||'0',messageId,text};
       const queue=[...this.entries(id),entry];
       // Persist the queue, transcript row and draft consumption as one acceptance.
       const db=this.core.store.sessionDatabase(id);db.exec('BEGIN');
       try {
         this.core.store.set('sendQueue:'+id,queue);
-        this.core.store.message({id:messageId,sessionId:id,role:'user',kind:'queued',text:'Queued for the next turn:\n\n'+text,time:Date.now(),turnId});
+        const received=this.core.temporal.messageTiming(timing);
+        this.core.store.message({id:messageId,sessionId:id,role:'user',kind:'queued',text:'Queued for the next turn:\n\n'+text,time:Date.now(),turnId,...(received?{timing:received}:{})});
+        this.core.temporal.noteMessage(messageId,timing);
         this.core.store.saveSession({...session,draft:'',draftAttachments:[],view:undefined,queuedCount:queue.length,
           updated:Date.now()});
         db.exec('COMMIT');

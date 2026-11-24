@@ -1,3 +1,5 @@
+import { computerToolName,frameResult } from './provider-computer.ts';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { open } from 'node:fs/promises';
 import type { Adapter, ModelOption, Session, SendOptions, Source } from './types.ts';
@@ -7,6 +9,7 @@ import { HttpStatusError, transientHttpStatuses, withHttpRetry } from './http-re
 import { ToolProgress } from './tool-progress.ts';
 import { toolCall } from './tool-activity.ts';
 import { continuityBlock, continuityNote, estimateTokens, omittedNote, operatingRules, type PlanLayer, type TurnPlan } from './context-plan.ts';
+import { smallWindowTokens, temporalGuidance, timeToolNames, type RequestTime } from './temporal-context.ts';
 import { isToolResult, sourcePolicy, type ArtifactRef } from './tools/contracts.ts';
 
 export type OllamaMessage = {
@@ -15,6 +18,8 @@ export type OllamaMessage = {
   tool_call_id?: string;
   /** Opaque API output, including reasoning/signatures needed for tool continuation. */
   providerData?: any[];
+  originalFiles?:string[];
+  computerFrame?:{image:string;checks?:{id:string;code:string;message:string}[]};
   tool_name?: string;
   /** Internal marker for PAL-generated user-role messages; never sent to Ollama. */
   synthetic?: 'capture' | 'tool-history' | 'media' | 'references';
@@ -48,8 +53,14 @@ export type OllamaContext = {
   authorizePrivate?(signal: AbortSignal): Promise<void>;
   privateValid?(): void;
   documents?(text: string, signal: AbortSignal, budget: number): Promise<{ text: string; detail?: Record<string, any>; authorize?(): Promise<void>; assert?(): void }>;
+  /** Sources the person keeps beside every message; read for this turn and never stored in the history. */
+  pinned?(text: string, signal: AbortSignal, budget: number): Promise<{ text: string; detail?: { included: string[]; omitted: string[] }; authorize?(): Promise<void> }>;
   /** Whether finished delegated sessions report back by themselves, which the operating rules then say. */
   delegationUpdates?(): boolean;
+  /** A fresh clock sample for one request, within a token budget; nothing while time awareness is off. Request-only. */
+  temporal?(budget: number): RequestTime | undefined;
+  /** How that request's time, or its absence, is described in the plan. */
+  temporalLayer?(request?: RequestTime): PlanLayer;
   /** Refreshes what tool advertising depends on (file confinement, the model's processing route) before a request. */
   prepareTools?(signal: AbortSignal): Promise<void>;
   /** The history as this request may carry it: content whose source forbids the current route is withheld. */
@@ -60,12 +71,34 @@ export type OllamaContext = {
   media?(refs: ArtifactRef[], signal: AbortSignal): Promise<string[]>;
 };
 
+/**
+ * Replaces this request's own clock block in its serialized form when the request leaves late: on a retry, or when
+ * preparing it took longer than a sample stays fresh. Only the first occurrence can be PAL's, because the
+ * instructions are serialized before any message; a copy of it inside a message is content and stays as it is.
+ */
+function refreshTime(time: RequestTime) {
+  const quoted = (text: string) => JSON.stringify(text).slice(1, -1);
+  let sent = false, current = time.text;
+  const composed = current;
+  return (payload: string) => {
+    const next = time.refresh(sent); sent = true;
+    if (next !== undefined) current = next;
+    return current === composed ? payload : payload.replace(quoted(composed), () => quoted(current));
+  };
+}
+/** The turn's first reading, described as what it is for the requests that repeat it. */
+const heldTime = (time: RequestTime): RequestTime => ({ text: time.text, minimal: time.minimal, snapshot: time.snapshot, detail: { ...time.detail, refresh: 'once per turn, and time_now' }, refresh: () => undefined });
+const clockTools = new Set(timeToolNames.map(name => name.replaceAll('.', '_')));
+const cloudCredential = new AsyncLocalStorage<()=>string>();
+export const withOllamaCredential=<T>(key:()=>string,work:()=>T)=>cloudCredential.run(key,work);
+export const isDirectOllama=(host:string)=>/^https:\/\/ollama\.com(?:\/api)?\/?$/.test(host);
 export function ollamaHost(value: unknown): string {
   if (typeof value !== 'string' || !value.trim() || value.length > 2048) throw new Error('Enter an Ollama server URL');
   let url: URL;
   try { url = new URL(value.includes('://') ? value : 'http://' + value); } catch { throw new Error('Enter a valid Ollama server URL'); }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash)
     throw new Error('Use an HTTP or HTTPS Ollama URL without credentials, query, or fragment');
+  if(isDirectOllama(url.href))return 'https://ollama.com';
   return url.href.replace(/\/+$/, '');
 }
 
@@ -74,9 +107,16 @@ async function request(host: string, path: string, body: unknown, signal: AbortS
   return withHttpRetry(async()=>{
     signal.throwIfAborted(); acceptance.beforeAccept?.(); acceptance.onDispatched?.();
     let response:Response;
+    const serialized=body===undefined?undefined:JSON.stringify(body),outgoing=serialized===undefined||!acceptance.refresh?serialized:acceptance.refresh(serialized);
+    const headers:Record<string,string>={'Content-Type':'application/json'};
+    if(isDirectOllama(host)) {
+      const key=cloudCredential.getStore()?.();
+      if(!key)throw new Error('Set the Ollama Cloud account key in Connections');
+      headers.Authorization='Bearer '+key;
+    }
     try { response=await fetch(ollamaHost(host) + '/api/' + path, {
       method: body === undefined ? 'GET' : 'POST', redirect: 'error', signal,
-      headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body),
+      headers, body: outgoing,
     }); } catch(error:any) {
       signal.throwIfAborted();
       throw new Error(`Cannot reach Ollama at ${ollamaHost(host)}. Check the server and connection settings. ${error.message}`);
@@ -182,7 +222,7 @@ export async function modelRoute(host: string, model: string, signal?: AbortSign
       ollamaJson(host, 'tags', undefined, signal),
     ]);
     const entry = Array.isArray(tags?.models) ? tags.models.find((m: any) => m?.model === model || m?.name === model) : undefined;
-    return { route: isCloudModel(model, info, entry) ? 'cloud' : 'local', verified: true };
+    return { route: isDirectOllama(host)||isCloudModel(model, info, entry) ? 'cloud' : 'local', verified: true };
   } catch {
     signal?.throwIfAborted();
     return { route: 'cloud', verified: false };
@@ -212,7 +252,7 @@ export async function ollamaModels(host: string, capability: 'completion' | 'emb
     }
     const capabilities: string[] = Array.isArray(info.capabilities) ? info.capabilities.filter((c: unknown) => typeof c === 'string') : [];
     if (capabilities.length ? !capabilities.includes(capability) : capability === 'embedding') continue;
-    const cloud = isCloudModel(id, entry, info);
+    const cloud = isDirectOllama(host)||isCloudModel(id, entry, info);
     const details = info.details || {};
     const context = ollamaContext(info);
     models.push({ id, displayName: id + (cloud ? ' · Cloud' : ''),
@@ -308,7 +348,7 @@ export async function ollamaPreflight(session: Session, images: string[], signal
   await imageData(images, signal, false);
 }
 
-export class OllamaAdapter implements Adapter {
+export abstract class ManagedConversationAdapter implements Adapter {
   session: Session; hooks: Hooks; context: OllamaContext;
   cloud = false;
   label = 'Ollama';
@@ -361,16 +401,18 @@ export class OllamaAdapter implements Adapter {
         const referenced = capabilities.includes('vision') || this.cloud ? await imageData(options.references.images, signal) : [];
         messages.push({ role: 'user', content: options.references.text, ...(referenced.length ? { images: referenced } : {}), synthetic: 'references', ...(options.references.restricted ? { restricted: options.references.restricted } : {}) });
       }
-      messages.push({ role: 'user', content: text, ...(images.length ? { images } : {}), ...(options.messageId ? { sourceId: options.messageId } : {}) });
+      messages.push({ role: 'user', content: text, ...(options.originalFiles?.length?{originalFiles:[...options.originalFiles]}:{}), ...(images.length ? { images } : {}), ...(options.messageId ? { sourceId: options.messageId } : {}) });
       this.context.save(messages);
       if (capabilities.includes('tools')) await this.context.prepareTools?.(signal);
-      const advertisedTools=capabilities.includes('tools')?this.context.tools():[];
+      const offered = () => !capabilities.includes('tools') ? [] : contextSize > smallWindowTokens ? this.context.tools() : this.context.tools().filter(tool => !clockTools.has(tool.function.name));
+      const advertisedTools = offered();
       const memoryBudget=Math.max(0,Math.min(4000,Math.floor(contextSize/4),contextSize-Math.ceil(JSON.stringify(advertisedTools).length/2)-Math.ceil(personality.length/2)-messageTokens({role:'user',content:text})-1600));
       // Recall policy follows the verified model route, never the alias spelling.
       const route = !this.cloud && this.context.prepare && this.context.memoryActive?.() ? (await modelRoute(host, this.session.model, signal, info)).route : 'cloud';
       let memory = await this.context.prepare?.(text, signal, memoryBudget, route) || '';
       if (memory && this.context.memorySignal) signal = AbortSignal.any([signal, this.context.memorySignal()]);
       const documents = await this.context.documents?.(text, signal, Math.max(0, Math.min(3000, Math.floor(contextSize / 5) - Math.ceil(memory.length / 2)))) || { text: '' };
+      const pinned = await this.context.pinned?.(text, signal, Math.max(0, Math.min(3000, Math.floor(contextSize / 6) - Math.ceil(documents.text.length / 4)))) || { text: '' };
       const conventions = await this.context.conventions?.() || { text: '', files: [] };
       const sources: Source[] = [];
       const collectSources = (result: any) => {
@@ -394,15 +436,17 @@ export class OllamaAdapter implements Adapter {
       }
       let webCalls = options.webSearch ? 1 : 0;
       const progress = new ToolProgress();
+      let turnTime: RequestTime | undefined;
       for (let round = 0; round < 24; round++) {
         signal.throwIfAborted();
         await this.context.authorizePrivate?.(signal);
         await documents.authorize?.();
+        await pinned.authorize?.();
         if (capabilities.includes('tools')) await this.context.prepareTools?.(signal);
         signal.throwIfAborted();
-        const tools = capabilities.includes('tools') ? this.context.tools() : [];
+        const tools = offered();
         const hasWeb = tools.some(t => t.function.name === 'web_search');
-        const system: OllamaMessage = { role: 'system', content: personality + operatingRules({ date: new Date().toISOString().slice(0,10), cwd: this.session.cwd, hasWeb,
+        const system: OllamaMessage = { role: 'system', content: personality + operatingRules({ cwd: this.session.cwd, hasWeb,
           tools: !!(this.session.ollama?.tools || this.session.api?.tools), memory: !!this.context.memoryActive?.(), delegationUpdates: this.context.delegationUpdates?.() === true }) };
         let withheld = false;
         if (memory && route === 'local' && (await modelRoute(host, this.session.model, signal)).route !== 'local') {
@@ -411,7 +455,13 @@ export class OllamaAdapter implements Adapter {
           system.content += '\nRecalled project memory was withheld because this model now routes to Ollama Cloud.';
         }
         const telemetry = await this.context.telemetry?.() || '';
-        const budget = contextSize - Math.min(1024,Math.floor(contextSize/4)) - messageTokens(system) - Math.ceil(JSON.stringify(tools).length/2) - Math.ceil(memory.length/2) - Math.ceil(documents.text.length/2) - Math.ceil(conventions.text.length/2) - Math.ceil(telemetry.length/2) - 100;
+        // Sampled after everything that can take time, once for this request; tool results already in history stay historical.
+        // A provider that binds a turn's reasoning to its request text keeps the turn's first reading; time_now gives a newer one.
+        const held = round > 0 && turnTime !== undefined && this.keepsClock();
+        const time = held ? turnTime : this.context.temporal?.(Math.max(120, Math.floor(contextSize * .08)));
+        turnTime = time;
+        if (time) system.content += '\n' + temporalGuidance + '\n' + time.text;
+        const budget = contextSize - Math.min(1024,Math.floor(contextSize/4)) - messageTokens(system) - Math.ceil(JSON.stringify(tools).length/2) - Math.ceil(memory.length/2) - Math.ceil(documents.text.length/2) - Math.ceil(pinned.text.length/2) - Math.ceil(conventions.text.length/2) - Math.ceil(telemetry.length/2) - 100;
         // Content read under a destination policy that this model's route does not allow stays in the stored
         // history but is withheld from this request.
         const routed = this.context.restrict ? await this.context.restrict(messages, signal) : { messages, withheld: 0 };
@@ -433,12 +483,12 @@ export class OllamaAdapter implements Adapter {
           documents.assert?.();
           this.context.privateValid?.();
           options.beforeAccept?.();
-        }};
+        },...(time&&!held?{refresh:refreshTime(time)}:{})};
         // Per-turn data goes just before the turn it serves. Earlier history then stays an unchanged
         // prefix, which Ollama's cache and providers' prompt caching can reuse from turn to turn.
-        const data: OllamaMessage[] = [...(memory ? [{role:'user' as const,content:memory}] : []), ...(documents.text ? [{role:'user' as const,content:documents.text}] : []), ...(telemetry ? [{role:'user' as const,content:telemetry}] : [])];
+        const data: OllamaMessage[] = [...(memory ? [{role:'user' as const,content:memory}] : []), ...(documents.text ? [{role:'user' as const,content:documents.text}] : []), ...(pinned.text ? [{role:'user' as const,content:pinned.text}] : []), ...(telemetry ? [{role:'user' as const,content:telemetry}] : [])];
         const earlier: OllamaMessage[] = [...(conventions.text ? [{ role: 'user' as const, content: conventions.text }] : []), ...(continuity.text ? [{ role: 'user' as const, content: continuity.text }] : [])];
-        const requestPlan = this.plan({ round, contextSize, personality, system, continuity, context, memory, withheld, telemetry, tools, webSearch: !!options.webSearch, documents, conventions, workbenchWithheld: routed.withheld });
+        const requestPlan = this.plan({ round, contextSize, personality, system, continuity, context, memory, withheld, telemetry, tools, webSearch: !!options.webSearch, documents, pinned, conventions, workbenchWithheld: routed.withheld, time: held && time ? heldTime(time) : time });
         this.context.plan?.(requestPlan); this.reportedUsage = undefined;
         const reply = await this.stream(host, [system, ...earlier, ...context.messages.slice(0, context.turnStart), ...data, ...context.messages.slice(context.turnStart)], tools, signal, contextSize, sources, acceptance);
         // What the provider itself counted for this request joins its plan; nothing is estimated here.
@@ -469,7 +519,7 @@ export class OllamaAdapter implements Adapter {
           // A Workbench result names its source's processing restrictions and any artifacts it produced.
           const restricted = result && typeof result === 'object' ? (result as any)[sourcePolicy] : undefined;
           const artifacts: ArtifactRef[] = isToolResult(result) && Array.isArray(result.artifacts) ? result.artifacts.slice(0, 16) : [];
-          messages.push({ role: 'tool', tool_name: name, ...(call.id ? {tool_call_id:call.id} : {}), content, ...(restricted ? { restricted } : {}) }); this.context.save(messages);
+          messages.push({ role: 'tool', ...(name===computerToolName && (result as any)?.[frameResult]?{computerFrame:(result as any)[frameResult]}:{}),tool_name: name, ...(call.id ? {tool_call_id:call.id} : {}), content, ...(restricted ? { restricted } : {}) }); this.context.save(messages);
           const status = isToolResult(result) ? result.status : failed || (result && typeof result === 'object' && 'error' in result && result.error) ? 'failed' : 'completed';
           this.hooks.event({ type: 'tool', id, text: name + '\n' + content, toolActivity: { status, summary: isToolResult(result) ? result.summary.slice(0, 500) : undefined },
             ...(artifacts.length || (isToolResult(result) && result.operationId) ? { data: { artifacts, ...(isToolResult(result) && result.operationId ? { operationId: result.operationId } : {}) } } : {}) });
@@ -498,23 +548,26 @@ export class OllamaAdapter implements Adapter {
   }
   /** What one request carried, as estimated sizes and codes only (A01); building it sends nothing. */
   plan(p: { round: number; contextSize: number; personality: string; system: OllamaMessage; continuity: ReturnType<typeof continuityBlock>; context: ReturnType<typeof workingContext>;
-    memory: string; withheld: boolean; telemetry: string; tools: OllamaTool[]; webSearch: boolean; documents?: { text: string; detail?: Record<string, any> };
-    conventions?: { text: string; files: { name: string; sha256: string; truncated: boolean }[]; redactions?: number }; workbenchWithheld?: number }): TurnPlan {
+    memory: string; withheld: boolean; telemetry: string; tools: OllamaTool[]; webSearch: boolean; documents?: { text: string; detail?: Record<string, any> }; pinned?: { text: string; detail?: { included: string[]; omitted: string[] } };
+    conventions?: { text: string; files: { name: string; sha256: string; truncated: boolean }[]; redactions?: number }; workbenchWithheld?: number; time?: RequestTime }): TurnPlan {
+    const temporal = this.context.temporalLayer?.(p.time);
     const sum = (items: OllamaMessage[]) => items.reduce((total, message) => total + messageTokens(message), 0);
     const history = p.context.messages.slice(0, p.context.turnStart), current = p.context.messages.slice(p.context.turnStart);
     const layers: PlanLayer[] = [
       { id: 'personality', label: 'Personality block', trust: 'user', tokens: estimateTokens(p.personality), included: true },
-      { id: 'operating-rules', label: 'PAL operating rules', trust: 'pal', tokens: Math.max(0, messageTokens(p.system) - estimateTokens(p.personality)), included: true },
+      { id: 'operating-rules', label: 'PAL operating rules', trust: 'pal', tokens: Math.max(0, messageTokens(p.system) - estimateTokens(p.personality) - (temporal?.included ? temporal.tokens || 0 : 0)), included: true },
+      ...(temporal ? [temporal] : []),
       ...(p.conventions?.files.length ? [{ id: 'conventions' as const, label: 'Project conventions', trust: 'untrusted' as const, tokens: estimateTokens(p.conventions.text), included: true,
         detail: { files: p.conventions.files.map(file => `${file.name} ${file.sha256.slice(0, 12)}${file.truncated ? ' (truncated)' : ''}`), ...(p.conventions.redactions ? { redactions: p.conventions.redactions } : {}) } }] : []),
       { id: 'continuity', label: 'Earlier turns (excerpts)', trust: 'untrusted', tokens: p.continuity.tokens, included: !!p.continuity.text,
         ...(p.continuity.text ? {} : { reason: p.context.omitted ? 'no_room' : 'not_needed' }),
-        detail: { turns: p.continuity.turns, omittedBefore: p.continuity.skipped, sources: p.continuity.ids } },
+        detail: { turns: p.continuity.turns, omittedBefore: p.continuity.skipped, ...(p.continuity.opening ? { opening: true } : {}), sources: p.continuity.ids } },
       { id: 'history', label: 'Conversation history', trust: 'user', tokens: sum(history), included: true,
         ...(p.context.omitted ? { reason: 'older_turns_omitted' } : {}), detail: { keptMessages: history.length, omittedMessages: p.context.omitted, omittedTurns: p.context.omittedGroups.length } },
       { id: 'memory', label: 'Recalled memory', trust: 'untrusted', tokens: estimateTokens(p.memory), included: !!p.memory, ...(p.memory ? {} : { reason: p.withheld ? 'withheld_cloud_route' : 'none_supplied' }) },
       ...(p.documents?.detail ? [{ id: 'documents' as const, label: 'Document collections', trust: 'untrusted' as const, tokens: estimateTokens(p.documents.text), included: !!p.documents.text,
         ...(p.documents.text ? {} : { reason: p.documents.detail.collections?.length ? 'no_match' : 'none_supplied' }), detail: p.documents.detail }] : []),
+      ...(p.pinned?.detail ? [{ id: 'pinned' as const, label: 'Pinned sources', trust: 'untrusted' as const, tokens: estimateTokens(p.pinned.text), included: !!p.pinned.text, ...(p.pinned.text ? {} : { reason: 'none_supplied' }), detail: p.pinned.detail }] : []),
       { id: 'telemetry', label: 'Workspace telemetry', trust: 'untrusted', tokens: estimateTokens(p.telemetry), included: !!p.telemetry, ...(p.telemetry ? {} : { reason: 'none_supplied' }) },
       { id: 'current-turn', label: 'Current turn', trust: 'user', tokens: sum(current), included: true, ...(p.context.shortened ? { reason: 'tool_output_shortened' } : {}),
         detail: { messages: current.length, webEvidence: p.webSearch } },
@@ -534,7 +587,18 @@ export class OllamaAdapter implements Adapter {
       contextSize: p.contextSize, rounds: p.round + 1, layers, unknown: this.hiddenContext() };
   }
   /** Context this route adds that PAL cannot see. */
+  /** Whether a turn's later requests keep its first clock reading. */
+  keepsClock(): boolean { return false; }
   hiddenContext(): string[] { return this.cloud ? ['Ollama Cloud may apply its own routing and limits'] : []; }
+  abstract stream(host:string,messages:OllamaMessage[],tools:OllamaTool[],signal:AbortSignal,contextSize:number,sources:Source[],acceptance?:Pick<SendOptions,'beforeAccept'|'onDispatched'|'onAccepted'|'onRejected'>):Promise<OllamaMessage>;
+  async interrupt() { this.controller?.abort(new Error('Stopped by the user')); await this.task; }
+  async close() { await this.interrupt(); }
+}
+
+export class OllamaAdapter extends ManagedConversationAdapter {
+  accountKey:()=>string=()=>'';
+  override preflight(images:string[],signal:AbortSignal){return withOllamaCredential(this.accountKey,()=>super.preflight(images,signal));}
+  override send(text:string,images:string[]=[],options:SendOptions={}){return withOllamaCredential(this.accountKey,()=>super.send(text,images,options));}
   async stream(host: string, messages: OllamaMessage[], tools: OllamaTool[], signal: AbortSignal, contextSize: number, sources: Source[], acceptance:Pick<SendOptions,'beforeAccept'|'onDispatched'|'onAccepted'|'onRejected'>={}) {
     const timeout = new AbortController();
     let timer: NodeJS.Timeout;
@@ -587,6 +651,4 @@ export class OllamaAdapter implements Adapter {
       return reply;
     } finally { clearTimeout(timer!); }
   }
-  async interrupt() { this.controller?.abort(new Error('Stopped by the user')); await this.task; }
-  async close() { await this.interrupt(); }
 }

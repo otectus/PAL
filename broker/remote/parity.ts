@@ -54,8 +54,8 @@ export class Parity {
       const session=await r.core.create({provider:ticket.provider,nativeId:ticket.nativeId,cwd:project.path,title:ticket.title,trusted:true,handoffConfirmed:p.externalWriterStopped},check,{remote:r.execution(device,project),effectivePolicy:r.owner(device)?'desktop':ticket.provider==='claude'?'restricted':'unknown'});
       return r.sessionDto(device,session);
     }
-    if(['memory.inspect','memory.forgetPreview','memory.forget','memory.clear','memory.erasureStatus','memory.timeline','memory.correct','memory.resolveConflict','memory.identity','memory.freezeEpisode'].includes(method)) {
-      const write=['memory.forget','memory.clear','memory.forgetPreview','memory.correct','memory.resolveConflict','memory.identity','memory.freezeEpisode'].includes(method);r.require(device,write?'memory.write':'memory.read');const session=r.memorySession(device,p.sessionId);
+    if(['memory.inspect','memory.forgetPreview','memory.forget','memory.clear','memory.erasureStatus','memory.timeline','memory.correct','memory.resolveConflict','memory.identity','memory.identities','memory.identityUndo','memory.freezeEpisode'].includes(method)) {
+      const write=['memory.forget','memory.clear','memory.forgetPreview','memory.correct','memory.resolveConflict','memory.identity','memory.identityUndo','memory.freezeEpisode'].includes(method);r.require(device,write?'memory.write':'memory.read');const session=r.memorySession(device,p.sessionId);
       const controller=new AbortController(),executionId=randomUUID(),check=()=>{r.current(device);controller.signal.throwIfAborted();if(!r.core.settings.memory.enabled||r.core.settings.paused)throw remoteError('POLICY_PAUSED','Memory is disabled or paused.');};check();
       if([...r.actions.values()].some(a=>a.deviceId===device.id))throw remoteError('SESSION_BUSY','Wait for this device’s active desktop operation.');
       r.actions.set(executionId,{deviceId:device.id,controller,check});
@@ -74,6 +74,8 @@ export class Parity {
             ...(p.change.validMode?{valid_mode:p.change.validMode}:{}),...(p.change.validFromUs!==undefined?{valid_from_us:p.change.validFromUs}:{}),...(p.change.validToUs!==undefined?{valid_to_us:p.change.validToUs}:{})}},controller.signal,check);
         if(method==='memory.resolveConflict')return await r.core.memory.userGraph(session,'resolve_conflict',{id:p.id,expected_revision:Number(p.expectedRevision),statement:p.statement},controller.signal,check);
         if(method==='memory.identity')return await r.core.memory.userGraph(session,'identity',{left_id:p.leftId,right_id:p.rightId,decision:p.decision,statement:p.statement},controller.signal,check);
+        if(method==='memory.identities'){const result=await r.core.memory.graph(session,'identity_list',{},controller.signal,check);check();return result;}
+        if(method==='memory.identityUndo'){const result=await r.core.memory.graph(session,'identity',{revert_id:p.id,expected_revision:Number(p.expectedRevision)},controller.signal,check);check();return {id:result.id,undone:true};}
         if(method==='memory.freezeEpisode')return await r.core.memory.userGraph(session,'freeze_episode',{id:p.id},controller.signal,check);
         if(method==='memory.inspect'||method==='memory.forgetPreview') {
           const result=await r.core.memory.mobileGraph(session,method==='memory.inspect'?'inspect':'forget_preview',p.id?{id:p.id}:{},controller.signal,check);check();

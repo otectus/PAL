@@ -25,9 +25,13 @@ test('owner research wire inputs are complete, bounded, and model work requires 
   assert.equal(ownerOperations['owner.research.exclude'].schema.safeParse({ id, evidenceId: 'E2' }).success, true);
   assert.equal(ownerOperations['owner.research.exclude'].schema.safeParse({ id, evidenceId: 'E2.P1' }).success, false, 'sources and passages are distinct IDs');
   assert.equal(ownerOperations['owner.research.passage'].schema.safeParse({ id, passageId: 'E2.P1', versionId: 'v2' }).success, true);
-  for (const method of ['owner.research.plan', 'owner.research.start', 'owner.research.refresh', 'owner.research.continue', 'owner.research.steer', 'owner.research.ask', 'owner.research.resynthesize'])
+  assert.equal(ownerOperations['owner.research.start'].schema.safeParse({...start, provider:'ollama', model:'plain'}).success, true);
+  assert.equal(ownerOperations['owner.research.start'].schema.safeParse({...start, provider:'codex', model:'cli'}).success, false);
+  assert.equal(ownerOperations['owner.research.handoff'].schema.safeParse({id, targetSessionId:sessionId, provider:'claude'}).success, false);
+  assert.equal(ownerOperations['owner.research.handoff'].schema.safeParse({id, provider:'claude', trusted:true}).success, true);
+  for (const method of ['owner.research.handoff', 'owner.research.plan', 'owner.research.start', 'owner.research.refresh', 'owner.research.continue', 'owner.research.steer', 'owner.research.ask', 'owner.research.resynthesize'])
     assert.equal(needsProof(method, {}), true, method);
-  for (const method of ['owner.research.pause', 'owner.research.stop', 'owner.research.update', 'owner.research.export', 'owner.research.note', 'owner.research.exclude'])
+  for (const method of ['owner.research.cancel', 'owner.research.pause', 'owner.research.stop', 'owner.research.update', 'owner.research.export', 'owner.research.note', 'owner.research.exclude'])
     assert.equal(needsProof(method, {}), false, method);
 });
 
@@ -74,4 +78,20 @@ test('large phone run DTOs stay below one frame and fetch one exact versioned pa
   assert.ok(Buffer.byteLength(JSON.stringify(legacy), 'utf8') < 1_048_576);
   const passage = await ops.dispatch(device, 'owner.research.passage', { id, passageId: 'E1.P1', versionId: 'v2' });
   assert.deepEqual(passage, { id: 'E1.P1', text, location: 'Page 1', sourceId: 'E1', title: 'Source 1', versionId: 'v2' });
+});
+
+test('global phone research visibility and control are scoped to each run and planning destination', async () => {
+  const outside = randomUUID(), router: any = {
+    owner: () => true,
+    session: (_device: any, scoped: string) => { if (scoped !== sessionId) throw new Error('outside device scope'); },
+    core: { rpc: async (method:string, params:any) => {
+      if (method === 'research.tasks') return [{id, sessionId}, {id:requestId, sessionId:outside}];
+      if (method === 'research.get') return {id:params.id, sessionId:params.id === id ? sessionId : outside};
+      throw new Error('unexpected mutation');
+    }},
+  };
+  const ops = new OwnerOps(router), device:any = {};
+  assert.deepEqual(await ops.dispatch(device, 'owner.research.tasks', {}), [{id, sessionId}]);
+  await assert.rejects(ops.dispatch(device,'owner.research.cancel',{id:requestId}), /outside device scope/);
+  await assert.rejects(ops.dispatch(device,'owner.research.handoff',{id,targetSessionId:outside}), /outside device scope/);
 });

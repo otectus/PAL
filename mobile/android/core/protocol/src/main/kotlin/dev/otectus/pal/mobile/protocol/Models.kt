@@ -135,6 +135,8 @@ data class Session(
     val canSend: Boolean = false,
     val canQueue: Boolean = false,
     val queuedCount: Int = 0,
+    /** Results of delegated sessions that wait for this conversation. */
+    val pendingUpdates: Int = 0,
     val canConfigure: Boolean = false,
     val pinned: Boolean = false,
     val archived: Boolean = false,
@@ -155,7 +157,9 @@ data class Session(
     /** A compatible conversation's reviewed destination (feature sessions.routeRevision), its images declaration and connection name. */
     val routeRevision: String? = null,
     val imagesAvailable: Boolean? = null,
+    val connectionId: String? = null,
     val connectionName: String? = null,
+    val providerOptions: JsonObject = JsonObject(emptyMap()),
     /** Files, Images and Analysis selected on the desktop; "acknowledge" when sending from this phone pauses them (feature workbench.takeover). */
     val workbenchFamilies: List<String> = emptyList(),
     val workbenchTakeover: String? = null,
@@ -163,6 +167,9 @@ data class Session(
     val error: String? = null,
     val ollamaHost: String = "",
     val agents: List<Agent> = emptyList(),
+    /** This conversation's own time zone (feature time.context.v1); null follows the sending device or the desktop's choice. */
+    val timeZone: String? = null,
+    val task: SessionTask? = null,
 )
 
 /** W10: an attachment of a conversation's desktop draft: its name, kind and content digest, never a path. */
@@ -215,6 +222,52 @@ data class Message(
     val sessionTitle: String? = null,
     /** A Workbench result reviewed on the desktop (role "workbench"): what it is, never its contents. */
     val desktopOnly: DesktopOnlyResult? = null,
+    /** Transcripts this reply was about; a time it cites can open one. */
+    val recordings: List<MessageRecording> = emptyList(),
+)
+
+/** The project task a conversation works on; owner phones only. */
+@Serializable
+data class SessionTask(val id: String, val text: String = "")
+
+@Serializable
+data class MessageRecording(val artifactId: String, val versionId: String, val name: String = "")
+
+/** One reading of the desktop's clock (feature time.context.v1). Every field comes from one instant; `reason` says why a suggested zone was not used. */
+@Serializable
+data class TimeSnapshot(
+    val schema: Int = 1,
+    val sampledAtMs: Long,
+    val utcIso: String = "",
+    val localIso: String = "",
+    val timeZone: String,
+    val zoneSource: String = "",
+    val localDate: String = "",
+    val localTime: String = "",
+    val weekday: String = "",
+    val offsetSeconds: Int = 0,
+    val clockSource: String = "",
+    val clockStatus: String = "unknown",
+    val clockRevision: Long = 0,
+    val enabled: Boolean = true,
+    val conversationTiming: Boolean = true,
+    val reason: String? = null,
+)
+/** How long ago a recorded event was, or why that cannot be said. An unknown length is absent, never zero. */
+@Serializable
+data class ElapsedResult(
+    val schema: Int = 1,
+    val status: String,
+    val anchorKind: String = "",
+    val anchorId: String? = null,
+    val anchor: String? = null,
+    val fromMs: Long? = null,
+    val toMs: Long? = null,
+    val durationMs: Long? = null,
+    val basis: String = "unknown",
+    val includesInactivity: Boolean = true,
+    val includesSuspend: Boolean? = null,
+    val reason: String? = null,
 )
 
 @Serializable data class DesktopOnlyResult(val kind: String = "result", val label: String = "A desktop result")
@@ -252,7 +305,7 @@ data class Approval(
     val agentId: String? = null,
 )
 
-@Serializable data class Project(val id: String, val name: String, val path: String? = null)
+@Serializable data class Project(val id: String, val name: String, val path: String? = null, val revision: String = "0")
 @Serializable data class Provider(val id: String, val name: String, val available: Boolean = true, val models: List<String> = emptyList(), val efforts: List<String> = emptyList())
 @Serializable data class ActivityItem(val id: String, val sessionId: String, val title: String, val detail: String? = null, val status: String, val revision: String)
 @Serializable data class EffortOption(val id: String, val displayName: String, val description: String = "")
@@ -266,6 +319,11 @@ data class Approval(
     val capabilities: List<String> = emptyList(),
     val cloud: Boolean = false,
     val contextLength: Int? = null,
+    /** What its catalog states, in words: how much it holds, what it costs and what it reads. */
+    val detail: String = "",
+    val free: Boolean = false,
+    /** The day its provider says it stops serving it. */
+    val expires: String? = null,
 )
 
 /** A providers.models answer with listing:true (feature models.listing). */

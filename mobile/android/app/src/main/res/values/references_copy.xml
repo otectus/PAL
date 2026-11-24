@@ -1,0 +1,24 @@
+<resources>
+    <string name="refs_add">Reference…</string>
+    <string name="refs_title">Add a reference</string>
+    <string name="refs_find">Find a file, collection or conversation</string>
+    <string name="refs_none">Nothing matches. Choose a workspace folder or add files on the desktop first.</string>
+    <string name="refs_full">Remove a reference first. A message holds up to eight.</string>
+    <string name="refs_remove">Remove reference %1$s</string>
+    <string name="refs_keep">Keep %1$s for every message here</string>
+    <string name="refs_kept">Kept for every message here. Change it in Conversation settings.</string>
+    <string name="refs_cannot">Cannot be added: %1$s</string>
+    <string name="refs_pinned">Pinned sources</string>
+    <string name="refs_pinned_hint">Read again on the desktop for every message, and left out when this model may not receive them.</string>
+    <string name="refs_pinned_none">Nothing is pinned.</string>
+    <string name="refs_pin_add">Pin a source…</string>
+    <string name="refs_pin_where">Keep it beside every message of this conversation, or of every conversation in its project?</string>
+    <string name="refs_pin_here">This conversation</string>
+    <string name="refs_pin_project">This project</string>
+    <string name="refs_pin_everywhere">Every conversation in this project</string>
+    <string name="refs_unpin">Unpin</string>
+    <plurals name="refs_adds">
+        <item quantity="one">Adds about %1$d character.</item>
+        <item quantity="other">Adds about %1$d characters.</item>
+    </plurals>
+</resources>

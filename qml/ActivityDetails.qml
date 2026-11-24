@@ -184,7 +184,7 @@ ColumnLayout {
         }
         CMenuItem {
             text: output.selectedText ? qsTr("Speak selection") : qsTr("Speak entry")
-            onTriggered: App.rpc("tts.speak", {text: (output.selectedText || details.fullText).slice(0, 20000)})
+            onTriggered: App.rpc("tts.speak", {text: (output.selectedText || details.fullText).slice(0, 20000), sessionId: details.entry.sessionId, messageId: details.entry.id})
         }
         CMenuItem {
             visible: ["preparing", "speaking"].includes(App.state.speech?.state) || (App.state.speech?.queued || 0) > 0

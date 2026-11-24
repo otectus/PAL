@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "TimeText.js" as TimeText
 CDialog {
     id:shelf
     preferredWidth:Theme.dialogLarge
@@ -21,6 +22,12 @@ CDialog {
     onOpened:refresh()
     CText { text:"Offline utility shelf";font.pixelSize:Theme.page }
     CText { text:"Notes, tasks and calculations stay local and do not need a model.";color:Theme.muted }
+    ClockSource { id:shelfClock;active:shelf.opened }
+    CSection {
+        title:"Clock"
+        CText { objectName:"shelfClock";text:shelfClock.sample?TimeText.line(shelfClock.sample,shelfClock.format):shelfClock.error||"Reading the clock…";color:shelfClock.stale||!shelfClock.sample?Theme.muted:Theme.text }
+        CText { visible:shelfClock.stale;text:"Last reading from this desktop. PAL is reconnecting.";color:Theme.amber;font.pixelSize:Theme.secondary }
+    }
     CSection {
         title:"Notes and tasks"
         Repeater {

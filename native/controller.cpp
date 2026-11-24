@@ -4,6 +4,7 @@
 #include "avatardefinition.h"
 #include "avatarcatalog.h"
 #include "citations.h"
+#include <QJSValue>
 #include <qqml.h>
 #include <LayerShellQt/Window>
 #include <QApplication>
@@ -201,6 +202,8 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
     connect(&m_quitStopTimer,&QTimer::timeout,this,[this]{failQuitStop("PAL could not confirm that every session stopped. PAL is still open so you can retry or keep watching them.");});
     m_overlayRestartTimer.setSingleShot(true);
     connect(&m_overlayRestartTimer,&QTimer::timeout,this,[this]{launchOverlay(false);});
+    m_realtimeDrain.setSingleShot(true);
+    connect(&m_realtimeDrain,&QTimer::timeout,this,&Controller::scheduleRealtimePlaybackComplete);
     m_roamTimer.setInterval(200);
     connect(&m_roamTimer,&QTimer::timeout,this,&Controller::roam);
     connect(qApp,&QGuiApplication::screenRemoved,this,[this]{stopRoaming(false);m_screen=nullptr;m_placedPosition.clear();syncPet();refreshMotion();});
@@ -209,7 +212,7 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
 Controller::~Controller(){
     m_retry.stop();m_roamTimer.stop();m_motionTimer.stop();m_idleTimer.stop();m_toastTimer.stop();m_successTimer.stop();m_liveness.stop();
     QObject::disconnect(&m_socket,nullptr,this,nullptr);
-    stopOverlay();
+    stopRealtimeAudio(false);stopOverlay();
     if(m_panel)QObject::disconnect(m_panel,nullptr,this,nullptr);
     if (m_tray) {
         auto *menu = m_tray->contextMenu();
@@ -471,10 +474,21 @@ void Controller::openCompanionReply(const QString &replyId){
         return;
     }
 }
+// JavaScript leaves out what is undefined. Sent as null it is a value of its own, which many operations refuse.
+static QVariant withoutUndefined(const QVariant &value){
+    if(value.metaType()==QMetaType::fromType<QJSValue>())return withoutUndefined(value.value<QJSValue>().toVariant());
+    if(value.metaType()==QMetaType::fromType<QVariantMap>()){
+        QVariantMap kept;const auto map=value.toMap();
+        for(auto entry=map.cbegin();entry!=map.cend();++entry)if(const auto item=withoutUndefined(entry.value());item.isValid())kept.insert(entry.key(),item);
+        return kept;
+    }
+    if(value.metaType()==QMetaType::fromType<QVariantList>()){QVariantList kept;for(const auto &entry:value.toList())kept.append(withoutUndefined(entry));return kept;}
+    return value;
+}
 int Controller::rpc(const QString &method,const QVariantMap &params){
     if(!connected()){notify("PAL is reconnecting to her session broker.");return -1;}
     const int id=++m_sequence;m_requests[id]={method,m_clock.elapsed()};
-    m_socket.write(QJsonDocument(QJsonObject{{"id",id},{"method",method},{"params",QJsonObject::fromVariantMap(params)}}).toJson(QJsonDocument::Compact)+'\n');return id;
+    m_socket.write(QJsonDocument(QJsonObject{{"id",id},{"method",method},{"params",QJsonObject::fromVariantMap(withoutUndefined(params).toMap())}}).toJson(QJsonDocument::Compact)+'\n');return id;
 }
 void Controller::receive(){
     m_buffer+=m_socket.read(16*1024*1024+1-m_buffer.size());
@@ -604,6 +618,24 @@ void Controller::receive(){
             // The broker dropped message copies this host was too busy to read: reread the open transcript.
             if(method=="resync"){reloadMessages();emit terminalEvent(QVariantMap{{"kind","resync"}});}
             if(method=="terminal")emit terminalEvent(params);
+            if(method=="realtime.desktop"){
+                const auto id=params.value("sessionId").toString();const auto event=params.value("event").toMap();
+                if(id==m_realtimeSession){
+                    const auto type=event.value("type").toString();
+                    if(type=="audio"&&m_realtimePlayback){
+                        const auto audio=QByteArray::fromBase64(event.value("audio").toByteArray());
+                        if(!audio.isEmpty()&&audio.size()<=64*1024){
+                            m_realtimePlayback->write(audio);
+                            const qint64 now=m_clock.elapsed(),duration=(qint64(audio.size())*1000)/(qMax(1,m_realtimeOutputRate)*2);
+                            m_realtimePlaybackUntil=qMax(now,m_realtimePlaybackUntil)+duration;
+                        }
+                    }else if(type=="turn-complete"){
+                        m_realtimePlaybackCompletePending=true;scheduleRealtimePlaybackComplete();
+                    }else if(type=="interrupted")interruptRealtimeAudio();
+                    else if(type=="state"&&event.value("state").toString()=="closed")stopRealtimeAudio(false);
+                }
+                emit realtimeEvent(params);
+            }
             if(method=="message")observeConversation(params);
             if(method=="message"&&params.value("sessionId").toString()==m_selected){
                 // An older revision can arrive after a newer page; it never overwrites it.
@@ -1390,6 +1422,59 @@ QString Controller::chooseSavePath(const QString &suggestedName){
     return QFileDialog::getSaveFileName(nullptr,"Save a copy",QDir::home().filePath(name));
 }
 QString Controller::chooseWorkflow(){return QFileDialog::getOpenFileName(nullptr,"Import a ComfyUI workflow (Export (API))",QDir::homePath(),"ComfyUI API workflow (*.json)");}
+QString Controller::chooseProviderImportJson(){return chooseJson("Preview provider accounts from PyGPT");}
+QString Controller::chooseJson(const QString &title){
+    const auto path=QFileDialog::getOpenFileName(nullptr,title,QDir::homePath(),"JSON (*.json);;All files (*)");
+    if(path.isEmpty())return {};QFile file(path);
+    if(!file.open(QIODevice::ReadOnly)){notify("PAL could not open "+QFileInfo(path).fileName()+".");return {};}
+    const auto value=file.read(2*1024*1024+1);
+    if(value.size()>2*1024*1024){notify("Choose a JSON file of 2 MB or less.");return {};}
+    return QString::fromUtf8(value);
+}
+bool Controller::startRealtimePlayback(){
+    delete m_realtimePlayback;m_realtimePlayback=new QProcess(this);
+    QString program=QStandardPaths::findExecutable("pw-play");QStringList args;
+    if(!program.isEmpty())args={"--format=s16","--rate="+QString::number(m_realtimeOutputRate),"--channels=1","-"};
+    else{program=QStandardPaths::findExecutable("aplay");args={"-q","-t","raw","-f","S16_LE","-r",QString::number(m_realtimeOutputRate),"-c","1"};}
+    if(program.isEmpty()){delete m_realtimePlayback;m_realtimePlayback=nullptr;return false;}
+    m_realtimePlayback->setProcessChannelMode(QProcess::ForwardedErrorChannel);m_realtimePlayback->start(program,args,QIODevice::WriteOnly);
+    if(m_realtimePlayback->waitForStarted(2000))return true;
+    delete m_realtimePlayback;m_realtimePlayback=nullptr;return false;
+}
+bool Controller::startRealtimeAudio(const QString &sessionId,int inputRate,int outputRate){
+    if(sessionId.isEmpty()||inputRate<8000||inputRate>48000||outputRate<8000||outputRate>48000)return false;
+    stopRealtimeAudio(false);m_realtimeSession=sessionId;m_realtimeOutputRate=outputRate;m_realtimePlaybackUntil=m_clock.elapsed();
+    if(!startRealtimePlayback()){m_realtimeSession.clear();notify("PAL could not start an audio playback program (pw-play or aplay).");return false;}
+    m_realtimeCapture=new QProcess(this);QString program=QStandardPaths::findExecutable("pw-record");QStringList args;
+    if(!program.isEmpty())args={"--format=s16","--rate="+QString::number(inputRate),"--channels=1","-"};
+    else{program=QStandardPaths::findExecutable("arecord");args={"-q","-t","raw","-f","S16_LE","-r",QString::number(inputRate),"-c","1"};}
+    if(program.isEmpty()){stopRealtimeAudio(false);notify("PAL could not start an audio capture program (pw-record or arecord).");return false;}
+    m_realtimeCapture->setProcessChannelMode(QProcess::SeparateChannels);
+    connect(m_realtimeCapture,&QProcess::readyReadStandardOutput,this,[this]{
+        if(!m_realtimeCapture||m_realtimeSession.isEmpty())return;auto bytes=m_realtimeCapture->readAllStandardOutput();
+        while(!bytes.isEmpty()){const auto chunk=bytes.left(32*1024);bytes.remove(0,chunk.size());rpc("realtime.audio",{{"sessionId",m_realtimeSession},{"audio",QString::fromLatin1(chunk.toBase64())}});}
+    });
+    connect(m_realtimeCapture,&QProcess::errorOccurred,this,[this](QProcess::ProcessError){if(!m_realtimeSession.isEmpty())QTimer::singleShot(0,this,[this]{if(!m_realtimeSession.isEmpty()){notify("Realtime microphone capture stopped.");stopRealtimeAudio();}});});
+    m_realtimeCapture->start(program,args,QIODevice::ReadOnly);
+    if(!m_realtimeCapture->waitForStarted(2000)){stopRealtimeAudio(false);notify("PAL could not open the microphone for realtime voice.");return false;}
+    return true;
+}
+void Controller::scheduleRealtimePlaybackComplete(){
+    if(!m_realtimePlaybackCompletePending||m_realtimeSession.isEmpty())return;
+    const qint64 remaining=m_realtimePlaybackUntil-m_clock.elapsed();
+    if(remaining>0||(m_realtimePlayback&&m_realtimePlayback->bytesToWrite()>0)){m_realtimeDrain.start(int(qMax<qint64>(20,remaining+80)));return;}
+    m_realtimePlaybackCompletePending=false;rpc("realtime.playbackComplete",{{"sessionId",m_realtimeSession}});
+}
+void Controller::interruptRealtimeAudio(){
+    m_realtimeDrain.stop();m_realtimePlaybackCompletePending=false;m_realtimePlaybackUntil=m_clock.elapsed();
+    if(m_realtimePlayback){m_realtimePlayback->kill();m_realtimePlayback->waitForFinished(500);startRealtimePlayback();}
+}
+void Controller::stopRealtimeAudio(bool notifyBroker){
+    const auto id=m_realtimeSession;m_realtimeSession.clear();m_realtimeDrain.stop();m_realtimePlaybackCompletePending=false;
+    if(m_realtimeCapture){m_realtimeCapture->kill();m_realtimeCapture->waitForFinished(500);delete m_realtimeCapture;m_realtimeCapture=nullptr;}
+    if(m_realtimePlayback){m_realtimePlayback->kill();m_realtimePlayback->waitForFinished(500);delete m_realtimePlayback;m_realtimePlayback=nullptr;}
+    if(notifyBroker&&!id.isEmpty())rpc("realtime.stop",{{"sessionId",id}});
+}
 QString Controller::saveTextAs(const QString &suggestedName,const QString &text){
     // The dialog confirms overwriting; QSaveFile replaces the file only once the whole text is written.
     const auto filter=suggestedName.endsWith(".json")?QStringLiteral("PAL package (*.json)"):suggestedName.endsWith(".md")?QStringLiteral("Markdown (*.md);;Text (*.txt)"):QStringLiteral("Text (*.txt);;Markdown (*.md)");

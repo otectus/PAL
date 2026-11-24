@@ -1,6 +1,7 @@
 package dev.otectus.pal.mobile.data
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
@@ -40,6 +41,9 @@ class TerminalClientTest {
         val lease = TerminalLease.from(json("""{"leaseId":"l","epoch":2,"controllerRevision":"5","lastSequence":0}"""))!!
         assertEquals(2, lease.epoch); assertEquals("5", lease.controllerRevision)
         assertNull(TerminalLease.from(json("""{"epoch":2}""")))
+        // Another shape is not a lease, and a run that is not one is left out of its line.
+        assertNull(TerminalLease.from(json("""{"leaseId":{},"epoch":2}"""))); assertNull(TerminalLease.from(json("""{"leaseId":"l","epoch":[2]}""")))
+        assertEquals(listOf("ok", ""), TerminalFrames.line(json("""{"line":[null,"x",{},[1,2],[0,"ok",-1,-1,0],[{},[],null,{},[]]]}""").getValue("line") as JsonArray).map { it.text })
         assertEquals(json("""{"key":"up","mods":4}"""), TerminalKeys.key("up", TerminalKeys.CTRL))
         assertEquals(json("""{"char":99,"mods":4}"""), TerminalKeys.char('c'.code, TerminalKeys.CTRL))
     }

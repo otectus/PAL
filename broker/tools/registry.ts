@@ -22,7 +22,7 @@ export type ToolEffects = { read?: boolean; write?: boolean; execute?: boolean; 
 export type ToolContext = { sessionId: string; session: Session; signal: AbortSignal; turnId: string };
 export type ToolSpec<Input extends z.ZodType = z.ZodType> = {
   name: string;
-  family: WorkbenchFamily | 'operations' | 'knowledge' | 'skills';
+  family: WorkbenchFamily | 'operations' | 'knowledge' | 'skills' | 'accounts' | 'workspace' | 'code';
   description: string;
   input: Input;
   effects: ToolEffects;

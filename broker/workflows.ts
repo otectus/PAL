@@ -1,3 +1,4 @@
+import { apiProviders, providerIds, type ApiProvider } from './provider-catalog.ts';
 import { limitedControlled } from './authority.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
@@ -349,8 +350,42 @@ export class Workflows {
       changed.state=to;bump(changed);
     } else throw new Error('Unknown task change');
     const next:Capsule={...current,tasks,nextSteps:openTasks(tasks).map(task=>task.text),revision:String(BigInt(current.revision)+1n),updated:time};
-    this.core.store.set(key,next);this.core.changed();
+    this.core.store.set(key,next);this.core.changed();this.taskChanged(cwd,changed);
     return {capsule:this.hydrateCapsule(next),task:changed.id};
+  }
+  /**
+   * A05 task binding: a conversation works on one open task of its project because the person said so. Nothing else
+   * binds or unbinds it. What is said there is threaded by the task in memory and ranks first for it; the task is not a
+   * boundary, so the whole project still sees those memories.
+   */
+  private workOn(p:any) {
+    const session=this.session(p.sessionId),cwd=canonicalCwd(session.cwd);
+    if(p.taskId===null||p.taskId==='')return this.core.setTask(session.id,undefined);
+    const task=capsuleTasks(this.core.store.get<Capsule>(this.capsuleKey(cwd),this.emptyCapsule(cwd))).find(item=>item.id===p.taskId);
+    if(!task)throw new Error('This task no longer exists in this conversation’s project');
+    if(task.state!=='accepted'&&task.state!=='active')throw new Error(task.state==='proposed'?'Accept the task first':'This task is closed. Reopen it first');
+    return this.core.setTask(session.id,{id:task.id,cwd,revision:task.revision,text:task.text.slice(0,200)});
+  }
+  /** The open tasks a conversation of this project may work on. */
+  openTasksFor(sessionId:unknown) {
+    const session=this.session(sessionId),cwd=canonicalCwd(session.cwd);
+    return {current:session.task?.id||'',tasks:openTasks(capsuleTasks(this.core.store.get<Capsule>(this.capsuleKey(cwd),this.emptyCapsule(cwd)))).slice(0,100).map(task=>({id:task.id,text:task.text.slice(0,300),state:task.state}))};
+  }
+  /** How memory names the task a conversation is bound to, while that task is open. */
+  taskBinding(session:Session):{binding:string;status:string}|undefined {
+    if(!session.task||session.temporary)return undefined;
+    const task=capsuleTasks(this.core.store.get<Capsule>(this.capsuleKey(session.task.cwd),this.emptyCapsule(session.task.cwd))).find(item=>item.id===session.task!.id);
+    return task?{binding:'capsule:'+createHash('sha256').update(session.task.cwd).digest('hex').slice(0,32)+':'+task.id,status:task.state}:undefined;
+  }
+  /** A task that ended releases its conversations; a reworded one keeps them and shows its new text. */
+  private taskChanged(cwd:string,task:CapsuleTask) {
+    for(const session of this.core.store.sessions()){
+      if(session.task?.id!==task.id||session.task.cwd!==cwd)continue;
+      if(task.state==='done'||task.state==='dropped'){
+        void this.core.memory.endTask(session,{binding:'capsule:'+createHash('sha256').update(cwd).digest('hex').slice(0,32)+':'+task.id,status:task.state});
+        this.core.setTask(session.id,undefined);
+      } else if(session.task.text!==task.text.slice(0,200)||session.task.revision!==task.revision)this.core.setTask(session.id,{...session.task,revision:task.revision,text:task.text.slice(0,200)});
+    }
   }
   /** M17: the saved checks this project's results must pass. Each is a saved script for this exact folder. */
   private setRequiredChecks(p:any) {
@@ -423,7 +458,7 @@ export class Workflows {
     if(done.length)draft.push('','Recently done:',...done.map(task=>`- ${task.text} — ${task.completion?.kind==='observed-check'?'a reviewed check passed':'the user decided: '+(task.completion?.note||'')}`));
     if(capsule.relevantSessionIds.length)draft.push('',`Relevant PAL session IDs: ${capsule.relevantSessionIds.join(', ')}`);
     draft.push('','Review this draft before sending. Project organization does not change the working folder, permissions, or memory scope.');
-    const created=await this.core.create({provider:source.provider,cwd:canonicalCwd(source.cwd),model:source.model,effort:source.effort||'',trusted:true,tools:source.ollama?.tools||source.api?.tools,title:`Resume · ${capsule.goal||'project'}`.slice(0,100)});
+    const created=await this.core.create({provider:source.provider,connectionId:source.connectionId,providerOptions:source.api?.options,cwd:canonicalCwd(source.cwd),model:source.model,effort:source.effort||'',trusted:true,tools:source.ollama?.tools||source.api?.tools,title:`Resume · ${capsule.goal||'project'}`.slice(0,100)});
     const updated=this.core.draft(created.id,draft.join('\n'));
     return {session:updated,draft:updated.draft,capsuleRevision:capsule.revision};
   }
@@ -515,7 +550,7 @@ export class Workflows {
     const session=this.session(p.sessionId),definition=this.recipe(p.recipeId,p.version),inputs=this.resolveInputs(definition,p.inputs||{}),source={cwd:canonicalCwd(session.cwd),provider:session.provider,configRevision:session.configRevision||'0',model:session.model||'',effort:session.effort||''};
     const referenceInputs=definition.inputs.filter(input=>(referenceInputTypes as string[]).includes(input.type));
     if(definition.workbench){
-      if(!['ollama','openai','anthropic','google','compatible'].includes(session.provider)||session.temporary)throw new Error('Workbench recipes run in saved Ollama and API conversations');
+      if(!['ollama',...apiProviders].includes(session.provider)||session.temporary)throw new Error('Workbench recipes run in saved Ollama and API conversations');
       if(referenceInputs.length&&!referenceInputs.some(input=>input.required)&&!referenceInputs.some(input=>inputs[input.name]!==undefined))throw new Error(`Choose ${referenceInputs.map(input=>input.label.toLowerCase()).join(' or ')}`);
     }
     const plainInputs=Object.fromEntries(Object.entries(inputs).filter(([,value])=>typeof value!=='object'));
@@ -554,7 +589,7 @@ export class Workflows {
     if(definition.revision!==preview.definitionRevision||this.recipe(preview.definitionId).revision!==preview.authorizationRevision)throw new Error('Recipe changed. Prepare and review it again.');
     if(canonicalCwd(source.cwd)!==preview.source.cwd||source.provider!==preview.source.provider||(source.configRevision||'0')!==preview.source.configRevision)throw new Error('Source session configuration changed. Prepare and review the recipe again.');
     if(digest({definitionRevision:definition.revision,authorizationRevision:preview.authorizationRevision,inputs:preview.inputs,source:preview.source,limits:preview.limits,prompt:preview.prompt})!==preview.digest)throw new Error('Recipe preview integrity check failed');
-    const created=await this.core.create({provider:source.provider,cwd:preview.source.cwd,model:source.model,effort:source.effort,trusted:true,tools:definition.workbench?true:source.ollama?.tools||source.api?.tools,title:`Recipe · ${definition.name}`.slice(0,100),
+    const created=await this.core.create({provider:source.provider,connectionId:source.connectionId,providerOptions:source.api?.options,cwd:preview.source.cwd,model:source.model,effort:source.effort,trusted:true,tools:definition.workbench?true:source.ollama?.tools||source.api?.tools,title:`Recipe · ${definition.name}`.slice(0,100),
       ...(definition.workbench?{capabilities:Object.fromEntries(definition.workbench.capabilities.map(family=>[family,true]))}:{})});
     // Referenced folders are shared with the run's conversation as they were reviewed: same path, same policy.
     const references:Reference[]=[];
@@ -722,6 +757,8 @@ export class Workflows {
     case'capsules.proposeTask':return this.proposeTask(p);
     case'capsules.adoptUtilityTask':return this.adoptUtilityTask(p);
     case'capsules.setRequiredChecks':return this.setRequiredChecks(p);
+    case'capsules.workOn':return this.workOn(p);
+    case'capsules.openTasks':return this.openTasksFor(p.sessionId);
     case'recipes.list':return {recipes:this.latestRecipes(),versions:this.definitions()};
     case'recipes.get':return this.recipe(p.id,p.version);
     case'recipes.save':return this.saveRecipe(p);

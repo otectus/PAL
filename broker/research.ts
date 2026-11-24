@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type { Core } from './core.ts';
 import type { Session } from './types.ts';
 import { ownerControlled } from './authority.ts';
-import { isApiProvider } from './provider-catalog.ts';
+import { planningHandoff } from './research/handoff.ts';
+import { bindResearch, researchRoutes, researchSession, routeFields } from './research/routes.ts';
 import { strictest } from './tools/contracts.ts';
 import { webUrl } from './web.ts';
 import { allowedBySites, dedupeKey, validConstraints } from './web-plan.ts';
@@ -73,7 +74,7 @@ function diffFindings(previous: Finding[], next: Finding[], affected: Set<string
     ...next.filter((f) => touched(f) && !prior.has(f.text)).map((f) => 'Updated finding: ' + f.text),
   ].slice(0, 32);
 }
-type Active = { controller: AbortController; done: Promise<void>; sessionId: string; action?: 'pause' | 'finish' };
+type Active = { controller: AbortController; done: Promise<void>; sessionId: string; committing?: boolean; action?: 'pause' | 'finish' | 'cancel' | 'interrupt' };
 export class Research {
   core: Core;
   library: ResearchLibrary;
@@ -120,8 +121,6 @@ export class Research {
     const session = this.core.store.session(id);
     if (session.temporary || !ownerControlled(session))
       throw new Error('Research requires an owner-controlled saved conversation');
-    if (session.provider !== 'ollama' && !isApiProvider(session.provider))
-      throw new Error('Choose an Ollama or managed API conversation to run research');
     if (this.core.settingsFor(id).paused) throw new Error('PAL is paused');
     return session;
   }
@@ -129,21 +128,20 @@ export class Research {
     if (!this.core.settingsFor(sessionId).webSearch.enabled)
       throw new Error('Turn on web search in Settings or choose project sources only');
   }
-  private free(sessionId: string) {
-    if (
-      [...this.active.values()].some((a) => a.sessionId === sessionId) ||
-      [...this.checks.values()].some((a) => a.sessionId === sessionId)
-    )
-      throw new Error('A research task is already working in this conversation');
+  private routed(run: ResearchRun) {
+    const owner = this.session(run.sessionId);
+    return researchSession(this.core, owner, run.binding ?? bindResearch(this.core, owner, {}));
+  }
+  private free(id: string) {
+    if (this.active.has(id) || this.checks.has(id)) throw new Error('This research task is already working');
   }
   start(input: unknown) {
-    const p = startSchema.parse(input),
-      session = this.session(p.sessionId);
+    const p = startSchema.parse(input), session = this.session(p.sessionId);
     if (p.requestId) {
       const old = this.library.request(p.sessionId, p.requestId);
       if (old) return old;
     }
-    this.free(p.sessionId);
+    const binding = bindResearch(this.core, session, p);
     if (p.scope !== 'project') this.checkWeb(session.id);
     if (p.scope !== 'web' && !p.sourceIds.length) throw new Error('Select at least one project source');
     if ((p.scope === 'web' && p.sourceIds.length) || (p.scope === 'project' && (p.urls.length || p.sites.length)))
@@ -158,6 +156,7 @@ export class Research {
     const run: ResearchRun = {
       ...defaults(),
       ...p,
+      binding, provider: binding.provider, model: binding.model,
       sites: constraints.sites || [],
       urls,
       sourceIds: distinct(p.sourceIds),
@@ -180,6 +179,7 @@ export class Research {
       controller = new AbortController();
     const active: Active = { controller, sessionId: run.sessionId, done: Promise.resolve() };
     this.active.set(id, active);
+    this.patch(id, {resumeAt: kind});
     const deadline = AbortSignal.timeout(run.limits.minutes * 60_000);
     const signal = AbortSignal.any([controller.signal, deadline]);
     active.done = (async () => {
@@ -189,30 +189,35 @@ export class Research {
         await this.synthesize(id, signal);
       } catch (error) {
         if (!this.library.has(id)) return;
+        if (active.action === 'cancel' || active.action === 'interrupt') {
+          const cancelled = active.action === 'cancel';
+          this.patch(id, {state: cancelled ? 'cancelled' : 'interrupted', partial: true, monitorDays: 0, nextRefresh: 0},
+            cancelled ? 'Cancelled. Collected evidence is saved.' : 'Interrupted. Continue from the saved checkpoint.');
+          return;
+        }
         if (active.action === 'pause') {
-          this.patch(id, { state: 'paused', partial: true }, 'Paused. The remaining searches and sources are saved.');
+          this.patch(id, { state: 'paused', partial: true, nextRefresh: 0, monitorDays: 0 }, 'Paused. The remaining searches and sources are saved.');
           return;
         }
         if (signal.aborted) {
           const stopped = active.action === 'finish';
-          await this.write(
-            id,
-            this.collectedBrief(this.get(id)),
-            true,
-            stopped
-              ? 'Stopped before the report was written. The sources read so far are listed below.'
-              : 'The time limit was reached. Continue with a new budget to investigate further.',
-          );
+          const saved = this.get(id);
+          const earlyNote = saved.synthesis?.body
+            ? 'Finished before the support check completed.'
+            : 'Stopped before the report was written. The sources read so far are listed below.';
+          await this.write(id, saved.synthesis?.body || this.collectedBrief(saved), true,
+            stopped ? earlyNote : 'The time limit was reached. Continue with a new budget to investigate further.',
+            saved.synthesis?.body ? saved.findings : []);
           this.patch(
             id,
             { state: stopped ? 'stopped' : 'partial' },
             stopped ? 'Finished with the evidence collected.' : 'Time limit reached.',
           );
-        } else this.patch(id, { state: 'failed', partial: true, error: detail(error) }, detail(error));
+        } else this.patch(id, { state: 'failed', partial: true, error: detail(error), monitorDays: 0, nextRefresh: 0 }, detail(error));
       }
     })()
       .catch((error) => {
-        if (this.library.has(id)) this.patch(id, { state: 'failed', partial: true, error: detail(error) }, detail(error));
+        if (this.library.has(id)) this.patch(id, { state: 'failed', partial: true, error: detail(error), monitorDays: 0, nextRefresh: 0 }, detail(error));
       })
       .finally(() => this.active.delete(id));
     return this.get(id);
@@ -229,20 +234,21 @@ export class Research {
   stop(id: string, pause = false) {
     const run = this.get(id),
       active = this.active.get(id);
-    if (active && !active.controller.signal.aborted) {
+    if (active && !active.committing && !active.controller.signal.aborted) {
       active.action = pause ? 'pause' : 'finish';
       active.controller.abort(new Error('Research interrupted'));
     }
     if (!active && !pause && run.state === 'paused') {
-      this.free(run.sessionId);
+      this.free(id);
       const controller = new AbortController();
       const task: Active = { controller, sessionId: run.sessionId, done: Promise.resolve() };
       this.active.set(id, task);
       task.done = this.write(
         id,
-        this.collectedBrief(run),
+        run.synthesis?.body || this.collectedBrief(run),
         true,
-        'Finished early. These passages are from the saved evidence.',
+        'Finished early with the saved evidence.',
+        run.synthesis?.body ? run.findings : [],
       )
         .then(() => {
           this.patch(id, { state: 'stopped' }, 'Finished with the saved evidence.');
@@ -255,11 +261,27 @@ export class Research {
     }
     return run;
   }
+  async cancel(id: string) {
+    const run = this.get(id), active = this.active.get(id);
+    if (active) {
+      if (!active.committing && !active.controller.signal.aborted) {
+        active.action = 'cancel';
+        active.controller.abort();
+      }
+      await active.done;
+    } else if (['paused', 'interrupted'].includes(run.state)) {
+      this.patch(id, {state: 'cancelled', monitorDays: 0, nextRefresh: 0}, 'Cancelled. Collected evidence is saved.');
+    }
+    return this.get(id);
+  }
   async close(sessionId?: string) {
     const promises: Promise<unknown>[] = [];
-    for (const [id, a] of this.active)
+    for (const a of this.active.values())
       if (!sessionId || a.sessionId === sessionId) {
-        this.stop(id, true);
+        if (!a.committing && !a.controller.signal.aborted) {
+          a.action = 'interrupt';
+          a.controller.abort();
+        }
         promises.push(a.done);
       }
     for (const a of this.checks.values())
@@ -269,10 +291,9 @@ export class Research {
       }
     await Promise.allSettled(promises);
   }
-  private standalone<T>(session: Session, work: (signal: AbortSignal) => Promise<T>) {
-    this.free(session.id);
-    const controller = new AbortController(),
-      key = randomUUID();
+  private standalone<T>(session: Session, work: (signal: AbortSignal) => Promise<T>, key: string = randomUUID()) {
+    this.free(key);
+    const controller = new AbortController();
     const done = work(AbortSignal.any([controller.signal, AbortSignal.timeout(180000)])).finally(() =>
       this.checks.delete(key),
     );
@@ -283,14 +304,16 @@ export class Research {
     const session = this.session(String(p.sessionId)),
       question = clean(p.question, 2000),
       mode = z.enum(modes).parse(p.mode || 'answer');
+    const binding = bindResearch(this.core, session, z.object(routeFields).parse(p));
+    const current = () => researchSession(this.core, this.session(session.id), binding);
     return this.standalone(session, async (signal) => {
       const answer = await completeResearch(
         this.core,
-        session,
+        current(),
         'Draft 3–5 distinct research subquestions as a JSON array. ' + instructions[mode] + '\nQuestion: ' + question,
         signal,
         undefined,
-        queryFormat,
+        queryFormat, undefined, current,
       );
       const plan = arrayFrom(answer);
       if (!plan.length) throw new Error('The model returned no usable outline. Enter a plan or start directly.');
@@ -307,7 +330,7 @@ export class Research {
   ) {
     signal.throwIfAborted();
     const r = this.get(id),
-      session = this.session(r.sessionId);
+      session = this.routed(r);
     if (r.callsUsed >= r.limits.calls) throw new Error('Research model call limit reached');
     this.patch(id, { callsUsed: r.callsUsed + 1 });
     const authorize = async () => {
@@ -315,7 +338,7 @@ export class Research {
       this.session(r.sessionId);
       if (privateSources) await authorizeEvidence(this.core, session, this.get(id).evidence, signal);
     };
-    return completeResearch(this.core, session, prompt, signal, authorize, format, onTruncated);
+    return completeResearch(this.core, session, prompt, signal, authorize, format, onTruncated, () => this.routed(r));
   }
   private async queryPlan(id: string, signal: AbortSignal, adaptive: boolean) {
     const r = this.get(id);
@@ -356,7 +379,7 @@ export class Research {
         eid = old?.id || 'E' + (r.evidence.length + 1);
       let entry: Evidence;
       try {
-        const captured = await projectEvidence(this.core, this.session(r.sessionId), r, eid, key, signal);
+        const captured = await projectEvidence(this.core, this.routed(r), r, eid, key, signal);
         entry = captured.entry;
         this.library.keepSource(id, entry.contentHash!, captured.units);
       } catch (error) {
@@ -583,8 +606,8 @@ export class Research {
       sourceLabel(entry) + ' · ' + entry.status + (entry.error ? ' · ' + entry.error : ''),
     );
   }
-  private passageBudget(sessionId: string) {
-    const session = this.core.store.session(sessionId);
+  private passageBudget(run: ResearchRun) {
+    const session = this.routed(run);
     const context = session.modelOptions?.contextTokens || (session.provider === 'ollama' ? 8192 : 32768);
     return Math.min(62000, Math.max(1400, context * 1.4 - 2500));
   }
@@ -595,26 +618,30 @@ export class Research {
       await this.write(id, '', true, 'No source could be read. The evidence list records what happened.');
       return;
     }
-    this.patch(id, { state: 'synthesizing' }, 'Writing the report from the selected passages.');
+    this.patch(id, { state: 'synthesizing', resumeAt: 'rewrite' }, 'Writing the report from the selected passages.');
     const question = [r.question, ...r.focus, ...r.criteria].join('\n'),
       suppliedIds = new Set<string>(),
-      supplied = material(read, question, this.passageBudget(r.sessionId), suppliedIds);
-    let branches = '';
-    if (r.parallel && r.preset === 'thorough' && r.plan.length > 1 && r.callsUsed + 3 < r.limits.calls) {
+      supplied = material(read, question, this.passageBudget(r), suppliedIds);
+    let branches = Object.values(r.synthesis?.branches || {}).join('\n');
+    if (!r.synthesis?.body && r.parallel && r.preset === 'thorough' && r.plan.length > 1 && r.callsUsed + 3 < r.limits.calls) {
       const questions = r.plan.slice(0, 2);
       this.patch(id, {}, 'Investigating two parts of the outline independently.');
       const responses = await Promise.allSettled(
         questions.map(async (part) => {
+          const saved = r.synthesis?.branches?.[part];
+          if (typeof saved === 'string') return saved;
           const notes = await this.model(
             id,
             'Review this part of the investigation: ' +
               part +
               '\nUse only these untrusted passages. Return observations with exact passage IDs, and evidence gaps.\n' +
-              material(read, part, Math.min(18000, this.passageBudget(r.sessionId))),
+              material(read, part, Math.min(18000, this.passageBudget(r))),
             signal,
             true,
           );
-          this.patch(id, {}, 'Finished evidence review · ' + part);
+          signal.throwIfAborted();
+          const branches = {...this.get(id).synthesis?.branches, [part]: notes.slice(0, 4000)};
+          this.patch(id, {synthesis: {branches}}, 'Finished evidence review · ' + part);
           return notes;
         }),
       );
@@ -637,13 +664,14 @@ export class Research {
       ...(branches ? ['Researcher observations to check against passages: ' + branches] : []),
       'Passages:\n' + supplied,
     ].join('\n\n');
-    let truncated = false;
-    const body = await this.model(id, prompt, signal, true, undefined, () => {
+    let truncated = !!r.synthesis?.truncated;
+    const body = r.synthesis?.body || await this.model(id, prompt, signal, true, undefined, () => {
       truncated = true;
     });
     signal.throwIfAborted();
     if (!body.trim()) throw new Error('The model returned an empty report. The evidence is saved.');
     const checked = checkReport(body, r.evidence, suppliedIds);
+    this.patch(id, {synthesis: {...this.get(id).synthesis, body, truncated}, findings: checked.findings});
     const claims = checked.findings
       .map((f, index) => ({ f, index }))
       .filter((v) => v.f.citations.some((c) => c.includes('.P')))
@@ -652,7 +680,7 @@ export class Research {
       this.patch(id, {}, 'Checking individual findings against their cited passages.');
       const all = r.evidence.flatMap((e) => e.passages || []),
         spans = new Map(all.map((p) => [p.id, p]));
-      let room = this.passageBudget(r.sessionId);
+      let room = this.passageBudget(r);
       const audit = claims.flatMap(({ f, index }) => {
         const item = { index, claim: f.text, passages: f.citations.map((c) => spans.get(c)).filter(Boolean) };
         const length = JSON.stringify(item).length + 1;
@@ -807,6 +835,8 @@ export class Research {
     const policy = strictest(
       ...r.evidence.map((e) => e.policy || (e.sourceId ? { cloud: false, remote: false } : publicPolicy)),
     );
+    const committing = this.active.get(id);
+    if (committing) committing.committing = true;
     const artifact = await this.core.workbench.artifacts.install({
       sessionId: r.sessionId,
       name,
@@ -828,26 +858,29 @@ export class Research {
     }
     const now = Date.now(),
       report = { artifactId: artifact.artifactId, versionId: artifact.versionId, name };
-    const updated = this.patch(
-      id,
-      {
-        report,
-        reportText,
-        summary,
-        partial,
-        stale: false,
-        error: undefined,
-        note,
-        removedCitations: removed,
-        changes,
-        findings,
-        table: readTable(body),
-        revisions: [...r.revisions, { versionId: artifact.versionId, time: now, summary }],
-        state: partial ? 'partial' : 'completed',
-      },
-      partial ? 'Partial report saved.' : 'Report ready.',
-    );
-    this.library.snapshot(updated);
+    this.core.store.transaction(() => {
+      const updated = this.patch(
+        id,
+        {
+          report,
+          reportText,
+          synthesis: undefined, resumeAt: undefined,
+          summary,
+          partial,
+          stale: false,
+          error: undefined,
+          note,
+          removedCitations: removed,
+          changes,
+          findings,
+          table: readTable(body),
+          revisions: [...r.revisions, { versionId: artifact.versionId, time: now, summary }],
+          state: partial ? 'partial' : 'completed',
+        },
+        partial ? 'Partial report saved.' : 'Report ready.',
+      );
+      this.library.snapshot(updated);
+    });
     // Conversation history can later travel to another model. Keep project findings inside the protected artifact.
     if (
       !this.silent.has(id) ||
@@ -867,7 +900,7 @@ export class Research {
   private silent = new Set<string>();
   exclude(id: string, evidenceId: string, reason?: string) {
     const r = this.get(id);
-    this.free(r.sessionId);
+    this.free(id);
     if (!r.evidence.some((e) => e.id === evidenceId)) throw new Error('That source is not part of this run');
     const uses = (f: Finding) => f.citations.some((c) => c.split('.')[0] === evidenceId);
     return this.patch(
@@ -877,6 +910,7 @@ export class Research {
           e.id === evidenceId ? { ...e, status: 'excluded', reason: reason?.slice(0, 500) } : e,
         ),
         stale: !!r.report,
+        synthesis: undefined,
         findings: r.findings.map((f) => (uses(f) ? { ...f, status: 'Source excluded · needs review' } : f)),
       },
       'Source excluded. Rewrite to update the report.',
@@ -900,8 +934,9 @@ export class Research {
   }
   resume(id: string, focus?: string, refresh = false) {
     const r = this.get(id),
-      session = this.session(r.sessionId);
-    this.free(session.id);
+      session = this.routed(r);
+    this.free(id);
+    if (!refresh && !['paused', 'failed', 'interrupted', 'partial', 'stopped'].includes(r.state)) throw new Error('Only unfinished research can continue');
     if (r.scope !== 'project') this.checkWeb(session.id);
     validateSources(
       this.core,
@@ -929,7 +964,7 @@ export class Research {
       : r.processed;
     const pendingQueries = refresh ? [...r.queries.slice(-12)] : [...r.pendingQueries];
     if (text && r.scope !== 'project') pendingQueries.unshift(text);
-    if (!refresh && !text && empty && r.planned && r.scope !== 'project') {
+    if (!refresh && ['partial', 'stopped'].includes(r.state) && !text && empty && r.planned && r.scope !== 'project') {
       const gap = r.findings.find((f) => f.status === 'Insufficient support' || f.status === 'Needs evidence');
       // Only user-authored questions and public material may shape public search.
       pendingQueries.push(
@@ -938,9 +973,14 @@ export class Research {
       );
     }
     if (text) this.selectPassages(r, text);
+    const recovering = !refresh && !text && ['failed', 'interrupted', 'paused'].includes(r.state);
+    const phase = recovering ? r.resumeAt || 'collect' : 'collect';
     const next = this.patch(
       id,
       {
+        synthesis: recovering ? r.synthesis : undefined,
+        binding: r.binding ?? bindResearch(this.core, session, {}),
+        provider: session.provider as ResearchRun['provider'], model: session.model,
         state: 'planning',
         partial: false,
         error: undefined,
@@ -950,7 +990,7 @@ export class Research {
         plan: continuedPlan,
         callsUsed: 0,
         pageReads: 0,
-        round: 1,
+        round: refresh ? 1 : r.round,
         searchedCrossref: refresh ? false : r.searchedCrossref,
         processed: already,
         pending: refresh ? revisit : r.pending,
@@ -958,18 +998,21 @@ export class Research {
       },
       refresh ? 'Refreshing the evidence and checking what changed.' : 'Continuing from the saved evidence.',
     );
-    return this.launch(next, 'collect', refresh);
+    return this.launch(next, phase, refresh);
   }
   async resynthesize(id: string) {
     const r = this.get(id);
-    this.session(r.sessionId);
-    this.free(r.sessionId);
+    const route = this.routed(r);
+    const binding = r.binding ?? bindResearch(this.core, route, {});
+    this.free(id);
     this.launch(
       this.patch(id, {
+        binding, provider: binding.provider, model: binding.model,
         state: 'synthesizing',
+        synthesis: undefined,
         error: undefined,
         callsUsed: 0,
-        partial: r.partial || ['stopped', 'paused', 'failed', 'partial'].includes(r.state),
+        partial: r.partial || ['stopped', 'paused', 'failed', 'partial', 'interrupted', 'cancelled'].includes(r.state),
       }),
       'rewrite',
     );
@@ -993,12 +1036,12 @@ export class Research {
   async ask(id: string, q: unknown) {
     const r = this.get(id),
       question = clean(q, 2000),
-      session = this.session(r.sessionId);
+      session = this.routed(r);
     if (!readable(r).length) throw new Error('Read at least one source before asking a follow-up');
     return this.standalone(session, async (signal) => {
       const enriched = this.selectPassages(r, question);
       const suppliedIds = new Set<string>(),
-        supplied = material(enriched.evidence, question, this.passageBudget(r.sessionId), suppliedIds),
+        supplied = material(enriched.evidence, question, this.passageBudget(r), suppliedIds),
         answer = await completeResearch(
           this.core,
           session,
@@ -1010,13 +1053,13 @@ export class Research {
           async () => {
             this.session(r.sessionId);
             await authorizeEvidence(this.core, session, r.evidence, signal);
-          },
+          }, undefined, undefined, () => this.routed(r),
         );
       if (!answer.trim()) throw new Error('The model returned an empty answer');
       this.get(id);
       const result = checkReport(answer, enriched.evidence, suppliedIds);
       return { answer: result.text, findings: result.findings };
-    });
+    }, id);
   }
   async readReport(id: string, versionId?: string) {
     const r = this.get(id);
@@ -1091,6 +1134,15 @@ export class Research {
           .join('\n\n'),
       },
     };
+    if (format === 'pdf' || format === 'docx')
+      return this.core.workbench.documents.report(r.sessionId, {
+        markdown: choices.markdown.text,
+        name: r.report.name.replace(/\.md$/, ''),
+        title: r.title || r.question,
+        format,
+        policy,
+        parent: { artifactId: r.report.artifactId, versionId: r.report.versionId },
+      });
     const item = choices[z.enum(['markdown', 'csv', 'json', 'bibtex']).parse(format)];
     return this.core.workbench.artifacts.install({
       sessionId: r.sessionId,
@@ -1192,6 +1244,14 @@ export class Research {
     switch (method) {
       case 'research.start':
         return this.start(p);
+      case 'research.handoff':
+        return planningHandoff(this.core, p);
+      case 'research.routes':
+        return researchRoutes(this.core, this.session(p.sessionId));
+      case 'research.tasks':
+        return this.library.tasks();
+      case 'research.cancel':
+        return this.cancel(id);
       case 'research.list':
         return this.list(p.sessionId, !!p.project);
       case 'research.get':

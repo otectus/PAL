@@ -14,37 +14,6 @@ function inside(root: string, path: string): boolean {
   return child === '' || (!child.startsWith('..') && !isAbsolute(child));
 }
 
-export interface EditorEvent {
-  type: 'document_opened' | 'document_closed' | 'document_saved' | 'project_opened' | 'project_closed';
-  documentId?: string;
-  path?: string;
-  contentRevision?: string;
-  projectId?: string;
-}
-
-export class EditorEventCollector {
-  private emit?: (observation: LiveObservation) => void;
-  private factory = new LiveObservationFactory('editor');
-  private generations = new Map<string, string>();
-  async start(emit: (observation: LiveObservation) => void): Promise<void> { this.emit = emit; }
-  async reconcile(): Promise<void> {}
-  async stop(): Promise<void> { this.emit = undefined; }
-
-  ingest(event: EditorEvent): void {
-    if (!this.emit) throw new Error('Editor collector is not started');
-    if (!event.documentId && !event.projectId) throw new TypeError('Editor event requires an explicit document or project identity');
-    const id = event.documentId ? `document:${event.documentId}` : `project:${event.projectId}`;
-    const ended = event.type.endsWith('_closed');
-    let generation = this.generations.get(id);
-    if (!generation || event.type.endsWith('_opened')) { generation = randomUUID(); this.generations.set(id, generation); }
-    this.emit(this.factory.observation(id, generation, event.type.toUpperCase(), {
-      ...(event.documentId ? { documentId: event.documentId } : {}), ...(event.projectId ? { projectId: event.projectId } : {}),
-      ...(event.path ? { path: event.path } : {}), ...(event.contentRevision ? { contentRevision: event.contentRevision } : {}),
-    }));
-    if (ended) this.generations.delete(id);
-  }
-}
-
 export interface FilesystemCollectorConfig {
   approvedRoots: string[];
   excludes?: RegExp[];

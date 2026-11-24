@@ -1,0 +1,68 @@
+:root { --ground: #05090f; --surface: #0d141c; --raised: #141d27; --line: #5c7183; --line-soft: #22303d; --text: #edf4f7; --muted: #a6b8c4; --accent: #6ff3f7; --on-accent: #042a2d; --danger: #ff9daf; --amber: #ffcf7d; --radius: 8px; --space: 8px; color-scheme: dark; }
+@media (prefers-color-scheme: light) { :root { --ground: #f3f7f8; --surface: #ffffff; --raised: #e6eef0; --line: #5b7480; --line-soft: #cfdbe0; --text: #10232b; --muted: #46606b; --accent: #006a72; --on-accent: #ffffff; --danger: #a51e3b; --amber: #7a5200; color-scheme: light; } }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { display: flex; flex-direction: column; background: var(--ground); color: var(--text); font: 16px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3, p, ol, ul, dl { margin: 0; padding: 0; }
+h1 { font-size: 20px; } h2 { font-size: 18px; } h3 { font-size: 16px; }
+[hidden] { display: none !important; }
+.hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.skip { position: absolute; left: var(--space); top: -60px; padding: var(--space); background: var(--accent); color: var(--on-accent); border-radius: var(--radius); z-index: 2; }
+.skip:focus { top: var(--space); }
+.muted { color: var(--muted); font-size: 14px; }
+.problem { color: var(--danger); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button, input, textarea { font: inherit; color: inherit; }
+button { min-height: 40px; padding: 0 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--raised); cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+button.quiet { background: none; border-color: transparent; }
+button.danger { color: var(--danger); border-color: var(--danger); background: none; }
+input, textarea { width: 100%; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+textarea { resize: vertical; }
+header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line-soft); background: var(--surface); }
+header #status { flex: 1; color: var(--muted); font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+header nav { display: flex; gap: 8px; }
+.card { width: min(480px, calc(100% - 32px)); margin: 48px auto; padding: 24px; display: grid; gap: 16px; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 12px; }
+.card form { display: grid; gap: 8px; }
+.card form button { margin-top: 8px; }
+#code { font: 20px/1.4 ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; }
+.words { font-size: 22px; font-weight: 600; line-height: 1.6; color: var(--accent); overflow-wrap: anywhere; }
+#workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(220px, 320px) 1fr; }
+aside { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-right: 1px solid var(--line-soft); overflow-y: auto; }
+#sessions { list-style: none; display: grid; gap: 4px; }
+#sessions button { width: 100%; display: grid; gap: 2px; padding: 8px 12px; text-align: left; border-color: transparent; background: none; min-height: 52px; }
+#sessions button[aria-current="true"] { background: var(--raised); border-color: var(--accent); }
+#sessions b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+#sessions span { color: var(--muted); font-size: 13px; }
+main:focus { outline: none; }
+#back { display: none; }
+main { display: flex; flex-direction: column; gap: 12px; min-height: 0; padding: 16px 24px; overflow: hidden; }
+#heading { display: flex; align-items: center; gap: 12px; }
+#heading > div { flex: 1; min-width: 0; }
+#title, #about { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#messages { flex: 1; min-height: 0; overflow-y: auto; list-style: none; display: flex; flex-direction: column; gap: 12px; padding-right: 8px; }
+#messages li { max-width: 78ch; padding: 10px 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line-soft); }
+#messages li.mine { align-self: flex-end; background: var(--raised); }
+#messages li.note { align-self: center; background: none; border: 0; color: var(--muted); font-size: 14px; }
+#messages .who { display: block; font-size: 13px; color: var(--muted); margin-bottom: 2px; }
+#messages .body { white-space: pre-wrap; overflow-wrap: anywhere; }
+#composer { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; }
+dialog { width: min(640px, calc(100% - 32px)); max-height: calc(100% - 64px); padding: 24px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); overflow-y: auto; }
+dialog::backdrop { background: rgb(0 0 0 / .6); }
+dialog > * + * { margin-top: 16px; }
+.request > * + *, dialog .row { margin-top: 0; }
+.request { padding: 16px; border: 1px solid var(--line-soft); border-radius: 12px; display: grid; gap: 8px; }
+.request + .request { margin-top: 12px; }
+.request pre { margin: 0; padding: 12px; max-height: 320px; overflow: auto; background: var(--ground); border-radius: var(--radius); white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, monospace; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; } dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  header { padding: 8px 12px; gap: 8px; }
+  #workspace { grid-template-columns: 1fr; }
+  #workspace[data-view="conversation"] aside, #workspace[data-view="list"] main { display: none; }
+  main { padding: 12px; } aside { border-right: 0; }
+  #back { display: inline-block; padding: 0 8px; }
+}
+@media (prefers-reduced-motion: no-preference) { button { transition: border-color .15s; } }

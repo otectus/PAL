@@ -1,48 +1,54 @@
-export const providerIds = ['codex', 'claude', 'ollama', 'antigravity', 'openai', 'anthropic', 'google', 'compatible'] as const;
+import { apiProviderIds, providerDefinitions, type ApiProviderId,type ProviderDefinition } from './provider-registry.ts';
+
+export const providerIds = ['codex', 'claude', 'ollama', 'antigravity', ...apiProviderIds] as const;
 export type ProviderId = typeof providerIds[number];
-/** M13: 'compatible' is one user-configured OpenAI-compatible chat endpoint. */
-export type ApiProvider = 'openai' | 'anthropic' | 'google' | 'compatible';
-export const apiProviders: ApiProvider[] = ['openai', 'anthropic', 'google', 'compatible'];
+export type ApiProvider = ApiProviderId;
+export const apiProviders: ApiProvider[] = [...apiProviderIds];
 export function isApiProvider(value: unknown): value is ApiProvider { return apiProviders.includes(value as ApiProvider); }
 export const providerLabels: Record<ProviderId, string> = {
   codex: 'Codex', claude: 'Claude Code', ollama: 'Ollama', antigravity: 'AntiGravity',
-  openai: 'OpenAI API', anthropic: 'Claude API', google: 'Google AI API', compatible: 'Compatible endpoint',
+  ...Object.fromEntries(apiProviders.map(id => [id, providerDefinitions[id].label])) as Record<ApiProvider, string>,
 };
 
-/**
- * W08: one description of what each provider supports, owned by the broker. The desktop and the
- * phone derive controls and explanations from it instead of naming providers; what a provider can do
- * right now (availability, models, a configured key, a phone's grant) is reported alongside it.
- */
+/** Broker-owned UI behavior. Runtime availability and per-model capability gates are reported separately. */
 export type ProviderTraits = {
   label: string;
-  /** cli: a provider's own CLI runs the turn and its tools; local and api: PAL runs the conversation. */
   kind: 'cli' | 'local' | 'api';
-  /** A model must be chosen (no provider default), and whether a typed model ID is accepted. */
   modelRequired: boolean; customModel: boolean;
-  /** Reasoning-effort choices exist per model. */
   effort: boolean;
-  /** Image inputs: always, per model (Ollama vision), per endpoint declaration, or never. */
   images: 'yes' | 'per-model' | 'per-endpoint' | 'no';
-  /** cere: PAL's desktop tools and delegation, opt-in per conversation; native: the provider's own tools. */
   tools: 'cere' | 'native';
-  /** One-shot web search for a message. */
   webSearch: boolean;
-  /** An existing CLI conversation can be brought into PAL; a stopped one can be resumed. */
   importHistory: boolean; resume: boolean;
-  /** Messages sent while a turn runs wait in order instead of being refused. */
   queue: boolean;
-  /** Model, effort or tools can change after the conversation starts. */
   configure: boolean;
-  /** Usage may be billed per request to the owner's account. */
   billed: boolean;
-  /**
-   * How a turn started from a paired phone runs. restricted: under PAL's remote restrictions (and the
-   * provider's own sandbox for a CLI); withheld: not from a phone, for the stated reason.
-   */
   remote: 'restricted' | 'withheld';
   remoteNote: string;
-};
+} & Partial<Pick<ProviderDefinition,'auth'|'variants'|'operations'|'optionsSchema'|'capabilities'|'docsUrl'|'dialect'|'catalog'>>;
+
+export const providerTraitSchemas = {
+  kind: { type: 'enum', values: ['cli', 'local', 'api'] },
+  modelRequired: { type: 'boolean' }, customModel: { type: 'boolean' }, effort: { type: 'boolean' },
+  images: { type: 'enum', values: ['yes', 'per-model', 'per-endpoint', 'no'] },
+  tools: { type: 'enum', values: ['cere', 'native'] }, webSearch: { type: 'boolean' },
+  importHistory: { type: 'boolean' }, resume: { type: 'boolean' }, queue: { type: 'boolean' },
+  configure: { type: 'boolean' }, billed: { type: 'boolean' },
+  remote: { type: 'enum', values: ['restricted', 'withheld'] }, remoteNote: { type: 'string' },
+} as const;
+
+const cloudNote = 'Uses the selected account on the desktop; requests may be billed. PAL tools stay limited to this phone’s grants.';
+const apiTrait = (id: ApiProvider, changes: Partial<ProviderTraits> = {}): ProviderTraits => ({
+  variants:providerDefinitions[id].variants,auth:providerDefinitions[id].auth,operations:providerDefinitions[id].operations,
+  optionsSchema:providerDefinitions[id].optionsSchema,capabilities:providerDefinitions[id].capabilities,docsUrl:providerDefinitions[id].docsUrl,
+  dialect:providerDefinitions[id].dialect,catalog:providerDefinitions[id].catalog,
+  label: providerLabels[id], kind: 'api', modelRequired: true, customModel: true,
+  effort: providerDefinitions[id].optionsSchema.some(field => field.key === 'reasoningEffort'),
+  images: providerDefinitions[id].capabilities.images === 'connection' ? 'per-endpoint' : providerDefinitions[id].capabilities.images === 'unsupported' ? 'no' : 'per-model',
+  tools: 'cere', webSearch: true, importHistory: false, resume: false, queue: false, configure: true, billed: true,
+  remote: 'restricted', remoteNote: cloudNote, ...changes,
+});
+
 export const providerTraits: Record<ProviderId, ProviderTraits> = {
   codex: { label: providerLabels.codex, kind: 'cli', modelRequired: false, customModel: false, effort: true, images: 'yes', tools: 'native', webSearch: false, importHistory: true, resume: true, queue: false, configure: true, billed: false,
     remote: 'restricted', remoteNote: 'Runs in Codex’s restricted sandbox; its permission requests come to you.' },
@@ -52,12 +58,18 @@ export const providerTraits: Record<ProviderId, ProviderTraits> = {
     remote: 'restricted', remoteNote: 'Runs on the desktop’s granted Ollama server with PAL’s tools limited to this phone’s grants.' },
   antigravity: { label: providerLabels.antigravity, kind: 'cli', modelRequired: false, customModel: false, effort: false, images: 'no', tools: 'native', webSearch: false, importHistory: false, resume: true, queue: false, configure: false, billed: false,
     remote: 'withheld', remoteNote: 'AntiGravity’s headless mode cannot prove restricted execution, so turns start only on the desktop. Its conversations can still be read here.' },
-  openai: { label: providerLabels.openai, kind: 'api', modelRequired: true, customModel: true, effort: false, images: 'yes', tools: 'cere', webSearch: true, importHistory: false, resume: false, queue: false, configure: true, billed: true,
-    remote: 'restricted', remoteNote: 'Uses the desktop’s API key; requests may be billed. PAL’s tools stay limited to this phone’s grants.' },
-  anthropic: { label: providerLabels.anthropic, kind: 'api', modelRequired: true, customModel: true, effort: false, images: 'yes', tools: 'cere', webSearch: true, importHistory: false, resume: false, queue: false, configure: true, billed: true,
-    remote: 'restricted', remoteNote: 'Uses the desktop’s API key; requests may be billed. PAL’s tools stay limited to this phone’s grants.' },
-  google: { label: providerLabels.google, kind: 'api', modelRequired: true, customModel: true, effort: false, images: 'yes', tools: 'cere', webSearch: true, importHistory: false, resume: false, queue: false, configure: true, billed: true,
-    remote: 'restricted', remoteNote: 'Uses the desktop’s API key; requests may be billed. PAL’s tools stay limited to this phone’s grants.' },
-  compatible: { label: providerLabels.compatible, kind: 'api', modelRequired: true, customModel: true, effort: false, images: 'per-endpoint', tools: 'cere', webSearch: true, importHistory: false, resume: false, queue: false, configure: true, billed: true,
-    remote: 'restricted', remoteNote: 'Uses the endpoint the desktop granted to this phone; a changed endpoint needs a new grant.' },
+  openai: apiTrait('openai', { images: 'yes' }),
+  anthropic: apiTrait('anthropic', { images: 'yes' }),
+  google: apiTrait('google', { images: 'yes' }),
+  azure_openai: apiTrait('azure_openai'),
+  deepseek: apiTrait('deepseek'),
+  mistral: apiTrait('mistral'),
+  xai: apiTrait('xai'),
+  perplexity: apiTrait('perplexity'),
+  openrouter: apiTrait('openrouter'),
+  huggingface: apiTrait('huggingface'),
+  litellm: apiTrait('litellm', { images: 'per-endpoint' }),
+  forge: apiTrait('forge', { images: 'per-endpoint' }),
+  edenai: apiTrait('edenai'),
+  compatible: apiTrait('compatible', { images: 'per-endpoint', remoteNote: 'Uses the endpoint account the desktop granted to this phone; a changed destination needs a new grant.' }),
 };

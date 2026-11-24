@@ -23,6 +23,9 @@ async function allowed(url: URL, policy: DownloadPolicy) {
 }
 /** Fetches one image under the policy; returns its bytes after checking they decode within the limits. */
 export async function downloadImage(value: string, policy: DownloadPolicy, signal: AbortSignal) {
+  return verifyImage(await downloadMediaBytes(value,policy,signal));
+}
+export async function downloadMediaBytes(value: string, policy: DownloadPolicy, signal: AbortSignal) {
   let url: URL;
   try { url = new URL(value); } catch { throw Object.assign(new Error('The backend returned an invalid media address'), { code: 'blocked_url' }); }
   const limit = policy.maxBytes ?? downloadLimits.bytes;
@@ -42,7 +45,7 @@ export async function downloadImage(value: string, policy: DownloadPolicy, signa
     if (declared > limit) { await response.body?.cancel().catch(() => {}); throw Object.assign(new Error('The image is larger than PAL accepts'), { code: 'too_large' }); }
     const chunks: Buffer[] = []; let size = 0;
     for await (const chunk of response.body as any as AsyncIterable<Uint8Array>) { size += chunk.length; if (size > limit) throw Object.assign(new Error('The image is larger than PAL accepts'), { code: 'too_large' }); chunks.push(Buffer.from(chunk)); }
-    return verifyImage(Buffer.concat(chunks));
+    return Buffer.concat(chunks);
   }
   throw Object.assign(new Error('The media server redirected too many times'), { code: 'blocked_url' });
 }

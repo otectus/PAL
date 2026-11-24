@@ -192,7 +192,7 @@ export interface EmbeddingAdapter {
 
 export type LiveFreshness = 'fresh' | 'stale' | 'unknown';
 export interface LiveObservation<T extends Record<string, JsonValue> = Record<string, JsonValue>> {
-  source: 'hyprland' | 'fish' | 'kitty' | 'editor' | 'filesystem' | 'repository';
+  source: 'hyprland' | 'fish' | 'kitty' | 'editor' | 'filesystem' | 'repository' | 'session';
   sourceEpoch: string;
   sourceSequence: number;
   entityId: string;

@@ -1,3 +1,6 @@
+import { taskOutput } from './provider-completion.ts';
+import { apiTextRequest } from './api-providers.ts';
+import { apiProviders, providerIds, type ApiProvider } from './provider-catalog.ts';
 /**
  * Narrow helpers (12.3): a second model with one explicit role, a bounded request and selected inputs,
  * returning observations and suggestions in a fixed shape. A helper has no tools: it cannot read beyond its
@@ -13,7 +16,7 @@ import { modelRoute, ollamaHost, ollamaJson } from './ollama.ts';
 import { completed, failed, localOnly, routeAllowed, strictest, type DestinationPolicy, type ProcessingRoute, type ToolResultV1 } from './tools/contracts.ts';
 import type { Workbench } from './workbench.ts';
 
-export type HelperSettings = { provider: '' | 'ollama' | 'openai' | 'anthropic' | 'google' | 'compatible'; model: string };
+export type HelperSettings = { provider: '' | 'ollama' | ApiProvider; model: string; connectionId?: string };
 export const helperRoles = { document_summary: 'Document summarizer', code_review: 'Code reviewer', research_summary: 'Research summarizer', visual_review: 'Visual reviewer' } as const;
 export type HelperRole = keyof typeof helperRoles;
 export const helperLimits = { request: 2000, inputChars: 64_000, answerChars: 24_000, timeoutMs: 180_000, items: 20 };
@@ -33,8 +36,9 @@ delete outputSchema.$schema;
 
 export function validHelper(value: unknown): HelperSettings {
   const v = value as any;
-  if (!v || typeof v !== 'object' || !['', 'ollama', 'openai', 'anthropic', 'google', 'compatible'].includes(v.provider ?? '') || (v.model !== undefined && (typeof v.model !== 'string' || v.model.length > 200 || /[\x00-\x1f]/.test(v.model)))) throw new Error('Choose the helper’s provider and model');
+  if (!v || typeof v !== 'object' || !['', 'ollama', ...apiProviders].includes(v.provider ?? '') || (v.model !== undefined && (typeof v.model !== 'string' || v.model.length > 200 || /[\x00-\x1f]/.test(v.model)))) throw new Error('Choose the helper’s provider and model');
   const next = { provider: v.provider ?? '', model: v.provider ? String(v.model || '').trim() : '' } as HelperSettings;
+  if (v.connectionId) next.connectionId=z.uuid().parse(v.connectionId);
   if (next.provider && !next.model) throw new Error('Choose the helper’s model');
   return next;
 }
@@ -53,12 +57,13 @@ export class Helpers {
   async route(signal?: AbortSignal, helper: HelperSettings = this.settings()): Promise<ProcessingRoute> {
     if (!helper.provider) return 'unknown';
     if (helper.provider === 'ollama') {
-      const host = ollamaHost(this.core.settings.ollama.host), verified = await modelRoute(host, helper.model, signal);
+      const host = ollamaHost(helper.connectionId?this.core.chatConnections.get(helper.connectionId,'ollama').ollama!.host:this.core.settings.ollama.host), verified = await modelRoute(host, helper.model, signal);
       if (!verified.verified) return 'unknown';
       if (verified.route === 'cloud') return 'cloud';
       const name = new URL(host).hostname.replace(/^\[|\]$/g, '');
       return name === 'localhost' || name === '::1' || /^127\./.test(name) ? 'local' : 'remote';
     }
+    if (helper.connectionId) {this.core.chatConnections.get(helper.connectionId,helper.provider);return this.core.chatConnections.taskConnection(helper.connectionId).processing;}
     if (helper.provider === 'compatible') return this.core.settings.compatible.processing || 'unknown';
     return 'cloud';
   }
@@ -124,22 +129,12 @@ export class Helpers {
   async ask(helper: HelperSettings, prompt: string, signal: AbortSignal, format: Record<string, unknown> = outputSchema) {
     const timeout = AbortSignal.any([signal, AbortSignal.timeout(helperLimits.timeoutMs)]);
     if (helper.provider === 'ollama') {
-      const value = await ollamaJson(this.core.settings.ollama.host, 'chat', { model: helper.model, stream: false, format, messages: [{ role: 'user', content: prompt }] }, timeout);
+      const value = await ollamaJson(helper.connectionId?this.core.chatConnections.get(helper.connectionId,'ollama').ollama!.host:this.core.settings.ollama.host, 'chat', { model: helper.model, stream: false, format, messages: [{ role: 'user', content: prompt }] }, timeout);
       return { answer: String(value?.message?.content || '').slice(0, helperLimits.answerChars), usage: { inputTokens: value?.prompt_eval_count, outputTokens: value?.eval_count } };
     }
-    const provider = helper.provider as 'openai' | 'anthropic' | 'google' | 'compatible', key = provider === 'compatible' ? this.core.apiAccess('compatible').key() : this.core.credentials.key(provider);
-    if (!key && provider !== 'compatible') throw new Error(`Add an API key for the helper (${provider})`);
-    const request: { url: string; headers: Record<string, string>; body: unknown } = provider === 'openai' ? { url: 'https://api.openai.com/v1/responses', headers: { Authorization: `Bearer ${key}` }, body: { model: helper.model, store: false, input: prompt } }
-      : provider === 'anthropic' ? { url: 'https://api.anthropic.com/v1/messages', headers: { 'x-api-key': key!, 'anthropic-version': '2023-06-01' }, body: { model: helper.model, max_tokens: 2000, messages: [{ role: 'user', content: prompt }] } }
-      : provider === 'google' ? { url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(helper.model)}:generateContent`, headers: { 'x-goog-api-key': key! }, body: { contents: [{ role: 'user', parts: [{ text: prompt }] }] } }
-      : { url: this.core.settings.compatible.baseUrl.replace(/\/+$/, '') + '/chat/completions', headers: key ? { Authorization: `Bearer ${key}` } : {}, body: { model: helper.model, stream: false, messages: [{ role: 'user', content: prompt }] } };
-    const response = await this.fetch(request.url, { method: 'POST', redirect: 'error', signal: timeout, headers: { 'Content-Type': 'application/json', ...request.headers }, body: JSON.stringify(request.body) });
-    if (!response.ok) { await response.body?.cancel().catch(() => {}); throw new Error(`The helper rejected the request (HTTP ${response.status})`); }
-    const value: any = JSON.parse((await response.text()).slice(0, 2 * 1024 * 1024));
-    const answer = provider === 'openai' ? (value.output || []).flatMap((item: any) => item?.content || []).filter((part: any) => part?.type === 'output_text').map((part: any) => part.text).join('\n')
-      : provider === 'anthropic' ? (value.content || []).filter((part: any) => part?.type === 'text').map((part: any) => part.text).join('\n')
-      : provider === 'google' ? (value.candidates?.[0]?.content?.parts || []).filter((part: any) => typeof part?.text === 'string' && !part.thought).map((part: any) => part.text).join('\n')
-      : String(value.choices?.[0]?.message?.content || '');
-    return { answer: answer.slice(0, helperLimits.answerChars), usage: value.usage || value.usageMetadata };
+    const provider=helper.provider as ApiProvider;
+    const value=await apiTextRequest(provider,{...this.core.accountAccess(provider,helper.connectionId),fetch:this.fetch},{model:helper.model,input:prompt,maxOutputTokens:2000},timeout);
+    const output=taskOutput(value);
+    return {answer:output.text.slice(0,helperLimits.answerChars),usage:output.usage};
   }
 }

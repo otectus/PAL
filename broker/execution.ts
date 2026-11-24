@@ -13,7 +13,7 @@ export type RemoteExecution = {
   caps: string[]; categories: string[]; scriptIds: string[];
   memoryHosts?: string[];
   /** Hosted API providers the device was granted when this execution was authorized. */
-  apiProviders?: string[];
+  apiProviders?: string[]; apiConnections?: string[];
 };
 /**
  * The settings a phone-controlled turn runs under. An owner phone gets the desktop's own settings with

@@ -1,21 +1,23 @@
+import { apiProviders,isApiProvider,providerLabels,type ProviderId } from './provider-catalog.ts';
 import { ownerControlled } from './authority.ts';
 import type { Core } from './core.ts';
 import { categoryEnabled } from './permissions.ts';
 import type { Session, ToolDefinition } from './types.ts';
 
+const delegates = ['codex','claude',...apiProviders];
 const id = { type: 'string', maxLength: 150, description: 'ID of a session delegated by this conversation' };
-const prompt = { type: 'string', minLength: 1, maxLength: 100000, description: 'The complete task and context to send to this provider. The user reviews it before sending.' };
+const prompt = { type: 'string', minLength: 1, maxLength: 100000, description: 'The complete task and context to send to this provider. The user reviews it before sending. State the objective, what to read first, the relevant files, constraints and what not to change, how to check the result, and what to report back.' };
 // A next task the user asked for, declared with this one. It travels with this task's delegation update,
 // so it survives a long conversation; starting it is a separate delegation with its own approval.
 const followUp = { type: 'object', description: 'Only when the user asked for a next task to run after this one finishes: that task, which you start from this task\'s delegation update with its result as context. It needs its own approval then.',
-  properties: { provider: { type: 'string', enum: ['codex', 'claude'] }, prompt: { type: 'string', minLength: 1, maxLength: 20000, description: 'The next task as the user asked for it' },
+  properties: { provider: { type: 'string', enum: delegates }, prompt: { type: 'string', minLength: 1, maxLength: 20000, description: 'The next task as the user asked for it' },
     model: { type: 'string', maxLength: 512, description: 'Optional model ID from providers_list' }, effort: { type: 'string', maxLength: 32, description: 'Optional effort supported by that model' } },
   required: ['provider', 'prompt'], additionalProperties: false };
 export const orchestrationDefinitions: ToolDefinition[] = [
-  { name: 'providers.list', title: 'List providers', category: 'providers', description: 'List available Codex and Claude providers and their selectable models and efforts', schema: {}, readOnly: true },
+  { name: 'providers.list', title: 'List providers', category: 'providers', description: 'List available delegation providers, named accounts and models', schema: {}, readOnly: true },
   { name: 'sessions.list', title: 'List delegated sessions', category: 'providers', description: 'List sessions created by this conversation', schema: {}, readOnly: true },
-  { name: 'sessions.start', title: 'Delegate a task', category: 'providers', description: 'Start a visible Codex or Claude conversation in the current project after user approval. Returns its ID immediately; PAL sends this conversation a delegation update when it finishes.',
-    schema: { provider: { type: 'string', enum: ['codex', 'claude'] }, prompt, model: { type: 'string', maxLength: 512, description: 'Optional model ID from providers_list; omit for CLI default' }, effort: { type: 'string', maxLength: 32, description: 'Optional effort supported by that model' }, followUp }, required: ['provider', 'prompt'] },
+  { name: 'sessions.start', title: 'Delegate a task', category: 'providers', description: 'Start a visible provider conversation in the current project after user approval. Returns its ID immediately; PAL sends this conversation a delegation update when it finishes.',
+    schema: { provider: { type: 'string', enum: delegates }, connectionId:{type:'string',maxLength:64,description:'Named account ID from providers_list'}, prompt, model: { type: 'string', maxLength: 512, description: 'Optional model ID from providers_list; omit for CLI default' }, effort: { type: 'string', maxLength: 32, description: 'Optional effort supported by that model' }, followUp }, required: ['provider', 'prompt'] },
   { name: 'sessions.send', title: 'Continue delegated work', category: 'providers', description: 'Send a follow-up to an idle delegated session after user approval. Returns immediately; PAL sends this conversation a delegation update when it finishes.', schema: { id, prompt, followUp }, required: ['id', 'prompt'] },
   { name: 'sessions.read', title: 'Read delegated results', category: 'providers', description: 'Read status and recent conversation messages from a delegated session', schema: { id }, readOnly: true },
   { name: 'sessions.wait', title: 'Wait for delegated work', category: 'providers', description: 'Wait up to 60 seconds for a delegated turn, then return status and recent messages. Usually unnecessary: a finished session reports back by itself. Waiting sessions need user input in PAL.', schema: { id, seconds: { type: 'integer', minimum: 1, maximum: 60 } }, required: ['id'], readOnly: true },
@@ -24,7 +26,7 @@ export const orchestrationDefinitions: ToolDefinition[] = [
 // With automatic delegation updates off, results arrive only by waiting or reading, as before they existed,
 // and no next task can be declared, since no delegation update would carry it.
 const withoutUpdates: Record<string, string> = {
-  'sessions.start': 'Start a visible Codex or Claude conversation in the current project after user approval. Returns its ID immediately; use sessions_read to check results later.',
+  'sessions.start': 'Start a visible provider conversation in the current project after user approval. Returns its ID immediately; use sessions_read to check results later.',
   'sessions.send': 'Send a follow-up to an idle delegated session after user approval. Returns immediately.',
   'sessions.wait': 'Wait up to 60 seconds for a delegated turn, then return status and recent messages. Waiting sessions need user input in PAL.',
 };
@@ -61,7 +63,7 @@ export async function orchestrate(core: Core, parentId: string, name: string, ar
   };
   const parent = permitted();
   const children = () => core.store.sessions().filter(s => s.parentId === parentId);
-  const owned = () => { const session = core.store.session(args.id); if (session.parentId !== parentId || session.mode !== 'managed' || !['codex', 'claude'].includes(session.provider)) throw new Error('This conversation can only manage its own delegated sessions'); return session; };
+  const owned = () => { const session = core.store.session(args.id); if (session.parentId !== parentId || session.mode !== 'managed' || !delegates.includes(session.provider)) throw new Error('This conversation can only manage its own delegated sessions'); return session; };
   const summary = (s: Session) => ({ id: s.id, provider: s.provider, title: s.title, status: s.status, model: s.model, error: s.error });
   // A read that finds the delegated turn ended consumes its update: this turn already has the result.
   const read = () => {
@@ -70,7 +72,13 @@ export async function orchestrate(core: Core, parentId: string, name: string, ar
     if (!busy(session)) core.pings.consume(parentId, session.id);
     return result;
   };
-  if (name === 'providers.list') return ['codex', 'claude'].map(provider => ({ provider, available: !!core.capabilities[provider]?.available, models: core.capabilities[provider]?.models || [], modelsStatus: core.capabilities[provider]?.modelsStatus }));
+  const permittedRoute=(provider:ProviderId,connectionId?:string)=>!parent.remote || !!core.remoteAuthority?.(parent.remote,{...parent,provider,connectionId});
+  if (name === 'providers.list') return delegates.flatMap(id=>{
+    const provider=id as ProviderId, catalog=core.capabilities[provider];
+    const accounts=core.chatConnections.list().filter(c=>c.kind===provider&&permittedRoute(provider,c.id)).map(c=>({id:c.id,name:c.name}));
+    if(!permittedRoute(provider)&&!accounts.length)return [];
+    return [{provider,available:!!catalog?.available || accounts.length>0,accounts,models:permittedRoute(provider)?catalog?.models||[]:[],modelsStatus:catalog?.modelsStatus}];
+  });
   if (name === 'sessions.list') return children().map(summary);
   if (name === 'sessions.read') return read();
   if (name === 'sessions.stop') {
@@ -99,18 +107,25 @@ export async function orchestrate(core: Core, parentId: string, name: string, ar
   // session does. An owner phone's child inherits the owner snapshot and the desktop's launch policy; never more than the parent.
   const ownerParent = !!parent.remote && ownerControlled(parent);
   const remotePolicy = (ownerParent ? 'desktop' : provider === 'claude' ? 'restricted' : 'unknown') as Session['effectivePolicy'];
-  if (core.capabilities[provider]?.available === false) throw new Error(provider + ' is unavailable');
-  const label = (value: string) => value === 'codex' ? 'Codex' : 'Claude';
+  const connectionId=child?.connectionId||args.connectionId;
+  const account=connectionId?core.chatConnections.get(connectionId,provider):undefined;
+  const revision=account?.revision, ref=account?'connection:'+account.id:'provider:'+provider;
+  const credentialRevision=isApiProvider(provider)?core.credentials.credentialRevision(ref):'';
+  const checkRoute=()=>{permitted();if(!permittedRoute(provider,connectionId)||account&&core.chatConnections.get(account.id).revision!==revision||isApiProvider(provider)&&core.credentials.credentialRevision(ref)!==credentialRevision)throw new Error('The delegation destination or grant changed');};
+  checkRoute();
+  if (!account && core.capabilities[provider]?.available === false) throw new Error(provider + ' is unavailable');
+  const label = (value:string)=>value==='claude'?'Claude':providerLabels[value as ProviderId]||value;
   // A declared next task is shown with this one, but allowing this task never allows that one.
   const planned = next ? `\n\nAfter it finishes, the next task is planned for ${label(next.provider)}${next.model || next.effort ? ` (model: ${next.model || 'CLI default'}, effort: ${next.effort || 'CLI default'})` : ''}. Allowing this task does not allow that one:\n${next.prompt}` : '';
   const answer = await core.approval(parentId, { kind: 'provider', title: `Send this task to ${label(provider)}?`,
-    detail: `Project: ${parent.cwd}\nModel: ${child?.model || args.model || 'CLI default'}\nEffort: ${child?.effort || args.effort || 'CLI default'}\n\n${args.prompt}${planned}`,
+    detail: `${isApiProvider(provider)?'Billed API account: '+(account?.name||'default')+' · '+(account?.compatible?.baseUrl||label(provider))+'\n':''}Project: ${parent.cwd}\nModel: ${child?.model || args.model || 'CLI default'}\nEffort: ${child?.effort || args.effort || 'CLI default'}\n\n${args.prompt}${planned}`,
     choices: ['allow', 'deny'] });
   if (answer.choice !== 'allow') throw new Error('Delegation declined. Do not send this task again without a new user request.');
   permitted();
   if(answer.automatic&&!core.automaticallyApprove(parentId,{kind:'provider',choices:['allow']}))throw new Error('Automatic CLI permission was revoked');
   if (!child) {
-    child = await core.create({ provider, cwd: parent.cwd, trusted: true, model: args.model, effort: args.effort, title: 'Delegated · ' + args.prompt.trim().slice(0, 60) },permitted);
+    checkRoute();
+    child = await core.create({ provider, connectionId, cwd: parent.cwd, trusted: true, model: args.model, effort: args.effort, title: 'Delegated · ' + args.prompt.trim().slice(0, 60) },checkRoute);
     child = core.updateSession(child.id, { parentId, remote:parent.remote ? structuredClone(parent.remote) : undefined, effectivePolicy:parent.remote ? remotePolicy : undefined });
   }
   permitted();
@@ -122,7 +137,7 @@ export async function orchestrate(core: Core, parentId: string, name: string, ar
   permitted();
   // Registered before dispatch, so a child that finishes before send() returns still reports back.
   const ping = core.pings.register(parent, child, name, args);
-  try { await core.send({ id: child.id, text: args.prompt }); }
+  try { checkRoute();await core.send({ id: child.id, text: args.prompt }, {}); }
   catch (error) { if (ping) core.pings.drop(ping.id, 'Dispatch failed'); throw error; }
   if (ping) core.pings.attachTurn(ping.id, core.store.session(child.id).turnId);
   signal.throwIfAborted();

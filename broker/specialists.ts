@@ -18,7 +18,7 @@ import { helperOutput, helperRoles, validHelper, type HelperRole, type HelperSet
 import { completed, failed, routeAllowed, type ToolResultV1 } from './tools/contracts.ts';
 
 export type SpecialistRole = HelperRole | 'document_editor';
-export type Specialist = { id: string; name: string; role: SpecialistRole; description: string; provider?: HelperSettings['provider']; model?: string; instructions?: string; builtin?: boolean; revision: string };
+export type Specialist = { id: string; name: string; role: SpecialistRole; description: string; provider?: HelperSettings['provider']; model?: string; /** The saved account its model runs on; unset is the provider’s default. */ connectionId?: string; instructions?: string; builtin?: boolean; revision: string };
 export const specialistRoles: Record<SpecialistRole, string> = { ...helperRoles, document_editor: 'Document editor' };
 export const specialistLimits = { concurrency: 2, maxConcurrency: 4, panel: 4, specialists: 30, files: 4 };
 export const builtinSpecialists: Specialist[] = [
@@ -48,12 +48,13 @@ export class Specialists {
     if (typeof value.name !== 'string' || !value.name.trim() || value.name.length > 60 || /[\x00-\x1f]/.test(value.name)) throw new Error('Name the specialist with 1–60 characters');
     if (!(value.role in specialistRoles)) throw new Error(`A specialist is one of: ${Object.values(specialistRoles).join(', ')}`);
     if (value.instructions !== undefined && (typeof value.instructions !== 'string' || value.instructions.length > 2000)) throw new Error('Instructions are up to 2,000 characters');
-    const helper = value.provider ? validHelper({ provider: value.provider, model: value.model }) : undefined;
+    const helper = value.provider ? validHelper({ provider: value.provider, model: value.model, ...(value.connectionId ? { connectionId: value.connectionId } : {}) }) : undefined;
+    if (helper?.connectionId) this.core.chatConnections.get(helper.connectionId, helper.provider as any);
     if (helper && value.role === 'visual_review') throw new Error('A visual critic uses the vision helper set in Settings › Connections');
     const existing = stored.items.find(item => item.id === value.id);
     if (!existing && stored.items.length >= specialistLimits.specialists) throw new Error(`Keep at most ${specialistLimits.specialists} specialists`);
     const specialist: Specialist = { id: existing?.id || randomUUID(), name: value.name.trim(), role: value.role, description: typeof value.description === 'string' ? value.description.slice(0, 400) : '',
-      ...(helper ? { provider: helper.provider, model: helper.model } : {}), ...(value.instructions ? { instructions: value.instructions } : {}), revision: existing ? String(BigInt(existing.revision) + 1n) : '1' };
+      ...(helper ? { provider: helper.provider, model: helper.model, ...(helper.connectionId ? { connectionId: helper.connectionId } : {}) } : {}), ...(value.instructions ? { instructions: value.instructions } : {}), revision: existing ? String(BigInt(existing.revision) + 1n) : '1' };
     this.core.store.set(storeKey, { ...stored, revision: String(BigInt(stored.revision) + 1n), items: existing ? stored.items.map(item => item.id === specialist.id ? specialist : item) : [...stored.items, specialist] });
     this.core.changed(); return specialist;
   }
@@ -80,7 +81,7 @@ export class Specialists {
   /** One specialist task, as a child operation of the parent conversation and turn. */
   async run(sessionId: string, p: { specialist: string; request: string; inputs?: unknown[]; changeSetId?: string; turnId?: string; origin?: 'model' | 'user' }, signal: AbortSignal): Promise<ToolResultV1> {
     const specialist = this.get(p.specialist), session = this.core.store.session(sessionId);
-    const helper = specialist.role === 'visual_review' ? this.core.workbench.vision.settings() : specialist.provider ? { provider: specialist.provider, model: specialist.model || '' } as HelperSettings : this.core.workbench.helpers.settings();
+    const helper = specialist.role === 'visual_review' ? this.core.workbench.vision.settings() : specialist.provider ? { provider: specialist.provider, model: specialist.model || '', ...(specialist.connectionId ? { connectionId: specialist.connectionId } : {}) } as HelperSettings : this.core.workbench.helpers.settings();
     if (helper.provider && helper.provider !== 'ollama') this.core.usage.assertWithinBudget(helper.provider);
     const controller = new AbortController(), combined = AbortSignal.any([signal, controller.signal]);
     let operation = this.core.workbench.operations.create({ sessionId, ...(p.turnId ? { turnId: p.turnId } : {}), kind: 'specialist.run', origin: p.origin || 'model', label: `${specialist.name}: ${p.request.slice(0, 80)}`,

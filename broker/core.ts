@@ -1,3 +1,12 @@
+import { apiGet, catalogOperations,type CatalogOperation } from './api-providers.ts';
+import { modelEndpoints } from './model-catalog.ts';
+import { transcribeArtifact } from './speech/artifact.ts';
+import { XaiCollections, xaiManagementOrigin } from './xai-collections.ts';
+import { ProviderComputer,computerTool,computerToolName } from './provider-computer.ts';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { speechVoices,isHostedSpeech, transcribeDetailed, synthesize, voiceSchema } from './hosted-speech.ts';
+import { embeddingProviders } from './graph-memory/hosted-embeddings.ts';
+import { platformAuth } from './provider-auth.ts';
 import { ElevenLabs, validateElevenConfig } from './elevenlabs.ts';
 import { buildIdentity } from './build-info.ts';
 import { EventEmitter } from 'node:events';
@@ -18,13 +27,15 @@ import { discoverProviderModels } from './models.ts';
 import { actionDefinitions, validateAction, desktopAction, applications, windows, audioStatus, mediaStatus, exec } from './desktop.ts';
 import { RpcProcess } from './wire.ts';
 import { paths } from './paths.ts';
-import { OllamaAdapter, modelRoute, ollamaHost, ollamaModels } from './ollama.ts';
+import { OllamaAdapter, modelRoute, ollamaHost, ollamaModels, withOllamaCredential, isDirectOllama } from './ollama.ts';
 import type { OllamaMessage, OllamaTool } from './ollama.ts';
 import { orchestrationDefinitions, orchestrationOffer, orchestrate } from './orchestration.ts';
 import { WebSearch, webDefinitions, webUrl, searchProviders } from './web.ts';
 import type { SearchTrace } from './web.ts';
 import { validConstraints } from './web-plan.ts';
 import { boundedPlan, estimateTokens, type TurnPlan } from './context-plan.ts';
+import { claudeTimeTools, Temporal, temporalGuidance, timeToolNames, validTimeArguments, type Acceptance } from './temporal-context.ts';
+import { validTimeSettings, zoneList } from './time.ts';
 import { Memory, memoryDefinitions } from './memory.ts';
 import { defaultPersonality, personalityInstructions, personalityMaxLength, personalityPreview, validatePersonality, validateAssistantName, validateAvatar } from './personality.ts';
 import { BehaviorPresets } from './behavior-presets.ts';
@@ -43,7 +54,8 @@ import { DelegationPings, boundedText } from './delegation-pings.ts';
 import { ordinarySettings, busy, remoteError } from './execution.ts';
 import type { RemoteExecution } from './execution.ts';
 import { deviceRole, lapsed, limitedControlled, ownerControlled, type WorkingProfile } from './authority.ts';
-import { Speech, listVoices, validateVoice, voiceDirectories, voiceTestLine } from './tts.ts';
+import { Speech, listVoices, speechText, validateVoice, voiceDirectories, voiceTestLine } from './tts.ts';
+import { SpeechCache, validateSpeechCache, type SpeechSource } from './speech-cache.ts';
 import { stripMemoryCitations } from './citations.ts';
 import { Attachments } from './attachments.ts';
 import { Organization } from './organization.ts';
@@ -53,13 +65,15 @@ import { Utilities } from './utilities.ts';
 import { Recovery } from './recovery.ts';
 import { MemoryReview } from './memory-review.ts';
 import { Transcription } from './transcription.ts';
+import { checkSpeechServer, speechServerAddress } from './speech/recognizers.ts';
 import { forkCodex } from './branching.ts';
 import { Workflows } from './workflows.ts';
 import { Projects } from './projects.ts';
 import { providerIds, isApiProvider, providerLabels, providerTraits } from './provider-catalog.ts';
-import { ProviderCredentials } from './credentials.ts';
+import { ProviderCredentials, serviceCredentialIds } from './credentials.ts';
 import { ApiAdapter, apiLabel, apiModels, portableApiHistory, type ApiAccess } from './api-providers.ts';
-import { ChatConnections } from './connections.ts';
+import { validateProviderOptions, providerSupports, perplexityRoute, getProviderDefinition, resolveProviderEndpoint } from './provider-registry.ts';
+import { ChatConnections, credentialDestination, type ChatConnection } from './connections.ts';
 import { clearRouteCache } from './workspace/policy.ts';
 import { declared, endpointOrigin, validEndpoint } from './compatible-endpoint.ts';
 import { Extensions, validServers } from './extensions.ts';
@@ -67,6 +81,8 @@ import { CustomTools, validTemplates } from './custom-tools.ts';
 import { deviceId, listAudioDevices, selectAudio } from './audio-devices.ts';
 import { matchCommand, voiceCommands } from './voice-commands.ts';
 import { Spans } from './spans.ts';
+import { ServiceManager, validateLocalServices } from './service-manager.ts';
+import { CodeContext } from './code-context/service.ts';
 import { BackgroundJobs } from './jobs.ts';
 import { Schedules } from './schedules.ts';
 import { AntigravityAdapter } from './antigravity.ts';
@@ -77,10 +93,24 @@ import { Workbench, validWorkbenchSettings } from './workbench.ts';
 import { TerminalService, terminalKeys } from './terminal/service.ts';
 import { UsageLedger } from './usage.ts';
 import { Skills } from './skills.ts';
+import { planningContext } from './research/handoff.ts';
+import { strictest as strictestDestinations } from './tools/contracts.ts';
+import { providerManifest } from './provider-manifests.ts';
+import { jevModels } from './evaluation-services.ts';
+import { migrateProviderReferences, importProviderData } from './provider-import.ts';
+import { ProviderFiles } from './artifacts/provider-files.ts';
+import { HostedOutputs } from './artifacts/hosted-outputs.ts';
+import { ConnectionTools } from './connection-tools.ts';
+import { RealtimeConversations } from './realtime/conversations.ts';
+import { ProviderInferenceMount } from './provider-inference/mount.ts';
+import { ProviderBridgeMount } from './provider-bridge/mount.ts';
+import { ProviderResearchJobs } from './research/provider-jobs.ts';
 import { Research } from './research.ts';
 import { Canvas } from './canvas.ts';
 import { Notebook } from './notebook.ts';
 import { RemoteView } from './remote-view.ts';
+import { Accounts } from './accounts/service.ts';
+import { WorkspaceHistory } from './workspace-history.ts';
 import { McpOAuth } from './mcp-oauth.ts';
 import { Setups } from './setups.ts';
 import { Specialists } from './specialists.ts';
@@ -138,10 +168,16 @@ export class Core extends EventEmitter {
   packages: ProfilePackages;
   extensions: Extensions;
   oauth: McpOAuth;
+  accounts: Accounts;
+  workspaceHistory: WorkspaceHistory;
   setups = new Setups(this);
   specialists = new Specialists(this);
   translation = new Translation(this);
   customTools: CustomTools;
+  /** A07: local services PAL may run, all of them off until chosen. */
+  services = new ServiceManager(this);
+  /** A03: the code index of the projects the person chose. */
+  code = new CodeContext(this);
   /** M16: responsiveness spans, on only while the user measures. */
   spans = new Spans();
   /** A04: background work listed together, cancellable, and out of the way of replies. */
@@ -156,6 +192,14 @@ export class Core extends EventEmitter {
   usage!: UsageLedger;
   /** Reviewed, versioned SKILL.md packages (skills.ts). */
   skills!: Skills;
+  providerJobs:ProviderResearchJobs;
+  realtime:RealtimeConversations;
+  providerFiles:ProviderFiles;
+  readonly hostedOutputs=new HostedOutputs(this);
+  readonly connectionTools=new ConnectionTools(this);
+  xaiCollections:XaiCollections;
+  providerInference:ProviderInferenceMount;
+  providerBridge:ProviderBridgeMount;
   /** Research runs with an evidence ledger (research.ts). */
   research!: Research;
   /** Isolated interactive previews of workspace HTML (canvas.ts). */
@@ -164,6 +208,9 @@ export class Core extends EventEmitter {
   notebook!: Notebook;
   /** View desktop for owner phones (remote-view.ts). */
   remoteView!: RemoteView;
+  providerComputer=new ProviderComputer(this);
+  /** The clock: what models are told about now, the two clock tools, and when each turn happened (temporal-context.ts). */
+  temporal: Temporal = new Temporal(this);
   chatConnections!: ChatConnections;
   private turnTimers = new Map<string, { started: number; provider: string; first: boolean }>();
   private stopRequests = new Map<string, number>();
@@ -177,7 +224,7 @@ export class Core extends EventEmitter {
   settledReplies = new Map<string, Set<string>>();
   deliveredReplies = new Map<string, Set<string>>();
   turnReplies = new Map<string, Message>();
-  elevenlabs:ElevenLabs; speech: Speech; transcription:Transcription; indextts:IndexTTS;
+  elevenlabs:ElevenLabs; speech: Speech; speechCache!: SpeechCache; transcription:Transcription; indextts:IndexTTS;
   speechResponses = new Map<string, string>();
   sending = new Set<string>();
   deleting = new Set<string>();
@@ -198,6 +245,7 @@ export class Core extends EventEmitter {
   stopTimers=new Set<NodeJS.Timeout>();
   capabilities: any = {}; ticker: NodeJS.Timeout; flushTimer?: NodeJS.Timeout;
   generations = new Map<string, number>();
+  readonly realtimeExecution = new AsyncLocalStorage<{sessionId:string;execution:RemoteExecution}>();
   remoteAuthority?: (execution: RemoteExecution, session: Session) => boolean;
   /** An owner phone's working profile now (the gateway's device record); a turn keeps the narrower of this and its own. */
   remoteProfile?: (deviceId: string) => WorkingProfile | undefined;
@@ -211,7 +259,7 @@ export class Core extends EventEmitter {
   unacknowledged = new Map<string, { turnId: string; messageId: string; text: string; attachmentIds: string[]; returned?: boolean }>();
   memoryCaptures = new Set<Promise<unknown>>();
   constructor(store = new Store(), factory?: (s: Session, h: Hooks) => Adapter, modelLoader = discoverProviderModels) {
-    super(); this.store = store; this.settings = store.settings(); this.credentials = new ProviderCredentials(join(store.directory, 'credentials')); this.modelLoader = modelLoader === discoverProviderModels ? (provider, host) => isApiProvider(provider) ? apiModels(provider, this.apiAccess(provider)) : discoverProviderModels(provider,host) : modelLoader;
+    super(); migrateProviderReferences(store); this.store = store; this.settings = store.settings(); this.credentials = new ProviderCredentials(join(store.directory, 'credentials')); this.web.credentials = this.credentials; this.modelLoader = modelLoader === discoverProviderModels ? (provider, host) => isApiProvider(provider) ? apiModels(provider, this.apiAccess(provider)) : discoverProviderModels(provider,host) : modelLoader;
     this.telemetry=new TelemetryService(()=>{if(!this.closed)this.changed();},(process.env.PAL_RUNTIME_DIR||process.env.CERE_RUNTIME_DIR)?paths().runtime:undefined);
     this.power=new PowerSessions({sessions:()=>this.store.sessions(),changed:()=>{if(!this.closed)this.changed();},stop:id=>this.stopAndClose(id)});
     this.attachments=new Attachments(store);this.organization=new Organization(store,()=>this.changed());
@@ -222,20 +270,28 @@ export class Core extends EventEmitter {
     this.presets=new BehaviorPresets(store,()=>{if(!this.closed)this.changed();});
     this.localModels=new LocalModels(this);
     this.collections=new KnowledgeCollections(this);
-    this.vault=new NotesVault(()=>this.settings.notesVault.enabled?this.settings.notesVault.path:'');
+    this.vault=new NotesVault(()=>this.settings.notesVault.enabled?this.settings.notesVault.path:'',()=>this.settings.notesVault.folders);
     this.packages=new ProfilePackages(this);
-    this.extensions=new Extensions(this);this.oauth=new McpOAuth(this);
+    this.extensions=new Extensions(this);this.oauth=new McpOAuth(this);this.accounts=new Accounts(this);
     this.customTools=new CustomTools(this);
     selectAudio(this.settings.audio);
     this.spans.configure(this.settings.responsiveness);
-    this.transcription=new Transcription({settings:()=>this.settings.transcription,changed:()=>{if(!this.closed)this.changed();}});
+    this.transcription=new Transcription({cloud:(p,s,a,signal)=>transcribeDetailed(this,p,s,a,signal),settings:()=>this.settings.transcription,changed:()=>{if(!this.closed)this.changed();}});
     this.speech = new Speech(() => this.settings, () => { if (!this.closed) this.changed(); });
+    this.speech.hosted=(p,t,signal)=>synthesize(this,p,this.settings.hostedVoice||{},t,signal);
     this.indextts=new IndexTTS(store,()=>this.settings.indextts,()=>{if(!this.closed)this.changed();});
     this.speech.indextts=this.indextts;
     this.elevenlabs=new ElevenLabs(()=>this.settings.elevenlabs,()=>this.credentials.key('elevenlabs'),()=>{if(!this.closed)this.changed();});
     this.speech.elevenlabs=this.elevenlabs;
     this.speech.timing = (ms, outcome, backend) => this.spans.record('synthesis', ms, outcome, backend);
+    this.speech.observed = key => this.spans.utterance(key);
+    this.speech.cache = this.speechCache = new SpeechCache(this.store, () => this.settings.speechCache, () => { if (!this.closed) this.changed(); });
+    this.speech.hostedFacts = () => ({ ...this.settings.hostedVoice });
+    this.workspaceHistory = new WorkspaceHistory(this);
     this.memory = new Memory(store, () => this.settings, () => { if (!this.closed) this.changed(); });
+    this.memory.observed = (observation, current) => { if (!this.closed) this.workspaceHistory.observe(observation, current); };
+    this.memory.policyChanged = policy => { if (!this.closed) this.workspaceHistory.configure(policy); };
+    if (this.memory.historyPolicy) this.workspaceHistory.configure(this.memory.historyPolicy);
     this.factory = factory || ((s, h) => s.provider === 'codex' ? new CodexAdapter(s,h) : s.provider === 'claude' ? new ClaudeAdapter(s,h) : s.provider === 'antigravity' ? new AntigravityAdapter(s,h) : this.conversationAdapter(s,h,{
       load: () => this.store.get<OllamaMessage[]>((isApiProvider(s.provider) ? 'api:' : 'ollama:') + s.id, []),
       ...this.telemetryContext(s.id),
@@ -258,6 +314,8 @@ export class Core extends EventEmitter {
       search: (query, signal, constraints) => { if (!this.settingsFor(s.id).webSearch.enabled) throw new Error('Web scope denied'); return this.webCall('web_search', { query, ...(constraints || {}) }, signal, s.id); },
       plan: plan => this.recordPlan(s.id, plan),
       delegationUpdates: () => this.settings.delegationUpdates,
+      temporal: budget => this.temporal.request(s.id, budget),
+      temporalLayer: request => this.temporal.layer(s.id, request),
       prepareTools: signal => this.workbench.prepare(s.id, signal),
       restrict: (messages, signal) => this.workbench.restrict(s.id, messages, signal),
       media: (refs, signal) => this.workbench.mediaFor(s.id, refs, signal),
@@ -272,6 +330,10 @@ export class Core extends EventEmitter {
         this.assertNotePacket(s.id);
       },
       privateValid: () => { this.assertNotePacket(s.id); },
+      pinned: async (text, signal, budget) => {
+        const session = this.store.session(s.id);
+        return this.workbench.pins.resolve(session, text, signal, budget);
+      },
       documents: async (text, signal, budget) => {
         const session = this.store.session(s.id);
         if (session.temporary || !this.collections.bound(session).length) return { text: '' };
@@ -289,6 +351,8 @@ export class Core extends EventEmitter {
     this.sendQueue = new SendQueue(this);
     this.pings = new DelegationPings(this);
     this.memory.eraseDelegations = (sessions, matches) => this.pings.erase(sessions, matches);
+    this.memory.eraseTiming = (sessionId, messageIds) => this.temporal.erase(sessionId, messageIds);
+    this.memory.taskBinding = session => this.workflows.taskBinding(session);
     for (const s of store.sessions()) if (['starting','working','waiting','stopping'].includes(s.status)) {
       s.status = 'interrupted'; delete s.activity;
       s.agents = s.agents?.map(a => this.agentActive(a) ? {...a, status:'interrupted', updated:Date.now()} : a); s.error = 'PAL restarted. The previous turn was not replayed.'; store.saveSession(s);
@@ -301,13 +365,20 @@ export class Core extends EventEmitter {
       }
       store.saveSession(s);
     }
-    for (const s of store.sessions()) this.sendQueue.recover(s.id);
+    for (const s of store.sessions()) { this.sendQueue.recover(s.id); this.temporal.recover(s.id); }
     this.pings.recover();
     this.completions=store.get<any[]>('completionInbox',[]).flatMap(row=>{const message=store.messageById(row.messageId);try{const s=store.session(row.sessionId);return[{...row,message:message||{id:'',sessionId:s.id,role:'assistant',text:'This run finished without a final message.',time:row.time}}];}catch{return[];}});
     // Last, so its restart recovery can describe state that every other service already provides.
     this.chatConnections=new ChatConnections(this);
     this.memory.service.readConnection=id=>this.chatConnections.get(id);
+    this.memory.service.embeddingAccess=(provider,id)=>this.accountAccess(provider,id);
     this.chatConnections.addDependencyCheck(connection=>{
+      if(this.settings.workbench.imageConnections.some(c=>c.providerAccountId===connection.id))return 'Select another account in the image connection before removing this account';
+      if(this.settings.hostedVoice?.connectionId===connection.id||this.settings.transcription?.connectionId===connection.id)return 'Choose another speech account before removing this connection';
+      if(this.settings.workbench.helper?.connectionId===connection.id||this.settings.workbench.vision?.connectionId===connection.id)return 'Choose another helper account before removing this connection';
+      if(this.specialists?.list().specialists.some(item=>item.connectionId===connection.id))return 'Choose another account for the specialists that use this connection before removing it';
+      if(this.settings.memory.embeddingConnectionId===connection.id) return 'Choose another embedding account before removing this connection';
+      if(this.settings.memory.extractionConnectionId===connection.id) return 'Choose another memory extraction account before removing this connection';
       return this.memory.service.usesBinding('connection:'+connection.id)
         ?'Change the memory task binding in Knowledge settings before removing this connection.':undefined;
     });
@@ -315,6 +386,14 @@ export class Core extends EventEmitter {
     this.terminals=new TerminalService(this.store);
     this.usage=new UsageLedger(this);
     this.skills=new Skills(this);
+    this.providerJobs=new ProviderResearchJobs(this);
+    this.realtime=new RealtimeConversations(this);this.providerFiles=new ProviderFiles(this);
+    this.xaiCollections=new XaiCollections(this,connectionId=>{
+      const ref=connectionId?'connection:'+connectionId+':xai-management':undefined;
+      return {key:this.credentials.key('xai_management',xaiManagementOrigin,ref),revision:this.credentials.credentialRevision(ref||'provider:xai_management')};
+    });
+    this.providerInference=new ProviderInferenceMount(this);
+    this.providerBridge=new ProviderBridgeMount(this);
     this.research=new Research(this);
     this.canvas=new Canvas(this);
     this.notebook=new Notebook(this);
@@ -331,30 +410,108 @@ export class Core extends EventEmitter {
   }
   /** How an API adapter reaches its provider. A compatible endpoint's key is used only for its own origin. */
   apiAccess(provider: import('./provider-catalog.ts').ApiProvider, sessionId?: string): ApiAccess {
-    if (provider !== 'compatible') return { key: () => this.credentials.key(provider) };
-    // A conversation on a named connection always reads that connection, as it is now.
-    const endpoint = () => this.chatConnections.endpoint(sessionId ? this.store.session(sessionId) : undefined);
-    return { key: () => {const id=sessionId?this.store.session(sessionId).connectionId:undefined;return this.credentials.key('compatible', endpointOrigin(endpoint().baseUrl),id?'connection:'+id:undefined);}, endpoint };
+    const session = sessionId ? this.store.session(sessionId) : undefined;
+    return this.accountAccess(provider, session?.connectionId);
   }
-  endpointAccess(endpoint: import('./types.ts').CompatibleEndpoint,connectionId?:string): ApiAccess { return { key: () => this.credentials.key('compatible', endpointOrigin(endpoint.baseUrl),connectionId?'connection:'+connectionId:undefined), endpoint: () => endpoint }; }
+  accountAccess(provider: import('./provider-catalog.ts').ApiProvider, connectionId?: string): ApiAccess {
+    if (!connectionId) return provider === 'compatible' ? this.endpointAccess(this.settings.compatible) : {key: () => this.credentials.key(provider)};
+    const account = this.chatConnections.get(connectionId, provider), ref = 'connection:' + account.id;
+    const revision = this.credentials.credentialRevision(ref);
+    const check = () => {
+      if (this.chatConnections.get(connectionId, provider).revision !== account.revision || this.credentials.credentialRevision(ref) !== revision)
+        throw new Error('The provider account changed. Review its current settings and retry.');
+    };
+    const endpoint = account.compatible!, token=platformAuth(account);
+    return {...(token ? {token:async()=>{ check(); const value=await token(); check(); return value; }} : {}), key: () => { check(); return token?'platform-identity':this.credentials.key(provider, credentialDestination(account), ref); },
+      endpoint: () => {check(); return endpoint;},
+      route: () => {check(); return {baseUrl:endpoint.baseUrl, variant:provider==='compatible'?(account.task?.dialect==='responses'?'responses':'chat'):account.variant, deployment:account.deployment, apiVersion:account.apiVersion, organization:account.organization, project:account.project};},
+      ...(provider==='litellm'&&account.variant==='bridge'?{
+        localBridgeChat:(request:any,signal:AbortSignal,delta?:(text:string)=>void)=>{check();return this.providerBridge.service.chat({connectionId:account.id,connectionRevision:account.revision,...request},signal,delta);},
+        localBridgeEmbeddings:async(model:string,input:string[],dimensions:number|undefined,signal:AbortSignal)=>{check();return (await this.providerBridge.service.embeddings({connectionId:account.id,connectionRevision:account.revision,model,input,...(dimensions?{dimensions}:{})},signal)).vectors;},
+      }:{}),};
+  }
+  private accountCatalogs = new Map<string, {revision:string; models:ModelOption[]}>();
+  private ollamaKey(connectionId?: string){
+    const ref=connectionId?'connection:'+connectionId:undefined;
+    return ()=>this.credentials.key('ollama_cloud',connectionId?'https://ollama.com':undefined,ref);
+  }
+  private ollamaCatalog(host:string,connectionId?:string){return withOllamaCredential(this.ollamaKey(connectionId),()=>this.modelLoader('ollama',host));}
+  async accountModels(connection: ChatConnection,operation:CatalogOperation='chat') {
+    if(!catalogOperations.includes(operation))throw new Error('Choose a supported model catalog operation');
+    if(connection.kind==='ollama'&&operation==='embed')return withOllamaCredential(this.ollamaKey(connection.id),()=>ollamaModels(connection.ollama!.host,'embedding'));
+    if (connection.kind === 'ollama') return this.ollamaCatalog(connection.ollama!.host,connection.id);
+    if (connection.kind === 'litellm' && connection.variant === 'bridge') return Object.assign([] as ModelOption[],{unlisted:true});
+    const ref = 'connection:' + connection.id;
+    const revision = connection.revision + '/' + this.credentials.credentialRevision(ref);
+    const access = this.accountAccess(connection.kind, connection.id);
+    const models = await apiModels(connection.kind, access,operation);
+    access.key(); // Recheck identity after the response.
+    if(operation==='chat')this.accountCatalogs.set(connection.id, {revision, models});
+    return models;
+  }
+  private catalogForAccount(provider:import('./provider-catalog.ts').ApiProvider,connectionId?:string):ModelOption[] {
+    if (!connectionId) return this.capabilities[provider]?.models || [];
+    const account=this.chatConnections.get(connectionId,provider), cached=this.accountCatalogs.get(connectionId);
+    const revision=account.revision+'/'+this.credentials.credentialRevision('connection:'+connectionId);
+    return cached?.revision===revision?cached.models:[];
+  }
+  private validateEffort(provider:import('./provider-catalog.ts').ApiProvider,model:string,effort:string,connectionId?:string) {
+    if(provider==='perplexity') {perplexityRoute(model,effort || undefined);return;}
+    if (!effort) return;
+    const definition=getProviderDefinition(provider), option=definition.optionsSchema.find(field=>field.key==='reasoningEffort');
+    const catalog=connectionId||this.capabilities[provider]?.modelsStatus==='ready'?this.catalogForAccount(provider,connectionId):[];
+    const choices=catalog?.find((entry:ModelOption)=>entry.id===model)?.efforts;
+    // A model's own list is the authority: OpenRouter names more levels for some models than for others.
+    if(!option || !choices?.some((e:{id:string})=>e.id===effort))
+      throw new Error('Use the model’s default reasoning settings or choose an advertised effort');
+  }
+  apiModelGate(provider: import('./provider-catalog.ts').ApiProvider, model: string, connectionId: string|undefined, feature: 'local-tools'|'images') {
+    const account = connectionId ? this.chatConnections.list().find(c=>c.id===connectionId && c.kind===provider) : undefined;
+    if (connectionId && !account) return false;
+    if (provider === 'compatible') return (account?.compatible || this.settings.compatible)[feature === 'images' ? 'images' : 'tools'];
+    const entry = this.catalogForAccount(provider,connectionId).find(modelOption=>modelOption.id===model);
+    if(entry?.capabilities?.includes('no-'+feature))return false;
+    return providerSupports(provider, feature, {variant:account?.variant, connectionCapabilities:account?.compatible ? [ ...(account.compatible.tools?['local-tools']:[]), ...(account.compatible.images?['images']:[]) ] : undefined,modelCapabilities:entry?.capabilities?.map((c:string)=>c==='tools'?'local-tools':c==='vision'?'images':c)}) === true;
+  }
+  endpointAccess(endpoint: import('./types.ts').CompatibleEndpoint,connectionId?:string): ApiAccess {
+    if(connectionId) return this.accountAccess('compatible',connectionId);
+    return {key:()=>this.credentials.key('compatible',endpointOrigin(endpoint.baseUrl)),endpoint:()=>endpoint};
+  }
   /**
    * A conversation's own catalog: its Ollama host's, its named connection's, or the provider's. A
    * conversation on a named connection never gets the default endpoint's list (MOB-001).
    */
   async sessionModels(s: Session): Promise<ModelOption[]> {
-    if (s.provider === 'ollama') return ollamaModels(s.ollama!.host);
-    if (s.provider === 'compatible' && s.connectionId) return apiModels('compatible', this.apiAccess('compatible', s.id));
+    if (s.provider === 'ollama') return withOllamaCredential(this.ollamaKey(s.connectionId),()=>ollamaModels(s.ollama!.host));
+    if (isApiProvider(s.provider) && s.connectionId) return this.accountModels(this.chatConnections.get(s.connectionId, s.provider));
     return this.refreshProviderModels(s.provider);
   }
   /** M13: whether a conversation's provider takes tool calls; a compatible endpoint only if declared. */
-  toolCalling(s: Session) { if (s.provider !== 'compatible') return true; try { return this.chatConnections.endpoint(s).tools; } catch { return false; } }
+  toolCalling(s: Session) { if (!isApiProvider(s.provider)) return true; try { return this.apiModelGate(s.provider,s.model || '',s.connectionId,'local-tools'); } catch { return false; } }
   conversationAdapter(s: Session, h: Hooks, context: import('./ollama.ts').OllamaContext): Adapter {
     if (isApiProvider(s.provider)) {
-      const provider=s.provider,model:ModelOption|undefined=this.capabilities[provider]?.models?.find((m:ModelOption)=>m.id===s.model);
+      const provider=s.provider,model=this.catalogForAccount(provider,s.connectionId).find(m=>m.id===s.model);
       const endpoint=this.chatConnections.endpoint(s),limits=provider==='compatible'?{contextLength:endpoint.contextLength||undefined,maxOutputTokens:endpoint.maxOutputTokens||undefined}:{contextLength:model?.contextLength,maxOutputTokens:model?.maxOutputTokens};
-      return new ApiAdapter(s,h,context,this.apiAccess(provider,s.id),limits);
+      const accountRevision=s.connectionId?this.chatConnections.get(s.connectionId,provider).revision:0;
+      const credentialRevision=this.credentials.credentialRevision(s.connectionId?'connection:'+s.connectionId:'provider:'+provider);
+      const captureOutput=async(response:unknown,signal:AbortSignal)=>{
+        const current=this.store.session(s.id);
+        return this.providerJobs.outputFiles.capture({sessionId:s.id,response,connectionId:s.connectionId,accountRevision,credentialRevision,
+          allowDownload:!current.temporary&&!limitedControlled(current)&&(!current.remote||!!this.remoteAuthority?.(current.remote,current)),turnId:current.turnId,signal});
+      };
+      // Files the provider's own code made: kept with the conversation, from the account that made them.
+      const captureFiles=async(files:import('./artifacts/hosted-outputs.ts').HostedFile[],signal:AbortSignal)=>{
+        const check=()=>{
+          const current=this.store.session(s.id);
+          if((current.connectionId||undefined)!==(s.connectionId||undefined)||(s.connectionId?this.chatConnections.get(s.connectionId,provider).revision:0)!==accountRevision||this.credentials.credentialRevision(s.connectionId?'connection:'+s.connectionId:'provider:'+provider)!==credentialRevision)throw new Error('the account changed');
+          if(limitedControlled(current)||current.remote&&!this.remoteAuthority?.(current.remote,current))throw new Error('a restricted remote turn');
+        };
+        const access=this.accountAccess(provider,s.connectionId);
+        return this.hostedOutputs.capture(files,{sessionId:s.id,provider,connectionId:s.connectionId,base:resolveProviderEndpoint(provider,access.route?.()),key:access.token?await access.token():access.key(),turnId:this.store.session(s.id).turnId,fetch:access.fetch,check},signal);
+      };
+      return new ApiAdapter(s,h,context,{canUseImages:()=>this.apiModelGate(provider,s.model,s.connectionId,'images'),...(['anthropic','openai','google'].includes(provider)?{captureFiles}:{}),...(provider==='perplexity'?{captureOutput}:{}),...this.apiAccess(provider,s.id),fileParts:ids=>this.providerFiles.historyParts(s.id,ids),collectionTools:options=>this.xaiCollections.tools(s.id,options)},limits);
     }
-    if (s.provider === 'ollama') return new OllamaAdapter(s,h,context);
+    if (s.provider === 'ollama') {const adapter=new OllamaAdapter(s,h,context);adapter.accountKey=this.ollamaKey(s.connectionId);return adapter;}
     throw new Error('Unsupported conversation provider');
   }
   telemetryContext(id:string){
@@ -370,6 +527,7 @@ export class Core extends EventEmitter {
     this.stateRevision++;
     if (this.closed) return;
     // Policy takes effect on the change itself ('changed'); the snapshot that follows is paced.
+    this.realtime?.recheck();
     this.emit('changed');
     const elapsed=Date.now()-this.lastStateEmit;
     if (!this.stateTimer && elapsed>=Core.stateInterval) { this.emitState(); return; }
@@ -405,9 +563,9 @@ export class Core extends EventEmitter {
     if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;
     return {version:1,revision:p.revision,field:p.field,offset:p.offset,text:text.slice(p.offset,end),next:end<text.length?end:null};
   }
-  private snapshotData() { this.completions=this.completions.map(c=>{let message=this.store.messageById(c.message.id)||c.message;if(message.text.length>16000){let end=16000;if(/[\uD800-\uDBFF]/.test(message.text[end-1]))end--;message={...message,text:message.text.slice(0,end)+'\n\n[Long reply — open the conversation to read more.]',truncated:true} as RunCompletion['message'];}return{...c,message}});return { version: 1, revision:this.stateRevision, sessions: this.store.snapshotSessions(Object.values(this.attention).map(a=>a.sessionId)), sessionCount:this.store.sessionCount(),sessionCatalogRevision:this.store.catalogRevision,recoveryWarning:this.recovery.warning,recoveryPending:this.recovery.pending, power:this.power.snapshot(), folders:this.store.folders(), bookmarks:this.store.bookmarks(),navigation:this.store.get('navigation',{favorites:[],recents:[]}), settings: this.settings, telemetry: this.telemetry.status, speech: this.speech.snapshot(), indextts:this.indextts.snapshot(), elevenlabs:{...this.elevenlabs.snapshot(),credential:this.credentials.status().elevenlabs}, transcription:this.transcription.status(), settingsRevision:this.store.get('settingsRevision','0'), remote: this.remoteStatus, personality: { defaultText: defaultPersonality, maxLength: personalityMaxLength }, behaviorPresets:this.presets.summary(), modelPull:this.localModels.snapshot(), collectionJob:this.collections.snapshot(), extensions:this.extensions.snapshot(), customTools:this.customTools.snapshot(), jobs:this.jobs.snapshot(), workbench:this.workbench.summary(), memory: this.memory.summary(), approvals: [...this.approvals.values()].map(a => a.value), completions: this.completions, companionReplies: this.companionReplies, capabilities: this.capabilities, providerTraits, providerOrder: [...providerIds], actions: actionDefinitions, timers: this.store.timers(), activity: this.store.activities(), panels: {...this.panels}, attention: structuredClone(this.attention) }; }
+  private snapshotData() { const credentials = this.credentials.status(); this.completions=this.completions.map(c=>{let message=this.store.messageById(c.message.id)||c.message;if(message.text.length>16000){let end=16000;if(/[\uD800-\uDBFF]/.test(message.text[end-1]))end--;message={...message,text:message.text.slice(0,end)+'\n\n[Long reply — open the conversation to read more.]',truncated:true} as RunCompletion['message'];}return{...c,message}});return { version: 1, revision:this.stateRevision, sessions: this.store.snapshotSessions(Object.values(this.attention).map(a=>a.sessionId)).map(session=>{const waiting=this.pings.waiting(session.id);return waiting?{...session,pendingUpdates:waiting}:session;}), sessionCount:this.store.sessionCount(),sessionCatalogRevision:this.store.catalogRevision,recoveryWarning:this.recovery.warning,recoveryPending:this.recovery.pending, power:this.power.snapshot(), folders:this.store.folders(), bookmarks:this.store.bookmarks(),navigation:this.store.get('navigation',{favorites:[],recents:[]}), settings: this.settings, telemetry: this.telemetry.status, speech: this.speech.snapshot(), indextts:this.indextts.snapshot(), elevenlabs:{...this.elevenlabs.snapshot(),credential:credentials.elevenlabs}, webSearchCredentials:{perplexity:credentials.perplexity,google_search:credentials.google_search}, transcription:this.transcription.status(), settingsRevision:this.store.get('settingsRevision','0'), remote: this.remoteStatus, personality: { defaultText: defaultPersonality, maxLength: personalityMaxLength }, behaviorPresets:this.presets.summary(), modelPull:this.localModels.snapshot(), collectionJob:this.collections.snapshot(), extensions:this.extensions.snapshot(), customTools:this.customTools.snapshot(), accounts:this.accounts.summary(), jobs:this.jobs.snapshot(), workbench:this.workbench.summary(), memory: this.memory.summary(), approvals: [...this.approvals.values()].map(a => a.value), completions: this.completions, companionReplies: this.companionReplies, capabilities: this.capabilities, providerTraits, providerOrder: [...providerIds], actions: actionDefinitions, timers: this.store.timers(), activity: this.store.activities(), panels: {...this.panels}, attention: structuredClone(this.attention) }; }
   settingsFor(id: string): Settings {
-    const session = this.store.session(id), execution = session.remote;
+    const session = this.store.session(id), current = this.realtimeExecution.getStore(), execution = current?.sessionId === id ? current.execution : session.remote;
     if (execution && (!this.remoteAuthority?.(execution, session) || lapsed(execution))) throw remoteError('AUTH_REVOKED', 'Remote authority expired or was revoked. Detach locally to continue.');
     const owner=!!execution&&deviceRole(execution.role)==='owner';
     const settings=ordinarySettings(this.settings, execution, owner?this.remoteProfile?.(execution!.deviceId):undefined),power=this.power.effective(session);
@@ -415,7 +573,20 @@ export class Core extends EventEmitter {
     if (execution && !owner && session.provider !== 'ollama' && !execution.memoryHosts?.some(host => ollamaHost(host) === ollamaHost(settings.ollama.host))) settings.memory = {...settings.memory, enabled:false};
     return {...settings,bypassCliPermissions:settings.bypassCliPermissions||power.cli,bypassComputerPermissions:settings.bypassComputerPermissions||power.computer,...(session.temporary?{memory:{...settings.memory,enabled:false},profile:'manual' as const,categories:[],grants:[]}: {})};
   }
+  private async retireAccountSession(id:string) {
+    const conflict=remoteError('REVISION_CONFLICT','This conversation’s account changed. Review the current destination before sending.');
+    this.preparations.get(id)?.abort(conflict);
+    if(!busy(this.store.session(id))) {await this.disconnect(id);return;}
+    this.abortActions(id,conflict);
+    this.cancelApprovals(id);
+    const adapter=this.adapters.get(id);
+    this.adapters.delete(id);
+    // The change can arrive from a callback within the current send. Closing is asynchronous
+    // so it never waits on the same preparation that is still returning from this edit.
+    if(adapter)void adapter.interrupt().catch(()=>{}).finally(()=>adapter.close()).catch(()=>{});
+  }
   async disconnect(id: string) {
+    this.providerComputer.stop(id);
     const s = this.store.session(id); if (busy(s)) throw remoteError('SESSION_BUSY', 'Stop the active turn first.');
     this.abortActions(id, new Error('Session disconnected'));
     this.terminal.add(id); this.generations.set(id, (this.generations.get(id) || 0) + 1);
@@ -425,6 +596,8 @@ export class Core extends EventEmitter {
   }
   async sendRemote(p: any, execution: RemoteExecution, beforeAccept?:()=>void, onDispatched?:()=>void, onAccepted?:()=>void, onRejected?:()=>void) {
     const initial=this.store.session(p.id);
+    // The moment and zone this message is read in are fixed here, before any preparation; a queued one keeps its own.
+    if(!p.timing)p={...p,timing:this.temporal.accept(initial,'human-mobile',{device:p.clientContext?.timeZone})};
     // W10: a phone sends the desktop draft's attachments only as it reviewed them (IDs and content digests).
     const reviewed=(attachments:Attachment[]|undefined)=>JSON.stringify((attachments||[]).map(a=>[a.id,a.sha256]))===JSON.stringify((p.desktopAttachments||[]).map((a:any)=>[a.id,a.sha256]));
     if(!p.queuedMessageId && (initial.draftAttachments?.length||p.desktopAttachments?.length) && !reviewed(initial.draftAttachments))throw remoteError('REVISION_CONFLICT',p.desktopAttachments===undefined?'This desktop draft has attachments. Review or send it from the desktop before sending from mobile.':'The desktop draft attachments changed. Review them again before sending.');
@@ -505,7 +678,7 @@ export class Core extends EventEmitter {
     }
     this.capabilities[provider]={...previous,modelsStatus:'loading',modelsError:undefined};this.changed();
     try {
-      const models=await this.modelLoader(provider, provider === 'ollama' ? this.settings.ollama.host : undefined);
+      const models=provider==='ollama'?await this.ollamaCatalog(this.settings.ollama.host):await this.modelLoader(provider);
       if (this.closed) return models;
       if(this.modelGenerations.get(provider)!==generation)return this.capabilities[provider]?.models || models;
       // A partially readable catalog stays available; omitted entries are named, never guessed.
@@ -526,6 +699,8 @@ export class Core extends EventEmitter {
       toolActivity:{agentId:agent.id,agentName:agent.name,status:agent.status}});
     if (!this.flushTimer) this.flushTimer = setTimeout(() => this.flush(),80);
   }
+  /** A05: binds a conversation to a task of its project, or releases it. */
+  setTask(id: string, task: Session['task']) { return this.updateSession(id, { task }); }
   updateSession(id: string, patch: Partial<Session>) {
     // A status change can end a delegated turn; it is judged against the session as it was.
     const before = patch.status ? this.store.session(id) : undefined;
@@ -536,6 +711,7 @@ export class Core extends EventEmitter {
       this.pendingCompletions.delete(id);
       this.speechResponses.delete(id);
       this.turnReplies.delete(id);
+      this.temporal.finished(id, patch.status === 'error' ? 'failed' : 'interrupted');
       // A late provider fault retracts that turn's success, never another turn's.
       if (patch.status === 'error' || patch.status === 'interrupted')
         this.completions = this.completions.filter(c => c.sessionId !== id || c.turnId !== this.store.session(id).turnId);
@@ -558,19 +734,19 @@ export class Core extends EventEmitter {
     }
     return s;
   }
-  async create(p: any, authorize?: () => void, initial?:Pick<Session,'remote'|'effectivePolicy'> & {draft?:string}) {
+  async create(p: any, authorize?: () => void, initial?:Pick<Session,'remote'|'effectivePolicy'> & {draft?:string; onSave?:(session:Session)=>void}) {
     // A named connection supplies the host or endpoint; without one, Settings' default applies as before.
-    const connection = p.connectionId !== undefined ? this.chatConnections.get(p.connectionId, p.provider === 'ollama' ? 'ollama' : p.provider === 'compatible' ? 'compatible' : undefined) : undefined;
+    const connection = p.connectionId !== undefined ? this.chatConnections.get(p.connectionId, p.provider) : undefined;
     if (connection && p.provider !== connection.kind) throw new Error('That connection is for another provider');
     const limitedInitial=!!initial?.remote&&deviceRole(initial.remote.role)!=='owner';
-    if (connection && limitedInitial) throw new Error('Phones use the connections their pairing allows');
+    if (connection && limitedInitial && !initial?.remote?.apiConnections?.includes(connection.id)) throw new Error('Phones use the connections their pairing allows');
     if (connection?.kind === 'ollama') p = { ...p, ollamaHost: connection.ollama!.host };
     const ollamaConfig = {...this.settings.ollama,...(p.provider==='ollama'&&p.ollamaHost?{host:ollamaHost(p.ollamaHost)}:{})};
     // The default host's cached list says nothing about another host's models.
-    let ollamaCatalog: ModelOption[] | undefined = this.capabilities.ollama?.modelsStatus === 'ready' && ollamaHost(ollamaConfig.host) === ollamaHost(this.settings.ollama.host) ? this.capabilities.ollama.models : undefined;
+    let ollamaCatalog: ModelOption[] | undefined = !connection && this.capabilities.ollama?.modelsStatus === 'ready' && ollamaHost(ollamaConfig.host) === ollamaHost(this.settings.ollama.host) ? this.capabilities.ollama.models : undefined;
     if (!(providerIds as readonly string[]).includes(p.provider)) throw new Error('Choose a supported provider');
     // A phone runs a hosted API provider only when its authorized execution carries that provider's grant.
-    if(limitedInitial && (p.provider==='antigravity'||isApiProvider(p.provider)&&!(initial!.remote!.caps.includes('providers.api')&&initial!.remote!.apiProviders?.includes(p.provider))))throw new Error('This provider is currently available on the desktop only');
+    if(limitedInitial && (p.provider==='antigravity'||isApiProvider(p.provider)&&!(initial!.remote!.caps.includes('providers.api')&&(initial!.remote!.apiProviders?.includes(p.provider)||!!connection&&initial!.remote!.apiConnections?.includes(connection.id)))))throw new Error('This provider is currently available on the desktop only');
     if(p.temporary!==undefined&&typeof p.temporary!=='boolean')throw new Error('Invalid temporary-conversation choice');
     if(p.temporary&&(p.nativeId||initial?.remote||p.tools))throw new Error('Temporary conversations start fresh without PAL tools or mobile sharing');
     if(p.temporary&&this.store.sessions().filter(s=>s.temporary).length>=10)throw new Error('Close a temporary conversation before opening another');
@@ -592,16 +768,17 @@ export class Core extends EventEmitter {
     if (p.provider === 'ollama') {
       if (!model) throw new Error('Choose an Ollama model or set a default in Settings');
       if (effort) throw new Error('Ollama uses the model’s default thinking settings');
-      if (!ollamaCatalog) ollamaCatalog = await this.modelLoader('ollama', ollamaConfig.host);
+      if (!ollamaCatalog) ollamaCatalog = await this.ollamaCatalog(ollamaConfig.host,connection?.id);
     }
     if(isApiProvider(p.provider)){
-      if(!model)throw new Error('Choose an API model or enter its model ID');if(effort)throw new Error('API conversations use the model’s default reasoning settings');
+      if(!model)throw new Error('Choose an API model or enter its model ID');this.validateEffort(p.provider,model,effort,connection?.id);
+      if (p.tools && !this.apiModelGate(p.provider,model,connection?.id,'local-tools')) throw new Error('This model or endpoint is not declared to support tools');
       if(p.provider==='compatible'){
         const endpoint=connection?.compatible||this.settings.compatible,access=this.endpointAccess(endpoint,connection?.id);
         if(!endpoint.baseUrl)throw new Error('Set the compatible endpoint in Settings → Connections');
         if(endpoint.requiresKey&&!access.key())throw new Error(`Add a key for ${apiLabel('compatible',access)} in Settings → Connections`);
         if(p.tools===true&&!endpoint.tools)throw new Error('This endpoint is not declared to support tools. Turn on tool calling for it in Settings → Connections if it does.');
-      }else if(!this.credentials.key(p.provider))throw new Error('Add an API key in Settings → Connections');
+      }else if(!this.accountAccess(p.provider,connection?.id).key())throw new Error('Add an API key in Settings → Connections');
     }
     const catalog:ModelOption[]=p.provider === 'ollama' ? ollamaCatalog || [] : this.capabilities[p.provider]?.modelsStatus==='ready' ? this.capabilities[p.provider].models || [] : [];
     if (p.provider === 'ollama' && !catalog.some(m => m.id === model)) throw new Error('Choose an available Ollama chat model; refresh the model list');
@@ -611,14 +788,16 @@ export class Core extends EventEmitter {
       if(effort&&(!selected||!selected.efforts.some(option=>option.id===effort)))throw new Error('Choose an effort available for this model');
     } else if(!isApiProvider(p.provider)&&this.capabilities[p.provider]?.modelsStatus==='ready'&&(model||effort))throw new Error('This provider reported no selectable models');
     if (p.provider === 'ollama' && p.tools && !catalog.find(m => m.id === model)?.capabilities?.includes('tools')) throw new Error('Choose a model with tool support or use Conversation mode');
-    const s: Session = { ...(isApiProvider(p.provider)?{api:{tools:p.tools===true}}:{}), ...(p.provider === 'ollama' ? {ollama:{host:ollamaHost(ollamaConfig.host),tools:p.tools === true}} : {}), id: randomUUID(), provider: p.provider, nativeId: p.nativeId || null, title: sessionTitle(p.title), cwd, mode: 'managed', status: 'idle', created: Date.now(), updated: Date.now(), draft: '', scroll: 0, model, effort };
+    const s: Session = { ...(isApiProvider(p.provider)?{api:{tools:p.tools===true, ...(p.providerOptions ? {options:validateProviderOptions(p.provider,p.providerOptions,{variant:connection?.variant})} : {})}}:{}), ...(p.provider === 'ollama' ? {ollama:{host:ollamaHost(ollamaConfig.host),tools:p.tools === true}} : {}), id: randomUUID(), provider: p.provider, nativeId: p.nativeId || null, title: sessionTitle(p.title), cwd, mode: 'managed', status: 'idle', created: Date.now(), updated: Date.now(), draft: '', scroll: 0, model, effort };
     if(p.temporary)s.temporary=true;
     if(Object.keys(capabilities).length)s.capabilities=capabilities;
     if(connection){s.connectionId=connection.id;s.connectionRevision=connection.revision;}
     if(initial){s.remote=initial.remote;s.effectivePolicy=initial.effectivePolicy;if(initial.draft!==undefined)s.draft=initial.draft;}
     authorize?.();
     if(p.nativeId&&this.store.sessions().some(other=>other.provider===p.provider&&other.nativeId===p.nativeId))throw new Error('This session is already in PAL');
-    this.store.saveSession(s); this.changed(); return s;
+    if (initial?.onSave) this.store.transaction(() => { this.store.saveSession(s); initial.onSave!(s); });
+    else this.store.saveSession(s);
+    this.changed(); return s;
   }
   // Live events carry a frame-bounded copy; the complete text stays in SQLite.
   putMessage(message: Message) { this.store.message(message); this.emit('message', transportMessage(message)); }
@@ -644,6 +823,12 @@ export class Core extends EventEmitter {
     if(!this.settings.speechBrief||text.length<=600)return text;
     const end=text.slice(0,600).replace(/\s+\S*$/,'').length;
     return 'Brief reading. '+(this.settings.ttsProvider==='indextts'?indexPrefix(text,end):text.slice(0,end))+'. The full answer is in the conversation.';
+  }
+  /** Where spoken words came from, when they are exactly part of a saved message. Anything else is spoken and not kept. */
+  speechSource(text: string, sessionId: unknown, messageId: unknown): SpeechSource | undefined {
+    if (typeof sessionId !== 'string' || typeof messageId !== 'string' || this.store.temporary(sessionId)) return undefined;
+    const message = this.store.messageById(messageId), spoken = speechText(text);
+    return message && message.sessionId === sessionId && spoken && speechText(message.text).includes(spoken) ? { sessionId, messageId } : undefined;
   }
   finishReply(session: Session, message: Message) {
     if (message.role !== 'assistant' || !message.text.trim()) return;
@@ -673,7 +858,7 @@ export class Core extends EventEmitter {
       }
     }
     // A reply to a phone-started turn is shown, not read aloud: the person who asked may not be at the desktop.
-    if(this.settings.speechProviders[session.provider]!==false&&!session.remote)this.speech.speak(this.speechText(message.text), false, session.id, replyId, undefined, session.provider);
+    if(this.settings.speechProviders[session.provider]!==false&&!session.remote)this.speech.speak(this.speechText(message.text), false, session.id, replyId, undefined, session.provider, { sessionId: session.id, messageId: message.id });
     this.changed();
   }
   clearCompanion(sessionId: string) {
@@ -753,11 +938,14 @@ export class Core extends EventEmitter {
       const key = `${id}:${e.id || randomUUID()}`;
       const existing = this.partials.get(key) || this.store.messageById(key);
       const message: Message = { id: key, sessionId: id, role: e.type === 'tool' ? 'tool' : 'assistant', kind: e.type === 'tool' ? 'tool' : 'text', text: e.type === 'delta' ? (existing?.text || '') + (e.text || '') : e.text || '', time: existing?.time || Date.now(), sources: e.data?.sources || existing?.sources };
+      if(e.type==='tool'&&e.data?.providerOutputTrace&&session.provider==='perplexity'&&Array.isArray(e.data.providerOutputTrace.searches)&&Array.isArray(e.data.providerOutputTrace.fetches))message.providerOutputTrace=e.data.providerOutputTrace;
       if (e.type === 'tool' && (e.toolActivity || notice || existing?.toolActivity))
         message.toolActivity = mergeToolActivity(existing?.toolActivity, e.toolActivity || (notice ? {status:'notice'} : {}));
       // Artifact references come only from PAL's own tool results, never from model text.
       const refs = e.type === 'tool' && Array.isArray(e.data?.artifacts) ? e.data.artifacts.filter((ref: any) => ref && /^[0-9a-f-]{36}$/.test(ref.artifactId) && /^[0-9a-f-]{36}$/.test(ref.versionId)).slice(0, 16).map((ref: any) => ({ artifactId: ref.artifactId, versionId: ref.versionId, purpose: String(ref.purpose || '').slice(0, 200) })) : [];
       if (refs.length) message.artifacts = refs; else if (existing?.artifacts) message.artifacts = existing.artifacts;
+      const timed = message.role === 'assistant' ? existing?.recordings || this.turnRecordings.get(id) : undefined;
+      if (timed) message.recordings = timed;
       if (e.type === 'tool' && typeof e.data?.operationId === 'string' && /^[0-9a-f-]{36}$/.test(e.data.operationId)) message.operationId = e.data.operationId; else if (existing?.operationId) message.operationId = existing.operationId;
       // Files a tool produced also appear in the conversation as cards; an operation keeps its own single card.
       if (refs.length && !message.operationId && !existing) this.putMessage({ id: key + ':artifacts', sessionId: id, role: 'workbench', kind: 'artifacts', text: String(e.text || '').split('\n')[0].replaceAll('_', ' ').slice(0, 120), time: Date.now(), artifacts: refs });
@@ -766,6 +954,7 @@ export class Core extends EventEmitter {
       this.partials.set(key, message);
       if (message.role === 'assistant' && message.text.trim()) {
         this.turnReplies.set(id,message);
+        this.temporal.firstOutput(id);
         const timer = this.turnTimers.get(id);
         if (timer && !timer.first) { timer.first = true; this.spans.record('first-token', performance.now() - timer.started, 'ok', timer.provider); }
       }
@@ -788,7 +977,9 @@ export class Core extends EventEmitter {
       this.flush(); this.cancelApprovals(id);
       const interrupted = session.status === 'stopping' || ['interrupted','cancelled','stopped'].includes(e.type) || e.type === 'complete' && ['interrupted','cancelled','canceled','stopped'].includes((e.text || '').toLowerCase());
       const status = e.type === 'error' ? 'error' : interrupted ? 'interrupted' : 'idle';
+      this.temporal.finished(id, status === 'idle' ? 'completed' : status === 'error' ? 'failed' : 'interrupted', this.turnReplies.get(id)?.id);
       const timer = this.turnTimers.get(id), stopAt = this.stopRequests.get(id);
+      this.providerComputer.stop(id);
       this.turnTimers.delete(id); this.stopRequests.delete(id);
       if (timer) this.spans.record('turn', performance.now() - timer.started, status === 'idle' ? 'ok' : status === 'error' ? 'failed' : 'stopped', timer.provider);
       if (stopAt !== undefined) this.spans.record('cancel', performance.now() - stopAt, 'ok', timer?.provider || '');
@@ -804,7 +995,7 @@ export class Core extends EventEmitter {
       } else this.speech.stopSession(id);
       this.finishNativeMemory(session, status === 'idle' ? this.turnReplies.get(id)?.text || '' : undefined);
       // M02: a finished reply is checked against its turn's formatting constraints; a miss is a note on it.
-      const behavior = this.turnBehavior.get(id); this.turnBehavior.delete(id); this.turnPostures.delete(id);
+      const behavior = this.turnBehavior.get(id); this.turnBehavior.delete(id); this.turnPostures.delete(id); this.turnRecordings.delete(id);
       if (status === 'idle' && reply && behavior?.constraints.length) {
         const notes = checkReply(reply.text, behavior.constraints), stored = this.store.messageById(reply.id);
         if (notes.length && stored) this.putMessage({ ...stored, styleNotes: notes });
@@ -817,7 +1008,7 @@ export class Core extends EventEmitter {
       const reported = status === 'idle' && this.pings.reportsFor(session);
       if (!superseded && !reported) this.emit('notice', { kind: e.type === 'error' ? 'error' : interrupted ? 'interrupted' : 'complete', sessionId: id, text: e.type === 'error' ? e.text : interrupted ? (e.text || 'Task interrupted') : 'Task complete' });
       const response = this.speechResponses.get(id); this.speechResponses.delete(id);
-      if (status === 'idle' && !superseded && response && !session.pinned && !this.deliveredReplies.get(id)?.has(reply?.id || '') && session.mode === 'managed' && !session.parentId && !session.remote && !this.closed && this.settings.speechProviders[session.provider]!==false) this.speech.speak(this.speechText(response),false,undefined,undefined,undefined,session.provider);
+      if (status === 'idle' && !superseded && response && !session.pinned && !this.deliveredReplies.get(id)?.has(reply?.id || '') && session.mode === 'managed' && !session.parentId && !session.remote && !this.closed && this.settings.speechProviders[session.provider]!==false) this.speech.speak(this.speechText(response),false,undefined,undefined,undefined,session.provider,reply?.text.slice(0,100000)===response?{sessionId:id,messageId:reply.id}:undefined);
       this.settledReplies.delete(id); this.deliveredReplies.delete(id);
       if (status === 'idle') this.sendQueue.kick(id);
       else this.sendQueue.cancel(id, 'The previous turn ended; copy this message to send it again');
@@ -851,7 +1042,7 @@ export class Core extends EventEmitter {
   }
   answer(p: any, automatic = false) {
     const approval = this.approvals.get(p.id); if (!approval) throw new Error('This request has already ended');
-    if(p.choice==='allow' && (['file','extension','custom-tool','changeset','media-job','execution'].includes(approval.value.kind) && approval.value.fields?.reviewComplete!==true)) throw new Error('This operation cannot be reviewed completely');
+    if(p.choice==='allow' && (['file','extension','custom-tool','changeset','media-job','execution','account'].includes(approval.value.kind) && approval.value.fields?.reviewComplete!==true)) throw new Error('This operation cannot be reviewed completely');
     if(approval.value.kind==='changeset'&&p.operations!==undefined&&(!Array.isArray(p.operations)||p.operations.length>100||p.operations.some((index:unknown)=>!Number.isInteger(index))))throw new Error('Choose operations from this change set');
     if(approval.value.kind==='changeset'&&p.choice==='allow'&&p.digest!==undefined&&p.digest!==approval.value.fields?.digest)throw new Error('This review changed; open it again before accepting');
     if (!approval.value.choices.includes(p.choice)) throw new Error('Invalid approval response');
@@ -871,16 +1062,19 @@ export class Core extends EventEmitter {
   cancelApprovals(id: string) {
     for (const [key,a] of this.approvals) if (a.value.sessionId === id) { this.approvals.delete(key); a.resolve({ choice: 'deny', answers: {}, cancelled: true }); }
   }
-  async send(p: any) {
+  /** `automatic` marks a message PAL sends for itself (a routine, a delegated task): it is never the person's. */
+  async send(p: any, automatic?: { schedule?: string }) {
     if(this.recovery.pending)throw new Error('Recovery restart is pending');
-    // Only PAL's own delivery starts a delegation turn; a client's message is always the user's.
-    const { delegation: _delegation, ...message } = p; p = message;
+    // Only PAL's own delivery starts a delegation turn, and only PAL says when a message was received.
+    const { delegation: _delegation, timing: _timing, clientContext: _context, ...message } = p; p = message;
     if (typeof p.text === 'string' && p.text.trim() === '/tts-test' && !p.images?.length) {
       this.draft(p.id, '', p.expectedDraftRevision);
       return this.speech.speak(this.settings.ttsProvider==='indextts'?this.indextts.previewText(this.settings.indextts.profileId):voiceTestLine(this.settings.assistantName), true);
     }
     if (this.closed || this.deleting.has(p.id)) throw new Error('Conversation is closing or being deleted');
-    if (!p.queuedMessageId && this.sendQueue.shouldQueue(this.store.session(p.id))) return this.sendQueue.add(p);
+    const receiving = this.store.session(p.id);
+    p = { ...p, timing: this.temporal.accept(receiving, automatic ? 'broker' : 'human-desktop', { schedule: automatic?.schedule }) };
+    if (!p.queuedMessageId && this.sendQueue.shouldQueue(receiving)) return this.sendQueue.add(p);
     if(this.sending.has(p.id) || this.stopping.has(p.id))throw new Error('This session is busy. Stop it or wait for completion.');
     this.sending.add(p.id);
     try { return await this.sendTurn(p); } finally { this.sending.delete(p.id); this.sendQueue.kick(p.id); this.pings.kick(p.id); }
@@ -898,6 +1092,7 @@ export class Core extends EventEmitter {
     // A delegation update is PAL's own turn (broker/delegation-pings.ts): its card shows a summary, and it
     // never touches the draft or the recovery record, which belong to the user's messages.
     const delegation: { pingIds: string[]; summary: string } | undefined = p.delegation;
+    const timing: Acceptance = p.timing || this.temporal.accept(s, delegation ? 'broker' : 'human-desktop');
     const powerAtStart=this.power.effective(s);
     // The owner's monthly limit stops another paid request before anything is sent (usage.ts); it is not a provider cap.
     if(!delegation)this.usage.assertWithinBudget(s.provider);
@@ -908,7 +1103,7 @@ export class Core extends EventEmitter {
     // A phone's turn runs only for a provider its authorized execution carries: never AntiGravity, and a
     // hosted API only with that provider's grant. PAL runs Ollama and API conversations itself.
     const limited=limitedControlled(s);
-    if(limited&&(s.provider==='antigravity'||isApiProvider(s.provider)&&!(s.remote!.caps.includes('providers.api')&&s.remote!.apiProviders?.includes(s.provider))))throw remoteError('SCOPE_DENIED','This provider is not available to this phone. Check its access on the desktop.');
+    if(limited&&(s.provider==='antigravity'||isApiProvider(s.provider)&&!(s.remote!.caps.includes('providers.api')&&(s.remote!.apiProviders?.includes(s.provider)||!!s.connectionId&&s.remote!.apiConnections?.includes(s.connectionId)))))throw remoteError('SCOPE_DENIED','This provider is not available to this phone. Check its access on the desktop.');
     if(s.remote&&s.provider!=='ollama'&&!isApiProvider(s.provider)&&effective.paused)throw remoteError('POLICY_PAUSED','Native provider execution is paused.');
     if (limited && s.provider === 'claude' && s.effectivePolicy !== 'restricted') throw remoteError('PROVIDER_POLICY_UNSAFE', 'Claude restricted mode is not established; read, Stop and Deny remain available.');
     if (limited && s.provider !== 'ollama' && !isApiProvider(s.provider) && !s.remote!.caps.includes('providers.execute')) throw remoteError('SCOPE_DENIED', 'Native provider execution is not granted.');
@@ -934,8 +1129,21 @@ export class Core extends EventEmitter {
     // @ references are resolved and re-authorized now; a source this model may not receive stops the send.
     // A recipe draft sends exactly the references it was reviewed with.
     if(p.references===undefined){const pinned=this.workflows.pinnedReferences(s.id);if(pinned)p={...p,references:pinned};}
-    const referenced=p.references===undefined||(Array.isArray(p.references)&&!p.references.length)?null:await this.workbench.references.resolve(s,p.references,userText,signal);
+    let referenced=p.references===undefined||(Array.isArray(p.references)&&!p.references.length)?null:await this.workbench.references.resolve(s,p.references,userText,signal);
     authorizeDispatch();
+    const research = await planningContext(this, s, userText, signal);
+    if (research) {
+      if (s.provider === 'ollama' || isApiProvider(s.provider)) {
+        referenced = {text: [referenced?.text, research.text].filter(Boolean).join('\n\n'),
+          restricted: strictestDestinations(research.restricted, ...(referenced?.restricted ? [referenced.restricted] : [])),
+          images: referenced?.images || [], labels: [...referenced?.labels || [], 'Research report'], notes: referenced?.notes || [], ...(referenced?.recordings ? {recordings: referenced.recordings} : {})};
+      } else providerText += '\n\n' + research.text;
+      authorizeDispatch();
+    }
+    if(p.originalFiles!==undefined){
+      if(!Array.isArray(p.originalFiles)||p.originalFiles.length>4||p.originalFiles.some((id:unknown)=>typeof id!=='string'))throw new Error('Choose up to four original files');
+      this.providerFiles.resolve(s.id,p.originalFiles);
+    }
     const referenceNote=referenced?.labels.length?'\n\nReferenced: '+referenced.labels.join(', '):'';
     const images: string[] = [];
     images.push(...attached.images);
@@ -964,6 +1172,7 @@ export class Core extends EventEmitter {
     this.workflows.beforeSend(s.id,userText,[...attached.assets,...images],{webSearch:p.webSearch,references:p.references});
     // A turn-only posture applies to this turn's requests and ends with it.
     if (p.posture !== undefined) this.turnPostures.set(s.id, p.posture); else this.turnPostures.delete(s.id);
+    if (referenced?.recordings?.length) this.turnRecordings.set(s.id, referenced.recordings); else this.turnRecordings.delete(s.id);
     this.turnBehavior.set(s.id, this.resolvedBehavior(s.id));
     const userTime=Date.now()-1;
     if (!delegation) this.pings.userTurn(s.id);
@@ -975,9 +1184,11 @@ export class Core extends EventEmitter {
     if (this.spans.enabled) this.turnTimers.set(s.id, { started: performance.now(), provider: s.provider, first: false });
     const submittedDraftRevision=s.draftRevision;
     if(!remoteAcceptance && !delegation)this.store.set('submission:'+s.id,{text:userText,attachmentIds:attached.assets.map(a=>a.id),turnId:s.turnId,time:Date.now(),state:'dispatching'});
-    const userMessageId=randomUUID();
-    if(delegation)this.putMessage({ id: userMessageId, sessionId: s.id, role: 'user', kind: 'delegation', text: delegation.summary, time: Date.now() });
-    else if(!remoteAcceptance && !p.queuedMessageId)this.putMessage({ id: userMessageId, sessionId: s.id, role: 'user', text: p.text + referenceNote + (attached.assets.length ? '\n\nAttached files: ' + attached.assets.map(a=>a.name).join(', ') : '') + (images.length ? '\n\nAttached: ' + images.join(', ') : ''), time: Date.now() });
+    const userMessageId=randomUUID(), received=this.temporal.messageTiming(timing);
+    // Predecessors are read before this message joins the transcript; a queued one is already there.
+    this.temporal.begin(s.id, s.turnId!, timing, p.queuedMessageId || userMessageId);
+    if(delegation)this.putMessage({ id: userMessageId, sessionId: s.id, role: 'user', kind: 'delegation', text: delegation.summary, time: Date.now(), ...(received ? { timing: received } : {}) });
+    else if(!remoteAcceptance && !p.queuedMessageId)this.putMessage({ id: userMessageId, sessionId: s.id, role: 'user', text: p.text + referenceNote + (attached.assets.length ? '\n\nAttached files: ' + attached.assets.map(a=>a.name).join(', ') : '') + (images.length ? '\n\nAttached: ' + images.join(', ') : ''), time: Date.now(), ...(received ? { timing: received } : {}) });
     // HTTP providers and AntiGravity accept a turn from their stream, after send() returns.
     const tracked=!remoteAcceptance&&!p.queuedMessageId&&!delegation&&(s.provider==='ollama'||s.provider==='antigravity'||isApiProvider(s.provider));
     if(tracked)this.unacknowledged.set(s.id,{turnId:s.turnId!,messageId:userMessageId,text:userText,attachmentIds:attached.assets.map(a=>a.id)});
@@ -987,7 +1198,7 @@ export class Core extends EventEmitter {
     const sentAttachments=JSON.stringify(attached.assets.map(a=>a.id));
     const acceptedByProvider=remoteAcceptance?()=>{if(accepted)return;onAccepted!();accepted=true;if(p.queuedMessageId)return;
       s=this.updateSession(s.id,{draft:'',view:undefined,...(attached.assets.length&&JSON.stringify((this.store.session(s.id).draftAttachments||[]).map(a=>a.id))===sentAttachments?{draftAttachments:[]}:{})});
-      this.putMessage({id:randomUUID(),sessionId:s.id,role:'user',text:p.text+referenceNote+(attached.assets.length?'\n\nAttached files: '+attached.assets.map(a=>a.name).join(', '):'')+(images.length?'\n\nAttached: '+images.join(', '):''),time:userTime});}:undefined;
+      this.putMessage({id:userMessageId,sessionId:s.id,role:'user',text:p.text+referenceNote+(attached.assets.length?'\n\nAttached files: '+attached.assets.map(a=>a.name).join(', '):'')+(images.length?'\n\nAttached: '+images.join(', '):''),time:userTime,...(received?{timing:received}:{})});}:undefined;
     try {
       let memorySignal: AbortSignal | undefined, memoryText = '', documents: { text: string; detail?: Record<string, any>; authorization?: CollectionAuthorization } = { text: '' };
       if (s.provider !== 'ollama' && !isApiProvider(s.provider) && !(effective.memory.enabled && this.memory.active())) this.memory.recordOutcome(s.id, { outcome: 'disabled', reason: this.memoryOffReason(s.id), route: 'cloud' });
@@ -1018,6 +1229,7 @@ export class Core extends EventEmitter {
           layers: [
             { id: 'personality', label: 'Personality block', trust: 'user', tokens: estimateTokens(personalityInstructions(this.settings.personality, this.settings.assistantName)), included: true,
               detail: { channel: s.provider === 'codex' ? 'developer instructions' : s.provider === 'claude' ? 'appended system prompt' : 'prepended to the message' } },
+            this.temporal.cliLayer(s.id, false),
             { id: 'memory', label: 'Recalled memory', trust: 'untrusted', tokens: estimateTokens(memoryText), included: !!memoryText, ...(memoryText ? {} : { reason: outcome?.turnId === s.turnId ? outcome.outcome : 'none_supplied' }) },
             ...(documents.detail ? [{ id: 'documents' as const, label: 'Document collections', trust: 'untrusted' as const, tokens: estimateTokens(documents.text), included: !!documents.text, ...(documents.text ? {} : { reason: documents.detail.collections?.length ? 'no_match' : 'none_supplied' }), detail: documents.detail }] : []),
             { id: 'attachments', label: 'Attached text files', trust: 'user', tokens: estimateTokens(attached.text), included: !!attached.text, detail: { files: attached.assets.length, images: images.length } },
@@ -1027,7 +1239,10 @@ export class Core extends EventEmitter {
       }
       if(s.remote&&s.provider!=='ollama'&&this.settingsFor(s.id).paused)throw remoteError('POLICY_PAUSED','Native provider execution is paused.');
       authorizeDispatch();
-      await this.adapters.get(s.id)!.send(providerText, images, { webSearch: p.webSearch, ...(p.webConstraints !== undefined ? { webConstraints: validConstraints(p.webConstraints) } : {}), messageId: !remoteAcceptance && !p.queuedMessageId ? userMessageId : undefined, ...(referenced?.text ? { references: { text: referenced.text, images: referenced.images, ...(referenced.restricted ? { restricted: referenced.restricted } : {}) } } : {}), beforeAccept:()=>{memorySignal?.throwIfAborted();authorizeDispatch();if(documents.text&&!this.collections.authorizeContext(this.store.session(s.id),documents.authorization,'cloud'))throw new Error('Collection access changed before dispatch');}, onDispatched:remoteAcceptance?onDispatched:undefined, onAccepted:acceptedByProvider, onRejected:remoteAcceptance?onRejected:undefined, acknowledged:tracked?acknowledged:undefined });
+      research?.check();
+      await this.adapters.get(s.id)!.send(providerText, images, { originalFiles:p.originalFiles, webSearch: p.webSearch, ...(p.webConstraints !== undefined ? { webConstraints: validConstraints(p.webConstraints) } : {}), messageId: !remoteAcceptance && !p.queuedMessageId ? userMessageId : undefined, ...(referenced?.text ? { references: { text: referenced.text, images: referenced.images, ...(referenced.restricted ? { restricted: referenced.restricted } : {}) } } : {}), beforeAccept:()=>{memorySignal?.throwIfAborted();authorizeDispatch();research?.check();if(p.originalFiles?.length)this.providerFiles.resolve(s.id,p.originalFiles);if(documents.text&&!this.collections.authorizeContext(this.store.session(s.id),documents.authorization,'cloud'))throw new Error('Collection access changed before dispatch');}, onDispatched:()=>{this.temporal.dispatched(s.id,s.turnId);if(remoteAcceptance)onDispatched?.();}, onAccepted:acceptedByProvider, onRejected:remoteAcceptance?onRejected:undefined, acknowledged:()=>{this.temporal.accepted(s.id,s.turnId);if(tracked)acknowledged();} });
+      // A CLI took the turn, and with it the time it was given.
+      if(s.provider!=='ollama'&&!isApiProvider(s.provider)){this.temporal.accepted(s.id,s.turnId);this.recordTimeLayer(s.id);}
       if(!accepted)throw new Error('Provider did not confirm that it accepted the turn.');
       if(!remoteAcceptance && !delegation){
         const turn=this.unacknowledged.get(s.id),returned=!!turn&&turn.turnId===s.turnId&&turn.returned===true;
@@ -1064,6 +1279,7 @@ export class Core extends EventEmitter {
   }
   /** Refuses input the destination cannot accept, before a turn is recorded or dispatched. */
   async preflight(s: Session, images: string[], signal?: AbortSignal) {
+    if(images.length&&isApiProvider(s.provider)&&!this.apiModelGate(s.provider,s.model||'',s.connectionId,'images'))throw new Error('This model or account is not declared to accept images');
     await this.ensureAdapter(s).preflight?.(images, AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]));
   }
   /** The session's provider adapter, created with callbacks bound to its current generation. */
@@ -1075,6 +1291,9 @@ export class Core extends EventEmitter {
     const restrictive=limitedControlled(s);this.adapterRestricted.set(s.id,restrictive);
     const hooks: Hooks = { token, restrictive, policy:verified => { if (live() && restrictive) this.updateSession(s.id, {effectivePolicy:verified ? 'restricted' : 'unknown'}); }, personality: () => this.settings.personality, assistantName: () => this.settings.assistantName,
       behavior: () => this.behaviorText(s.id),
+      temporalGuidance: () => this.temporal.enabled() ? temporalGuidance : '',
+      temporal: channel => live() ? this.temporal.cliBlock(s.id, channel)?.text || '' : '',
+      clock: () => this.temporal.service.read().wall,
       memoryGuidance: () => { try { return this.memoryToolsFor(s.id).length > 0; } catch { return false; } },
       bypassCliPermissions: () => this.settingsFor(s.id).bypassCliPermissions,
       automaticApprovalValid: kind => {try{return live()&&!this.terminal.has(s.id)&&this.automaticallyApprove(s.id,{kind,choices:['allow']});}catch{return false;}},
@@ -1100,6 +1319,7 @@ export class Core extends EventEmitter {
     if (message) this.putMessage({ ...message, kind: 'queue-cancelled', text: `Not sent — ${reason.trim()} ${restored ? 'The message is back in your draft.' : 'Recover it from the conversation menu.'}\n\n${message.text}` });
   }
   async stop(id: string): Promise<boolean> {
+    this.providerComputer.stop(id);
     if (this.spans.enabled && this.turnTimers.has(id) && !this.stopRequests.has(id)) this.stopRequests.set(id, performance.now());
     this.sendQueue.cancel(id, 'Stopped before sending; copy this message to send it again');
     // Keep already-ready results as transcript notes. Running children can still report later.
@@ -1217,7 +1437,8 @@ export class Core extends EventEmitter {
     if ('assistantName' in patch) next.assistantName = validateAssistantName(patch.assistantName);
     if ('avatar' in patch) next.avatar = validateAvatar(patch.avatar);
     if ('voice' in patch) next.voice = validateVoice(patch.voice);
-    if ('ttsProvider' in patch) {if(!['local','indextts','elevenlabs'].includes(patch.ttsProvider))throw new IndexError('INVALID_CONFIG');next.ttsProvider=patch.ttsProvider;}
+    if ('hostedVoice' in patch) next.hostedVoice=voiceSchema.parse({...next.hostedVoice,...patch.hostedVoice});
+    if ('ttsProvider' in patch) {if(!isHostedSpeech(patch.ttsProvider)&&!['local','indextts','elevenlabs'].includes(patch.ttsProvider))throw new IndexError('INVALID_CONFIG');next.ttsProvider=patch.ttsProvider;}
     if ('speechProviders' in patch) {
       const value=patch.speechProviders;
       if(!value||typeof value!=='object'||Array.isArray(value)||Object.entries(value).some(([key,v])=>!providerIds.includes(key as Provider)||typeof v!=='boolean'))throw new Error('Choose conversation providers with boolean speech switches');
@@ -1231,11 +1452,12 @@ export class Core extends EventEmitter {
       if(next.indextts.profileId&&!this.indextts.profiles().some(p=>p.id===next.indextts.profileId&&p.version===next.indextts.version))throw new IndexError('PROFILE_MISSING');
     }
     for (const key of ['webSearch','memory'] as const) if (key in patch) {
-      const value = patch[key], allowed = key === 'webSearch' ? ['enabled','provider','searxngUrl'] : ['enabled','model','extractionModel','extractionProvider','embeddingProvider','allowCloudEmbedding','allowCloudMemory','allowCloudExtraction'];
+      const value = patch[key], allowed = key === 'webSearch' ? ['enabled','provider','searxngUrl','googleEngineId'] : ['enabled','model','extractionModel','extractionProvider','extractionConnectionId','embeddingProvider','embeddingPooling','embeddingDimensions','embeddingConnectionId','voyageRerankModel','allowCloudEmbedding','allowCloudMemory','allowCloudExtraction'];
       if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !allowed.includes(k))) throw new Error(`Invalid ${key} settings`);
       if ('enabled' in value && typeof value.enabled !== 'boolean') throw new Error(`Invalid ${key} enabled setting`);
       if (key === 'webSearch') {
         if ('provider' in value && !searchProviders.includes(value.provider)) throw new Error('Choose a supported search provider');
+        if ('googleEngineId' in value && (typeof value.googleEngineId!=='string'|| !/^[a-zA-Z0-9:_-]{0,128}$/.test(value.googleEngineId))) throw new Error('Enter a valid Google search engine ID');
         if ('searxngUrl' in value) {
           if (typeof value.searxngUrl !== 'string') throw new Error('Enter a SearXNG base URL');
           if (value.searxngUrl) { const url = webUrl(value.searxngUrl, true); if (url.search || url.hash) throw new Error('Use a SearXNG base URL without query or fragment'); value.searxngUrl = url.href.replace(/\/+$/, ''); }
@@ -1246,11 +1468,27 @@ export class Core extends EventEmitter {
         if ('model' in value && (typeof value.model !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,511}$/.test(value.model))) throw new Error('Enter an embedding model name');
         if ('extractionModel' in value && (typeof value.extractionModel !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,511}$/.test(value.extractionModel))) throw new Error('Enter an extraction model name');
         if ('extractionProvider' in value && !['ollama','google','anthropic'].includes(value.extractionProvider)) throw new Error('Choose Ollama, Gemini or Claude for extraction');
-        if ('embeddingProvider' in value && !['ollama','google'].includes(value.embeddingProvider)) throw new Error('Choose Ollama or Gemini for embeddings');
+        if ('embeddingProvider' in value && !embeddingProviders.includes(value.embeddingProvider)) throw new Error('Choose a supported embedding provider');
+        if ('embeddingPooling' in value && !['mean','cls'].includes(value.embeddingPooling)) throw new Error('Choose mean or CLS embedding pooling');
         if ('allowCloudEmbedding' in value && typeof value.allowCloudEmbedding !== 'boolean') throw new Error('Invalid cloud embedding permission');
         if ('allowCloudMemory' in value && typeof value.allowCloudMemory !== 'boolean') throw new Error('Invalid cloud memory permission');
         if ('allowCloudExtraction' in value && typeof value.allowCloudExtraction !== 'boolean') throw new Error('Invalid cloud extraction permission');
+        if(value.voyageRerankModel!==undefined && (typeof value.voyageRerankModel!=='string'|| !/^[a-zA-Z0-9._-]{0,128}$/.test(value.voyageRerankModel))) throw new Error('Choose a Voyage reranking model');
+        if ('extractionConnectionId' in value && typeof value.extractionConnectionId !== 'string') throw new Error('Choose a saved extraction account');
         next.memory = { ...next.memory, ...value };
+        // An account belongs to one provider: choosing another provider returns to that provider's default key.
+        if ('extractionProvider' in value && !('extractionConnectionId' in value)) next.memory.extractionConnectionId = '';
+        if (next.memory.extractionConnectionId) {
+          const account = this.chatConnections.get(next.memory.extractionConnectionId);
+          if (account.kind === 'ollama' || account.kind !== (next.memory.extractionProvider || 'ollama')) throw new Error('Choose an account of the extraction provider');
+        }
+        if(next.memory.embeddingDimensions!==undefined && (!Number.isSafeInteger(next.memory.embeddingDimensions)||next.memory.embeddingDimensions!<0||next.memory.embeddingDimensions!>16384)) throw new Error('Choose an embedding dimension from 1 to 16384, or 0 for the model default');
+        if(next.memory.embeddingConnectionId) {
+          const account=this.chatConnections.get(next.memory.embeddingConnectionId);
+          if(account.kind!==next.memory.embeddingProvider || account.kind==='ollama') throw new Error('Choose the matching hosted embedding account');
+        }
+        // The provider's own key is the absence of an account, not an empty one.
+        for (const key of ['extractionConnectionId','embeddingConnectionId'] as const) if (!next.memory[key]) delete next.memory[key];
       }
     }
     if ('ollama' in patch) {
@@ -1266,9 +1504,11 @@ export class Core extends EventEmitter {
     if ('conversationDefaults' in patch) next.conversationDefaults = conversationDefaults(patch.conversationDefaults);
     if ('notesVault' in patch) {
       const value = patch.notesVault;
-      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !['path','enabled','allowCloud'].includes(k)) || Object.entries(value).some(([k, v]) => k === 'path' ? typeof v !== 'string' : typeof v !== 'boolean')) throw new Error('Invalid notes vault settings');
+      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !['path','enabled','allowCloud','folders'].includes(k)) || Object.entries(value).some(([k, v]) => k === 'folders' ? !Array.isArray(v) : k === 'path' ? typeof v !== 'string' : typeof v !== 'boolean')) throw new Error('Invalid notes vault settings');
       next.notesVault = { ...next.notesVault, ...value };
       if (next.notesVault.path) next.notesVault.path = await NotesVault.folder(next.notesVault.path, this.store.directory);
+      // A vault that moved keeps its chosen folders: ones it does not have are reported, never widened to the whole vault.
+      if ('folders' in value) next.notesVault.folders = await NotesVault.scope(next.notesVault.path, value.folders);
       if (next.notesVault.enabled && !next.notesVault.path) throw new Error('Choose the notes folder first');
     }
     if ('compatible' in patch) next.compatible = validEndpoint(patch.compatible, next.compatible);
@@ -1280,6 +1520,7 @@ export class Core extends EventEmitter {
       if (!value || typeof value !== 'object' || Array.isArray(value) || Object.entries(value).some(([key, flag]) => !['enabled', 'confirm', 'speakFeedback'].includes(key) || typeof flag !== 'boolean')) throw new Error('Invalid voice command settings');
       next.voiceCommands = { ...next.voiceCommands, ...value };
     }
+    if ('time' in patch) next.time = validTimeSettings(patch.time, next.time);
     if ('audio' in patch) {
       const value = patch.audio;
       if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['input', 'output'].includes(key))) throw new Error('Invalid audio device settings');
@@ -1296,7 +1537,18 @@ export class Core extends EventEmitter {
         next[key]=patch[key];
       }
     }
-    if ('transcription' in patch) {const t=patch.transcription;if(!t||typeof t!=='object'||Array.isArray(t)||Object.keys(t).some(k=>!['executable','model'].includes(k))||Object.values(t).some(v=>typeof v!=='string'||v.length>4096||v.includes('\0')))throw new Error('Choose local executable and model paths');next.transcription={...next.transcription,...t};await this.transcription.cancel();}
+    if ('speechCache' in patch) next.speechCache = validateSpeechCache(patch.speechCache, next.speechCache);
+    if ('localServices' in patch) next.localServices = validateLocalServices(patch.localServices, next.localServices);
+    if ('transcription' in patch) {
+      const t=patch.transcription;
+      if(!t||typeof t!=='object'||Array.isArray(t)||Object.keys(t).some(k=>!['executable','model','provider','serverUrl','serverModel','cloudModel','language','region','connectionId','prompt','timestampGranularities'].includes(k)))throw new Error('Invalid transcription settings');
+      for(const key of ['executable','model'])if(t[key]!==undefined&&(typeof t[key]!=='string'||t[key].length>4096||t[key].includes('\0')))throw new Error('Choose local executable and model paths');
+      if(t.serverUrl!==undefined&&t.serverUrl!=='')speechServerAddress(t.serverUrl);
+      if(t.serverModel!==undefined&&(typeof t.serverModel!=='string'||!/^[a-zA-Z0-9._:/ -]{0,160}$/.test(t.serverModel)))throw new Error('Invalid speech server model');
+      if(t.provider!==undefined && !['local','local-server'].includes(t.provider)&&!isHostedSpeech(t.provider))throw new Error('Unknown transcription provider');
+      voiceSchema.parse({model:t.cloudModel,language:t.language,region:t.region,connectionId:t.connectionId,prompt:t.prompt,timestampGranularities:t.timestampGranularities});
+      next.transcription={...next.transcription,...t};await this.transcription.cancel();
+    }
     if ('interfaceScale' in patch) {if(!Number.isFinite(patch.interfaceScale)||patch.interfaceScale<.8||patch.interfaceScale>1.5)throw new Error('Interface scale must be between 80% and 150%');next.interfaceScale=patch.interfaceScale;}
     if ('desktopProfile' in patch) {
       if(!['normal','focus','gaming','presentation'].includes(patch.desktopProfile))throw new Error('Unknown desktop profile');
@@ -1339,7 +1591,7 @@ export class Core extends EventEmitter {
         if (!s.id || typeof s.id !== 'string' || typeof s.name !== 'string' || !isAbsolute(s.executable) || !isAbsolute(s.cwd) || !Array.isArray(s.args) || !s.args.every((v: any) => typeof v === 'string' && !v.includes('\0')) || !Number.isInteger(s.timeout) || s.timeout < 1000 || s.timeout > 600000) throw new Error('Scripts need absolute paths, argument arrays, and a 1–600 second timeout'); return s;
       });
     }
-    if('ttsProvider' in patch||'indextts' in patch||'elevenlabs' in patch){this.speech.stop();await this.speech.idle();await this.indextts.reconfigure();}
+    if('hostedVoice' in patch||'ttsProvider' in patch||'indextts' in patch||'elevenlabs' in patch){this.speech.stop();await this.speech.idle();await this.indextts.reconfigure();}
     if ('expectedIdentity' in patch) {
       if (['personality','assistantName','avatar'].some(key => (this.settings as any)[key] !== (baseline as any)[key]))
         throw remoteError('REVISION_CONFLICT','Name, avatar or personality changed on another client. Reload before saving.');
@@ -1352,6 +1604,8 @@ export class Core extends EventEmitter {
       const result = {...current};
       const keys=new Set([...Object.keys(supplied || {}),...Object.keys(prepared).filter(key=>JSON.stringify(prepared[key])!==JSON.stringify(base?.[key]))]);
       for (const key of keys) if (Object.hasOwn(prepared,key)) result[key] = merge(current?.[key],prepared[key],supplied?.[key],base?.[key]);
+      // What this change took out (a helper's account, for example) goes; what another change added meanwhile stays.
+      if (base && typeof base === 'object' && !Array.isArray(base)) for (const key of Object.keys(base)) if (!Object.hasOwn(prepared,key)) delete result[key];
       return result;
     };
     const committed = structuredClone(this.settings);
@@ -1386,6 +1640,7 @@ export class Core extends EventEmitter {
     for (const { value } of [...this.approvals.values()]) if (this.automaticallyApprove(value.sessionId, value)) this.answer({ id: value.id, choice: 'allow' }, true);
     this.changed();
     if (hostChanged) { this.capabilities.ollama = {}; void this.refreshProviderModels('ollama').catch(() => {}); }
+    if ('speechCache' in patch) this.speechCache.configured();
     if ('responsiveness' in patch) { this.spans.configure(next.responsiveness); if (!next.responsiveness) { this.turnTimers.clear(); this.stopRequests.clear(); } }
     if ('audio' in patch) {
       const outputChanged = next.audio.output !== previousAudio.output;
@@ -1494,13 +1749,15 @@ export class Core extends EventEmitter {
     const ceiling = this.resolvedBehavior(id).ceiling;
     // A02: extension tools, already limited to tool-enabled desktop conversations in each server's scope.
     const extensions = ceiling.extensions === false ? [] : [...this.extensions.toolsFor(id), ...this.customTools.toolsFor(id)];
+    const computer=(s.provider==='openai'||s.provider==='anthropic') && s.api?.tools && s.api.options?.nativeComputer===true && !s.temporary && !limitedControlled(s) && (!s.remote||s.remote.caps.includes('desktop.control')) && ceiling.desktop!==false && categoryEnabled(settings,'capture') && categoryEnabled(settings,'windows');
     const kept = definitions.filter(d => !(ceiling.desktop === false && actionDefinitions.includes(d)) && !(ceiling.delegation === false && orchestrationDefinitions.includes(d))
       && !(ceiling.web === false && webDefinitions.includes(d)) && !(ceiling.memory === false && (memoryDefinitions.includes(d) || notesDefinitions.includes(d))));
     return [...kept.map(d => {
       const offer = orchestrationDefinitions.includes(d) ? orchestrationOffer(d, settings.delegationUpdates) : d;
       return { type: 'function' as const, function: { name: d.name.replaceAll('.', '_'), description: offer.description,
         parameters: { type: 'object', properties: offer.schema, required: offer.required || Object.keys(offer.schema), additionalProperties: false } } };
-    }), ...extensions, ...this.workbench.tools(id)];
+    }), ...this.temporal.definitions(id).map(d => ({ type: 'function' as const, function: { name: d.name.replaceAll('.', '_'), description: d.description, parameters: { type: 'object', properties: d.schema, required: d.required || [], additionalProperties: false } } })),
+      ...(computer?[computerTool]:[]),...extensions, ...this.workbench.tools(id)];
   }
   memoryToolsFor(id: string) {
     const s = this.store.session(id), settings = this.settingsFor(id);
@@ -1509,6 +1766,8 @@ export class Core extends EventEmitter {
   }
   /** Turn-only postures for the turn in progress, and the behavior each running turn started with. */
   turnPostures = new Map<string, string>();
+  /** Transcripts the running turn referred to; its replies keep them so a cited time can be opened. */
+  private turnRecordings = new Map<string, NonNullable<Message['recordings']>>();
   turnBehavior = new Map<string, ResolvedBehavior>();
   /** M01: this conversation's behavior for its next request, resolved session → project → global, plus any posture. */
   resolvedBehavior(sessionId: string): ResolvedBehavior {
@@ -1542,6 +1801,12 @@ export class Core extends EventEmitter {
       this.store.set('turn-plan:' + sessionId, boundedPlan({ ...plan, layers, turnId: this.store.session(sessionId).turnId || '' }));
       this.usage.recordTurn(sessionId, { ...plan, turnId: plan.turnId || this.store.session(sessionId).turnId || '' });
     } catch { /* the conversation is gone */ }
+  }
+  /** Replaces a CLI plan's time line with the sample its adapter actually sent. */
+  private recordTimeLayer(sessionId: string) {
+    const plan = this.store.get<TurnPlan | null>('turn-plan:' + sessionId, null);
+    if (!plan || plan.boundary !== 'cli-owned') return;
+    this.store.set('turn-plan:' + sessionId, { ...plan, layers: plan.layers.map(layer => layer.id === 'temporal-context' ? this.temporal.cliLayer(sessionId, true) : layer) });
   }
   memoryOffReason(id: string) {
     const s = this.store.session(id);
@@ -1606,6 +1871,7 @@ export class Core extends EventEmitter {
     const result = await applyProposal(proposal, join(this.store.directory, 'vault-backups'), async () => {
       signal.throwIfAborted();
       await this.refreshNoteRoute(id, signal);
+      await this.vault.editable(path);
       if (!this.notesToolsFor(id).some(d=>d.name==='notes.propose_edit') || await realpath(this.settings.notesVault.path).catch(()=>'') !== proposal.root) throw new Error('Notes permission changed before commit');
       signal.throwIfAborted();
     }, () => {
@@ -1626,8 +1892,12 @@ export class Core extends EventEmitter {
   }
   async callTool(id: string, name: string, args: unknown, signal: AbortSignal) {
     signal.throwIfAborted();
+    // A clock read is its own family: no desktop category, web access or memory decides it.
+    const clock = timeToolNames.find(tool => tool.replaceAll('.', '_') === name);
+    if (clock) return this.temporal.call(id, clock, args);
     const nativeMemory = this.store.session(id).provider !== 'ollama' && (this.memoryToolsFor(id).some(d => d.name.replaceAll('.', '_') === name) || this.notesToolsFor(id).some(d => d.name.replaceAll('.', '_') === name));
     if (!nativeMemory && !this.toolsFor(id).some(t => t.function.name === name)) throw new Error('This tool is disabled in PAL settings');
+    if(name===computerToolName)return this.providerComputer.run(id,args,signal);
     if (this.workbench.registry.has(name)) return this.workbench.call(id, name, args, signal);
     if (name.startsWith('ext_')) return this.extensions.call(id, name, args, signal);
     if (name.startsWith('custom_')) return this.customTools.call(id, name, args, signal);
@@ -1798,23 +2068,24 @@ export class Core extends EventEmitter {
       check();
       if(typeof p.model!=='string'||p.model.length>512||/[\x00-\x1f\x7f]/.test(p.model))throw new Error('Choose a valid model');
       // Moving to another named connection changes where the history goes: a reviewed change only.
-      const target=p.connectionId!==undefined&&p.connectionId!==s.connectionId?this.chatConnections.get(p.connectionId,local?'ollama':s.provider==='compatible'?'compatible':undefined):undefined;
-      if(p.connectionId!==undefined&&p.connectionId!==s.connectionId&&!local&&s.provider!=='compatible')throw new Error('Only Ollama and compatible conversations use named connections');
+      const target=p.connectionId!==undefined&&p.connectionId!==s.connectionId?this.chatConnections.get(p.connectionId,local?'ollama':api?s.provider as import('./provider-catalog.ts').ApiProvider:undefined):undefined;
+      if(p.connectionId!==undefined&&p.connectionId!==s.connectionId&&!local&&!api)throw new Error('Only Ollama and compatible conversations use named connections');
       if(target&&p.destinationReviewed!==true)throw new Error('Moving a conversation to another connection changes where its history is sent. Review the destination and confirm.');
       if(target&&limitedControlled(s))throw new Error('Detach this conversation from mobile control before moving it');
       const modelId=p.model.trim(),oldTools=s.ollama?.tools||s.api?.tools||false;
       const tools=p.tools===undefined?oldTools:p.tools;
       if(typeof tools!=='boolean'||(!api&&!local&&tools))throw new Error('Choose a valid assistance mode');
       if(s.temporary&&tools)throw new Error('PAL tools are unavailable in temporary conversations');
-      if(tools&&!this.toolCalling(target?{...s,connectionId:target.id}:s))throw new Error('This endpoint is not declared to support tools. Turn on tool calling for it in Settings → Connections if it does.');
+      if(tools&&!this.toolCalling({...s,model:modelId,connectionId:target?.id??s.connectionId}))throw new Error('This endpoint is not declared to support tools. Turn on tool calling for it in Settings → Connections if it does.');
       if(tools&&!oldTools&&!p.trusted&&!this.settings.bypassCliPermissions)throw new Error('Confirm that you trust this project before enabling delegation');
       if((local||api)&&!modelId)throw new Error('Choose a model or enter its API model ID');
       const effort=p.effort===undefined?(modelId===s.model?s.effort||'':''):p.effort;
       if(typeof effort!=='string'||effort.length>32||/[\x00-\x1f\x7f]/.test(effort))throw new Error('Choose a valid reasoning effort');
-      if((local||api)&&effort)throw new Error('This provider uses the model’s default reasoning settings');
+      if(api)this.validateEffort(s.provider as import('./provider-catalog.ts').ApiProvider,modelId,effort,target?.id||s.connectionId);
+      if(local&&effort)throw new Error('This provider uses the model’s default reasoning settings');
       if(local){
         if(!s.ollama)throw new Error('Missing Ollama connection settings');
-        const models=await ollamaModels(target?target.ollama!.host:s.ollama.host),model=models.find(m=>m.id===modelId);
+        const models=await withOllamaCredential(this.ollamaKey(target?.id||s.connectionId),()=>ollamaModels(target?target.ollama!.host:s.ollama!.host)),model=models.find(m=>m.id===modelId);
         if(!model)throw new Error('Choose an available Ollama model');
         if(tools&&!model.capabilities?.includes('tools'))throw new Error('This model does not support tools');
         if(!model.capabilities?.includes('vision')&&this.store.get<OllamaMessage[]>('ollama:'+s.id,[]).some(m=>m.images?.length))throw new Error('This conversation contains images. Choose a model with Images, or start a new conversation.');
@@ -1825,13 +2096,14 @@ export class Core extends EventEmitter {
         if(effort&&!selected?.efforts.some(e=>e.id===effort))throw new Error('Choose an effort available for this model');
       }
       check();
-      if(modelId===s.model&&effort===(s.effort||'')&&tools===oldTools&&!target)return this.store.session(s.id);
+      const providerOptions = api && p.providerOptions !== undefined ? validateProviderOptions(s.provider as import('./provider-catalog.ts').ApiProvider, p.providerOptions, {variant:target?.variant ?? (s.connectionId ? this.chatConnections.get(s.connectionId).variant : undefined)}) : target&&target.id!==s.connectionId ? undefined : s.api?.options;
+      if(JSON.stringify(providerOptions)===JSON.stringify(s.api?.options)&&modelId===s.model&&effort===(s.effort||'')&&tools===oldTools&&!target)return this.store.session(s.id);
       // Invalidate callbacks before closing; late events from the old adapter cannot
       // overwrite the newly chosen model, transcript, or completion status.
       await this.disconnect(s.id);check();
       if(api&&(modelId!==s.model||target))this.store.set('api:'+s.id,portableApiHistory(this.store.get<OllamaMessage[]>('api:'+s.id,[])));
       if(target)clearRouteCache();
-      return this.updateSession(s.id,{model:modelId,effort,...(local?{ollama:{...s.ollama!,...(target?{host:target.ollama!.host}:{}),tools}}:api?{api:{tools}}:{}),...(target?{connectionId:target.id,connectionRevision:target.revision}:{}),error:undefined});
+      return this.updateSession(s.id,{model:modelId,effort,...(local?{ollama:{...s.ollama!,...(target?{host:target.ollama!.host}:{}),tools}}:api?{api:{tools,...(providerOptions?{options:providerOptions}:{})}}:{}),...(target?{connectionId:target.id,connectionRevision:target.revision}:{}),error:undefined});
     } finally { this.sending.delete(p.id); this.pings.kick(p.id); }
   }
   /**
@@ -1851,14 +2123,16 @@ export class Core extends EventEmitter {
       this.updateSession(s.id,{status:'interrupted',error:'Deletion is incomplete because provider termination is unconfirmed. Retry deletion to finish cleanup; sending remains blocked.'});
       throw error;
     }
+    try {await this.providerFiles.removeSession(s.id);}catch(error){this.deleting.delete(s.id);throw error;}
     await this.research.close(s.id);
     this.sendQueue.cancel(s.id, 'Conversation deleted');
     this.workflows.finish(s.id); this.workflows.forgetSession(s.id);
     this.attachments.removeSession(s.id);
     this.workbench.removeSession(s.id);
+    this.xaiCollections.forgetSession(s.id);this.accounts.forgetSession(s.id);this.speechCache.forgetSession(s.id);
     this.store.deleteSession(s.id);
     for (const map of [this.settledReplies, this.deliveredReplies, this.turnReplies, this.speechResponses, this.pendingCompletions, this.unacknowledged, this.generations]) map.delete(s.id);
-    this.pings.forget(s.id); this.pings.forgetChild(s);
+    this.pings.forget(s.id); this.pings.forgetChild(s); this.temporal.forget(s.id);
     this.terminal.delete(s.id); this.memory.packets.delete(s.id); this.webTraces.delete(s.id); this.collections.forgetSession(s.id);
     this.completions = this.completions.filter(c => c.sessionId !== s.id); this.persistCompletions(); this.clearCompanion(s.id);
     for (const row of this.store.db.prepare("SELECT key,value FROM meta WHERE key LIKE 'memory-review:%'").all()) {
@@ -1895,7 +2169,7 @@ export class Core extends EventEmitter {
   checkingTimers = false;
   async checkTimers() {
     if (this.checkingTimers||this.recovery.pending) return;
-    if (!this.closed) { this.research.tick(); void this.workbench.track(this.workbench.analyses.tick()).catch(() => {}); void this.schedules.tick().catch(() => {}); }
+    if (!this.closed) { this.providerJobs.tick();this.workbench.timedMedia.tick();this.research.tick(); void this.workbench.track(this.workbench.analyses.tick()).catch(() => {}); void this.schedules.tick().catch(() => {}); }
     this.checkingTimers = true;
     try {
       for (const t of this.store.timers()) if (!t.paused && t.due <= Date.now()) {
@@ -1941,7 +2215,7 @@ export class Core extends EventEmitter {
     return entries;
   }
   async rpc(method: string, p: any = {}) : Promise<any> {
-    const readOnly=['state.field','session.hydrate','state','settings.inspect','projects.list','session.messages','session.messageText','session.recovery','session.context','navigation.search','sessions.list','session.search','bookmarks.list','capsules.get','recipes.list','recipes.versions','results.list','memoryReview.list','memoryReview.recalled','recovery.status','diagnostics.preview','utility.list','utility.calculate','utility.convert','ui.panel','ui.attention','session.stop','approval.answer','power.end','personality.preview','presets.list','behavior.postures','behavior.resolve','behavior.preview','session.export','models.local','memory.embeddingImpact','collections.list','notes.status','notes.search','notes.read','packages.export','packages.preview','extensions.status','extensions.writes','extensions.importPreview','setups.list','setups.preview','setups.export','specialists.list','tables.preview','audio.devices','diagnostics.spans','diagnostics.uiLag','schedules.list'].includes(method)||Workbench.readOnly.includes(method);
+    const readOnly=['state.field','session.hydrate','state','settings.inspect','projects.list','session.messages','session.messageText','session.recovery','session.context','navigation.search','sessions.list','session.search','bookmarks.list','capsules.get','recipes.list','recipes.versions','results.list','memoryReview.list','memoryReview.recalled','recovery.status','diagnostics.preview','utility.list','utility.calculate','utility.convert','ui.panel','ui.attention','session.stop','approval.answer','power.end','personality.preview','presets.list','behavior.postures','behavior.resolve','behavior.preview','session.export','models.local','memory.embeddingImpact','collections.list','notes.status','notes.search','notes.read','packages.export','packages.preview','extensions.status','extensions.writes','extensions.importPreview','setups.list','setups.preview','setups.export','specialists.list','tables.preview','time.now','time.elapsed','time.conversation','time.zones','audio.devices','diagnostics.spans','diagnostics.uiLag','schedules.list','services.list','services.log','tts.cache','workspace.history','code.status','code.find','code.around','code.linkable'].includes(method)||Workbench.readOnly.includes(method);
     if(readOnly||method==='recovery.activate'||method==='recovery.cancel')return this.rpcInner(method,p);
     return this.withMutation(()=>this.rpcInner(method,p));
   }
@@ -1984,12 +2258,26 @@ export class Core extends EventEmitter {
     if(method==='notebook.rename')return this.notebook.rename(String(p.id||''),p.title);
     if(method==='notebook.delete')return this.notebook.remove(String(p.id||''),String(p.expectedRevision??''));
     if(method==='notebook.day')return this.notebook.day(String(p.date||''),Number.isInteger(p.offsetMinutes)?p.offsetMinutes:undefined);
+    if(method==='voice.transcribeArtifact')return transcribeArtifact(this,p);
+    if(method==='voice.hostedVoices')return speechVoices(this,p.provider,voiceSchema.parse(p.settings||{}),AbortSignal.timeout(15000));
+    if(method==='evaluation.models')return jevModels(this.credentials.key('jev'));
+    if(method.startsWith('providerManifests.'))return providerManifest(this,method.slice('providerManifests.'.length),p);
+    if(method.startsWith('xaiCollections.'))return this.xaiCollections.rpc(method.slice('xaiCollections.'.length),p);
+    if(method==='workspace.history')return this.workspaceHistory.list(p||{});
+    if(method==='workspace.historyErase')return this.workspaceHistory.erase(p||{});
+    if(method.startsWith('accounts.'))return this.accounts.rpc(method.slice('accounts.'.length),p||{});
+    if(method.startsWith('originalFiles.'))return this.providerFiles.rpc(method.slice('originalFiles.'.length),p);
+    if(method.startsWith('realtime.'))return this.realtime.rpc(method,p);
+    if(method.startsWith('providerInference.'))return this.providerInference.rpc(method,p);
+    if(method.startsWith('providerBridge.'))return this.providerBridge.rpc(method,p);
+    if(method.startsWith('media.timed.'))return this.workbench.timedMedia.rpc(method.slice('media.timed.'.length),p);
+    if(method.startsWith('research.provider.'))return this.providerJobs.rpc(method.slice('research.provider.'.length),p);
     if(method.startsWith('research.'))return this.research.rpc(method,p);
     if(method==='usage.summary')return this.usage.summary({days:Number(p.days)||30,...(typeof p.sessionId==='string'?{sessionId:p.sessionId}:{})});
     if(method==='usage.policy')return this.usage.policy();
     if(method==='usage.setPolicy')return this.usage.setPolicy(p);
     if(method.startsWith('projects.'))return this.projects.dispatch(method,p);
-    if(['workspace.','files.','changes.','artifacts.','images.','operations.','codelab.','commands.','references.','shelf.'].some(prefix=>method.startsWith(prefix)))return this.workbench.dispatch(method,p);
+    if(['workspace.','files.','changes.','artifacts.','images.','recordings.','documents.','operations.','codelab.','commands.','references.','shelf.'].some(prefix=>method.startsWith(prefix)))return this.workbench.dispatch(method,p);
     if(method==='session.capabilities')return this.setCapabilities(p);
     if(method==='session.modelOptions')return this.setModelOptions(p);
     if(['capsules.','recipes.','results.'].some(prefix=>method.startsWith(prefix)))return this.workflows.dispatch(method,p);
@@ -2004,6 +2292,16 @@ export class Core extends EventEmitter {
     if(['sessions.list','session.search','session.organize','session.read','folders.save','folders.delete','bookmarks.list','message.bookmark','navigation.search','navigation.record','navigation.favorite'].includes(method))return this.organization.dispatch(method,p);
     switch (method) {
       case 'state': return this.snapshot();
+      // The desktop's own clock: exact without a model, and available whatever models are told.
+      case 'time.now': { const choice = p.sessionId ? this.temporal.preview(this.store.session(p.sessionId).id) : this.temporal.preview(); return { ...this.temporal.now(p.sessionId ? this.store.session(p.sessionId).id : undefined, p.timeZone), ...(p.timeZone === undefined && choice.reason ? { reason: choice.reason } : {}) }; }
+      case 'time.elapsed': { const q = validTimeArguments('time.elapsed', { anchor: p.anchor, ...(p.messageId === undefined ? {} : { messageId: p.messageId }) }); return this.temporal.elapsed(this.store.session(p.sessionId).id, q.anchor!, q.messageId); }
+      case 'time.conversation': return this.temporal.conversation(this.store.session(p.sessionId).id);
+      case 'time.zones': return zoneList(this.temporal.service.read().wall);
+      case 'session.timeZone': {
+        const s = this.store.session(p.id);
+        if (p.expectedConfigRevision !== undefined && p.expectedConfigRevision !== (s.configRevision || '0')) throw remoteError('REVISION_CONFLICT', 'Conversation settings changed on another client. Review them and try again.');
+        return this.temporal.setZone(s.id, p.timeZone);
+      }
       case 'settings.inspect': return { bypassCliPermissions: this.settings.bypassCliPermissions, settingsRevision: this.store.get('settingsRevision','0') };
       case 'state.field': return this.snapshotField(p);
       case 'session.create': return this.create(p);
@@ -2011,7 +2309,7 @@ export class Core extends EventEmitter {
       case 'session.send': if(this.recovery.pending)throw new Error('Recovery restart is pending');return this.send(p);
       case 'session.stop': return this.stop(p.id);
       case 'session.disconnect': return this.disconnect(p.id);
-      case 'session.discardTemporary': {const s=this.store.session(p.id);if(!s.temporary)throw new Error('This is a saved conversation');await this.stopAndClose(s.id);this.webTraces.delete(s.id);this.completions=this.completions.filter(c=>c.sessionId!==s.id);this.clearCompanion(s.id);this.settledReplies.delete(s.id);this.deliveredReplies.delete(s.id);this.store.discardTemporary(s.id);this.changed();return true;}
+      case 'session.discardTemporary': {const s=this.store.session(p.id);if(!s.temporary)throw new Error('This is a saved conversation');await this.stopAndClose(s.id);this.webTraces.delete(s.id);this.completions=this.completions.filter(c=>c.sessionId!==s.id);this.clearCompanion(s.id);this.settledReplies.delete(s.id);this.deliveredReplies.delete(s.id);this.temporal.forget(s.id);this.store.discardTemporary(s.id);this.changed();return true;}
       case 'session.delete': return this.deleteSession(p);
       case 'session.detachRemote': { await this.disconnect(p.id); return this.updateSession(p.id,{remote:undefined,effectivePolicy:undefined}); }
       // Byte-bounded pages, newest first by cursor; clients load older pages on request.
@@ -2041,13 +2339,15 @@ export class Core extends EventEmitter {
           // The plan of the last request actually sent, distinct from the estimate above for the draft.
           lastPlan:this.store.get('turn-plan:'+s.id,null),
           behavior:this.resolvedBehavior(s.id),
+          ...(await this.workbench.contextFacts(s,AbortSignal.timeout(4000)).catch(()=>({}))),
+          time:{enabled:this.temporal.enabled(),timing:this.temporal.timingEnabled(),override:s.timeZone||null,...this.temporal.preview(s.id)},
           nativeContext:s.provider==='ollama'||isApiProvider(s.provider)?'Conversation context is managed by PAL.':'The native CLI may additionally read its session history, project instructions and files. PAL cannot measure all of that context.'};
       }
       case 'session.nativeFork': {const source=this.store.session(p.id);const nativeId=await forkCodex(source);return this.create({provider:'codex',nativeId,handoffConfirmed:true,cwd:source.cwd,model:source.model,title:'Fork · '+source.title,trusted:true});}
       case 'session.branch': {
         const source=this.store.session(p.id);
         if(typeof p.text!=='string'||!p.text.trim()||p.text.length>100000)throw new Error('Review the selected context first');
-        const branch=await this.create({provider:p.provider||source.provider,cwd:source.cwd,model:p.provider&&p.provider!==source.provider?(p.model||''):source.model,title:'Branch · '+source.title,temporary:source.temporary===true,trusted:p.trusted===true,tools:source.ollama?.tools||source.api?.tools});
+        const branch=await this.create({provider:p.provider||source.provider,cwd:source.cwd,...(!p.provider||p.provider===source.provider?{connectionId:source.connectionId,providerOptions:source.api?.options,effort:source.effort}:{}),model:p.provider&&p.provider!==source.provider?(p.model||''):source.model,title:'Branch · '+source.title,temporary:source.temporary===true,trusted:p.trusted===true,tools:source.ollama?.tools||source.api?.tools});
         return this.draft(branch.id,p.text);
       }
       case 'session.rename': return this.updateSession(p.id, { title: sessionTitle(p.title) });
@@ -2064,9 +2364,20 @@ export class Core extends EventEmitter {
       }
       case 'session.history': return this.history(p.provider);
       case 'provider.models': {
+        if(p.operation && p.operation!=='chat'){
+          if(!isApiProvider(p.provider)||!catalogOperations.includes(p.operation))throw new Error('Choose a supported service catalog');
+          const s=p.sessionId?this.store.session(p.sessionId):undefined;if(s&&s.provider!==p.provider)throw new Error('Choose the conversation provider');
+          return apiModels(p.provider,this.accountAccess(p.provider,p.connectionId||s?.connectionId),p.operation);
+        }
         if (p.sessionId) { const s = this.store.session(p.sessionId); if(p.provider!==s.provider)throw new Error('Choose this conversation’s provider'); return this.sessionModels(s); }
         if(!(providerIds as readonly string[]).includes(p.provider))throw new Error('Unknown provider');
         return this.refreshProviderModels(p.provider);
+      }
+      // Who serves one OpenRouter model: a free question that names only the model.
+      case 'provider.modelEndpoints': {
+        if (p.provider !== 'openrouter') throw new Error('Only OpenRouter names who serves a model');
+        const access = this.accountAccess('openrouter', p.connectionId || undefined);
+        return { endpoints: await modelEndpoints(p.model, path => apiGet('openrouter', access, path, AbortSignal.timeout(20_000))) };
       }
       case 'approval.answer': return this.answer(p);
       case 'companion.dismiss': {
@@ -2080,20 +2391,37 @@ export class Core extends EventEmitter {
         this.changed(); return true;
       }
       case 'provider.credentials': {
+        if(p.provider==='xai_management'){
+          const account=p.connectionId?this.chatConnections.get(p.connectionId,'xai'):undefined;
+          const status=this.credentials.update('xai_management',p.key,xaiManagementOrigin,account?'connection:'+account.id+':xai-management':undefined);
+          this.changed();return status.xai_management;
+        }
+        if (p.provider==='ollama_cloud' && p.connectionId){
+          const account=this.chatConnections.get(p.connectionId,'ollama');
+          if(!isDirectOllama(account.ollama!.host))throw new Error('Choose an Ollama Cloud account');
+          const status=this.credentials.update(p.provider,p.key,'https://ollama.com','connection:'+account.id);
+          for(const session of this.store.sessions().filter(s=>s.connectionId===account.id))await this.retireAccountSession(session.id);
+          this.changed();return status.ollama_cloud;
+        }
+        if ((serviceCredentialIds as readonly string[]).includes(p.provider) && p.provider!=='elevenlabs') {
+          if (p.connectionId) throw new Error('Choose the service credential');
+          const status=this.credentials.update(p.provider,p.key); this.changed(); return status[p.provider];
+        }
         if (!isApiProvider(p.provider)) throw new Error('Choose an API provider');
         // M13: a compatible endpoint's key is saved for the endpoint's current origin only.
-        const origin=p.provider==='compatible'?endpointOrigin((p.connectionId!==undefined?this.chatConnections.get(p.connectionId,'compatible').compatible!:this.settings.compatible).baseUrl):undefined;
-        const status=this.credentials.update(p.provider,p.key,origin,p.provider==='compatible'&&p.connectionId?'connection:'+p.connectionId:undefined);
+        const account = p.connectionId ? this.chatConnections.get(p.connectionId,p.provider) : undefined;
+        const origin = account ? credentialDestination(account) : p.provider === 'compatible' ? endpointOrigin(this.settings.compatible.baseUrl) : undefined;
+        const status = this.credentials.update(p.provider,p.key,origin,account ? 'connection:'+account.id : undefined);
         this.memory.service.controller.abort(new Error('API credentials changed'));
         this.memory.service.controller = new AbortController();
         this.memory.service.extractor = undefined;
         await this.memory.ready;
-        const changedRef=p.provider==='compatible'?(p.connectionId||this.chatConnections.list().find(row=>row.kind==='compatible'&&row.migrated)?.id):undefined;
+        const changedRef=account?.id || (p.provider==='compatible'?this.chatConnections.list().find(row=>row.kind==='compatible'&&row.migrated)?.id:undefined);
         if(p.provider!=='compatible'||changedRef)await this.memory.service.bindingChanged(changedRef?'connection:'+changedRef:'native:'+p.provider);
         this.modelGenerations.set(p.provider,(this.modelGenerations.get(p.provider)||0)+1);
-        this.capabilities[p.provider]={...status[p.provider],available:false,models:[],modelsStatus:'unknown',remoteRestricted:false,label:apiLabel(p.provider,this.apiAccess(p.provider)),...(p.provider==='compatible'?{endpoint:this.settings.compatible.baseUrl,declared:declared(this.settings.compatible)}:{})};
+        if (!account) this.capabilities[p.provider]={...status[p.provider],available:false,models:[],modelsStatus:'unknown',remoteRestricted:false,label:apiLabel(p.provider,this.apiAccess(p.provider)),...(p.provider==='compatible'?{endpoint:this.settings.compatible.baseUrl,declared:declared(this.settings.compatible)}:{})};
         // Revoking a key also stops an in-flight tool loop before another request can leave.
-        for(const s of this.store.sessions())if(s.provider===p.provider){if(busy(s))await this.stop(s.id);await this.disconnect(s.id);}
+        for(const s of this.store.sessions())if(s.provider===p.provider && (s.connectionId===account?.id || !!changedRef && s.connectionId===changedRef)){await this.retireAccountSession(s.id); this.store.set('api:'+s.id,portableApiHistory(this.store.get<OllamaMessage[]>('api:'+s.id, [])));}
         this.changed(); return status[p.provider];
       }
       case 'elevenlabs.refresh': return this.elevenlabs.refresh();
@@ -2144,6 +2472,7 @@ export class Core extends EventEmitter {
       }
       case 'permissions.revoke': return this.updateSettings({grants:this.settings.grants.filter(g=>g.category!==p.category||g.cwd!==p.cwd)});
       case 'transcription.status': return this.transcription.status();
+      case 'transcription.checkServer': return checkSpeechServer(p.url);
       case 'transcription.start': {const session=this.store.session(p.sessionId);if(session.temporary)throw new Error('Voice drafts create temporary audio files. Use a saved conversation.');return this.transcription.start({sessionId:session.id});}
       case 'transcription.finish': {
         // M21: a whole transcript that is an allowlisted phrase is offered as a command; it never runs here.
@@ -2161,7 +2490,7 @@ export class Core extends EventEmitter {
         else if (command.run === 'speech.last') {
           const reply = p.sessionId ? [...this.store.messages(p.sessionId)].reverse().find(message => message.role === 'assistant' && message.text.trim()) : undefined;
           if (!reply) throw new Error('There is no reply to read in this conversation');
-          this.speech.speak(this.speechText(reply.text), true);
+          this.speech.speak(this.speechText(reply.text), true, undefined, undefined, undefined, undefined, { sessionId: p.sessionId, messageId: reply.id });
         }
         // Spoken feedback names navigation only; stopping speech stays silent.
         if (this.settings.voiceCommands.speakFeedback && command.run === 'ui') this.speech.speak(command.label, true);
@@ -2175,8 +2504,9 @@ export class Core extends EventEmitter {
           // 12.6: the timestamped transcript is kept as a file of this conversation, local-only like its audio.
           if(!result.vtt)return result;
           const {vtt,...rest}=result;
-          const version=await this.workbench.artifacts.install({sessionId:session.id,bytes:Buffer.from(vtt),name:(result.source?.name||'recording').replace(/\.[^.]+$/,'')+' (transcript).vtt',mime:'text/vtt',source:'derived',label:'transcript',
-            provenance:{kind:'transcription',engine:'whisper.cpp',source:result.source?.name||'',sha256:result.source?.sha256||'',durationSeconds:result.source?.durationSeconds??null,truncated:!!result.source?.truncated}});
+          // §16.3: the recording itself is not kept unless the person adds it; the same bytes then find this transcript.
+          const version=await this.workbench.recordings.installTranscript(session.id,{vtt,source:{name:result.source?.name||'recording',sha256:result.source?.sha256||'',durationSeconds:result.source?.durationSeconds??null,truncated:!!result.source?.truncated},
+            hosted:isHostedSpeech(this.settings.transcription?.provider)?String(this.settings.transcription.provider):''});
           return {...rest,artifact:{artifactId:version.artifactId,versionId:version.versionId,name:version.name}};
         }finally{listed();}
       }
@@ -2199,7 +2529,9 @@ export class Core extends EventEmitter {
         return this.workbench.dispatch('files.table', { sessionId: p.sessionId, rootId: p.rootId, path: p.path });
       }
       case 'tts.test': return { queued: this.speech.speak(this.settings.ttsProvider==='indextts'?this.indextts.previewText(this.settings.indextts.profileId):voiceTestLine(this.settings.assistantName), true) };
-      case 'tts.speak': { if(typeof p.text!=='string'||!p.text.trim()||p.text.length>20000)throw new Error('Select 1–20,000 characters to speak');return {queued:this.speech.speak(p.text,true)}; }
+      case 'tts.speak': { if(typeof p.text!=='string'||!p.text.trim()||p.text.length>20000)throw new Error('Select 1–20,000 characters to speak');return {queued:this.speech.speak(p.text,true,undefined,undefined,undefined,undefined,this.speechSource(p.text,p.sessionId,p.messageId))}; }
+      case 'tts.cache': return this.speechCache.status();
+      case 'tts.cacheClear': return { removed: this.speechCache.clear(), ...this.speechCache.status() };
       case 'tts.stop': this.speech.stop(); return true;
       case 'tts.voices': return { voices: await listVoices(), directories: voiceDirectories() };
       case 'tts.status': return this.speech.snapshot();
@@ -2221,6 +2553,11 @@ export class Core extends EventEmitter {
         return {queued:this.speech.speak(p.text,true,undefined,undefined,{profileId:p.profileId,language:p.language,emotion:p.emotion,durationFactor:p.durationFactor})};
       }
       case 'memory.check': return this.memory.check();
+      // A05: whether two remembered things are the same, in the person's own words; undone through memory.graph.
+      case 'memory.identityDecide': {
+        if(!['same','not_same','possible'].includes(p.decision)||typeof p.statement!=='string'||!p.statement.trim()||p.statement.length>2000)throw new Error('Say whether they are the same, and why');
+        return this.memory.userGraph(this.store.session(p.sessionId),'identity',{left_id:p.leftId,right_id:p.rightId,decision:p.decision,statement:p.statement.trim()});
+      }
       case 'memory.graph': return this.memory.graph(p.sessionId ? this.store.session(p.sessionId) : undefined, p.method, p.params || {});
       case 'memory.models': return ollamaModels(this.settings.ollama.host, 'embedding');
       case 'memory.embeddingImpact': return this.memory.embeddingImpact(p.model);
@@ -2235,23 +2572,50 @@ export class Core extends EventEmitter {
       case 'notes.status': return this.vault.scan();
       case 'extensions.status': return this.extensions.snapshot();
       case 'audio.devices': return listAudioDevices();
+      case 'code.status': return this.code.status(p);
+      case 'code.configure': return this.code.configure(p);
+      case 'code.refresh': { const cwd = this.store.session(p.sessionId).cwd; if (!this.code.enabled(cwd)) throw new Error('This project’s code is not indexed'); await this.code.refresh(cwd); return this.code.status(p); }
+      case 'code.find': return this.code.find(p);
+      case 'code.around': return this.code.around(p);
+      case 'code.linkable': return this.code.linkable(p);
+      case 'code.link': return this.code.link(p);
+      case 'code.unlink': return this.code.unlink(p);
+      case 'services.list': return this.services.list();
+      case 'services.start': return this.services.start(p.id);
+      case 'services.stop': return this.services.stop(p.id);
+      case 'services.restart': return this.services.restart(p.id);
+      case 'services.log': return this.services.log(p.id);
       case 'diagnostics.spans': return this.spans.summary();
       case 'diagnostics.uiLag': return this.spans.uiLag(p);
       case 'diagnostics.clearSpans': this.spans.clear(); this.turnTimers.clear(); this.stopRequests.clear(); return this.spans.summary();
       case 'extensions.restart': return this.extensions.restart(p.id);
       case 'extensions.secret': return this.extensions.setSecret(p);
+      case 'connections.importMigrations': return this.store.get('providerImportMigrations',[]);
+      case 'connections.importPreview': return importProviderData(this,'preview',p);
+      case 'connections.importApply': {const result=importProviderData(this,'apply',p);this.changed();return result;}
       case 'connections.list': return this.chatConnections.snapshot();
       case 'connections.save': {
         await this.memory.ready;
+        const previous=p.id?this.chatConnections.get(p.id):undefined;
         const result=this.chatConnections.save(p);
+        if (previous?.kind==='compatible' && (previous.compatible?.baseUrl!==result.compatible?.baseUrl || credentialDestination(previous)!==credentialDestination(result)) && this.credentials.key('compatible',credentialDestination(previous),'connection:'+previous.id))
+          this.credentials.update('compatible','',credentialDestination(result),'connection:'+result.id);
+        for (const session of this.store.sessions().filter(s=>s.connectionId===result.id)) {
+          await this.retireAccountSession(session.id);
+          if (isApiProvider(session.provider)) this.store.set('api:'+session.id,portableApiHistory(this.store.get<OllamaMessage[]>('api:'+session.id,[])));
+          this.updateSession(session.id,{connectionRevision:result.revision, ...(result.ollama && session.ollama ? {ollama:{...session.ollama,host:result.ollama.host}} : {})});
+        }
         await this.memory.service.bindingChanged('connection:'+result.id);
         return result;
       }
       case 'connections.remove': await this.memory.ready;return this.chatConnections.remove(p.id);
+      // What an account can do, what depends on it, and moving those to another one.
+      case 'connections.check': return this.connectionTools.check(p);
+      case 'connections.uses': return this.connectionTools.uses(p.id);
+      case 'connections.reassign': return this.connectionTools.reassign(p);
       case 'connections.models': {
         const connection = this.chatConnections.get(p.id);
-        if (connection.kind === 'ollama') return { models: await this.modelLoader('ollama', connection.ollama!.host) };
-        return { models: await apiModels('compatible', this.endpointAccess(connection.compatible!,connection.id)) };
+        return { models: await this.accountModels(connection,p.operation) };
       }
       // Resources and prompt templates are the user's own operations; models never invoke them.
       case 'extensions.resources': return this.extensions.resources(p.id, p.cursor);
@@ -2285,6 +2649,7 @@ export class Core extends EventEmitter {
       case 'notes.clearBackups': { const { rm } = await import('node:fs/promises'); await rm(join(this.store.directory, 'vault-backups'), { recursive: true, force: true }); return true; }
       case 'collections.create': return this.collections.create(p);
       case 'collections.update': return this.collections.update(p);
+      case 'collections.search': return this.collections.search(p);
       case 'collections.addSource': return this.collections.addSource(p);
       case 'collections.removeSource': return this.collections.removeSource(p);
       case 'collections.bind': return this.collections.bind(p);
@@ -2351,7 +2716,7 @@ export class Core extends EventEmitter {
       case 'ui.quit': this.emit('ui',{command:'quit',stopTasks:!!p.stopTasks}); return true;
       case 'mcp.tools': {
         const id = this.tokens.get(p.token); if (!id) throw new Error('Session capability expired');
-        return [...(this.withheld(id, 'desktop') ? [] : actionDefinitions.filter(d => categoryEnabled(this.settingsFor(id), d.category))), ...this.memoryToolsFor(id), ...this.notesToolsFor(id)];
+        return [...(this.withheld(id, 'desktop') ? [] : actionDefinitions.filter(d => categoryEnabled(this.settingsFor(id), d.category))), ...this.memoryToolsFor(id), ...this.notesToolsFor(id), ...this.temporal.definitions(id)];
       }
       case 'mcp.call': {
         const id = this.tokens.get(p.token); if (!id) throw new Error('Session capability expired');
@@ -2364,6 +2729,14 @@ export class Core extends EventEmitter {
             const answers = Object.fromEntries(questions.map(q => [q.question,answer.answers[q.id].answers.join(', ')]));
             return {behavior:'allow',updatedInput:{...input,answers}};
           }
+          // PAL's own two clock reads need no question. Only these exact names, offered now and with valid arguments;
+          // anything else, however similar, is asked about as usual, and the call itself is checked again.
+          if (claudeTimeTools.has(p.args?.tool_name)) {
+            const clock = timeToolNames.find(tool => String(p.args.tool_name).endsWith('__' + tool.replaceAll('.', '_')))!;
+            let valid = this.temporal.offered(id, clock);
+            if (valid) try { validTimeArguments(clock, p.args.input || {}); } catch { valid = false; }
+            if (valid) return { behavior: 'allow', updatedInput: p.args.input || {} };
+          }
           // Claude also asks before entering our MCP bridge. Use the same category
           // as the underlying action, so computer bypass does not need CLI bypass.
           const tool = actionDefinitions.find(d => ['mcp__pal__', 'mcp__cere__'].some(prefix => p.args.tool_name === prefix + d.name.replaceAll('.', '_')));
@@ -2371,6 +2744,7 @@ export class Core extends EventEmitter {
           const answer = await this.approval(id, { kind, title:`Allow Claude to use ${String(p.args.tool_name || 'a tool')}?`, detail:JSON.stringify(p.args.input || {},null,2), choices:['allow','deny'] });
           return answer.choice === 'allow' && (!answer.automatic || this.tokens.get(p.token) === id && this.automaticallyApprove(id,{kind,choices:['allow']})) ? { behavior:'allow', updatedInput:p.args.input || {} } : { behavior:'deny', message:'Declined in PAL or automatic permission was revoked' };
         }
+        if (timeToolNames.includes(p.name)) return this.temporal.call(id, p.name, p.args);
         if (memoryDefinitions.some(d => d.name === p.name) || notesDefinitions.some(d => d.name === p.name)) {
           const controller = new AbortController(), active = this.actionControllers.get(id) || new Set<AbortController>();
           active.add(controller); this.actionControllers.set(id, active);
@@ -2396,7 +2770,8 @@ export class Core extends EventEmitter {
     this.schedules.shutdown();this.collections.closeWatchers();
     await this.canvas.shutdown().catch(()=>{});
     this.remoteView.end();
-    this.jobs.cancelAll();await this.research.close();await this.workbench.close();this.workflows.close();this.utilities.close();this.localModels.cancel();this.collections.cancel();this.packages.close();await this.extensions.close().catch(error=>this.emit('notice',{kind:'error',text:error.message}));this.oauth.close();await this.transcription.close();await this.power.close();
+    this.realtime.transport.close();this.providerBridge.close();this.accounts.close();await this.providerJobs.close();this.jobs.cancelAll();await this.research.close();await this.workbench.close();this.workflows.close();this.utilities.close();this.localModels.cancel();this.collections.cancel();this.packages.close();await this.extensions.close().catch(error=>this.emit('notice',{kind:'error',text:error.message}));this.oauth.close();await this.transcription.close();await this.power.close();
+    this.services.close(); const codeClosed = this.code.close();
     const speechClosed = this.speech.close(); this.speechResponses.clear();
     this.memory.invalidate(); this.webController.abort(new Error('PAL is closing'));
     clearInterval(this.ticker); this.flush();
@@ -2415,7 +2790,7 @@ export class Core extends EventEmitter {
     await bounded([this.mutationsSettled()]);
     for(const timer of this.stopTimers)clearTimeout(timer);this.stopTimers.clear();
     await this.memory.close();
-    await speechClosed;
+    await speechClosed; await codeClosed;
     this.elevenlabs.reset();
     await this.indextts.close();
     this.store.close();

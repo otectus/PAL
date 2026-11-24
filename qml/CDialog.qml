@@ -27,8 +27,10 @@ Popup {
     anchors.centerIn: parent
     scale: Theme.interfaceScale
     width: Math.min(preferredWidth, parent ? Math.max(1, (parent.width - Theme.space5) / scale) : preferredWidth)
-    implicitHeight: Math.min(bodyColumn.implicitHeight + inset * 2 + footerHeight,
-                             parent ? Math.max(1, (parent.height - Theme.space6) / scale) : 720)
+    // How tall a body may be before it scrolls. It does not look at the dialog's own height, which follows the body:
+    // the scroll bar's room can wrap one more line, and a choice made from the result of itself would never settle.
+    readonly property real bodyLimit: (parent ? Math.max(1, (parent.height - Theme.space6) / scale) : 720) - inset * 2 - footerHeight
+    implicitHeight: Math.min(bodyColumn.implicitHeight, bodyLimit) + inset * 2 + footerHeight
     modal: true
     dim: true
     focus: true
@@ -78,7 +80,7 @@ Popup {
         clip: true
         contentWidth: availableWidth
         contentHeight: bodyColumn.implicitHeight
-        rightPadding: contentHeight > availableHeight ? Theme.minimumTarget : 0
+        rightPadding: bodyColumn.implicitHeight > dialog.bodyLimit ? Theme.minimumTarget : 0
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical: CScrollBar { parent: viewport; x: viewport.width - width; height: viewport.availableHeight }
         ColumnLayout { id: bodyColumn; width: viewport.availableWidth; spacing: Theme.space3 }

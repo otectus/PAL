@@ -160,6 +160,14 @@ public:
     /** A path the user chose in a save dialog (which already confirmed any overwrite); nothing is written here. */
     Q_INVOKABLE QString chooseSavePath(const QString &suggestedName);
     Q_INVOKABLE QString chooseWorkflow();
+    /** Opens a JSON file selected by the user and returns at most 2 MB for reviewed provider import. */
+    Q_INVOKABLE QString chooseProviderImportJson();
+    /** Opens one JSON file the user chose and returns at most 2 MB of its text. */
+    Q_INVOKABLE QString chooseJson(const QString &title);
+    /** Starts raw PCM capture/playback for a broker realtime session. Audio never enters QML. */
+    Q_INVOKABLE bool startRealtimeAudio(const QString &sessionId,int inputRate,int outputRate);
+    Q_INVOKABLE void interruptRealtimeAudio();
+    Q_INVOKABLE void stopRealtimeAudio(bool notifyBroker=true);
     Q_INVOKABLE void saveHomePosition();
     Q_INVOKABLE void goHomePosition();
     Q_INVOKABLE void dockPet(const QString &edge);
@@ -218,6 +226,7 @@ signals:
     void result(int id, const QVariant &value);
     // A broker terminal frame (screen delta, state, scroll); {kind:"resync"} when held frames were dropped.
     void terminalEvent(const QVariantMap &event);
+    void realtimeEvent(const QVariantMap &event);
     // Editors persist unsaved text before a window hides, expands or quits.
     void flushDrafts();
     void attachmentRequested(const QString &path);
@@ -313,6 +322,13 @@ private:
     bool m_compactShowPending = false;
     QSystemTrayIcon *m_tray=nullptr;
     QProcess *m_overlayProcess=nullptr;
+    QProcess *m_realtimeCapture=nullptr;
+    QProcess *m_realtimePlayback=nullptr;
+    QString m_realtimeSession;
+    int m_realtimeOutputRate=0;
+    qint64 m_realtimePlaybackUntil=0;
+    QTimer m_realtimeDrain;
+    bool m_realtimePlaybackCompletePending=false;
     QTimer m_overlayRestartTimer;
     QElapsedTimer m_overlayUptime;
     QList<int> m_overlayRestartDelays{250,1000,4000};
@@ -336,6 +352,8 @@ private:
     void sendHeldDraft(const QVariantMap &draft);
     void retainDeferredDraft(int request);
     void receive();
+    bool startRealtimePlayback();
+    void scheduleRealtimePlaybackComplete();
     void applyState(const QVariantMap &state);
     void syncPet();
     Q_SLOT void showCompactWhenReady();

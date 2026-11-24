@@ -8,7 +8,6 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -128,7 +127,7 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
                 val apply = terminalId == id && retained.attachGeneration == generation
                 if (apply) {
                     terminal = value.obj("terminal")
-                    screen = value.obj("screen")?.let(TerminalFrames::snapshot)
+                    screen = value.obj("screen")?.let { runCatching { TerminalFrames.snapshot(it) }.getOrNull() }
                     if (lease != null && !terminalLeaseMatches(terminal, lease, state.desktop?.deviceId)) {
                         setLease(null)
                         pending.clear()
@@ -226,7 +225,7 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
                 val value = result as JsonObject
                 terminal = value.obj("terminal")
                 terminalId = terminal?.str("id").orEmpty()
-                screen = value.obj("screen")?.let(TerminalFrames::snapshot)
+                screen = value.obj("screen")?.let { runCatching { TerminalFrames.snapshot(it) }.getOrNull() }
                 setLease(TerminalLease.from(value.obj("lease"))); setLastSequence(lease?.lastSequence ?: 0)
                 error = null; actionError = null; refreshList(); runCatching { focus.requestFocus() }
             },
@@ -252,7 +251,7 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
         repository.workEvents.collect { event ->
             val data = event.data
             when (event.name) {
-                "terminal.screen" -> if (data.str("id") == terminalId) { val next = TerminalFrames.apply(screen, data); if (next == null) attach(terminalId) else screen = next }
+                "terminal.screen" -> if (data.str("id") == terminalId) { val next = runCatching { TerminalFrames.apply(screen, data) }.getOrNull(); if (next == null) attach(terminalId) else screen = next }
                 "terminal.state" -> {
                     val id = data.str("id").orEmpty()
                     terminals = (listOf(data) + terminals.filter { it.str("id") != id }).sortedByDescending { it.num("created") ?: 0 }
@@ -298,8 +297,10 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
                     }
                 }
             }
-            items(terminals, key = { it.str("id").orEmpty() }) { item ->
+            keyedItems(terminals, { it.str("id").orEmpty() }) { item ->
                 ListItem(headlineContent = { Text(item.str("title").orEmpty()) }, supportingContent = { Text("${item.str("shell")} · ${item.str("cwd")} · ${terminalState(item.str("state"))}") },
+                    // A terminal whose program has ended can leave the list; a running one is stopped first.
+                    trailingContent = if (item.str("state") != "running" && state.supports("terminal.forget")) ({ TextButton({ scope.launch { runCatching { repository.mutate("terminal.forget", buildJsonObject { put("terminalId", item.str("id").orEmpty()) }) }.onSuccess { terminals = terminals.filter { it.str("id") != item.str("id") } }.onFailure { error = it.message } } }) { Text(stringResource(R.string.extras_terminal_forget)) } }) else null,
                     modifier = Modifier.clickable { retained.actionGeneration++; retained.attachGeneration++; setLease(null); actionError = null; terminal = null; screen = null; terminalId = item.str("id").orEmpty() })
             }
         }
@@ -314,7 +315,7 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
                     Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
             }
             IconButton({ scope.launch { runCatching { repository.request("terminal.history", buildJsonObject { put("terminalId", terminalId); put("limit", 1000) }) as JsonObject }.onSuccess { value ->
-                history = (value["lines"] as? JsonArray).orEmpty().joinToString("\n") { Screen.plain(TerminalFrames.line(it.jsonArray)) } + "\n" + (screen?.text() ?: "")
+                history = value.array("lines").joinToString("\n") { line -> (line as? JsonArray)?.let { Screen.plain(TerminalFrames.line(it)) }.orEmpty() } + "\n" + (screen?.text() ?: "")
             }.onFailure { error = it.message } } }) { Icon(Icons.Default.List, stringResource(R.string.terminal_history_and_copy)) }
             if (running) IconButton({ confirmStop = true }) { Icon(Icons.Default.Close, stringResource(R.string.terminal_stop_terminal)) }
         }
@@ -346,6 +347,7 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
                     }
                     AssistChip({ scope.launch { runCatching { repository.mutate("terminal.interrupt", buildJsonObject { put("terminalId", terminalId) }) }.onFailure { error = it.message } } }, { Text(stringResource(R.string.terminal_ctrl_c)) })
                     AssistChip({ clipboard.getText()?.text?.takeIf { it.isNotEmpty() }?.let { send(TerminalKeys.paste(it.take(65536))) } }, { Text(stringResource(R.string.terminal_paste)) })
+                    if (state.supports("terminal.release")) AssistChip({ scope.launch { runCatching { repository.mutate("terminal.release", buildJsonObject { put("terminalId", terminalId) }) }.onSuccess { setLease(null) }.onFailure { error = it.message } } }, { Text(stringResource(R.string.extras_terminal_release)) })
                 }
                 OutlinedTextField(field, { value ->
                     // Send committed prefix changes now, but keep the active IME preedit exclusively on the phone.
@@ -371,7 +373,7 @@ internal fun TerminalScreen(repository: PALRepository, state: MobileState, activ
             Column(Modifier.fillMaxWidth().padding(PALLayout.groupGap)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(stringResource(R.string.terminal_history), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                    TextButton({ clipboard.setText(AnnotatedString(text)); history = null }) { Text(stringResource(R.string.terminal_copy_all)) }
+                    TextButton({ if (!copyText(activity, strings.getString(R.string.terminal_history), text)) notice = strings.getString(R.string.copy_refused); history = null }) { Text(stringResource(R.string.terminal_copy_all)) }
                 }
                 Text(stringResource(R.string.terminal_select_any_part_to_copy_it_terminal_output), style = MaterialTheme.typography.bodySmall)
                 SelectionContainer(Modifier.heightIn(max = PALLayout.dialogBodyHeight)) { Text(text, Modifier.verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()), style = style, softWrap = false) }

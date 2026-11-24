@@ -28,10 +28,12 @@ for (const dir of ['broker', 'qml', 'assets', 'protocol', 'shell']) for (const f
   if (existsSync(installed) && (!statSync(installed).isFile() || !readFileSync(installed).equals(readFileSync(join(root, file))))) problems.push(`differs from source: share/pal/${file}`);
 }
 executable(join(share, 'broker/graph-memory/adapters/fish/pal-memory-emitter.py'));
+executable(join(share, 'broker/graph-memory/adapters/editor/pal-memory-editor.py'));
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 for (const name of Object.keys(manifest.dependencies || {})) need(join(share, 'node_modules', name, 'package.json'), 'runtime package');
 for (const module of ['pal-peercred.node', 'pal-telemetry.node']) need(join(share, 'native', module), 'native module');
 executable(join(share, 'native', 'pal-workspacefs'));
+executable(join(share, 'native', 'pal-document'));
 const tts = join(share, 'tts');
 if (!existsSync(tts) || !readdirSync(tts, { recursive: true }).some(entry => String(entry).endsWith('.onnx'))) problems.push('missing speech resources: share/pal/tts has no voice model');
 for (const program of ['bin/pal', 'bin/pal-report', 'bin/pal-run', 'bin/pal-telemetry-hooks', 'lib/pal/pal']) executable(join(prefix, program));

@@ -37,6 +37,11 @@
     <string name="lab_rows_export">Export selected or matching rows</string>
     <string name="lab_explain_record">Explain the selected record using its source values</string>
     <string name="lab_results">Result explorer</string>
+    <string name="lab_safe">Keep formulas as text for spreadsheets</string>
+    <plurals name="lab_safe_hint">
+        <item quantity="one">%1$d cell starts like a formula. In the export it gets a leading apostrophe.</item>
+        <item quantity="other">%1$d cells start like a formula. In the export each gets a leading apostrophe.</item>
+    </plurals>
     <string name="lab_exported">Saved selection to Library · %1$s</string>
     <string name="lab_previous">Previous</string>
     <string name="lab_next">Next</string>

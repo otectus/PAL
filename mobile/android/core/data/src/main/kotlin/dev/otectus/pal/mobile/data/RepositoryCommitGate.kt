@@ -44,6 +44,20 @@ internal class RepositoryCommitGate(private val mutex: Mutex) {
         else null
     }
 
+    /**
+     * An answer to show, asked for again when only a routine snapshot came while it was loading: a desktop at work sends
+     * them all the time. Every answer is checked against the fence it was asked under, so one from before a change of
+     * desktop, connection, access or transcript ([holds]) is refused as ever.
+     */
+    suspend fun <T> settled(attempts: Int, capture: () -> ReadFence, holds: (ReadFence) -> Boolean, ask: suspend () -> T): T {
+        repeat(attempts) {
+            val origin = capture(); val answer = ask()
+            if (!holds(origin)) throw StaleResultException()
+            if (origin.snapshotGeneration == snapshotGeneration) return answer
+        }
+        throw StaleResultException()
+    }
+
     suspend fun <T> commit(origin: ReadFence, authorized: () -> Boolean, block: suspend () -> T): T? = mutex.withLock {
         if (!authorityCurrent(origin) || origin.snapshotGeneration != snapshotCounter.get() || !authorized()) return@withLock null
         block()

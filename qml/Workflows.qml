@@ -90,7 +90,10 @@ ColumnLayout {
     }
     Connections {
         target: workflowView
-        function onTabChanged() { viewport.contentItem.contentY = viewport.contentItem.originY }
+        function onTabChanged() {
+            page.requestedTab = workflowView.tab
+            viewport.contentItem.contentY = viewport.contentItem.originY
+        }
     }
     onVisibleChanged: {
         if (visible) {

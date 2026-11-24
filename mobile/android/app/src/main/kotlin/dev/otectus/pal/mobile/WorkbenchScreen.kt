@@ -2,16 +2,16 @@
 package dev.otectus.pal.mobile
 
 import androidx.compose.ui.res.stringResource
-import android.graphics.BitmapFactory
+import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
-import android.util.Base64
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -37,6 +37,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -44,12 +45,17 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.otectus.pal.mobile.data.PALRepository
 import dev.otectus.pal.mobile.data.ConnectionState
 import dev.otectus.pal.mobile.data.MobileState
+import dev.otectus.pal.mobile.data.traits
+import dev.otectus.pal.mobile.data.providerConnections
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 
@@ -59,10 +65,17 @@ import kotlinx.serialization.json.*
  * sends edits through the same change engine and moves bytes as verified transfers. A phone with limited access,
  * or a desktop without these features, gets a literal explanation instead of controls.
  */
-private enum class WorkTab(val label: Int) { Files(R.string.work_tab_files), Changes(R.string.work_tab_changes), Library(R.string.work_tab_library), Runs(R.string.work_tab_runs), Research(R.string.work_tab_research), Canvas(R.string.work_tab_canvas), Notes(R.string.work_tab_notes), Terminal(R.string.work_tab_terminal) }
+private enum class WorkTab(val label: Int) { Files(R.string.work_tab_files), Changes(R.string.work_tab_changes), Library(R.string.work_tab_library), Runs(R.string.work_tab_runs), Research(R.string.work_tab_research), Canvas(R.string.work_tab_canvas), Shelf(R.string.tools_tab_shelf), Notes(R.string.work_tab_notes), Accounts(R.string.work_tab_accounts), Terminal(R.string.work_tab_terminal) }
 
 @Composable
-internal fun WorkScreen(repository: PALRepository, state: MobileState, activity: FragmentActivity, preferredSessionId: String?, openOwnerSection: (String, String?) -> Unit) {
+internal fun WorkScreen(
+    repository: PALRepository,
+    state: MobileState,
+    activity: FragmentActivity,
+    preferredSessionId: String?,
+    openConversation: (String) -> Unit,
+    openOwnerSection: (String, String?) -> Unit,
+) {
     // Keep navigation and each pane's saveable state mounted while a signed action briefly re-authenticates.
     // Otherwise starting a terminal can recreate Work at the default Files tab before the action result arrives.
     var tab by rememberSaveable { mutableStateOf(WorkTab.Files.name) }
@@ -102,9 +115,11 @@ internal fun WorkScreen(repository: PALRepository, state: MobileState, activity:
                         WorkTab.Changes -> ChangesTab(repository, state, activity, sessionId)
                         WorkTab.Library -> LibraryTab(repository, state, activity, sessionId) { artifact, version -> pendingLabArtifact=artifact; pendingLabVersion=version; tab=WorkTab.Runs.name }
                         WorkTab.Runs -> RunsTab(repository, state, activity, sessionId, pendingLabArtifact, pendingLabVersion, consumedPending = { pendingLabArtifact=""; pendingLabVersion="" }, openSettings = { openOwnerSection("Desktop settings", sessionId) })
-                        WorkTab.Research -> ResearchTab(repository, state, activity, sessionId) { openOwnerSection("Desktop settings", sessionId) }
+                        WorkTab.Research -> ResearchTab(repository, state, activity, sessionId, openConversation) { openOwnerSection("Desktop settings", sessionId) }
                         WorkTab.Canvas -> CanvasTab(repository, state, activity, sessionId)
+                        WorkTab.Shelf -> ShelfTab(repository, state, sessionId, openConversation)
                         WorkTab.Notes -> NotesTab(repository, state, sessionId)
+                        WorkTab.Accounts -> AccountsTab(repository, state, activity, sessionId) { openOwnerSection("Accounts", sessionId) }
                         WorkTab.Terminal -> Unit
                     }
                 }
@@ -157,7 +172,7 @@ private fun ModelFamilies(repository: PALRepository, activity: FragmentActivity,
         error = null
         runCatching { repository.request("sessions.get", buildJsonObject { put("sessionId", session.id) }) as JsonObject }
             .onSuccess { dto ->
-                families = (dto["capabilities"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }?.toSet() ?: emptySet()
+                families = dto.strings("capabilities").toSet()
                 configRevision = dto.str("configRevision") ?: session.configRevision
                 error = null
             }
@@ -226,6 +241,7 @@ private fun ConversationActions(repository: PALRepository, activity: FragmentAct
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val live by repository.state.collectAsStateWithLifecycle()
     var open by remember { mutableStateOf(false) }
     var modelAccess by rememberSaveable(session.id) { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -237,13 +253,15 @@ private fun ConversationActions(repository: PALRepository, activity: FragmentAct
         IconButton({ open = true }) { Icon(Icons.Default.MoreVert, stringResource(R.string.conversation_actions)) }
         DropdownMenu(open, { open = false }) {
             DropdownMenuItem(text = { Text(stringResource(R.string.work_apply_working_setup)) }, onClick = { open = false; openSetup() })
-            if (session.provider in setOf("ollama", "openai", "anthropic", "google", "compatible"))
+            // PAL runs these conversations itself, whichever provider answers; what the desktop says about a provider decides.
+            if (live.traits(session.provider).kind != "cli")
                 DropdownMenuItem(text = { Text(stringResource(R.string.work_model_access)) }, onClick = { open = false; modelAccess = true })
             DropdownMenuItem(text = { Text(stringResource(R.string.work_share_as_markdown)) }, onClick = { open = false; scope.launch {
-                runCatching { repository.request("owner.sessions.export", buildJsonObject { put("sessionId", session.id) }) as JsonObject }.onSuccess { exported ->
-                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/markdown").putExtra(android.content.Intent.EXTRA_TEXT, exported.str("text").orEmpty()).putExtra(android.content.Intent.EXTRA_SUBJECT, exported.str("filename") ?: session.title)
-                    context.startActivity(android.content.Intent.createChooser(intent, strings.getString(R.string.work_share_conversation)))
-                }.onFailure { error = it.message }
+                ownerCall {
+                    val exported = repository.request("owner.sessions.export", buildJsonObject { put("sessionId", session.id) }) as JsonObject
+                    val intent = withContext(Dispatchers.IO) { conversationShare(context, exported.str("text").orEmpty(), exported.str("filename") ?: session.title) }
+                    if (!context.open(Intent.createChooser(intent, strings.getString(R.string.work_share_conversation)))) error(strings.getString(R.string.open_refused))
+                }.onSuccess { error = null }.onFailure { error = it.message }
             } })
             DropdownMenuItem(text = { Text(stringResource(R.string.work_branch_with_its_last_messages)) }, onClick = { open = false; scope.launch {
                 runCatching {
@@ -312,6 +330,10 @@ private fun FilesTab(repository: PALRepository, state: MobileState, activity: Fr
             FlowRow(Modifier.padding(horizontal = PALLayout.groupGap), horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                 roots.forEach { item -> FilterChip(item.str("id") == rootId, { rootId = item.str("id").orEmpty(); path = ""; matches = null }, { Text(item.str("name") ?: stringResource(R.string.work_folder)) }) }
                 AssistChip({ choosing = true }, { Text(stringResource(R.string.work_add_a_folder)) }, leadingIcon = { Icon(Icons.Default.Add, null) })
+                if (state.supports("workbench.conversationRoot") && roots.none { it.str("kind") == "conversation" }) AssistChip({ scope.launch {
+                    runCatching { signed(activity, repository, "workbench.conversationRoot", buildJsonObject { put("sessionId", sessionId) }, strings.getString(R.string.tools_private_action)) as JsonObject }
+                        .onSuccess { made -> rootId = made.str("id").orEmpty(); path = ""; loadRoots() }.onFailure { error = it.message }
+                } }, { Text(stringResource(R.string.tools_private)) })
             }
         }
         if (roots.isEmpty()) item { Text(stringResource(R.string.work_no_folders_yet_add_a_folder_from_this), Modifier.padding(PALLayout.groupGap), color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -341,7 +363,7 @@ private fun FilesTab(repository: PALRepository, state: MobileState, activity: Fr
                 ListItem(headlineContent = { Text(match.str("path").orEmpty(), maxLines = 1) }, supportingContent = { Text("${match.int("line") ?: ""}: ${match.str("text").orEmpty().trim()}", fontFamily = FontFamily.Monospace, maxLines = 2) },
                     modifier = Modifier.clickable { openFile = match.str("path") })
             }
-        } else items(entries, key = { it.str("path").orEmpty() }) { entry ->
+        } else keyedItems(entries, { it.str("path").orEmpty() }) { entry ->
             val folder = entry.str("type") == "directory"
             ListItem(headlineContent = { Text(entry.str("name").orEmpty()) },
                 supportingContent = { Text(if (folder) stringResource(R.string.work_folder) else byteSize(entry.num("size")) + if (entry.isTrue("credential")) stringResource(R.string.work_may_hold_credentials) else "") },
@@ -359,6 +381,10 @@ private fun FolderPermissions(repository: PALRepository, activity: FragmentActiv
     val scope = rememberCoroutineScope()
     val policy = root.obj("policy"); val rootId = root.str("id").orEmpty()
     var error by remember { mutableStateOf<String?>(null) }
+    var removing by remember { mutableStateOf(false) }
+    if (removing) ToolDialog(stringResource(R.string.tools_root_remove_title, root.str("name").orEmpty()), { removing = false }, confirm = { Button({ removing = false; scope.launch {
+        runCatching { repository.mutate("workbench.removeRoot", buildJsonObject { put("sessionId", sessionId); put("rootId", rootId) }) }.onSuccess { error = null; reload() }.onFailure { error = it.message }
+    } }) { Text(stringResource(R.string.tools_root_remove)) } }) { Text(stringResource(R.string.tools_root_remove_body)) }
     fun update(key: String, value: Boolean) = scope.launch {
         runCatching { signed(activity, repository, "workbench.updateRoot", buildJsonObject { put("sessionId", sessionId); put("rootId", rootId); put("expectedRevision", (root["revision"] as? JsonPrimitive)?.content ?: "0"); put("policy", buildJsonObject { put(key, value) }) }, strings.getString(R.string.work_change_s_permissions, root.str("name"))) }
             .onSuccess { error = null; reload() }.onFailure { error = it.message }
@@ -366,6 +392,7 @@ private fun FolderPermissions(repository: PALRepository, activity: FragmentActiv
     FlowRow(Modifier.padding(horizontal = PALLayout.groupGap), horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
         FilterChip(policy?.isTrue("write") == true, { update("write", policy?.isTrue("write") != true) }, { Text(stringResource(R.string.work_create_and_edit)) })
         FilterChip(policy?.isTrue("execute") == true, { update("execute", policy?.isTrue("execute") != true) }, { Text(stringResource(R.string.work_run_commands)) })
+        AssistChip({ removing = true }, { Text(stringResource(R.string.tools_root_remove)) })
         if (policy?.isTrue("write") == true && grant == null) AssistChip({ scope.launch {
             runCatching { signed(activity, repository, "workbench.grantEdits", buildJsonObject { put("sessionId", sessionId); put("rootId", rootId); put("minutes", 30) }, strings.getString(R.string.work_let_the_model_edit_for_30_minutes, root.str("name"))) }
                 .onSuccess { error = null; reload() }.onFailure { error = it.message }
@@ -410,7 +437,7 @@ private fun FolderChooser(repository: PALRepository, start: String?, dismiss: ()
         }
         Button({ current?.str("path")?.let { choose(it, write) } }, enabled = current != null) { Text(stringResource(R.string.work_use_this_folder)) }
         LazyColumn(Modifier.weight(1f)) {
-            items(current?.list("items").orEmpty().filter { it.str("kind") == "folder" }, key = { it.str("path").orEmpty() }) { item ->
+            keyedItems(current?.list("items").orEmpty().filter { it.str("kind") == "folder" }, { it.str("path").orEmpty() }) { item ->
                 ListItem(headlineContent = { Text(item.str("name").orEmpty()) }, leadingContent = { Icon(Icons.AutoMirrored.Filled.List, null) }, modifier = Modifier.clickable { go(item.str("path")) })
             }
         }
@@ -418,14 +445,17 @@ private fun FolderChooser(repository: PALRepository, start: String?, dismiss: ()
 }
 
 /** A file from the desktop: line numbers, search, and an editor that saves through the change engine. */
+/** An edit in progress and the version of the file it started from, kept together when the phone is turned. */
+internal data class FileEdit(val version: String, val text: String)
+internal val fileEditSaver = androidx.compose.runtime.saveable.listSaver<FileEdit?, String>({ edit -> if (edit == null) emptyList() else listOf(edit.version, edit.text) }, { if (it.size == 2) FileEdit(it[0], it[1]) else null })
+
 @Composable
 private fun FileView(repository: PALRepository, activity: FragmentActivity, sessionId: String, rootId: String, root: JsonObject?, file: String, close: () -> Unit) {
     val strings = androidx.compose.ui.platform.LocalResources.current
 
     val scope = rememberCoroutineScope()
     var text by remember { mutableStateOf<JsonObject?>(null) }
-    var editing by remember { mutableStateOf(false) }
-    var draft by rememberSaveable(file) { mutableStateOf("") }
+    var edit by rememberSaveable(file, stateSaver = fileEditSaver) { mutableStateOf<FileEdit?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var info by remember { mutableStateOf<String?>(null) }
     var find by rememberSaveable { mutableStateOf("") }
@@ -439,16 +469,18 @@ private fun FileView(repository: PALRepository, activity: FragmentActivity, sess
         // The whole text when it fits one change (256 KiB); otherwise the first 300 lines, read only.
         runCatching { repository.read("workbench.files.text", buildJsonObject { put("sessionId", sessionId); put("rootId", rootId); put("path", file) }) as JsonObject }
             .recoverCatching { repository.read("workbench.files.read", buildJsonObject { put("sessionId", sessionId); put("rootId", rootId); put("path", file); put("lineCount", 300) }) as JsonObject }
-            .onSuccess { text = it; if (!editing) draft = it.str("text").orEmpty() }.onFailure { error = it.message }
+            .onSuccess { text = it }.onFailure { error = it.message }
     }
     LaunchedEffect(file) { load() }
-    val editable = root?.obj("policy")?.isTrue("write") == true && text?.str("text") != null && text?.isTrue("truncated") != true && text?.num("totalLines") == null
+    val current = edit
+    val start = text?.let { shown -> shown.str("version")?.let { version -> shown.str("text")?.let { FileEdit(version, it) } } }
+    val editable = root?.obj("policy")?.isTrue("write") == true && start != null && text?.isTrue("truncated") != true && text?.num("totalLines") == null
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.padding(horizontal = PALLayout.tight), verticalAlignment = Alignment.CenterVertically) {
             IconButton(close) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.work_back_to_the_folder)) }
             Text(file.substringAfterLast('/'), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 1)
-            if (editable && !editing) TextButton({ editing = true; draft = text?.str("text").orEmpty() }) { Text(stringResource(R.string.action_edit)) }
-            if (text?.str("text") != null && !editing) TextButton({ translating = true }) { Text(stringResource(R.string.work_translate)) }
+            if (editable && current == null) TextButton({ edit = start }) { Text(stringResource(R.string.action_edit)) }
+            if (text?.str("text") != null && current == null) TextButton({ translating = true }) { Text(stringResource(R.string.work_translate)) }
             if (Regex("\\.(csv|tsv)$", RegexOption.IGNORE_CASE).containsMatchIn(file)) TextButton({ scope.launch {
                 runCatching { repository.read("owner.tables.preview", buildJsonObject { put("sessionId", sessionId); put("rootId", rootId); put("path", file) }) as JsonObject }.onSuccess { table = it }.onFailure { error = it.message }
             } }) { Text(stringResource(R.string.work_columns)) }
@@ -457,7 +489,7 @@ private fun FileView(repository: PALRepository, activity: FragmentActivity, sess
         table?.let { preview -> AlertDialog({ table = null }, title = { Text(stringResource(R.string.work_rows, preview.num("rows") ?: 0)) }, text = {
             Column(verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
                 preview.list("columns").forEach { column -> Text("${column.str("name")} · ${column.str("type")}" + (column.num("missing")?.takeIf { it > 0 }?.let { " · " + strings.getString(R.string.column_missing, it) } ?: "") + (column.str("example")?.let { " · " + strings.getString(R.string.column_example, it) } ?: ""), style = MaterialTheme.typography.bodySmall) }
-                (preview["problems"] as? JsonArray)?.forEach { Text(it.jsonPrimitive.content, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                preview.strings("problems").forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             }
         }, confirmButton = { TextButton({ table = null }) { Text(stringResource(R.string.action_close)) } }) }
         // §16.3: the translation is a new linked file in this conversation's Library; this file is not changed.
@@ -475,20 +507,19 @@ private fun FileView(repository: PALRepository, activity: FragmentActivity, sess
         } }, enabled = language.isNotBlank()) { Text(stringResource(R.string.work_translate)) } }, dismissButton = { TextButton({ translating = false }) { Text(stringResource(R.string.action_cancel)) } })
         Text("${root?.str("path").orEmpty()}/$file", Modifier.padding(horizontal = PALLayout.groupGap), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Status(error, info)
-        if (editing) {
-            OutlinedTextField(draft, { draft = it }, Modifier.weight(1f).fillMaxWidth().padding(PALLayout.small), textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
+        if (current != null) {
+            OutlinedTextField(current.text, { edit = current.copy(text = it) }, Modifier.weight(1f).fillMaxWidth().padding(PALLayout.small), textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
             Row(Modifier.padding(PALLayout.small), horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
-                OutlinedButton({ editing = false; draft = text?.str("text").orEmpty() }) { Text(stringResource(R.string.desktop_discard)) }
+                OutlinedButton({ edit = null }) { Text(stringResource(R.string.desktop_discard)) }
                 Button({
-                    val version = text?.str("version") ?: return@Button
                     saving = true; error = null
                     scope.launch {
                         // The owner's own edit, checked against the version shown: a newer desktop change is never overwritten.
                         runCatching { signed(activity, repository, "workbench.changes.propose", buildJsonObject {
                             put("sessionId", sessionId); put("apply", true); put("reason", "Edited on the phone")
-                            put("operations", buildJsonArray { add(buildJsonObject { put("kind", "patch_text"); put("rootId", rootId); put("path", file); put("baseVersion", version); put("content", draft) }) })
+                            put("operations", buildJsonArray { add(buildJsonObject { put("kind", "patch_text"); put("rootId", rootId); put("path", file); put("baseVersion", current.version); put("content", current.text) }) })
                         }, strings.getString(R.string.work_save_2, file.substringAfterLast('/'))) as JsonObject }
-                            .onSuccess { value -> val applied = value.obj("applied"); info = if (applied?.str("status") == "applied" || applied?.str("state") == "applied" || applied != null) strings.getString(R.string.work_saved_on_the_desktop) else strings.getString(R.string.work_proposed_for_review); editing = false; load() }
+                            .onSuccess { value -> val applied = value.obj("applied"); info = if (applied?.str("status") == "applied" || applied?.str("state") == "applied" || applied != null) strings.getString(R.string.work_saved_on_the_desktop) else strings.getString(R.string.work_proposed_for_review); edit = null; load() }
                             .onFailure { error = it.message + strings.getString(R.string.work_reload_to_see_the_desktops_current_version_your) }
                         saving = false
                     }
@@ -549,8 +580,7 @@ private fun ChangesTab(repository: PALRepository, state: MobileState, activity: 
                         Column(Modifier.padding(PALLayout.small).fillMaxWidth()) {
                             Text("${op.str("label") ?: op.str("kind")} · ${op.str("path") ?: op.str("to").orEmpty()}", fontWeight = FontWeight.SemiBold)
                             op.obj("outcome")?.str("state")?.let { Text(stringResource(R.string.work_outcome, it), style = MaterialTheme.typography.bodySmall) }
-                            op.obj("review")?.list("notes")?.let { } // notes are strings; shown below
-                            (op.obj("review")?.get("notes") as? JsonArray)?.forEach { note -> Text(note.jsonPrimitive.contentOrNull.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            op.obj("review")?.strings("notes")?.forEach { note -> Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             op.obj("review")?.str("diff")?.takeIf { it.isNotBlank() }?.let { diff ->
                                 SelectionContainer {
                                     Column(Modifier.horizontalScroll(rememberScrollState())) {
@@ -584,9 +614,10 @@ private fun ChangesTab(repository: PALRepository, state: MobileState, activity: 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(PALLayout.groupGap), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
         item { Status(error, null) }
         if (sets.isEmpty()) item { Text(stringResource(R.string.work_no_proposed_changes_in_this_conversation), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        items(sets, key = { it.str("id").orEmpty() }) { set ->
+        item { TrashList(repository, state, activity, sessionId) { restored -> load(); restored?.let { open(it) } } }
+        keyedItems(sets, { it.str("id").orEmpty() }) { set ->
             ListItem(headlineContent = { Text(set.str("reason") ?: stringResource(R.string.work_proposed_changes), maxLines = 2) },
-                supportingContent = { Text("${set.str("status").orEmpty()} · ${set.list("operations").size.takeIf { it > 0 } ?: set.int("operationCount") ?: ""} · ${set.str("origin").orEmpty()}" + if (set.isTrue("pendingApproval")) stringResource(R.string.work_waiting_for_your_answer) else "") },
+                supportingContent = { Text(listOfNotNull(set.str("status"), set.obj("totals")?.int("operations")?.toString(), set.str("origin")).joinToString(" · ") + if (set.isTrue("pendingApproval")) stringResource(R.string.work_waiting_for_your_answer) else "") },
                 modifier = Modifier.clickable { open(set.str("id").orEmpty()) })
         }
     }
@@ -609,6 +640,14 @@ private fun LibraryTab(repository: PALRepository, state: MobileState, activity: 
     var info by remember { mutableStateOf<String?>(null) }
     var progress by remember { mutableStateOf<Float?>(null) }
     var pendingSave by remember { mutableStateOf<Pair<String, ByteArray>?>(null) }
+    var inference by remember { mutableStateOf<Pair<JsonObject, JsonObject>?>(null) }
+    var transcribing by remember { mutableStateOf<Pair<JsonObject, JsonObject>?>(null) }
+    var originalFilesOpen by remember { mutableStateOf(false) }
+    var selecting by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var chosenIds by rememberSaveable(sessionId) { mutableStateOf(emptyList<String>()) }
+    var blankCanvas by remember { mutableStateOf(false) }
+    var recordingsOpen by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var writingDocument by rememberSaveable(sessionId) { mutableStateOf(false) }
     fun load() = scope.launch {
         runCatching { repository.read("workbench.artifacts.list", buildJsonObject { put("sessionId", sessionId); put("limit", 60) }) }
             .onSuccess { value -> items = (value as? JsonObject)?.list("artifacts") ?: value.objects() }.onFailure { error = it.message }
@@ -619,10 +658,7 @@ private fun LibraryTab(repository: PALRepository, state: MobileState, activity: 
             val id = item.str("id") ?: item.str("artifactId") ?: continue
             if (thumbs.containsKey(id)) continue
             runCatching { repository.read("workbench.artifacts.thumbnail", buildJsonObject { put("sessionId", sessionId); put("artifactId", id); put("size", 192) }) as JsonObject }.getOrNull()?.str("data")?.let { data ->
-                val image = withContext(Dispatchers.Default) {
-                    val bytes = Base64.decode(data.substringAfter("base64,"), Base64.DEFAULT)
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                }
+                val image = withContext(Dispatchers.Default) { decodePicture(data) }
                 image?.let { bitmap -> thumbs = thumbs + (id to bitmap) }
             }
         }
@@ -688,34 +724,186 @@ private fun LibraryTab(repository: PALRepository, state: MobileState, activity: 
                 } }) { Text(stringResource(R.string.work_show_preview)) }
                 Button({ progress = 0f; scope.launch {
                     runCatching { downloadArtifact(strings, repository, sessionId, id, null, "original") { done, total -> progress = done.toFloat() / total.coerceAtLeast(1) } }
-                        .onSuccess { (meta, bytes) -> pendingSave = (meta.str("name") ?: "download") to bytes; save.launch(meta.str("name") ?: "download") }.onFailure { error = it.message }
+                        .mapCatching { (meta, bytes) -> pendingSave = (meta.str("name") ?: "download") to bytes; save.launch(meta.str("name") ?: "download") }.onFailure { error = it.message }
                     progress = null } }) { Text(stringResource(R.string.work_download_original)) }
+                if (latest?.str("mime")?.startsWith("audio/") == true || latest?.str("mime")?.startsWith("video/") == true) OutlinedButton({ scope.launch {
+                    runCatching {
+                        val (meta, bytes) = downloadArtifact(strings, repository, sessionId, id, latest.str("versionId"), "original")
+                        val uri = withContext(Dispatchers.IO) { sharedFile(context, meta.str("name") ?: current.str("name") ?: "media", "media", bytes) }
+                        val view = Intent(Intent.ACTION_VIEW).setDataAndType(uri, latest.str("mime") ?: "application/octet-stream").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        context.startActivity(Intent.createChooser(view, "Open media with"))
+                    }.onFailure { error = it.message }
+                } }) { Text("Open in app…") }
                 OutlinedButton({ scope.launch { runCatching { repository.mutate("workbench.artifacts.useInDraft", buildJsonObject { put("sessionId", sessionId); put("artifactId", id) }) }.onSuccess { info = strings.getString(R.string.work_added_to_the_conversations_desktop_draft) }.onFailure { error = it.message } } }) { Text(stringResource(R.string.work_use_in_draft)) }
+                if (latest?.str("mime") == "application/pdf" && state.supports("owner.originalFiles.upload")) OutlinedButton({ scope.launch {
+                    val session = state.sessions.firstOrNull { it.id == sessionId }
+                    val draft = session?.let(state::draft)?.text.orEmpty()
+                    runCatching {
+                        requireNotNull(session) { "The conversation is no longer available" }
+                        require(draft.isNotBlank()) { "Write the message to send with this original PDF first" }
+                        val listed = repository.request("owner.connections.list", buildJsonObject {})
+                        val connections = (listed as? JsonObject)?.list("connections") ?: listed.objects()
+                        val account = session.connectionId?.let { selected -> connections.firstOrNull { it.str("id") == selected } }
+                        if (session.connectionId != null) requireNotNull(account) { "The selected provider account is no longer available" }
+                        val connectionRevision = account?.num("revision") ?: 0
+                        val providerLabel = state.traits(session.provider).label
+                        val accountLabel = account?.str("name") ?: session.connectionName ?: "default account"
+                        val uploaded = signed(activity, repository, "owner.originalFiles.upload", buildJsonObject {
+                            put("sessionId", sessionId); put("artifactId", id); latest.str("versionId")?.let { put("versionId", it) }
+                            put("expectedSessionRevision", session.configRevision); put("expectedConnectionRevision", connectionRevision); put("acknowledgeUpload", true)
+                        }, "Upload this original PDF to $providerLabel · $accountLabel") as JsonObject
+                        val handle = uploaded.obj("handle")?.str("id") ?: uploaded.str("id") ?: error("The provider file handle is missing")
+                        val action = repository.prepareSend(sessionId, draft, originalFiles = listOf(handle))
+                        authenticated(activity, repository, action, "Send this message with the original PDF to $providerLabel · $accountLabel")
+                        val submittedRevision = action.params.str("expectedDraftRevision").orEmpty()
+                        val sentAttachments = repository.state.value.attachments.filter { it.sessionId == sessionId }.mapTo(HashSet(), dev.otectus.pal.mobile.data.LocalAttachment::id)
+                        repository.clearAcceptedDraft(sessionId, draft, sentAttachments, submittedRevision)
+                    }.onSuccess { info = "Sent the current draft with the original PDF" }.onFailure { error = it.message }
+                } }) { Text("Send original PDF") }
+                if (state.supports("owner.originalFiles.list")) OutlinedButton({ originalFilesOpen = true }) { Text("Provider PDF copies…") }
                 OutlinedButton({ latest?.str("versionId")?.let { useInCodeLab(id,it) } }, enabled = !latest?.str("versionId").isNullOrBlank()) { Text("Use in Code Lab") }
+                if (state.supports("owner.providerInference.run") || state.supports("owner.providerInference.mistralOcr")) OutlinedButton({ latest?.let { inference = current to it } }) { Text("Provider analysis") }
+                if (state.supports("owner.voice.transcribeArtifact") && latest?.str("mime") in setOf("audio/wav", "audio/x-wav", "audio/wave")) OutlinedButton({ latest?.let { transcribing = current to it } }) { Text("Cloud transcription…") }
                 OutlinedButton({ scope.launch { runCatching { repository.mutate("workbench.artifacts.update", buildJsonObject { put("sessionId", sessionId); put("artifactId", id); put("pinned", !current.isTrue("pinned")) }) }.onSuccess { info = if (current.isTrue("pinned")) strings.getString(R.string.work_unpinned) else strings.getString(R.string.session_pinned); load() }.onFailure { error = it.message } } }) { Text(if (current.isTrue("pinned")) stringResource(R.string.work_unpin) else stringResource(R.string.work_pin)) }
             }
             preview?.let { Image(it.asImageBitmap(), stringResource(R.string.work_preview), Modifier.fillMaxWidth().heightIn(max = PALLayout.desktopPreviewHeight)) }
+            ArtifactToolsRow(repository, state, activity, sessionId, current, preview, { info = it; error = null }, { load() }, { selected = null; preview = null; load() })
+            inference?.let { (artifact, version) -> ProviderInferenceDialog(activity, repository, state, sessionId, artifact, version, { inference = null }) { info = it; inference = null } }
+            transcribing?.let { (artifact, version) -> ArtifactTranscriptionDialog(activity, repository, state, sessionId, artifact, version, { transcribing = null }) { result -> info = result; transcribing = null; load() } }
             Text(stringResource(R.string.work_downloads_are_verified_against_the_desktops_copy_before), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        if (originalFilesOpen) OriginalFilesDialog(activity, repository, sessionId) { originalFilesOpen = false }
         return
     }
+    if (recordingsOpen) RecordingsList(repository, state, activity, sessionId) { recordingsOpen = false; load() }
+    if (writingDocument) DocumentDialog(repository, activity, sessionId, DocumentSource.Blank) { writingDocument = false; load() }
+    if (blankCanvas) BlankCanvas(repository, activity, sessionId, { blankCanvas = false }) { message -> blankCanvas = false; info = message; load() }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(PALLayout.groupGap), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                 Button({ pick.launch("*/*") }, enabled = progress == null) { Icon(Icons.Default.Add, null); Text(stringResource(R.string.work_send_a_file_from_this_phone)) }
             }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                if (state.supports("workbench.recordings.list")) TextButton({ recordingsOpen = true }) { Text(stringResource(R.string.media_title)) }
+                if (documentsOffered(state)) TextButton({ writingDocument = true }) { Text(stringResource(R.string.docs_write)) }
+                if (state.supports("workbench.images.sketch")) TextButton({ blankCanvas = true }) { Text(stringResource(R.string.tools_sketch)) }
+                if (items.isNotEmpty() && !selecting) TextButton({ selecting = true; chosenIds = emptyList() }) { Text(stringResource(R.string.tools_select)) }
+            }
+            if (selecting) SelectionTools(repository, state, activity, sessionId, items.filter { (it.str("id") ?: it.str("artifactId")) in chosenIds }, { info = it; error = null }, { error = it }) { selecting = false; chosenIds = emptyList(); load() }
             progress?.let { LinearProgressIndicator({ it }, Modifier.fillMaxWidth().padding(top = PALLayout.small)) }
             Status(error, info)
         }
         if (items.isEmpty()) item { Text(stringResource(R.string.work_nothing_in_this_conversations_library_yet), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        items(items, key = { it.str("id") ?: it.str("artifactId").orEmpty() }) { item ->
+        keyedItems(items, { it.str("id") ?: it.str("artifactId").orEmpty() }) { item ->
             val id = item.str("id") ?: item.str("artifactId").orEmpty(); val latest = item.obj("latest")
             ListItem(headlineContent = { Text(item.str("name") ?: latest?.str("name").orEmpty(), maxLines = 1) },
                 supportingContent = { Text("${latest?.str("kind").orEmpty()} · ${byteSize(latest?.num("bytes"))}" + if (item.isTrue("pinned")) stringResource(R.string.work_pinned) else "") },
                 leadingContent = { Box(Modifier.size(PALLayout.target), contentAlignment = Alignment.Center) { thumbs[id]?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize()) } ?: Icon(Icons.Default.Star, null) } },
-                modifier = Modifier.clickable { selected = item; preview = null; error = null; info = null })
+                trailingContent = if (selecting) ({ Checkbox(id in chosenIds, null) }) else null,
+                modifier = if (selecting) Modifier.toggleable(id in chosenIds, role = Role.Checkbox) { on -> chosenIds = if (on) (chosenIds + id).take(50) else chosenIds - id }
+                    else Modifier.clickable { selected = item; preview = null; error = null; info = null })
         }
     }
+}
+
+@Composable
+private fun OriginalFilesDialog(activity: FragmentActivity, repository: PALRepository, sessionId: String, dismiss: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var handles by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var confirm by rememberSaveable { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    fun load() = scope.launch {
+        runCatching { repository.request("owner.originalFiles.list", buildJsonObject { put("sessionId", sessionId) }) }
+            .onSuccess { value -> handles = (value as? JsonObject)?.list("files") ?: value.objects(); message = null }
+            .onFailure { message = it.message }
+    }
+    LaunchedEffect(sessionId) { load() }
+    AlertDialog(
+        onDismissRequest = { if (!busy) dismiss() },
+        title = { Text("Provider PDF copies") },
+        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+            Text("These are original PDFs uploaded to the conversation provider. Removing one deletes the provider copy; it does not remove the Library artifact or a separate xAI collection member.", style = MaterialTheme.typography.bodySmall)
+            if (handles.isEmpty() && message == null) Text("No provider PDF copies are recorded for this conversation.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            handles.forEach { handle ->
+                val id = handle.str("id").orEmpty()
+                Surface(shape = MaterialTheme.shapes.small, border = BorderStroke(PALLayout.hairline, MaterialTheme.colorScheme.outlineVariant)) {
+                    Column(Modifier.fillMaxWidth().padding(PALLayout.small)) {
+                        Text(handle.str("name").orEmpty(), style = MaterialTheme.typography.labelLarge)
+                        Text("${handle.str("provider").orEmpty()} · ${handle.str("state").orEmpty()}" + (handle.str("remoteId")?.let { " · $it" } ?: ""), style = MaterialTheme.typography.bodySmall)
+                        TextButton({
+                            if (confirm != id) confirm = id else {
+                                busy = true; message = null
+                                scope.launch { runCatching { signed(activity, repository, "owner.originalFiles.remove", buildJsonObject { put("sessionId", sessionId); put("id", id) }, "Delete ${handle.str("name")} from ${handle.str("provider")}") }
+                                    .onSuccess { confirm = ""; message = "Provider copy removed"; load() }.onFailure { message = it.message }; busy = false }
+                            }
+                        }, enabled = !busy && handle.str("state") != "deleted") { Text(if (confirm == id) "Confirm provider deletion" else "Remove provider copy") }
+                    }
+                }
+            }
+            message?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        } },
+        confirmButton = { TextButton(dismiss, enabled = !busy) { Text("Done") } },
+    )
+}
+
+@Composable
+private fun ArtifactTranscriptionDialog(
+    activity: FragmentActivity, repository: PALRepository, state: MobileState, sessionId: String,
+    artifact: JsonObject, version: JsonObject, dismiss: () -> Unit, completed: (String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val providers = listOf("openai", "xai", "google", "google_cloud", "azure_speech", "azure_openai", "mistral", "openrouter")
+    var provider by rememberSaveable { mutableStateOf("openai") }
+    var model by rememberSaveable { mutableStateOf("") }
+    var language by rememberSaveable { mutableStateOf("") }
+    var region by rememberSaveable { mutableStateOf("") }
+    var googleCloudUri by rememberSaveable { mutableStateOf("") }
+    var connectionId by rememberSaveable(provider) { mutableStateOf("") }
+    var consent by rememberSaveable { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val accounts = state.providerConnections(provider)
+    AlertDialog(
+        onDismissRequest = { if (!busy) dismiss() },
+        title = { Text("Cloud transcription") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                Text("The selected immutable WAV version will be uploaded to the provider. PAL saves a structured transcript as a new Library artifact.", style = MaterialTheme.typography.bodySmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { providers.forEach { id ->
+                    FilterChip(provider == id, { provider = id }, { Text(state.traits(id).label.takeIf { id != "google_cloud" } ?: "Google Cloud Speech") })
+                } }
+                if (accounts.isNotEmpty()) {
+                    Text("Named account", style = MaterialTheme.typography.labelMedium)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                        accounts.forEach { account -> FilterChip(connectionId == account.id, { connectionId = account.id }, { Text(account.name) }) }
+                    }
+                }
+                OutlinedTextField(model, { model = it.take(160) }, Modifier.fillMaxWidth(), label = { Text("Model (optional)") }, singleLine = true)
+                OutlinedTextField(language, { language = it.take(32) }, Modifier.fillMaxWidth(), label = { Text("Language, such as en-US (optional)") }, singleLine = true)
+                if (provider in setOf("azure_speech", "google_cloud")) OutlinedTextField(region, { region = it.take(40) }, Modifier.fillMaxWidth(), label = { Text("Region (required by some services)") }, singleLine = true)
+                if (provider == "google_cloud") OutlinedTextField(googleCloudUri, { googleCloudUri = it.take(2048) }, Modifier.fillMaxWidth(), label = { Text("Google Cloud Storage URI (optional)") }, singleLine = true)
+                Row(Modifier.fillMaxWidth().toggleable(consent, onValueChange = { consent = it }, role = Role.Checkbox), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(consent, null); Text("I understand this audio will leave the desktop and be processed by $provider.")
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = { Button({
+            busy = true; error = null
+            scope.launch {
+                runCatching {
+                    signed(activity, repository, "owner.voice.transcribeArtifact", buildJsonObject {
+                        put("sessionId", sessionId); put("artifactId", artifact.str("id") ?: artifact.str("artifactId")); put("versionId", version.str("versionId"))
+                        put("provider", provider); put("acknowledgeUpload", true)
+                        put("settings", buildJsonObject { if (model.isNotBlank()) put("model", model.trim()); if (language.isNotBlank()) put("language", language.trim()); if (region.isNotBlank()) put("region", region.trim()); if (connectionId.isNotBlank()) put("connectionId", connectionId) })
+                        if (provider == "google_cloud" && googleCloudUri.isNotBlank()) put("googleCloudUri", googleCloudUri.trim())
+                    }, "Upload this WAV to $provider and save its structured transcript")
+                }.onSuccess { completed("Transcription finished and was saved to the Library") }.onFailure { error = it.message; busy = false }
+            }
+        }, enabled = consent && !busy && version.str("versionId") != null) { Text(if (busy) "Transcribing…" else "Transcribe") } },
+        dismissButton = { TextButton(dismiss, enabled = !busy) { Text("Cancel") } },
+    )
 }
 
 // ── Runs ─────────────────────────────────────────────────────────────────────────────────────────
@@ -738,7 +926,7 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
     var parametersText by rememberSaveable(sessionId) { mutableStateOf("{}") }
     var artifacts by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
     var inputJson by rememberSaveable(sessionId) { mutableStateOf("[]") }
-    val selectedInputs = remember(inputJson) { Json.parseToJsonElement(inputJson).objects() }
+    val selectedInputs = remember(inputJson) { runCatching { Json.parseToJsonElement(inputJson) }.getOrNull().objects() }
     var parentRun by rememberSaveable(sessionId) { mutableStateOf("") }
     var analysisId by rememberSaveable(sessionId) { mutableStateOf("") }
     var recipeId by rememberSaveable(sessionId) { mutableStateOf("") }
@@ -767,8 +955,11 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
     var compareRight by rememberSaveable(sessionId) { mutableStateOf("") }
     var comparison by remember { mutableStateOf<JsonObject?>(null) }
     var labStatus by remember { mutableStateOf<JsonObject?>(null) }
+    var commanding by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var sessionOpen by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var making by rememberSaveable(sessionId) { mutableStateOf(false) }
     var stepsJson by rememberSaveable(sessionId) { mutableStateOf("[]") }
-    val steps = remember(stepsJson) { Json.parseToJsonElement(stepsJson).objects() }
+    val steps = remember(stepsJson) { runCatching { Json.parseToJsonElement(stepsJson) }.getOrNull().objects() }
     LaunchedEffect(pendingArtifact, pendingVersion) {
         if (pendingArtifact.isNotBlank() && pendingVersion.isNotBlank()) {
             val ref = buildJsonObject { put("artifactId", pendingArtifact); put("versionId", pendingVersion) }
@@ -838,7 +1029,7 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
         analysisId = draft.str("id").orEmpty()
         recipeId = draft.str("recipeId") ?: labStatus?.list("recipes")?.find { it.str("code") == code }?.str("id").orEmpty()
         reviewWarnings = ""
-        error = (draft["warnings"] as? JsonArray)?.joinToString("\n") { it.jsonPrimitive.content }
+        error = draft.strings("warnings").takeIf { it.isNotEmpty() }?.joinToString("\n")
         inspect = null
         updateFiles()
     }
@@ -861,7 +1052,7 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
             val args = reviewPayload()
             val check = repository.read("workbench.codelab.preflight",args).jsonObject
             inspect = check
-            val warnings = (check["warnings"] as? JsonArray)?.joinToString("\n") { it.jsonPrimitive.content }.orEmpty()
+            val warnings = check.strings("warnings").joinToString("\n")
             error = null
             if (launch) {
                 val run = buildJsonObject { args.forEach { (key,value) -> put(key,value) }; put("purpose",purpose); put("notify",notify); put("reuseSteps",recompute) }
@@ -941,8 +1132,7 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
                 fun setParam(v: String) { parametersText = JsonObject(runCatching { params().toMap() }.getOrDefault(emptyMap()) + (key to JsonPrimitive(v))).toString() }
                 OutlinedTextField(current, ::setParam, Modifier.fillMaxWidth(), label = { Text(field.str("label") ?: key) })
                 if (field.str("type") == "column") FlowRow {
-                    val names = inspect?.list("slots")?.firstOrNull()?.get("columns") as? JsonArray
-                    names?.forEach { c -> val name = c.jsonPrimitive.content; FilterChip(current == name, { setParam(name) }, { Text(name) }) }
+                    inspect?.list("slots")?.firstOrNull()?.strings("columns")?.forEach { name -> FilterChip(current == name, { setParam(name) }, { Text(name) }) }
                 }
             }
             CodeLabEditor(code, { code = it }, language, { language = it }, purpose, { purpose = it }, parametersText, { parametersText = it },
@@ -982,11 +1172,16 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
             Text(stringResource(R.string.work_create_an_image), Modifier.semantics { heading() }, style = MaterialTheme.typography.titleSmall)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { connections.forEach { c -> FilterChip(c.str("id") == connectionId, { connectionId = c.str("id").orEmpty() }, { Text(c.str("name") ?: stringResource(R.string.work_image_connection)) }) } }
             OutlinedTextField(prompt, { prompt = it }, Modifier.fillMaxWidth(), placeholder = { Text(stringResource(R.string.work_describe_the_image)) })
-            Button({ generate(false) }, enabled = prompt.isNotBlank() && connectionId.isNotEmpty()) { Text(stringResource(R.string.work_generate)) }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                Button({ generate(false) }, enabled = prompt.isNotBlank() && connectionId.isNotEmpty()) { Text(stringResource(R.string.work_generate)) }
+                if (state.supports("workbench.images.capabilities")) TextButton({ making = true }) { Text(stringResource(R.string.tools_more)) }
+            }
         }
+        if (state.supports("workbench.codelab.session")) item { OutlinedButton({ sessionOpen = true }, Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.lab_session)) } }
+        if (state.supports("workbench.commands.run")) item { OutlinedButton({ commanding = true }, Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.tools_command)) } }
         item { Text(stringResource(R.string.work_runs_in_this_conversation), Modifier.semantics { heading() }, style = MaterialTheme.typography.titleSmall) }
         if (runs.isEmpty()) item { Text(stringResource(R.string.work_no_runs_yet), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        items(runs, key = { it.str("operationId") ?: it.str("id").orEmpty() }) { run ->
+        keyedItems(runs, { it.str("operationId") ?: it.str("id").orEmpty() }) { run ->
             val id = run.str("operationId") ?: run.str("id").orEmpty(); val state = run.str("state").orEmpty()
             ListItem(headlineContent = { Text(run.str("label") ?: run.str("kind").orEmpty(), maxLines = 2) },
                 supportingContent = { Text(runState(state) + (run.str("message")?.let { " · $it" } ?: "")) },
@@ -1002,6 +1197,12 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
             detail.str("summary")?.let { Text(it) }
             detail.str("error")?.let { Text(it,color=MaterialTheme.colorScheme.error) }
             detail.obj("details")?.let { d -> SelectionContainer { Text(listOfNotNull(d.str("stdout"),d.str("stderr")).joinToString("\n"),style=MaterialTheme.typography.bodySmall.copy(fontFamily=FontFamily.Monospace)) } }
+            if (state.supports("workbench.operations.retry") && detail.str("kind").orEmpty().startsWith("image.") && detail.str("state") in setOf("failed", "unknown", "interrupted", "cancelled", "expired"))
+                RetryRun(repository, activity, selectedOwner, selectedRun.orEmpty(), detail.str("state") == "unknown", { error = it }) { info = strings.getString(R.string.work_started_on_the_desktop_its_result_appears_in); load() }
+            // A provider’s video or music job is asked about again, never sent again.
+            if (state.supports("owner.media.timed.poll") && detail.str("kind") in setOf("video.generate", "music.generate") && detail.str("state") in setOf("running", "unknown")) TextButton({ scope.launch {
+                runCatching { repository.mutate("owner.media.timed.poll", buildJsonObject { put("sessionId", selectedOwner); put("id", selectedRun.orEmpty()) }) }.onSuccess { load() }.onFailure { error = it.message }
+            } }) { Text(stringResource(R.string.extras_media_check)) }
             if (detail.str("kind") == "codelab.run" && selectedOwner == sessionId) TextButton({ scope.launch {
                 runCatching { repository.read("workbench.codelab.open",buildJsonObject { put("sessionId",sessionId);put("operationId",selectedRun) }).jsonObject }
                     .onSuccess(::setDraft).onFailure { error = it.message }
@@ -1026,7 +1227,7 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
             OutlinedTextField(historySearch, { historySearch = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.lab_history_query)) })
             if (projectId != null) FilterChip(projectHistory, { projectHistory = !projectHistory }, { Text(stringResource(R.string.lab_across_project)) })
         }
-        items(history, key = { "history:" + it.str("operationId") }) { row ->
+        keyedItems(history, { "history:" + it.str("operationId") }) { row ->
             val id = row.str("operationId").orEmpty()
             ListItem(headlineContent = { Text(row.str("label").orEmpty()) },
                 supportingContent = { Text(runState(row.str("state").orEmpty())) },
@@ -1039,6 +1240,9 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
         }
         if (historyHasMore) item { TextButton({ historyBefore = history.lastOrNull()?.str("cursor").orEmpty() }) { Text(stringResource(R.string.lab_older)) } }
     }
+    if (sessionOpen) AnalysisSessionSheet(repository, state, activity, sessionId, { spec -> sessionOpen = false; setDraft(spec) }) { sessionOpen = false; load() }
+    if (commanding) RunCommand(repository, activity, sessionId, { commanding = false }) { message -> commanding = false; info = message; error = null; load() }
+    if (making) ImageMaker(repository, activity, sessionId, null, null, { making = false }) { message -> making = false; info = message; load() }
     pendingRun?.let { payload ->
         AlertDialog(onDismissRequest = { pendingRun = null }, title = { Text(stringResource(R.string.lab_check)) }, text = { Text(reviewWarnings) },
             confirmButton = { TextButton({ pendingRun = null; scope.launch { runCatching { startRun(payload) }.onFailure { error = it.message } } }) { Text(stringResource(R.string.lab_last_check)) } },
@@ -1048,7 +1252,7 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
         AlertDialog(onDismissRequest = { proposal=null }, title={ Text(stringResource(R.string.lab_review)) }, text={
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(proposed.str("explanation").orEmpty())
-                (proposed["plan"] as? JsonArray)?.forEach { Text(it.jsonPrimitive.content) }
+                proposed.strings("plan").forEach { Text(it) }
                 SelectionContainer { Text(proposed.str("diff").orEmpty(),fontFamily=FontFamily.Monospace) }
             }
         }, confirmButton = {
@@ -1071,7 +1275,14 @@ private fun RunsTab(repository: PALRepository, state: MobileState, activity: Fra
 
 /** Full-access Research uses the desktop's canonical run and report objects; the phone never keeps a second copy. */
 @Composable
-private fun ResearchTab(repository: PALRepository, state: MobileState, activity: FragmentActivity, sessionId: String, openSearchSettings: () -> Unit) {
+private fun ResearchTab(
+    repository: PALRepository,
+    state: MobileState,
+    activity: FragmentActivity,
+    sessionId: String,
+    openConversation: (String) -> Unit,
+    openSearchSettings: () -> Unit,
+) {
     val strings = androidx.compose.ui.platform.LocalResources.current
 
     val scope = rememberCoroutineScope()
@@ -1093,9 +1304,22 @@ private fun ResearchTab(repository: PALRepository, state: MobileState, activity:
     var selectedSources by remember(sessionId) { mutableStateOf<Set<String>>(emptySet()) }
     var plan by remember(sessionId) { mutableStateOf<List<String>>(emptyList()) }
     var requestId by rememberSaveable(sessionId, question) { mutableStateOf(java.util.UUID.randomUUID().toString()) }
+    var routes by remember(sessionId) { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var routeKey by rememberSaveable(sessionId) { mutableStateOf("") }
+    var routeModel by rememberSaveable(sessionId, routeKey) { mutableStateOf("") }
+    var routeMenu by remember { mutableStateOf(false) }
+    var refreshKey by remember { mutableIntStateOf(0) }
     var runs by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
-    var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
-    var selected by remember { mutableStateOf<JsonObject?>(null) }
+    var selectedId by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
+    var selected by remember(sessionId) { mutableStateOf<JsonObject?>(null) }
+    var handoffRoutes by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var handoffOpen by rememberSaveable { mutableStateOf(false) }
+    var handoffTarget by rememberSaveable { mutableStateOf("") }
+    var handoffModel by rememberSaveable { mutableStateOf("") }
+    var handoffBusy by remember { mutableStateOf(false) }
+    var pendingHandoffSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var handoffOpenAttempt by remember { mutableIntStateOf(0) }
+    var confirmCancel by rememberSaveable { mutableStateOf(false) }
     var report by remember { mutableStateOf<String?>(null) }
     var expandedPassage by remember { mutableStateOf<JsonObject?>(null) }
     var focus by rememberSaveable { mutableStateOf("") }
@@ -1104,40 +1328,109 @@ private fun ResearchTab(repository: PALRepository, state: MobileState, activity:
     var info by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var webSearch by remember { mutableStateOf<Boolean?>(null) }
-    val working = setOf("planning", "searching", "reading", "synthesizing", "refreshing")
-    fun load() = scope.launch {
-        runCatching { repository.request("owner.research.list", buildJsonObject { put("sessionId", sessionId); put("project", true) }) }
-            .onSuccess { value -> runs = (value as? JsonObject)?.list("runs") ?: value.objects() }.onFailure { error = it.message }
+    val working = setOf("queued", "starting", "running", "planning", "searching", "reading", "synthesizing", "refreshing", "cancel_requested")
+    val actionableWorking = working - "cancel_requested"
+    val recoverable = setOf("cancelled", "interrupted", "failed")
+    val selectedRoute = routes.firstOrNull { researchRouteKey(it) == routeKey }
+    val selectedRouteReady = selectedRoute != null && (!researchRouteNeedsModel(selectedRoute) || validResearchModel(routeModel))
+    val taskLoadMutex = remember { Mutex() }
+    suspend fun load(refreshHandoffRoutes: Boolean = false) = taskLoadMutex.withLock {
+        runCatching { repository.request("owner.research.tasks", buildJsonObject {}) }
+            .onSuccess { value ->
+                runs = (value as? JsonObject)?.list("tasks") ?: value.objects()
+                if (selectedId != null && runs.none { it.str("id") == selectedId }) {
+                    selectedId = null; selected = null; report = null; handoffRoutes = emptyList()
+                }
+            }.onFailure { error = it.message }
         selectedId?.let { id -> runCatching { repository.request("owner.research.get", buildJsonObject { put("id", id) }) as JsonObject }
-            .onSuccess { selected = it }.onFailure { error = it.message } }
+            .onSuccess { detail -> if (selectedId == id) {
+                selected = mergeResearchTask(runs.firstOrNull { it.str("id") == id }, detail)
+                if (refreshHandoffRoutes) {
+                    val sourceSessionId = selected?.str("sessionId")
+                    val choices = if (sourceSessionId == null) emptyList() else runCatching {
+                        repository.request("owner.research.routes", buildJsonObject { put("sessionId", sourceSessionId) })
+                    }.getOrNull().researchRoutes() + researchCliHandoffRoutes(state)
+                    if (selectedId != id) return@onSuccess
+                    handoffRoutes = choices
+                    if (!handoffOpen && handoffRoutes.none { "route:${researchRouteKey(it)}" == handoffTarget }) {
+                        handoffTarget = handoffRoutes.firstOrNull()?.let { "route:${researchRouteKey(it)}" }.orEmpty()
+                        handoffModel = ""
+                    }
+                }
+            } }
+            .onFailure { failure -> if (selectedId == id) error = failure.message } }
     }
     fun open(id: String) {
         selectedId = id; report = null; answer = null; expandedPassage = null
         scope.launch { runCatching { repository.request("owner.research.get", buildJsonObject { put("id", id) }) as JsonObject }
-            .onSuccess { selected = it; error = null }.onFailure { error = it.message } }
+            .onSuccess { detail ->
+                if (selectedId != id) return@onSuccess
+                selected = mergeResearchTask(runs.firstOrNull { it.str("id") == id }, detail)
+                val sourceSessionId = selected?.str("sessionId")
+                val researchRoutes = if (sourceSessionId == null) emptyList() else runCatching {
+                    repository.request("owner.research.routes", buildJsonObject { put("sessionId", sourceSessionId) })
+                }.getOrNull().researchRoutes()
+                if (selectedId != id) return@onSuccess
+                handoffRoutes = researchRoutes + researchCliHandoffRoutes(state)
+                handoffTarget = handoffRoutes.firstOrNull()?.let { "route:${researchRouteKey(it)}" }.orEmpty()
+                handoffModel = ""
+                error = null
+            }.onFailure { failure -> if (selectedId == id) error = failure.message } }
     }
-    LaunchedEffect(sessionId) {
-        selectedId = null; selected = null; report = null
-        load()
+    LaunchedEffect(sessionId, state.cacheEpoch, refreshKey) {
+        load(refreshHandoffRoutes = true)
+        runCatching { repository.request("owner.research.routes", buildJsonObject { put("sessionId", sessionId) }) }
+            .onSuccess { value ->
+                routes = value.researchRoutes()
+                if (routes.none { researchRouteKey(it) == routeKey }) routeKey = routes.firstOrNull()?.let(::researchRouteKey).orEmpty()
+            }.onFailure { error = it.message }
         runCatching { repository.request("owner.research.sources", buildJsonObject { put("sessionId", sessionId) }) }
             .onSuccess { value -> availableSources = (value as? JsonObject)?.list("sources") ?: value.objects() }.onFailure { error = it.message }
         runCatching { repository.request("owner.settings.get", buildJsonObject {}) as JsonObject }
             .onSuccess { webSearch = it.obj("settings")?.obj("webSearch")?.isTrue("enabled") }
     }
-    LaunchedEffect(runs.any { it.str("state") in working }) {
-        while (runs.any { it.str("state") in working }) { kotlinx.coroutines.delay(2000); load() }
+    LaunchedEffect(sessionId, state.cacheEpoch) {
+        while (true) {
+            kotlinx.coroutines.delay(if (runs.any { it.str("state") in working }) 2_000 else 10_000)
+            load(refreshHandoffRoutes = false)
+        }
+    }
+    LaunchedEffect(pendingHandoffSessionId, state.cacheEpoch, handoffOpenAttempt) {
+        val destinationId = pendingHandoffSessionId ?: return@LaunchedEffect
+        handoffBusy = true
+        runCatching {
+            // sessions.get is authoritative. Never copy the earlier handoff response over a draft
+            // that the destination (or this phone's reconciler) may have changed in the meantime.
+            val full = repository.request("sessions.get", buildJsonObject { put("sessionId", destinationId) })
+            repository.openCreatedSession(full)
+            destinationId
+        }.onSuccess { id ->
+            if (pendingHandoffSessionId == id) {
+                pendingHandoffSessionId = null; handoffBusy = false; error = null; openConversation(id)
+            }
+        }.onFailure { failure ->
+            if (pendingHandoffSessionId == destinationId) {
+                handoffBusy = false
+                error = strings.getString(R.string.work_handoff_saved_open_retry, failure.message ?: strings.getString(R.string.mobile_start_it_again))
+            }
+        }
     }
     fun preparePlan() = scope.launch {
-        runCatching { signed(activity, repository, "owner.research.plan", buildJsonObject { put("sessionId", sessionId); put("question", question.trim()); put("mode", mode) }, strings.getString(R.string.work_prepare_a_research_plan)) as JsonObject }
-            .onSuccess { result -> plan = (result["plan"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList(); info = strings.getString(R.string.work_review_the_plan_sources_and_limits_before_starting); error = null }
+        val route = selectedRoute ?: return@launch
+        runCatching { signed(activity, repository, "owner.research.plan", buildJsonObject {
+            put("sessionId", sessionId); put("question", question.trim()); put("mode", mode); putResearchRoute(route, routeModel)
+        }, strings.getString(R.string.work_prepare_a_research_plan)) as JsonObject }
+            .onSuccess { result -> plan = result.strings("plan"); info = strings.getString(R.string.work_review_the_plan_sources_and_limits_before_starting); error = null }
             .onFailure { error = it.message }
     }
     fun start() = scope.launch {
+        val route = selectedRoute ?: return@launch
         val siteList = sites.lines().map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(5)
         val seedUrls = urls.lines().map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(12)
         val criteriaList = criteria.lines().map { it.trim() }.filter { it.isNotEmpty() }.take(12)
         runCatching { signed(activity, repository, "owner.research.start", buildJsonObject {
             put("sessionId", sessionId); put("question", question.trim()); put("preset", preset); put("mode", mode); put("scope", researchScope)
+            putResearchRoute(route, routeModel)
             put("sourceIds", buildJsonArray { selectedSources.forEach { add(it) } }); put("requestId", requestId)
             if (plan.isNotEmpty()) put("plan", buildJsonArray { plan.forEach { add(it) } })
             if (siteList.isNotEmpty()) { put("sites", buildJsonArray { siteList.forEach { add(it) } }); put("siteMode", siteMode) }
@@ -1150,20 +1443,98 @@ private fun ResearchTab(repository: PALRepository, state: MobileState, activity:
             .onSuccess { run -> run.str("id")?.let(::open); requestId = java.util.UUID.randomUUID().toString(); info = strings.getString(R.string.work_research_started_on_the_desktop); error = null; load() }
             .onFailure { error = it.message }
     }
+    fun restart(run: JsonObject) = scope.launch {
+        val sourceSessionId = run.str("sessionId") ?: return@launch
+        val questionText = run.str("question") ?: return@launch
+        val binding = run.obj("binding")
+        val route = buildJsonObject {
+            (binding?.str("provider") ?: run.str("provider"))?.let { put("provider", it) }
+            (binding?.str("model") ?: run.str("model"))?.let { put("model", it) }
+            (binding?.str("connectionId") ?: run.str("connectionId"))?.let { put("connectionId", it) }
+        }
+        runCatching { signed(activity, repository, "owner.research.start", buildJsonObject {
+            put("sessionId", sourceSessionId); put("question", questionText)
+            put("preset", run.str("preset") ?: "quick"); put("mode", run.str("mode") ?: "answer"); put("scope", run.str("scope") ?: "web")
+            put("requestId", java.util.UUID.randomUUID().toString()); putResearchRoute(route)
+            listOf("sourceIds", "plan", "sites", "urls", "criteria").forEach { key -> run[key]?.let { put(key, it) } }
+            listOf("siteMode", "recency", "output").forEach { key -> run.str(key)?.let { put(key, it) } }
+            listOf("minutes", "sources", "calls").forEach { key -> run.int(key)?.let { put(key, it) } }
+        }, strings.getString(R.string.work_start_research_again)) as JsonObject }
+            .onSuccess { next -> next.str("id")?.let(::open); info = strings.getString(R.string.work_research_restarted); error = null; load() }
+            .onFailure { error = it.message }
+    }
+    fun handoff(target: String) = scope.launch {
+        val detail = selected ?: return@launch
+        val id = detail.str("id") ?: return@launch
+        handoffBusy = true; error = null
+        val targetSession = target.removePrefix("session:").takeIf { target.startsWith("session:") }
+        val targetRoute = target.removePrefix("route:").takeIf { target.startsWith("route:") }
+            ?.let { key -> handoffRoutes.firstOrNull { researchRouteKey(it) == key } }
+        val projectName = state.sessions.firstOrNull { it.id == detail.str("sessionId") }?.project?.substringAfterLast('/')
+            ?: strings.getString(R.string.sheet_project)
+        runCatching {
+            val result = signed(activity, repository, "owner.research.handoff", buildJsonObject {
+                put("id", id)
+                if (targetSession != null) put("targetSessionId", targetSession)
+                else {
+                    requireNotNull(targetRoute)
+                    putResearchRoute(targetRoute, handoffModel)
+                    put("trusted", true)
+                }
+            }, if (targetSession != null) strings.getString(R.string.work_save_research_draft_for_review)
+                else strings.getString(R.string.work_create_trusted_research_conversation, projectName)) as JsonObject
+            result.str("sessionId") ?: throw IllegalStateException(strings.getString(R.string.work_handoff_missing_destination))
+        }.onSuccess { destinationId ->
+                pendingHandoffSessionId = destinationId
+                handoffOpen = false; handoffBusy = false; info = strings.getString(R.string.work_handoff_saved_opening)
+            }
+            .onFailure { failure -> handoffBusy = false; error = failure.message }
+    }
     fun runAction(method: String, title: String, signedAction: Boolean = false, params: JsonObjectBuilder.() -> Unit = {}) = scope.launch {
         val id = selected?.str("id") ?: return@launch
         val payload = buildJsonObject { put("id", id); params() }
         runCatching { if (signedAction) signed(activity, repository, method, payload, title) else repository.mutate(method, payload) }
             .onSuccess { info = title; error = null; load() }.onFailure { error = it.message }
     }
+    fun openResearchConversation(id: String) = scope.launch {
+        runCatching {
+            val full = repository.request("sessions.get", buildJsonObject { put("sessionId", id) })
+            repository.openCreatedSession(full)
+            id
+        }.onSuccess(openConversation).onFailure { error = it.message }
+    }
     val detail = selected
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(PALLayout.groupGap), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+        item { PerplexityResearchJobs(activity = activity, repository = repository, state = state, sessionId = sessionId) }
         item {
             Text(stringResource(R.string.work_choose_exactly_where_pal_may_look_web_searches), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(when (webSearch) { true -> stringResource(R.string.work_web_search_is_available); false -> stringResource(R.string.work_web_search_is_off_on_this_computer); null -> stringResource(R.string.work_checking_web_search) }, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = if (webSearch == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                 if (webSearch == false) TextButton(openSearchSettings) { Text(stringResource(R.string.work_enable)) }
             }
+            Text(stringResource(R.string.work_research_provider_and_model), style = MaterialTheme.typography.labelMedium)
+            Box(Modifier.fillMaxWidth()) {
+                OutlinedButton({ routeMenu = true }, Modifier.fillMaxWidth(), enabled = routes.isNotEmpty()) {
+                    Text(selectedRoute?.str("label") ?: stringResource(R.string.work_no_research_route), Modifier.weight(1f), maxLines = 2)
+                    Icon(Icons.Default.ArrowDropDown, null)
+                }
+                DropdownMenu(routeMenu, { routeMenu = false }) {
+                    routes.forEach { route ->
+                        DropdownMenuItem(
+                            text = { Text(route.str("label") ?: researchRouteDescription(route), maxLines = 2) },
+                            onClick = { routeKey = researchRouteKey(route); routeMenu = false },
+                            trailingIcon = if (researchRouteKey(route) == routeKey) { { Icon(Icons.Default.Check, null) } } else null,
+                        )
+                    }
+                }
+            }
+            if (routes.isEmpty()) Text(stringResource(R.string.work_no_research_routes_for_this_conversation), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            if (selectedRoute?.let(::researchRouteNeedsModel) == true) OutlinedTextField(
+                routeModel, { routeModel = it.take(512) }, Modifier.fillMaxWidth(),
+                label = { Text(stringResource(R.string.work_research_model_id)) },
+                supportingText = { Text(stringResource(R.string.work_research_model_id_explanation)) },
+                isError = routeModel.isNotEmpty() && !validResearchModel(routeModel), singleLine = true,
+            )
             OutlinedTextField(question, { question = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.work_what_should_pal_research)) }, minLines = 2)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
                 listOf("answer" to strings.getString(R.string.mobile_answer), "compare" to strings.getString(R.string.work_compare), "check" to "Fact-check", "literature" to strings.getString(R.string.work_literature)).forEach { (value, label) -> FilterChip(mode == value, { mode = value }, { Text(label) }) }
@@ -1197,35 +1568,53 @@ private fun ResearchTab(repository: PALRepository, state: MobileState, activity:
                 OutlinedTextField(plan.joinToString("\n"), { text -> plan = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.take(12) }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.work_plan_steps_one_per_line)) }, minLines = 3)
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
-                OutlinedButton({ preparePlan() }, enabled = question.trim().length >= 5) { Text(if (plan.isEmpty()) stringResource(R.string.work_prepare_plan) else stringResource(R.string.work_replan)) }
-                Button({ start() }, enabled = question.trim().length >= 5 && (researchScope == "project" || webSearch != false) && (researchScope == "web" || selectedSources.isNotEmpty())) { Text(stringResource(R.string.work_start_research)) }
+                OutlinedButton({ preparePlan() }, enabled = question.trim().length >= 5 && selectedRouteReady) { Text(if (plan.isEmpty()) stringResource(R.string.work_prepare_plan) else stringResource(R.string.work_replan)) }
+                Button({ start() }, enabled = question.trim().length >= 5 && selectedRouteReady && (researchScope == "project" || webSearch != false) && (researchScope == "web" || selectedSources.isNotEmpty())) { Text(stringResource(R.string.work_start_research)) }
             }
             Status(error, info)
+            if (pendingHandoffSessionId != null && !handoffBusy) TextButton({ handoffOpenAttempt++ }) { Text(stringResource(R.string.work_open_saved_handoff)) }
         }
-        items(runs.take(10), key = { it.str("id").orEmpty() }) { run ->
-            ListItem(headlineContent = { Text(run.str("title") ?: run.str("question").orEmpty(), maxLines = 2) }, supportingContent = { Text(researchState(run.str("state")) + (run.str("summary")?.let { " · $it" } ?: "")) },
-                modifier = Modifier.clickable { run.str("id")?.let(::open) }, trailingContent = { if (run.isTrue("pinned")) Icon(Icons.Default.Star, stringResource(R.string.session_pinned)) })
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.work_research_across_conversations), Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.titleSmall)
+                TextButton({ refreshKey++ }) { Text(stringResource(R.string.action_refresh)) }
+            }
         }
+        if (runs.isEmpty()) item { Text(stringResource(R.string.work_no_research_runs), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        researchTaskItems(runs, { id -> state.sessions.firstOrNull { it.id == id }?.title }, ::open)
         if (detail != null) {
             item {
                 Text(detail.str("title") ?: detail.str("question").orEmpty(), Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium)
                 val stateName = detail.str("state")
+                val hasReport = detail["reportText"] != null || detail.obj("report") != null
+                val canHandoff = stateName in setOf("completed", "partial", "stopped") && hasReport && !detail.isTrue("stale")
+                val sourceSessionId = detail.str("sessionId")
+                val owner = state.sessions.firstOrNull { it.id == sourceSessionId }?.title ?: sourceSessionId.orEmpty()
+                Text(listOf(owner, researchRouteDescription(detail), researchState(stateName)).filter(String::isNotBlank).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
-                    if (stateName in working) OutlinedButton({ runAction("owner.research.pause", strings.getString(R.string.work_research_paused)) }) { Text(stringResource(R.string.work_pause)) }
-                    if (stateName in working || stateName == "paused") OutlinedButton({ runAction("owner.research.stop", strings.getString(R.string.work_research_finished_with_the_evidence_collected)) }) { Text(stringResource(R.string.work_finish)) }
+                    if (sourceSessionId != null) ResearchConversationButton(sourceSessionId, ::openResearchConversation)
+                    if (stateName in actionableWorking) Button({ confirmCancel = true }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.action_cancel)) }
+                    if (stateName in actionableWorking) OutlinedButton({ runAction("owner.research.pause", strings.getString(R.string.work_research_paused)) }) { Text(stringResource(R.string.work_pause)) }
+                    if (stateName in actionableWorking || stateName == "paused") OutlinedButton({ runAction("owner.research.stop", strings.getString(R.string.work_research_finished_with_the_evidence_collected)) }) { Text(stringResource(R.string.work_finish)) }
                     if (stateName == "paused" || stateName == "stopped" || stateName == "partial") OutlinedButton({ runAction("owner.research.continue", strings.getString(R.string.work_continue_research), true) { if (focus.isNotBlank()) put("focus", focus.trim()) } }) { Text(stringResource(R.string.work_continue)) }
-                    if (stateName !in working && stateName != "paused") OutlinedButton({ runAction("owner.research.refresh", strings.getString(R.string.work_refresh_research), true) }) { Text(stringResource(R.string.action_refresh)) }
-                    if (detail.list("evidence").isNotEmpty() && stateName !in working) OutlinedButton({ runAction("owner.research.resynthesize", strings.getString(R.string.work_rewrite_report), true) }) { Text(stringResource(R.string.work_rewrite)) }
+                    if (stateName in setOf("completed", "partial", "stopped")) OutlinedButton({ runAction("owner.research.refresh", strings.getString(R.string.work_refresh_research), true) }) { Text(stringResource(R.string.action_refresh)) }
+                    if (detail.list("evidence").isNotEmpty() && stateName in setOf("completed", "partial", "stopped")) OutlinedButton({ runAction("owner.research.resynthesize", strings.getString(R.string.work_rewrite_report), true) }) { Text(stringResource(R.string.work_rewrite)) }
+                    if (stateName in setOf("failed", "interrupted")) Button({ runAction("owner.research.continue", strings.getString(R.string.work_resume_research_checkpoint), true) }) { Text(stringResource(R.string.work_resume)) }
+                    if (stateName == "cancelled") Button({ restart(detail) }) { Text(stringResource(R.string.work_start_again)) }
+                    if (canHandoff) Button({ handoffOpen = true }) { Text(stringResource(R.string.work_continue_in_conversation)) }
                 }
+                if (stateName in recoverable) Text(detail.str("recovery") ?: detail.obj("error")?.str("message") ?:
+                    stringResource(if (stateName == "cancelled") R.string.work_research_cancelled_without_a_report else R.string.work_research_can_resume_checkpoint),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 detail.str("note")?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
                 detail.int("monitorDays")?.takeIf { it > 0 }?.let { Text(stringResource(R.string.work_monitoring_every_days_was_authorized_on_the_desktop, it), style = MaterialTheme.typography.bodySmall) }
                 if (detail.isTrue("stale")) Text(stringResource(R.string.work_some_evidence_is_stale_refresh_re_checks_it), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                val runPlan = (detail["plan"] as? JsonArray).orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }
+                val runPlan = detail.strings("plan")
                 if (runPlan.isNotEmpty()) Text(runPlan.mapIndexed { i, step -> "${i + 1}. $step" }.joinToString("\n"), style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(focus, { focus = it }, Modifier.fillMaxWidth(), label = { Text(if (stateName in working) stringResource(R.string.work_steer_this_run) else stringResource(R.string.work_follow_up_question_or_focus)) }, minLines = 2)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
-                    if (stateName in working) Button({ runAction("owner.research.steer", strings.getString(R.string.work_research_direction_updated), true) { put("focus", focus.trim()) } }, enabled = focus.isNotBlank()) { Text(stringResource(R.string.work_steer)) }
-                    else Button({ val q = focus.trim(); scope.launch { runCatching { signed(activity, repository, "owner.research.ask", buildJsonObject { put("id", detail.str("id").orEmpty()); put("question", q) }, strings.getString(R.string.work_ask_this_report_a_follow_up)) as JsonObject }
+                    if (stateName in actionableWorking) Button({ runAction("owner.research.steer", strings.getString(R.string.work_research_direction_updated), true) { put("focus", focus.trim()) } }, enabled = focus.isNotBlank()) { Text(stringResource(R.string.work_steer)) }
+                    else if (stateName !in working && hasReport) Button({ val q = focus.trim(); scope.launch { runCatching { signed(activity, repository, "owner.research.ask", buildJsonObject { put("id", detail.str("id").orEmpty()); put("question", q) }, strings.getString(R.string.work_ask_this_report_a_follow_up)) as JsonObject }
                         .onSuccess { answer = it.str("answer"); error = null }.onFailure { error = it.message } } }, enabled = focus.isNotBlank()) { Text(stringResource(R.string.work_ask_report)) }
                     OutlinedButton({ runAction("owner.research.update", if (detail.isTrue("pinned")) strings.getString(R.string.work_report_unpinned) else strings.getString(R.string.work_report_pinned)) { put("pinned", !detail.isTrue("pinned")) } }) { Text(if (detail.isTrue("pinned")) stringResource(R.string.work_unpin) else stringResource(R.string.work_pin)) }
                     if (detail.int("monitorDays")?.let { it > 0 } == true) OutlinedButton({ runAction("owner.research.update", strings.getString(R.string.work_monitoring_turned_off)) { put("monitorDays", 0) } }) { Text(stringResource(R.string.work_stop_monitoring)) }
@@ -1237,7 +1626,7 @@ private fun ResearchTab(repository: PALRepository, state: MobileState, activity:
                     OutlinedButton({ runAction("owner.research.note", strings.getString(R.string.work_note_saved)) { put("text", note.trim()) } }, enabled = note.isNotBlank()) { Text(stringResource(R.string.work_save_note)) }
                     listOf("markdown", "csv", "bibtex", "json").forEach { format -> TextButton({ runAction("owner.research.export", strings.getString(R.string.work_added_to_this_conversations_library, format.uppercase())) { put("format", format) } }) { Text(format.uppercase()) } }
                 }
-                val changes = (detail["changes"] as? JsonArray).orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }
+                val changes = detail.strings("changes")
                 if (changes.isNotEmpty()) Text(stringResource(R.string.work_since_the_last_version, changes.joinToString(" · ")), style = MaterialTheme.typography.bodySmall)
             }
             researchResultItems(detail, report, expandedPassage, working,
@@ -1256,6 +1645,106 @@ private fun ResearchTab(repository: PALRepository, state: MobileState, activity:
                 onExclude = { evidenceId -> runAction("owner.research.exclude", strings.getString(R.string.work_source_excluded)) { put("evidenceId", evidenceId) } })
         }
     }
+    if (confirmCancel) AlertDialog(
+        onDismissRequest = { confirmCancel = false },
+        title = { Text(stringResource(R.string.work_cancel_research)) },
+        text = { Text(stringResource(R.string.work_cancel_research_explanation)) },
+        confirmButton = { Button({
+            confirmCancel = false
+            runAction("owner.research.cancel", strings.getString(R.string.work_research_cancel_requested))
+        }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.action_cancel)) } },
+        dismissButton = { TextButton({ confirmCancel = false }) { Text(stringResource(R.string.mobile_not_yet)) } },
+    )
+    if (handoffOpen && detail != null) ResearchHandoffDialog(
+        sessions = state.sessions.filter { session ->
+            !session.archived && state.draft(session).text.isBlank() && session.draftAttachments.isEmpty() &&
+                state.attachments.none { it.sessionId == session.id }
+        },
+        routes = handoffRoutes,
+        selected = handoffTarget,
+        model = handoffModel,
+        busy = handoffBusy,
+        onSelected = { handoffTarget = it; handoffModel = "" },
+        onModel = { handoffModel = it },
+        onDismiss = { if (!handoffBusy) handoffOpen = false },
+        onConfirm = { handoff(it) },
+    )
+}
+
+/** Global Research navigation is transport-free so cross-conversation selection can run on an emulator fixture. */
+internal fun LazyListScope.researchTaskItems(
+    runs: List<JsonObject>,
+    sessionTitle: (String) -> String?,
+    onOpen: (String) -> Unit,
+) {
+    keyedItems(runs, { "task:" + it.str("id").orEmpty() }) { run ->
+        val sessionId = run.str("sessionId").orEmpty()
+        val owner = sessionTitle(sessionId) ?: sessionId
+        val route = researchRouteDescription(run)
+        val progress = researchProgress(run)
+        ListItem(
+            headlineContent = { Text(run.str("title") ?: run.str("question").orEmpty(), maxLines = 2) },
+            supportingContent = { Text(listOf(owner, route, progress).filter(String::isNotBlank).joinToString(" · "), maxLines = 3) },
+            modifier = Modifier.clickable { run.str("id")?.let(onOpen) },
+            trailingContent = { if (run.isTrue("pinned")) Icon(Icons.Default.Star, stringResource(R.string.session_pinned)) },
+        )
+    }
+}
+
+@Composable
+internal fun ResearchConversationButton(sessionId: String, onOpen: (String) -> Unit) {
+    OutlinedButton({ onOpen(sessionId) }) { Text(stringResource(R.string.work_open_conversation)) }
+}
+
+@Composable
+private fun ResearchHandoffDialog(
+    sessions: List<dev.otectus.pal.mobile.protocol.Session>,
+    routes: List<JsonObject>,
+    selected: String,
+    model: String,
+    busy: Boolean,
+    onSelected: (String) -> Unit,
+    onModel: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    val selectedRoute = selected.removePrefix("route:").takeIf { selected.startsWith("route:") }
+        ?.let { key -> routes.firstOrNull { researchRouteKey(it) == key } }
+    val ready = selected.isNotBlank() && (selectedRoute?.let(::researchRouteNeedsModel) != true || validResearchModel(model))
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.work_continue_research_in_conversation)) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+                Text(stringResource(R.string.work_research_handoff_explanation), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.work_new_conversation), style = MaterialTheme.typography.titleSmall)
+                routes.forEach { route ->
+                    val value = "route:${researchRouteKey(route)}"
+                    Row(Modifier.fillMaxWidth().clickable(enabled = !busy) { onSelected(value) }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected == value, { onSelected(value) }, enabled = !busy)
+                        Text(route.str("label") ?: researchRouteDescription(route), Modifier.weight(1f))
+                    }
+                }
+                if (selectedRoute?.let(::researchRouteNeedsModel) == true) OutlinedTextField(
+                    model, { onModel(it.take(512)) }, Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(R.string.work_research_model_id)) },
+                    supportingText = { Text(stringResource(R.string.work_research_model_id_explanation)) },
+                    isError = model.isNotEmpty() && !validResearchModel(model), singleLine = true, enabled = !busy,
+                )
+                Text(stringResource(R.string.work_existing_conversation), style = MaterialTheme.typography.titleSmall)
+                sessions.forEach { session ->
+                    val value = "session:${session.id}"
+                    Row(Modifier.fillMaxWidth().clickable(enabled = !busy) { onSelected(value) }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected == value, { onSelected(value) }, enabled = !busy)
+                        Text(session.title, Modifier.weight(1f), maxLines = 2)
+                    }
+                }
+                Text(stringResource(R.string.work_existing_draft_will_not_be_replaced), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = { Button({ onConfirm(selected) }, enabled = ready && !busy) { Text(stringResource(R.string.work_open_draft)) } },
+        dismissButton = { TextButton(onDismiss, enabled = !busy) { Text(stringResource(R.string.action_close)) } },
+    )
 }
 
 /** Completed-report navigation is isolated from transport so it can be exercised with fixture DTOs on an emulator. */
@@ -1276,12 +1765,13 @@ internal fun LazyListScope.researchResultItems(
             }
         }
     }
-    items(detail.list("findings"), key = { "f" + (it.str("id") ?: it.str("text")) }) { finding ->
-        val citations = (finding["citations"] as? JsonArray).orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }
+    // Two findings can say the same thing.
+    keyedItems(detail.list("findings"), { "f" + (it.str("id") ?: it.str("text")) }) { finding ->
+        val citations = finding.strings("citations")
         ListItem(headlineContent = { Text(finding.str("text").orEmpty()) }, supportingContent = { Text(listOfNotNull(finding.str("status"), citations.takeIf { it.isNotEmpty() }?.joinToString(" · ")).joinToString(" · ")) },
             modifier = Modifier.clickable { onPassage(citations.firstOrNull()) })
     }
-    items(detail.list("evidence"), key = { "e" + it.str("id") }) { evidence ->
+    keyedItems(detail.list("evidence"), { "e" + it.str("id") }) { evidence ->
         val status = evidence.str("status")
         Column {
             ListItem(headlineContent = { Text(stringResource(if (status == "excluded") R.string.excluded_evidence else R.string.normal_evidence, evidence.str("id").orEmpty(), evidence.str("title") ?: evidence.str("url").orEmpty()), maxLines = 2) },
@@ -1319,14 +1809,12 @@ private fun CanvasTab(repository: PALRepository, state: MobileState, activity: F
     var typing by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var info by remember { mutableStateOf<String?>(null) }
+    var unavailable by remember { mutableStateOf<String?>(null) }
     val id = preview?.str("id")
     suspend fun refresh() {
         val current = id ?: return
         runCatching { repository.request("canvas.frame", buildJsonObject { put("sessionId", sessionId); put("id", current) }) as JsonObject }.onSuccess { value ->
-            frame = withContext(Dispatchers.Default) {
-                val bytes = Base64.decode(value.str("data").orEmpty().substringAfter("base64,"), Base64.DEFAULT)
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            }
+            frame = withContext(Dispatchers.Default) { decodePicture(value.str("data")) }
         }.onFailure { error = it.message; if (it.message?.contains("closed") == true) preview = null }
         runCatching { repository.request("canvas.console", buildJsonObject { put("sessionId", sessionId); put("id", current) }) }.onSuccess { consoleLines = it.objects().takeLast(6) }
         runCatching { repository.request("canvas.annotations", buildJsonObject { put("sessionId", sessionId); put("id", current) }) }.onSuccess { annotations = it.objects() }
@@ -1335,6 +1823,7 @@ private fun CanvasTab(repository: PALRepository, state: MobileState, activity: F
     LaunchedEffect(sessionId) {
         runCatching { repository.request("workbench.roots", buildJsonObject { put("sessionId", sessionId) }) as JsonObject }.onSuccess { roots = it.list("roots"); if (rootId.isEmpty()) rootId = roots.firstOrNull()?.str("id").orEmpty() }
         runCatching { repository.request("canvas.list", buildJsonObject { put("sessionId", sessionId) }) }.onSuccess { preview = it.objects().firstOrNull() }
+        runCatching { repository.request("canvas.status", buildJsonObject {}) as JsonObject }.onSuccess { unavailable = if (it["available"] == JsonPrimitive(false)) it.str("unavailableReason") else null }
     }
     LaunchedEffect(rootId) {
         if (rootId.isEmpty()) { pages = emptyList(); return@LaunchedEffect }
@@ -1371,6 +1860,7 @@ private fun CanvasTab(repository: PALRepository, state: MobileState, activity: F
                         .onSuccess { preview = it; error = null }.onFailure { error = it.message }
                 } }, enabled = rootId.isNotEmpty() && path.isNotBlank()) { Text(stringResource(R.string.work_preview)) }
             }
+            unavailable?.let { Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall) }
             Status(error, info ?: preview?.let { strings.getString(R.string.work_snapshot_no_network, it.str("path"), it.str("revision"), it.int("width"), it.int("height")) })
         }
         if (id != null) {
@@ -1382,6 +1872,8 @@ private fun CanvasTab(repository: PALRepository, state: MobileState, activity: F
                     FilterChip(annotate, { annotate = !annotate }, { Text(if (annotate) stringResource(R.string.work_tap_an_element) else stringResource(R.string.work_annotate)) })
                     if (annotate) AssistChip({ pending = .5f to .5f }, { Text(stringResource(R.string.work_pin_at_center)) })
                     AssistChip({ scope.launch { runCatching { repository.mutate("canvas.reload", buildJsonObject { put("sessionId", sessionId); put("id", id) }) as JsonObject }.onSuccess { preview = it; refresh() }.onFailure { error = it.message } } }, { Text(stringResource(R.string.work_reload)) })
+                    if (state.supports("canvas.screenshot")) AssistChip({ scope.launch { runCatching { repository.mutate("canvas.screenshot", buildJsonObject { put("sessionId", sessionId); put("id", id) }) }.onSuccess { error = null; info = strings.getString(R.string.tools_canvas_shot_done) }.onFailure { error = it.message } } }, { Text(stringResource(R.string.tools_canvas_shot)) })
+                    if (state.supports("canvas.export")) AssistChip({ scope.launch { runCatching { repository.mutate("canvas.export", buildJsonObject { put("sessionId", sessionId); put("id", id) }) }.onSuccess { error = null; info = strings.getString(R.string.tools_canvas_export_done) }.onFailure { error = it.message } } }, { Text(stringResource(R.string.tools_canvas_export)) })
                     AssistChip({ scope.launch { runCatching { repository.mutate("canvas.close", buildJsonObject { put("sessionId", sessionId); put("id", id) }) }; preview = null; frame = null } }, { Text(stringResource(R.string.action_close)) })
                 }
             }
@@ -1528,8 +2020,50 @@ private fun NotesTab(repository: PALRepository, state: MobileState, sessionId: S
     }
 }
 
+internal fun researchRouteKey(route: JsonObject): String = listOf(
+    route.str("provider").orEmpty(), route.str("model").orEmpty(), route.str("connectionId").orEmpty()
+).joinToString("\u0000")
+
+internal fun JsonElement?.researchRoutes(): List<JsonObject> =
+    (this as? JsonObject)?.list("routes") ?: this.objects()
+
+private fun JsonObjectBuilder.putResearchRoute(route: JsonObject, manualModel: String = "") {
+    route.str("provider")?.let { put("provider", it) }
+    (route.str("model")?.takeIf(String::isNotBlank) ?: manualModel.trim().takeIf(String::isNotBlank))?.let { put("model", it) }
+    route.str("connectionId")?.let { put("connectionId", it) }
+}
+
+internal fun researchRouteNeedsModel(route: JsonObject): Boolean = route.containsKey("model") && route.str("model").isNullOrBlank()
+
+internal fun validResearchModel(model: String): Boolean = model.trim().let { it.isNotEmpty() && it.length <= 512 && it.none { char -> char.code < 32 || char.code == 127 } }
+
+private fun researchCliHandoffRoutes(state: MobileState): List<JsonObject> = state.providers.mapNotNull { (provider, value) ->
+    val available = (value as? JsonObject)?.isTrue("remoteExecution") == true
+    val traits = state.traits(provider)
+    if (!available || traits.kind != "cli") null else buildJsonObject {
+        put("provider", provider); put("label", traits.label)
+    }
+}
+
+private fun mergeResearchTask(task: JsonObject?, detail: JsonObject): JsonObject =
+    JsonObject(task.orEmpty() + detail)
+
+internal fun researchRouteDescription(route: JsonObject): String =
+    route.str("label") ?: listOfNotNull(route.str("provider"), route.str("model")).joinToString(" · ")
+
+@Composable
+private fun researchProgress(run: JsonObject): String {
+    val status = researchState(run.str("state"))
+    val progress = run.int("progress")?.let { "${it.coerceIn(0, 100)}%" }
+        ?: run.str("progress")?.takeUnless { it.equals(run.str("state"), ignoreCase = true) }
+    return listOfNotNull(status.takeIf(String::isNotBlank), progress?.takeIf(String::isNotBlank)).joinToString(" · ")
+}
+
 @Composable
 private fun researchState(state: String?) = when (state) {
+    "queued" -> stringResource(R.string.status_queued)
+    "starting" -> stringResource(R.string.status_starting)
+    "running" -> stringResource(R.string.status_running)
     "planning" -> stringResource(R.string.status_planning)
     "searching" -> stringResource(R.string.status_searching)
     "reading" -> stringResource(R.string.status_reading_sources)
@@ -1539,6 +2073,9 @@ private fun researchState(state: String?) = when (state) {
     "partial" -> stringResource(R.string.status_partial_report)
     "paused" -> stringResource(R.string.status_paused)
     "stopped" -> stringResource(R.string.status_stopped)
+    "cancel_requested" -> stringResource(R.string.status_cancelling)
+    "cancelled" -> stringResource(R.string.status_cancelled)
+    "interrupted" -> stringResource(R.string.status_interrupted)
     "failed" -> stringResource(R.string.status_failed)
     else -> state.orEmpty()
 }

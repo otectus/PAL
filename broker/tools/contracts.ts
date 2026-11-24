@@ -1,3 +1,4 @@
+import { apiProviders, providerIds, type ApiProvider } from '../provider-catalog.ts';
 /**
  * Workbench contracts shared by the file, artifact, media, execution and operation services.
  *
@@ -81,7 +82,7 @@ export const routeLabels: Record<ProcessingRoute, string> = { local: 'this compu
 
 /** The Workbench families this session has selected. Absent means off: an upgrade never adds a family. */
 export function sessionCapabilities(session: Pick<Session, 'capabilities' | 'temporary' | 'remote' | 'provider'>): Record<Exclude<WorkbenchFamily, 'host'>, boolean> & { host?: true } {
-  const managed = session.provider === 'ollama' || ['openai', 'anthropic', 'google', 'compatible'].includes(session.provider);
+  const managed = session.provider === 'ollama' || (apiProviders as readonly string[]).includes(session.provider);
   // Desktop-equivalent controllers (the desktop, an owner phone) keep the selection; a limited phone pauses it.
   const allowed = managed && !session.temporary && ownerControlled(session);
   // `host` appears only when on, so a conversation that never opted in keeps the capability shape (and schedule

@@ -89,8 +89,24 @@ class Showcase : public QObject {
     }
     // Parks the pointer in a corner so no hover state or tooltip shows.
     void rest(){if(window)QTest::mouseMove(window,QPoint(window->width()-3,window->height()-3));}
-    // Notices float over the page for a few seconds; shots wait for them to clear.
-    void shot(const QString &name){QVERIFY(window);rest();waitFor([&]{return app->toast().isEmpty();},8000);QTest::qWait(400);save(window->grabWindow(),name);}
+    // Qt's software renderer does not apply a one-rectangle clip to shapes, so icons scrolled out of a
+    // page would be drawn over what surrounds it.
+    static void hideClippedIcons(QQuickItem *root,QRectF clip,QList<QPointer<QQuickItem>> &hidden){
+        if(!root->isVisible())return;
+        const auto area=root->mapRectToScene(root->boundingRect());
+        if(root->clip())clip&=area;
+        if(root->inherits("QQuickShape")&&!clip.contains(area.center())){root->setVisible(false);hidden.append(root);return;}
+        for(auto child:root->childItems())hideClippedIcons(child,clip,hidden);
+    }
+    // Notices float over the page for a few seconds; shots wait for them to clear. Changing the size
+    // repaints the whole window, so nothing an earlier page drew stays behind.
+    void shot(const QString &name){
+        QVERIFY(window);rest();waitFor([&]{return app->toast().isEmpty();},8000);QTest::qWait(400);
+        QList<QPointer<QQuickItem>> hidden;hideClippedIcons(window->contentItem(),QRectF(QPointF(),window->size()),hidden);
+        const auto size=window->size();window->resize(size+QSize(0,1));QTest::qWait(150);window->resize(size);QTest::qWait(350);
+        save(window->grabWindow(),name);
+        for(const auto &icon:hidden)if(icon)icon->setVisible(true);
+    }
     // Scrolls the nearest flickable so a control's top sits just below the viewport's top.
     void reveal(const QString &name,qreal gap=8){
         auto control=item(name);QVERIFY2(control,qPrintable(name));
@@ -410,7 +426,7 @@ private slots:
             if(id=="motion"){QMetaObject::invokeMethod(page,"revealControl",Q_ARG(QVariant,"motionStage"));QTest::qWait(1500);}
             shot("settings-"+id);
         }
-        QVERIFY(clickText("Health and recovery"));QTest::qWait(1500);
+        QVERIFY(click("openHealth"));QTest::qWait(1500);
         shot("health");closePopups();
         auto search=item("settingsSearch");QVERIFY(search);
         search->setProperty("text","voice");QTest::qWait(800);shot("settings-search");

@@ -14,10 +14,13 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.Rule
 import org.junit.Test
@@ -75,5 +78,37 @@ class ResearchScreenTest {
         compose.onNodeWithText("The trial enrolled 120 participants and reported a twelve percent improvement.")
             .performScrollTo().assertIsDisplayed()
         compose.runOnIdle { check(opens.get() == 1) }
+    }
+
+    @Test
+    fun globalTaskSelectionOpensItsCrossConversationOwner() {
+        val tasks = Json.parseToJsonElement(
+            """[
+              {"id":"10000000-0000-4000-8000-000000000011","sessionId":"20000000-0000-4000-8000-000000000012","title":"Current project investigation","provider":"ollama","model":"qwen3","state":"completed","progress":"Complete"},
+              {"id":"10000000-0000-4000-8000-000000000021","sessionId":"20000000-0000-4000-8000-000000000022","title":"Other project investigation","provider":"anthropic","model":"claude-sonnet","state":"searching","progress":"Reading source 3 of 8"}
+            ]"""
+        ) as JsonArray
+        val rows = tasks.map { it.jsonObject }
+        val destination = AtomicReference<String?>()
+
+        compose.setContent {
+            var selected by remember { mutableStateOf<JsonObject?>(null) }
+            MaterialTheme {
+                LazyColumn(Modifier.fillMaxSize()) {
+                    researchTaskItems(
+                        runs = rows,
+                        sessionTitle = { id -> if (id.endsWith("12")) "Conversation Alpha" else "Conversation Beta" },
+                        onOpen = { id -> selected = rows.first { it["id"]?.jsonPrimitive?.content == id } },
+                    )
+                    selected?.let { task -> item {
+                        ResearchConversationButton(task.getValue("sessionId").toString().trim('"')) { destination.set(it) }
+                    } }
+                }
+            }
+        }
+
+        compose.onNodeWithText("Other project investigation").performClick()
+        compose.onNodeWithText("Open conversation").performScrollTo().assertIsDisplayed().performClick()
+        compose.runOnIdle { check(destination.get() == "20000000-0000-4000-8000-000000000022") }
     }
 }

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { routeFields, type ResearchBinding } from './routes.ts';
 import { z } from 'zod';
 import type { DestinationPolicy } from '../tools/contracts.ts';
 import type { Recency } from '../web-plan.ts';
@@ -7,6 +8,7 @@ export const modes = ['answer', 'compare', 'check', 'literature'] as const;
 export const presets = { quick: { minutes: 5, sources: 12, calls: 3 }, thorough: { minutes: 20, sources: 40, calls: 10 } };
 export const listText = z.array(z.string().trim().min(1).max(500)).max(12);
 export const startSchema = z.object({
+  ...routeFields,
   sessionId: z.string().min(1),
   question: z.string().trim().min(5).max(2000),
   preset: z.enum(['quick', 'thorough']).default('quick'),
@@ -67,12 +69,15 @@ export type Table = { columns: string[]; rows: string[][] };
 export type ResearchRun = {
   id: string;
   sessionId: string;
+  binding?: ResearchBinding;
+  provider?: ResearchBinding['provider'];
+  model?: string;
   requestId?: string;
   title: string;
   question: string;
   preset: 'quick' | 'thorough';
   limits: typeof presets.quick;
-  state: 'planning' | 'searching' | 'reading' | 'synthesizing' | 'completed' | 'partial' | 'stopped' | 'paused' | 'failed';
+  state: 'planning' | 'searching' | 'reading' | 'synthesizing' | 'completed' | 'partial' | 'stopped' | 'paused' | 'failed' | 'cancelled' | 'interrupted';
   scope: 'web' | 'project' | 'both';
   mode: (typeof modes)[number];
   criteria: string[];
@@ -96,6 +101,8 @@ export type ResearchRun = {
   processed: string[];
   report?: { artifactId: string; versionId: string; name: string };
   reportText?: string;
+  synthesis?: {branches?: Record<string, string>; body?: string; truncated?: boolean};
+  resumeAt?: 'collect' | 'rewrite';
   summary?: string;
   error?: string;
   removedCitations?: string[];

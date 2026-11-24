@@ -42,8 +42,11 @@ Item {
     property string pendingFocusSession:""
     // @ references: picked with the composer's picker, kept per conversation until sent.
     readonly property var references:WorkbenchState.referencesFor(App.selectedId)
-    readonly property bool referencesSupported:["ollama","openai","anthropic","google","compatible"].includes(App.session.provider||"")&&!App.session.temporary&&!App.session.remote
+    readonly property var originalFiles:WorkbenchState.originalFilesFor(App.selectedId)
+    readonly property var providerTrait:(App.state.providerTraits||{})[App.session.provider||""]||({})
+    readonly property bool referencesSupported:providerTrait.tools==="cere"&&!App.session.temporary&&!App.session.remote
     property string pendingReferences:"[]"
+    property string pendingOriginalFiles:"[]"
     property string referenceError:""
     property var submissionErrors: ({})
     readonly property string submissionError: submissionErrors[App.selectedId] || ""
@@ -107,6 +110,16 @@ Item {
         && (!idleWhileReading || composer.text.length > 0 || attachments.length > 0)
     onListeningChanged: App.setListening(listening)
     property string sessionId: App.selectedId
+    property int realtimeRequest:-1
+    property string realtimeId:""
+    property string realtimeState:"idle"
+    readonly property bool realtimeAvailable:["openai","google","xai"].includes(App.session.provider||"")&&!!App.session.model&&!linked
+    function startRealtime(){
+        if(realtimeRequest>=0||realtimeId)return
+        realtimeState="connecting"
+        realtimeRequest=App.rpc("realtime.start",{conversationId:App.selectedId,model:App.session.model,turnDetection:"server_vad",toolsEnabled:App.session.tools===true})
+    }
+    function stopRealtime(){App.stopRealtimeAudio(true);realtimeId="";realtimeState="idle"}
     property var attachments: []
     property string attachmentBaseline: "[]"
     property var attachmentRequests: ({})
@@ -470,6 +483,7 @@ Item {
         scroll.contentY=Math.max(scroll.originY,Math.min(scroll.originY+scroll.contentHeight-scroll.height,target))
     }
     onSessionIdChanged: {
+        if(realtimeId)stopRealtime()
         if(pendingFocusSession!==sessionId)pendingFocusSession=""
         submissionRecovery.close()
         referenceError="";referencePreview=""
@@ -526,6 +540,13 @@ Item {
                     HoverHandler { id:subtitleHover }
                     ToolTip.visible:subtitleHover.hovered&&sessionSubtitle.truncated;ToolTip.text:sessionSubtitle.text;ToolTip.delay:Theme.tooltipDelay
                 }
+                // A05: the project task this conversation works on, set and released only by the person.
+                RowLayout {
+                    objectName:"sessionTask";visible:!!App.session.task;Layout.fillWidth:true;spacing:Theme.space1
+                    CIcon { name:"check";implicitWidth:Theme.iconSmall;implicitHeight:Theme.iconSmall;color:Theme.accentText }
+                    CText { objectName:"sessionTaskText";Layout.fillWidth:true;text:"Working on: "+(App.session.task?.text||"");color:Theme.accentText;font.pixelSize:Theme.caption;elide:Text.ElideRight;wrapMode:Text.NoWrap }
+                    CButton { objectName:"sessionTaskStop";text:"Leave task";quiet:true;implicitHeight:Theme.minimumTarget+Theme.space1;leftPadding:Theme.space2;rightPadding:Theme.space2;help:"Stop working on this task here";Accessible.name:help;onClicked:App.rpc("capsules.workOn",{sessionId:App.session.id,taskId:null}) }
+                }
             }
             CButton { objectName:"renameSession";visible:!!App.session.id;text:"";iconName:"edit";quiet:true;help:"Rename session";Accessible.name:"Rename session";onClicked:renameDialog.open() }
         }
@@ -536,7 +557,7 @@ Item {
         CButton { text:"Discard";danger:true;onClicked:App.rpc("session.discardTemporary",{id:App.selectedId}) }
     }
     Rectangle {
-        visible: !!App.session.error; Layout.fillWidth: true; implicitHeight: errorText.implicitHeight+2*Theme.space2; radius: Theme.radiusControl; color: Theme.dangerSurface; border.color: Theme.dangerBorder
+        objectName:"sessionError";visible: !!App.session.error; Layout.fillWidth: true; implicitHeight: errorText.implicitHeight+2*Theme.space2; radius: Theme.radiusControl; color: Theme.dangerSurface; border.color: Theme.dangerBorder
         RowLayout {
             id:errorText; x:Theme.space3; y:Theme.space2; width:parent.width - 2*x
             CText { text:App.session.error || ""; color:Theme.danger; maximumLineCount:3; elide:Text.ElideRight; font.pixelSize:Theme.secondary; Accessible.role:Accessible.AlertMessage }
@@ -619,6 +640,7 @@ Item {
                     }
                     onBranchRequested: text => { branch.contextText = text; branch.open() }
                     onExportRequested: exportDialog.openFor(message.sessionId, [message.id])
+                    onDocumentRequested: markdown => documentExport.openFor(message.sessionId, { markdown: markdown }, "This reply")
                     onQuoteRequested: text => {
                         composer.text += (composer.text ? "\n\n" : "") + text.split("\n").map(line => "> " + line).join("\n") + "\n\n"
                         chat.focusComposer()
@@ -628,6 +650,7 @@ Item {
             footer:Column {
                 width:scroll.width-Theme.minimumTarget;spacing:Theme.space2
                 Text { visible: (App.session.queuedCount||0)>0; width:parent.width; text: App.session.queuedCount+(App.session.queuedCount===1?" message queued":" messages queued")+" · sends after this turn"; color:Theme.accentText;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
+                Text { objectName:"pendingUpdates"; readonly property int waiting:App.session.pendingUpdates||0; visible:waiting>0;width:parent.width;text:waiting+(waiting===1?" delegated result is waiting":" delegated results are waiting")+(chat.busy?" · reported when this turn ends":" · reported after your next message");color:Theme.accentText;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
                 Text { visible: chat.busy; width:parent.width; text: chat.activityStatus(); color: chat.pendingApprovals.length ? Theme.amber : Theme.accentText; font.pixelSize: Theme.secondary;wrapMode:Text.Wrap }
                 Repeater {
                     model: chat.pendingQuestions
@@ -703,6 +726,19 @@ Item {
             }
         }
     }
+    Flow {
+        objectName:"originalFileChips";visible:chat.originalFiles.length>0;Layout.fillWidth:true;spacing:Theme.space2
+        Repeater { model:chat.originalFiles
+            Rectangle { required property var modelData;required property int index
+                width:Math.min(originalLabel.implicitWidth+2*Theme.minimumTarget,Theme.menuMaxHeight);height:Theme.compactHeight;radius:Theme.radiusChip;color:Theme.surface;border.color:Theme.border
+                Accessible.role:Accessible.StaticText;Accessible.name:"Original PDF "+modelData.name
+                CIcon { x:Theme.space2;anchors.verticalCenter:parent.verticalCenter;width:Theme.iconSmall;height:Theme.iconSmall;name:"file" }
+                Text { id:originalLabel;x:Theme.labelIndent;anchors.verticalCenter:parent.verticalCenter;width:parent.width-x-Theme.labelIndent;text:"Original · "+parent.modelData.name;elide:Text.ElideMiddle;color:Theme.text;font.pixelSize:Theme.caption }
+                CButton { anchors.right:parent.right;anchors.verticalCenter:parent.verticalCenter;text:"×";quiet:true;implicitWidth:Theme.compactHeight;implicitHeight:Theme.compactHeight;Accessible.name:"Remove original PDF "+parent.modelData.name;onClicked:WorkbenchState.setOriginalFiles(App.selectedId,chat.originalFiles.filter((file,i)=>i!==parent.index)) }
+            }
+        }
+    }
+    CText { visible:chat.originalFiles.length>0;text:"Original PDFs upload through this conversation’s selected provider account when you send.";color:Theme.amber;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
     // @ references for the next message: structured picks the broker resolves and re-checks at send.
     Flow {
         objectName:"referenceChips";visible:chat.references.length>0;Layout.fillWidth:true;spacing:Theme.space2
@@ -711,10 +747,12 @@ Item {
             Rectangle {
                 required property var modelData;required property int index
                 objectName:"referenceChip_"+index
-                width:Math.min(chipLabel.implicitWidth+2*Theme.minimumTarget,Theme.menuMaxHeight);height:Theme.compactHeight;radius:Theme.radiusChip;color:Theme.surface;border.color:Theme.border
+                width:Math.min(chipLabel.implicitWidth+2*Theme.minimumTarget+Theme.compactHeight,Theme.menuMaxHeight);height:Theme.compactHeight;radius:Theme.radiusChip;color:Theme.surface;border.color:Theme.border
                 Accessible.role:Accessible.StaticText;Accessible.name:"Reference "+modelData.label
+                CButton { objectName:"referenceKeep_"+parent.index;anchors.right:parent.right;anchors.rightMargin:Theme.compactHeight;anchors.verticalCenter:parent.verticalCenter;iconName:"star";quiet:true;implicitWidth:Theme.compactHeight;implicitHeight:Theme.compactHeight;help:"Keep for every message here";Accessible.name:help
+                    onClicked:referenceRpc.call("references.keep",{sessionId:App.selectedId,ref:parent.modelData},value=>{if(value.error){chat.referenceError=String(value.error.message||value.error);return}WorkbenchState.setReferences(App.selectedId,chat.references.filter((r,i)=>i!==parent.index));App.notify("Kept for every message here. Change it in Context.")}) }
                 CIcon { x: Theme.space2;anchors.verticalCenter:parent.verticalCenter;width:Theme.iconSmall;height:Theme.iconSmall;name:modelData.kind==="folder"?"projects":modelData.kind==="artifact"?"image":modelData.kind==="collection"?"memory":modelData.kind==="conversation"?"chat":"file" }
-                Text { id:chipLabel;x:Theme.labelIndent;anchors.verticalCenter:parent.verticalCenter;width:parent.width-x-Theme.labelIndent;text:"@"+parent.modelData.label;elide:Text.ElideMiddle;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.caption }
+                Text { id:chipLabel;x:Theme.labelIndent;anchors.verticalCenter:parent.verticalCenter;width:parent.width-x-Theme.labelIndent-Theme.compactHeight;text:"@"+parent.modelData.label;elide:Text.ElideMiddle;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.caption }
                 CButton { anchors.right:parent.right;anchors.verticalCenter:parent.verticalCenter;text:"×";quiet:true;implicitWidth:Theme.compactHeight;implicitHeight:Theme.compactHeight;Accessible.name:"Remove reference "+parent.modelData.label
                     onClicked:WorkbenchState.setReferences(App.selectedId,chat.references.filter((r,i)=>i!==parent.index)) }
             }
@@ -728,9 +766,9 @@ Item {
     Rectangle {
         visible: !!App.session.id
         id:composerCard;objectName:"composerCard"
-        readonly property int minimumHeight:chat.height<Theme.wideToolbar?Theme.composerCompact:Theme.composerNormal
+        readonly property int minimumHeight:(chat.height<Theme.wideToolbar?Theme.composerCompact:Theme.composerNormal)+(composerActions.folded?extras.height+Theme.space1:0)
         readonly property real heightLimit: Math.max(minimumHeight, chat.height * .48)
-        readonly property real automaticHeight: Math.min(Math.max(minimumHeight, chat.height * .30), Math.max(minimumHeight, composer.contentHeight + Theme.controlHeight + 3 * Theme.space3))
+        readonly property real automaticHeight: Math.min(Math.max(minimumHeight, chat.height * .30), Math.max(minimumHeight, composer.contentHeight + composerActions.implicitHeight + 3 * Theme.space3))
         Layout.fillWidth:true;implicitHeight:Math.max(minimumHeight,Math.min(heightLimit,WorkbenchState.layout.composerHeight || automaticHeight));radius:Theme.radiusPanel;color:Theme.surface;border.color:composer.visualFocus?Theme.focus:Theme.border;border.width:composer.visualFocus?Theme.focusWidth:Theme.hairline
         Accessible.role:Accessible.Grouping;Accessible.name:"Message composer"
         DropArea {
@@ -784,52 +822,96 @@ Item {
                 }
             }
         }
-    RowLayout {
+    ColumnLayout {
         id:composerActions
         anchors.left:parent.left;anchors.right:parent.right;anchors.bottom:parent.bottom;anchors.margins:Theme.space2
-        spacing:Theme.space2
-        CButton { text:chat.width>=Theme.toolbarBreakpoint?"Attach":"";iconName:"image";quiet:true;help:!App.connected?"Reconnect to attach a file":"Attach an image or text file";Accessible.name:"Attach a file";enabled:composer.enabled&&App.connected&&!App.session.temporary&&attachments.length<8;onClicked:{const p=App.chooseFile();if(p)chat.importAttachment(p)} }
-        CButton { objectName:"pasteClipboard";text:chat.width>=Theme.toolbarBreakpoint?"Paste":"";iconName:chat.width<Theme.toolbarBreakpoint?"copy":"";quiet:true;help:"Paste text, images or files (Ctrl+V)";Accessible.name:"Paste from clipboard";enabled:composer.enabled;onClicked:chat.pasteClipboard() }
-        CButton { visible:attachments.length>0;text:chat.width>=Theme.formBreakpoint?"Clear":"×";help:"Clear attachments";Accessible.name:"Clear attachments";onClicked:attachments=[] }
-        CCheckBox { id:searchThisTurn;objectName:"searchThisTurn";visible:["ollama","openai","anthropic","google","compatible"].includes(App.session.provider)&&App.state.settings?.webSearch?.enabled===true;text:chat.width>=Theme.formBreakpoint?"Search web":"Web";enabled:composer.enabled&&(!chat.busy||chat.canSendWhileBusy)&&!App.state.settings?.paused;Accessible.name:"Search web for this message";Accessible.description:"Search uses the next message as a public query, up to 500 characters";ToolTip.visible:hovered;ToolTip.text:Accessible.description;onToggled:chat.viewPristine=false }
-        CButton { id:sourcesButton;objectName:"searchSources";visible:searchThisTurn.visible&&searchThisTurn.checked;quiet:true;implicitHeight:Theme.compactHeight;font.pixelSize:Theme.secondary;text:chat.sourcesLabel();help:"Limit this search to sites or a time range";Accessible.name:"Search sources";onClicked:sourcesDialog.openFor(App.selectedId) }
-        CButton { objectName:"turnPostureChip";visible:chat.hasTurnPosture;quiet:true;implicitHeight:Theme.compactHeight;font.pixelSize:Theme.secondary;text:(chat.width>=Theme.formBreakpoint?"Next: ":"")+chat.turnPosture.label+"  ×";help:"The next message uses the "+chat.turnPosture.label+" posture. Click to remove it.";Accessible.name:"Remove the posture for the next message";onClicked:chat.setTurnPosture(App.selectedId,null) }
-        Item { Layout.fillWidth:true;Layout.minimumWidth:0 }
-        Text { objectName:"sendKeyHint";visible:chat.width>=Theme.fullToolbar;text:chat.sendHint;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
-        CButton {
-            id:moreTools;objectName:"conversationMore";visible:!!App.session.id
-            implicitWidth:Theme.compactHeight;implicitHeight:Theme.compactHeight;leftPadding:Theme.space2;rightPadding:Theme.space2;quiet:true
-            help:qsTr("More conversation tools");Accessible.name:help
-            contentItem:CIcon { name:"more";color:Theme.text }
-            onClicked:toolsMenu.popup(moreTools,0,-toolsMenu.implicitHeight)
-        }
-        VoiceInput {
-            id:voiceInput;sessionId:App.selectedId;available:composer.enabled
-            onTranscriptionAccepted:text=>{composer.insert(composer.cursorPosition,(composer.text?"\n":"")+text);composer.forceActiveFocus()}
-            onNavigationRequested:target=>chat.navigateRequested(target)
-        }
-        CButton { objectName:"stopMessage";visible:chat.busy;enabled:App.connected&&App.session.status!=="stopping";text:App.session.status==="stopping"?"Stopping…":"Stop";implicitWidth:App.session.status==="stopping"?Theme.editorShort:2*Theme.compactHeight;leftPadding:Theme.space2;rightPadding:Theme.space2;font.pixelSize:Theme.body;help:App.connected?"Stop":"Stop is available once PAL reconnects";Accessible.name:App.session.status==="stopping"?qsTr("Stopping"):qsTr("Stop response");danger:true;onClicked:App.rpc("session.stop",{id:App.selectedId}) }
-        CButton {
-            id:sendButton;objectName:"sendMessage";visible:!chat.busy||chat.canSendWhileBusy
-            implicitWidth:implicitHeight;leftPadding:Theme.space2;rightPadding:Theme.space2
-            help:(chat.busy?"Queue message after this turn":"Send")+(chat.sendKey==="button"?"":" ("+chat.sendKeyName+")")+" · "+chat.newLineHint;Accessible.name:chat.busy?qsTr("Queue message"):qsTr("Send");primary:true
-            prominent:true
-            enabled:composer.enabled && chat.sendRequest < 0 && !chat.draftConflict && !chat.importingAttachments && !chat.sendUnconfirmed && composer.text.trim().length > 0 && App.connected
-            onClicked:chat.send()
-            contentItem: Item {
-                implicitWidth:Theme.iconSize;implicitHeight:Theme.iconSize
-                Shape {
-                    anchors.centerIn:parent;width:Theme.iconSize;height:Theme.iconSize
-                    ShapePath {
-                        strokeColor:sendButton.ink
-                        strokeWidth:Theme.iconStroke;fillColor:Theme.transparent
-                        capStyle:ShapePath.RoundCap;joinStyle:ShapePath.RoundJoin
-                        PathSvg { path:"M18 2 L12 18 L9 11 L2 8 Z M9 11 L18 2" }
+        spacing:Theme.space1
+        // What goes with a message sits beside the buttons while it fits, and above them when it does not: Send keeps its place.
+        // The reminder of the send key gives way first.
+        readonly property real needed:leftActions.implicitWidth+rightActions.implicitWidth+extras.wanted+2*Theme.space2
+        readonly property bool folded:extras.wanted>0&&needed>width
+        Item { id:extrasAbove;visible:composerActions.folded;Layout.fillWidth:true;implicitHeight:extras.height }
+        RowLayout {
+            Layout.fillWidth:true;spacing:Theme.space2
+            RowLayout {
+                id:leftActions;Layout.fillWidth:false;spacing:Theme.space2
+                CButton { text:chat.width>=Theme.toolbarBreakpoint?"Attach":"";iconName:"image";quiet:true;help:!App.connected?"Reconnect to attach a file":"Attach an image or text file";Accessible.name:"Attach a file";enabled:composer.enabled&&App.connected&&!App.session.temporary&&attachments.length<8;onClicked:{const p=App.chooseFile();if(p)chat.importAttachment(p)} }
+                CButton { objectName:"pasteClipboard";text:chat.width>=Theme.toolbarBreakpoint?"Paste":"";iconName:chat.width<Theme.toolbarBreakpoint?"copy":"";quiet:true;help:"Paste text, images or files (Ctrl+V)";Accessible.name:"Paste from clipboard";enabled:composer.enabled;onClicked:chat.pasteClipboard() }
+            }
+            Item { id:extrasInline;Layout.fillWidth:true;Layout.minimumWidth:0;implicitHeight:Theme.controlHeight }
+            Text { id:sendKeyHint;objectName:"sendKeyHint";visible:chat.width>=Theme.fullToolbar&&composerActions.needed+implicitWidth+Theme.space2<=composerActions.width;text:chat.sendHint;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
+            RowLayout {
+                id:rightActions;Layout.fillWidth:false;spacing:Theme.space2
+                CButton {
+                    id:moreTools;objectName:"conversationMore";visible:!!App.session.id
+                    implicitWidth:Theme.compactHeight;implicitHeight:Theme.compactHeight;leftPadding:Theme.space2;rightPadding:Theme.space2;quiet:true
+                    help:qsTr("More conversation tools");Accessible.name:help
+                    contentItem:CIcon { name:"more";color:Theme.text }
+                    onClicked:toolsMenu.popup(moreTools,0,-toolsMenu.implicitHeight)
+                }
+                VoiceInput {
+                    id:voiceInput;sessionId:App.selectedId;available:composer.enabled
+                    onTranscriptionAccepted:text=>{composer.insert(composer.cursorPosition,(composer.text?"\n":"")+text);composer.forceActiveFocus()}
+                    onNavigationRequested:target=>chat.navigateRequested(target)
+                }
+                CButton { objectName:"stopMessage";visible:chat.busy;enabled:App.connected&&App.session.status!=="stopping";text:App.session.status==="stopping"?"Stopping…":"Stop";implicitWidth:App.session.status==="stopping"?Theme.editorShort:2*Theme.compactHeight;leftPadding:Theme.space2;rightPadding:Theme.space2;font.pixelSize:Theme.body;help:App.connected?"Stop":"Stop is available once PAL reconnects";Accessible.name:App.session.status==="stopping"?qsTr("Stopping"):qsTr("Stop response");danger:true;onClicked:App.rpc("session.stop",{id:App.selectedId}) }
+                CButton {
+                    id:sendButton;objectName:"sendMessage";visible:!chat.busy||chat.canSendWhileBusy
+                    implicitWidth:implicitHeight;leftPadding:Theme.space2;rightPadding:Theme.space2
+                    help:(chat.busy?"Queue message after this turn":"Send")+(chat.sendKey==="button"?"":" ("+chat.sendKeyName+")")+" · "+chat.newLineHint;Accessible.name:chat.busy?qsTr("Queue message"):qsTr("Send");primary:true
+                    prominent:true
+                    enabled:composer.enabled && chat.sendRequest < 0 && !chat.draftConflict && !chat.importingAttachments && !chat.sendUnconfirmed && composer.text.trim().length > 0 && App.connected
+                    onClicked:chat.send()
+                    contentItem: Item {
+                        implicitWidth:Theme.iconSize;implicitHeight:Theme.iconSize
+                        Shape {
+                            anchors.centerIn:parent;width:Theme.iconSize;height:Theme.iconSize
+                            ShapePath {
+                                strokeColor:sendButton.ink
+                                strokeWidth:Theme.iconStroke;fillColor:Theme.transparent
+                                capStyle:ShapePath.RoundCap;joinStyle:ShapePath.RoundJoin
+                                PathSvg { path:"M18 2 L12 18 L9 11 L2 8 Z M9 11 L18 2" }
+                            }
+                        }
                     }
                 }
             }
         }
     }
+    Flow {
+        id:extras;objectName:"composerExtras"
+        // The width they ask for on one line, whichever line they are on.
+        readonly property real wanted:{let total=0;for(const item of children)if(item.shown)total+=item.implicitWidth+spacing;return Math.max(0,total-spacing)}
+        parent:composerActions.folded?extrasAbove:extrasInline
+        width:parent.width;y:(parent.height-height)/2;spacing:Theme.space2
+        CButton { objectName:"realtimeVoice";readonly property bool shown:chat.realtimeAvailable;visible:shown;text:chat.realtimeId?(chat.width>=Theme.formBreakpoint?"Live · "+chat.realtimeState:"Live"):(chat.width>=Theme.formBreakpoint?"Live voice":"Live");quiet:!chat.realtimeId;primary:!!chat.realtimeId;enabled:App.connected&&chat.realtimeRequest<0;help:chat.realtimeId?"Stop live voice":"Talk and hear this provider in realtime";Accessible.name:help;onClicked:chat.realtimeId?chat.stopRealtime():chat.startRealtime() }
+        CButton { readonly property bool shown:!!chat.realtimeId;visible:shown;text:"Turn";quiet:true;help:"Finish this voice turn";Accessible.name:help;onClicked:App.rpc("realtime.commit",{sessionId:chat.realtimeId}) }
+        CButton { readonly property bool shown:!!chat.realtimeId;visible:shown;text:"Interrupt";quiet:true;help:"Interrupt realtime playback";Accessible.name:help;onClicked:{App.interruptRealtimeAudio();App.rpc("realtime.interrupt",{sessionId:chat.realtimeId})} }
+        CButton { readonly property bool shown:attachments.length>0;visible:shown;text:chat.width>=Theme.formBreakpoint?"Clear":"×";help:"Clear attachments";Accessible.name:"Clear attachments";onClicked:attachments=[] }
+        CCheckBox { id:searchThisTurn;implicitWidth:implicitContentWidth+leftPadding+rightPadding;implicitHeight:Theme.controlHeight;objectName:"searchThisTurn";readonly property bool shown:chat.providerTrait.webSearch===true&&App.state.settings?.webSearch?.enabled===true;visible:shown;text:chat.width>=Theme.formBreakpoint?"Search web":"Web";enabled:composer.enabled&&(!chat.busy||chat.canSendWhileBusy)&&!App.state.settings?.paused;Accessible.name:"Search web for this message";Accessible.description:"Search uses the next message as a public query, up to 500 characters";ToolTip.visible:hovered;ToolTip.text:Accessible.description;onToggled:chat.viewPristine=false }
+        CButton { id:sourcesButton;objectName:"searchSources";readonly property bool shown:searchThisTurn.shown&&searchThisTurn.checked;visible:shown;quiet:true;implicitHeight:Theme.controlHeight;font.pixelSize:Theme.secondary;text:chat.sourcesLabel();help:"Limit this search to sites or a time range";Accessible.name:"Search sources";onClicked:sourcesDialog.openFor(App.selectedId) }
+        CButton { objectName:"turnPostureChip";readonly property bool shown:chat.hasTurnPosture;visible:shown;quiet:true;implicitHeight:Theme.controlHeight;font.pixelSize:Theme.secondary;text:(chat.width>=Theme.formBreakpoint?"Next: ":"")+chat.turnPosture.label+"  ×";help:"The next message uses the "+chat.turnPosture.label+" posture. Click to remove it.";Accessible.name:"Remove the posture for the next message";onClicked:chat.setTurnPosture(App.selectedId,null) }
+    }
+    }
+    Connections {
+        target:App
+        function onResult(id,value){
+            if(id!==chat.realtimeRequest)return
+            chat.realtimeRequest=-1
+            if(value?.error){chat.realtimeState="idle";App.notify(String(value.error.message||value.error));return}
+            const input=value.input||{},output=value.output||{}
+            if(input.codec!=="pcm16"||output.codec!=="pcm16"||!App.startRealtimeAudio(value.sessionId,input.sampleRate||24000,output.sampleRate||24000)){
+                App.rpc("realtime.stop",{sessionId:value.sessionId});chat.realtimeState="idle";return
+            }
+            chat.realtimeId=value.sessionId;chat.realtimeState="listening"
+        }
+        function onRealtimeEvent(value){
+            if(value.sessionId!==chat.realtimeId)return
+            const event=value.event||{}
+            if(event.type==="state")chat.realtimeState=event.state||chat.realtimeState
+            else if(event.type==="error")App.notify(event.message||"Realtime voice failed")
+            if((event.type==="state"&&event.state==="closed")||(event.type==="error"&&event.recoverable===false)){App.stopRealtimeAudio(false);chat.realtimeId=""}
+        }
     }
     RowLayout {
         visible:!!voiceInput.statusText;Layout.fillWidth:true;spacing:Theme.space2
@@ -856,9 +938,14 @@ Item {
         CMenuItem { objectName:"menuInbox";text:"Inbox · "+(App.state.completions||[]).length;onTriggered:inbox.open() }
         CMenuItem { objectName:"menuMemoryReview";text:"Memory review";onTriggered:memoryReview.open() }
         CMenuItem { objectName:"menuContext";text:"Context";onTriggered:contextDrawer.open() }
+        CMenuItem { objectName:"menuBookmarks";text:"Bookmarks…";onTriggered:pinnedReplies.openPinned() }
+        CMenuItem { objectName:"menuClock";text:"Clock and time zone…";onTriggered:chat.navigateRequested("clock") }
         CMenuItem { objectName:"menuStyle";text:"Style and posture…";onTriggered:sessionBehavior.openFor(App.selectedId,chat.hasTurnPosture?chat.turnPosture.id:"") }
         CMenuItem { objectName:"menuExportFolded";text:"Export conversation…";onTriggered:exportDialog.openFor(App.selectedId,[]) }
+        CMenuItem { objectName:"menuDocument";text:"Write a document…";visible:!App.session.temporary;onTriggered:documentExport.openBlank(App.selectedId,"") }
         CMenuItem { objectName:"menuTranscribeFolded";text:"Transcribe a recording…";visible:!App.session.temporary;onTriggered:chat.transcribeFile() }
+        CMenuItem { objectName:"menuTimedMedia";text:"Generate video or music…";visible:!App.session.temporary;onTriggered:timedMedia.openFresh() }
+        CMenuItem { objectName:"menuXaiCollections";text:"xAI document collections…";visible:App.session.provider==="xai"&&!App.session.temporary;onTriggered:xaiCollections.openFor(App.selectedId) }
         CMenuItem { objectName:"menuCollectionsFolded";text:"Document collections…";onTriggered:collections.openFor(App.selectedId) }
         CMenuItem { text:"Recover submission";visible:!!chat.recoverable.text&&chat.recoverable.state!=="accepted";onTriggered:submissionRecovery.open() }
         CMenuItem { text:"Terminal";visible:chat.linked;onTriggered:App.rpc("session.terminal",{id:App.selectedId}) }
@@ -871,6 +958,7 @@ Item {
     readonly property string sendHint:sendKey==="button"?"Send button sends · Enter new line":sendKeyName+" sends · "+newLineHint
     RpcClient { id:referenceRpc; scope: App.selectedId }
     RpcClient { id:pinRpc }
+    RpcClient { id:xaiRpc; scope: App.selectedId }
     function insertPendingImageText() {
         if (!visible || !composer.enabled || !draftHydrated || draftSession !== App.selectedId) return
         const text = WorkbenchState.takeImageText(draftSession)
@@ -930,7 +1018,8 @@ Item {
         if(hasTurnPosture)params.posture=turnPosture.id
         if(params.webSearch&&hasWebSources)params.webConstraints=webConstraints()
         if(references.length)params.references=references.map(r=>Object.assign({},r))
-        pendingReferences=JSON.stringify(references);referenceError="";setSubmissionError(pendingSession,"")
+        if(originalFiles.length)params.originalFiles=originalFiles.map(file=>file.id)
+        pendingReferences=JSON.stringify(references);pendingOriginalFiles=JSON.stringify(originalFiles);referenceError="";setSubmissionError(pendingSession,"")
         sendRequest=App.rpc("session.send",params);jumpToLatest()
     }
     Timer { id:draftTimer;interval:600;onTriggered:chat.saveDraft(false) }
@@ -1057,6 +1146,7 @@ Item {
             else if(value?.error&&owner===chat.draftSession&&chat.draftDirty())draftTimer.restart()
             if(value?.error&&value.code!=="CONNECTION_LOST")chat.setSubmissionError(owner,value.error)
             if(!value?.error&&JSON.stringify(WorkbenchState.referencesFor(owner))===chat.pendingReferences)WorkbenchState.setReferences(owner,[])
+            if(!value?.error&&JSON.stringify(WorkbenchState.originalFilesFor(owner))===chat.pendingOriginalFiles)WorkbenchState.setOriginalFiles(owner,[])
             if(owner===App.selectedId&&!value?.error){
                 chat.unconfirmedSend=null
                 if(composer.text===chat.pendingText)composer.text=""
@@ -1069,7 +1159,7 @@ Item {
     }
     Connections { target:App;function onAttachmentRequested(path){chat.importAttachment(path)} }
     Connections { target:App;function onResult(id,value){if(!(id in chat.attachmentRequests))return;const owner=chat.attachmentRequests[id],next=Object.assign({},chat.attachmentRequests);delete next[id];chat.attachmentRequests=next;if(owner!==App.selectedId){if(!value?.error){App.rpc("attachments.keepInDraft",{sessionId:owner,attachmentId:value.id});App.notify("Attachment saved in its original conversation’s draft.")}return}if(value?.error)chat.attachmentError=String(value.error.message||value.error);else {if(!chat.attachments.some(a=>a.id===value.id))chat.attachments=chat.attachments.concat([value]);chat.draftRevision=App.session.draftRevision||"0";chat.attachmentBaseline=JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id));if((App.session.draft||"")!==chat.draftBaseline&&!chat.ownsBrokerDraft())chat.draftConflict=true;else{if((App.session.draft||"")!==chat.draftBaseline)chat.draftBaseline=App.session.draft||"";chat.saveDraft()}}} }
-    ContextDrawer { id:contextDrawer;sessionId:App.selectedId;draftText:composer.text;attachmentIds:chat.attachmentIds() }
+    ContextDrawer { id:contextDrawer;onClockRequested:chat.navigateRequested("clock");sessionId:App.selectedId;draftText:composer.text;attachmentIds:chat.attachmentIds() }
     Connections { target:App;function onResult(id,value){if(id===chat.recoveryRequest){chat.recoveryRequest=-1;if(chat.recoveryOwner===App.selectedId&&!value?.error)chat.recoverable=value||{}}else if(id===chat.recoveryRestoreRequest){chat.recoveryRestoreRequest=-1;if(value?.error)App.notify(String(value.error.message||value.error));else if(chat.restoreOwner===App.selectedId)chat.loadDraft()}} }
     CDialog {
         id:submissionRecovery
@@ -1106,14 +1196,103 @@ Item {
     }
     SessionModelDialog { id:modelOptions }
     CDialog {
+        id:timedMedia;objectName:"timedMediaDialog"
+        property int requestId:-1
+        property var prepared:null
+        property string error:""
+        readonly property var sourceOptions:{
+            const refs=WorkbenchState.referencesFor(App.selectedId).filter(ref=>ref.kind==="artifact"&&ref.artifactId&&ref.versionId).map(ref=>({artifactId:ref.artifactId,versionId:ref.versionId,label:ref.label||("Artifact "+ref.versionId.slice(0,8))}))
+            const selected=WorkbenchState.imageFor(App.selectedId)
+            if(selected.artifactId&&selected.versionId&&!refs.some(ref=>ref.versionId===selected.versionId))refs.unshift({artifactId:selected.artifactId,versionId:selected.versionId,label:"Selected Workbench image"})
+            return [{artifactId:"",versionId:"",label:"No source file"}].concat(refs)
+        }
+        readonly property var source:mediaSource.currentIndex>0?sourceOptions[mediaSource.currentIndex]:null
+        readonly property bool xaiEdit:mediaProvider.currentValue==="xai"&&!!source
+        function openFresh(){requestId=-1;prepared=null;error="";mediaProvider.currentIndex=0;mediaKind.currentIndex=0;mediaSource.currentIndex=0;mediaPrompt.text="";mediaModel.text="gemini-omni-1.2-flash";open()}
+        function prepare(){
+            const params={sessionId:App.selectedId,provider:mediaProvider.currentValue,model:mediaModel.text.trim(),kind:mediaKind.currentValue,prompt:mediaPrompt.text.trim()}
+            if(source)params.references=[{artifactId:source.artifactId,versionId:source.versionId}]
+            if(!xaiEdit){params.duration=Number(mediaDuration.text);params.resolution=mediaResolution.text.trim();params.aspectRatio=mediaAspect.text.trim()}
+            requestId=App.rpc("media.timed.prepare",params)
+        }
+        CText { text:"Generate timed media";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
+        CText { text:"Prepare a video or music operation, review its route, then confirm the potentially billed provider request. Results become immutable conversation artifacts with lineage.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        RowLayout {
+            Layout.fillWidth:true
+            CComboBox { id:mediaProvider;Layout.fillWidth:true;model:[{id:"google",label:"Google"},{id:"xai",label:"xAI"},{id:"edenai",label:"Eden AI"}];textRole:"label";valueRole:"id";onActivated:{mediaModel.text=currentValue==="xai"?"grok-imagine-video":currentValue==="edenai"?"video/generation_async/bytedance":"gemini-omni-1.2-flash";if(currentValue!=="google")mediaKind.currentIndex=0;if(currentValue==="edenai")mediaSource.currentIndex=0;timedMedia.prepared=null} }
+            CComboBox { id:mediaKind;Layout.fillWidth:true;model:mediaProvider.currentValue==="google"?[{id:"video.generate",label:"Video"},{id:"music.generate",label:"Music"}]:[{id:"video.generate",label:"Video"}];textRole:"label";valueRole:"id";onActivated:{if(currentValue==="music.generate"){mediaModel.text="lyria-3.5";mediaSource.currentIndex=0}timedMedia.prepared=null} }
+        }
+        CField { id:mediaModel;Layout.fillWidth:true;placeholderText:"Provider model";Accessible.name:"Timed media model" }
+        CTextArea { id:mediaPrompt;Layout.fillWidth:true;Layout.preferredHeight:Theme.editorShort;placeholderText:"Describe the video or music to generate";Accessible.name:"Timed media prompt" }
+        CComboBox { id:mediaSource;visible:mediaProvider.currentValue!=="edenai"&&mediaKind.currentValue==="video.generate";Layout.fillWidth:true;model:timedMedia.sourceOptions;textRole:"label";Accessible.name:"Source Workbench version";onActivated:timedMedia.prepared=null }
+        CText { visible:mediaSource.visible&&timedMedia.sourceOptions.length===1;text:"Pin or select an image or video version in this conversation's Workbench to use it as a source.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        RowLayout {
+            visible:!timedMedia.xaiEdit;Layout.fillWidth:true
+            CField { id:mediaDuration;Layout.fillWidth:true;text:"5";placeholderText:"3–15 seconds";inputMethodHints:Qt.ImhDigitsOnly;Accessible.name:"Duration in seconds" }
+            CField { id:mediaAspect;Layout.fillWidth:true;text:"16:9";placeholderText:"Aspect ratio";Accessible.name:"Aspect ratio" }
+            CField { id:mediaResolution;Layout.fillWidth:true;text:"720p";placeholderText:"Resolution";Accessible.name:"Resolution" }
+        }
+        CText { visible:!!timedMedia.prepared;text:"Ready to send · "+mediaProvider.currentText+" · "+mediaKind.currentText+" · this may use provider credits";color:Theme.amber;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        CText { visible:!!timedMedia.error;text:timedMedia.error;color:Theme.danger;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        RowLayout {
+            Layout.fillWidth:true
+            CButton { text:"Cancel";onClicked:timedMedia.close() }
+            Item { Layout.fillWidth:true }
+            CButton { visible:!timedMedia.prepared;text:"Review operation";primary:true;enabled:timedMedia.requestId<0&&mediaPrompt.text.trim().length>0&&(timedMedia.xaiEdit||(Number(mediaDuration.text)>=3&&Number(mediaDuration.text)<=15));onClicked:timedMedia.prepare() }
+            CButton { visible:!!timedMedia.prepared;text:"Confirm billed generation";primary:true;enabled:timedMedia.requestId<0;onClicked:timedMedia.requestId=App.rpc("media.timed.start",{sessionId:App.selectedId,id:timedMedia.prepared.id}) }
+        }
+        Connections { target:App;function onResult(id,value){if(id!==timedMedia.requestId)return;timedMedia.requestId=-1;if(value?.error){timedMedia.error=String(value.error.message||value.error);return}if(!timedMedia.prepared){timedMedia.prepared=value;timedMedia.error=""}else{App.notify("Timed media generation started. Watch Workbench → Runs for its artifact.");timedMedia.close()}} }
+    }
+    CDialog {
+        id:xaiCollections; objectName:"xaiCollectionsDialog"
+        property string sessionId:""
+        property var items:[]
+        property var files:[]
+        property string selectedId:""
+        property string message:""
+        function load(){xaiRpc.call("xaiCollections.list",{sessionId:sessionId},value=>{if(value.error)message=value.error;else{items=value||[];if(!selectedId&&items.length)selectedId=items[0].id}});xaiRpc.call("originalFiles.list",{sessionId:sessionId},value=>{if(!value.error)files=value||[]})}
+        function openFor(id){sessionId=id;selectedId="";message="";collectionName.text="";collectionDescription.text="";load();open()}
+        function run(method,params,success){message="Working…";xaiRpc.call(method,params,value=>{if(value.error)message=value.error;else{message=success;load()}})}
+        CText { text:"xAI document collections";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
+        CText { text:"Collections persist in this named xAI account. PAL uses a separate Management key and confirms cloud storage changes.";color:Theme.muted;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        Repeater { model:xaiCollections.items
+            ColumnLayout { required property var modelData;Layout.fillWidth:true
+                CCheckBox { text:modelData.name+" · "+modelData.documentsCount+" PDF(s)";checked:xaiCollections.selectedId===modelData.id;onClicked:xaiCollections.selectedId=modelData.id }
+                RowLayout { Layout.fillWidth:true
+                    CButton { text:"Attach";quiet:true;onClicked:xaiCollections.run("xaiCollections.attach",{sessionId:xaiCollections.sessionId,collectionId:modelData.id,maxResults:Number(collectionResults.text)||10,acknowledgeSearch:true},"Collection attached") }
+                    CButton { text:"Detach";quiet:true;onClicked:xaiCollections.run("xaiCollections.detach",{sessionId:xaiCollections.sessionId,collectionId:modelData.id},"Collection detached") }
+                    CButton { text:"Delete";quiet:true;danger:true;onClicked:xaiCollections.run("xaiCollections.delete",{sessionId:xaiCollections.sessionId,collectionId:modelData.id,acknowledgeDeletion:true},"Collection deleted") }
+                }
+            }
+        }
+        CField { id:collectionResults;Layout.fillWidth:true;text:"10";placeholderText:"Maximum search results (1–50)";inputMethodHints:Qt.ImhDigitsOnly }
+        CText { visible:xaiCollections.selectedId&&xaiCollections.files.some(file=>file.provider==="xai"&&file.state==="ready");text:"Uploaded original PDFs";font.weight:Font.DemiBold }
+        Repeater { model:xaiCollections.files.filter(file=>file.provider==="xai"&&file.state==="ready")
+            RowLayout { required property var modelData;Layout.fillWidth:true
+                CText { text:modelData.name;Layout.fillWidth:true;elide:Text.ElideMiddle }
+                CButton { text:"Add";quiet:true;enabled:!!xaiCollections.selectedId;onClicked:xaiCollections.run("xaiCollections.addDocument",{sessionId:xaiCollections.sessionId,collectionId:xaiCollections.selectedId,originalFileId:modelData.id,acknowledgeCloudStorage:true},"PDF added") }
+                CButton { text:"Remove";quiet:true;enabled:!!xaiCollections.selectedId;onClicked:xaiCollections.run("xaiCollections.removeDocument",{sessionId:xaiCollections.sessionId,collectionId:xaiCollections.selectedId,originalFileId:modelData.id,acknowledgeRemoval:true},"PDF removed") }
+            }
+        }
+        CText { text:"Create collection";font.weight:Font.DemiBold }
+        CField { id:collectionName;Layout.fillWidth:true;placeholderText:"Collection name";maximumLength:200 }
+        CTextArea { id:collectionDescription;Layout.fillWidth:true;Layout.preferredHeight:Theme.editorShort;placeholderText:"Description (optional)" }
+        CText { visible:!!xaiCollections.message;text:xaiCollections.message;color:xaiCollections.message.includes("error")?Theme.danger:Theme.muted;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        RowLayout { Layout.fillWidth:true
+            CButton { text:"Create";primary:true;enabled:!!collectionName.text.trim();onClicked:xaiCollections.run("xaiCollections.create",{sessionId:xaiCollections.sessionId,name:collectionName.text.trim(),description:collectionDescription.text.trim(),acknowledgeCloudStorage:true},"Collection created") }
+            Item { Layout.fillWidth:true }
+            CButton { text:"Done";onClicked:xaiCollections.close() }
+        }
+    }
+    CDialog {
         id:handoffDialog;objectName:"handoffDialog"
         property string error:""
-        property var targets:[{id:"codex",displayName:"Codex"},{id:"claude",displayName:"Claude"},{id:"ollama",displayName:"Ollama"},{id:"antigravity",displayName:"AntiGravity"},{id:"openai",displayName:"OpenAI API"},{id:"anthropic",displayName:"Claude API"},{id:"google",displayName:"Google AI API"},{id:"compatible",displayName:"Compatible endpoint"}].filter(p=>p.id!==App.session.provider)
+        property var targets:(App.state.providerOrder||[]).filter(id=>id!==App.session.provider).map(id=>({id:id,displayName:(App.state.providerTraits||{})[id]?.label||Labels.provider(id)}))
         onOpened: {error="";handoffTrust.checked=false;handoffProvider.currentIndex=0;handoffText.text="Continue this work in "+(App.session.cwd||"")+".\n\n"+App.messages.filter(m=>m.role!=="tool").slice(-8).map(m=>m.role+": "+m.text).join("\n\n");if(handoffProvider.currentValue)App.rpc("provider.models",{provider:handoffProvider.currentValue})}
         CText { text:"Review context before sharing";font.pixelSize:Theme.title;font.bold:true }
         CText { text:"Choose a provider for the new conversation. Nothing is sent until you submit its draft.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CComboBox { id:handoffProvider;objectName:"handoffProvider";Layout.fillWidth:true;model:handoffDialog.targets;textRole:"displayName";valueRole:"id";Accessible.name:"Handoff provider";onActivated:if(currentValue)App.rpc("provider.models",{provider:currentValue}) }
-        CComboBox { id:handoffModel;visible:["ollama","openai","anthropic","google","compatible"].includes(handoffProvider.currentValue);Layout.fillWidth:true;model:(App.state.capabilities||{})[handoffProvider.currentValue]?.models||[];textRole:"displayName";valueRole:"id";Accessible.name:"Handoff model";currentIndex:Math.max(0,model.findIndex(m=>m.id===App.state.settings?.ollama?.model)) }
+        CComboBox { id:handoffModel;visible:["local","api"].includes((App.state.providerTraits||{})[handoffProvider.currentValue]?.kind);Layout.fillWidth:true;model:(App.state.capabilities||{})[handoffProvider.currentValue]?.models||[];textRole:"displayName";valueRole:"id";Accessible.name:"Handoff model";currentIndex:Math.max(0,model.findIndex(m=>m.id===App.state.settings?.ollama?.model)) }
         CCheckBox { id:handoffTrust;objectName:"handoffTrust";visible:!App.state.settings?.bypassCliPermissions&&["codex","claude","antigravity"].includes(handoffProvider.currentValue);text:"I trust this project’s CLI configuration and hooks" }
         CText { visible:!!handoffDialog.error;text:handoffDialog.error;color:Theme.danger;font.pixelSize:Theme.secondary }
         ScrollView {
@@ -1155,8 +1334,10 @@ Item {
             }
         }
     }
+    PinnedReplies { id:pinnedReplies }
     SessionBehavior { id:sessionBehavior;onTurnPostureChosen:(id,label)=>chat.setTurnPosture(sessionBehavior.sessionId,{id:id,label:label}) }
     ConversationExport { id:exportDialog }
+    DocumentExport { id:documentExport }
     TranscriptImport { id:transcriptImport;onInsertRequested:text=>{composer.insert(composer.cursorPosition,(composer.text?"\n":"")+text);composer.forceActiveFocus()} }
     KnowledgeCollections { id:collections }
     BranchDialog { id:branch }

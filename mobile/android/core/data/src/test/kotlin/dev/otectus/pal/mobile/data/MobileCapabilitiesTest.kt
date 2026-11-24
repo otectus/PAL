@@ -35,6 +35,16 @@ class MobileCapabilitiesTest {
         assertFalse(state.canSearchWeb(session.copy(provider = "codex")))
     }
 
+    @Test fun settingsThatAreAbsentNullOrAnotherShapeAllowNothing() {
+        val session = Session("s", "ollama", "Chat", status = "idle")
+        for (settings in listOf("""{"webSearch":null}""", """{"webSearch":true}""", """{"webSearch":["enabled"]}""", """{"webSearch":{"enabled":{}}}""", """{"webSearch":{"enabled":true},"ollamaHost":{}}"""))
+            for (permissions in listOf("""{"caps":null}""", """{"caps":"web"}""", """{"caps":{"web":true}}""", """{"caps":[null,["web"],{"web":1}]}""")) {
+                val state = MobileState(connection = ConnectionState.Online("Desktop", setOf("sessions.send"), 0), settings = WireCodec.json.parseToJsonElement(settings).jsonObject, permissions = WireCodec.json.parseToJsonElement(permissions).jsonObject)
+                assertFalse(state.canSearchWeb(session))
+                assertFalse("defaultModel" in assistantSettingsPatch(state.settings, "4", "", "model", "auto"))
+            }
+    }
+
     @Test fun newerAttachmentDraftSurvivesOlderSummary() {
         val current = Session("s", "ollama", "Chat", status = "idle", revision = "9", draftRevision = "4", draftAttachmentCount = 2)
         val older = current.copy(revision = "8", draftRevision = "3", draftAttachmentCount = 0, draftIncluded = false)

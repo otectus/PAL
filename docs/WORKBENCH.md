@@ -6,7 +6,7 @@ The expanded workspace opens the Workbench alongside saved conversations. Use th
 
 In a narrow window, the same bottom-right button opens and closes the Workbench sheet. **Chat** returns to the composer. **Panes** folds the list of tools, and the command palette can jump directly to a tool such as **Open Notes** or **Browse project files**.
 
-The tabs are **Files**, **Preview**, **Changes**, **Images**, **Runs**, **Terminal**, **Research**, **Canvas**, **Notes** and **Shelf**.
+The tabs are **Files**, **Preview**, **Changes**, **Images**, **Runs**, **Terminal**, **Research**, **Canvas**, **Media**, **Notes**, **Shelf** and **Accounts**.
 
 ## What the model may use
 
@@ -37,7 +37,7 @@ PAL opens files through a small helper (`pal-workspacefs`) that refuses `..`, sy
 
 A proposal opens in **Changes** with every operation listed: created, changed, moved, copied, trashed. Text changes include their diffs. **Accept all**, **Accept selected** or **Reject**. PAL checks each file's version before applying. If a file changed after the proposal was made, that operation is refused and nothing is overwritten. Results are shown per operation. A set can end as *applied*, *partially applied*, *failed* or *outcome unknown*.
 
-**Undo…** creates a new review of the inverse operations. It restores from backups or PAL's private trash only where nothing changed since; where something did, the earlier content comes back as a copy beside it, so no newer edit is overwritten. Trashed files are kept privately (up to 512 MiB). A folder's **Edit permission** lets PAL apply small text edits there for a time and a number of operations you choose, without asking each time; moves, trash and commands are never covered. **Revoke** ends it.
+**Undo…** creates a new review of the inverse operations. It restores from backups or PAL's private trash only where nothing changed since; where something did, the earlier content comes back as a copy beside it, so no newer edit is overwritten. Trashed files are kept privately (up to 512 MiB); **Changes** lists them to **Restore…** or **Delete…**. A folder's **Edit permission** lets PAL apply small text edits there for a time and a number of operations you choose, without asking each time; moves, trash and commands are never covered. **Revoke** ends it.
 
 ## References in the composer (@)
 
@@ -52,22 +52,27 @@ References are resolved when you send, never by reading paths out of your text:
 
 A reference whose processing destination does not allow this conversation's model stops the send before anything is recorded, with the reason. Referenced content travels apart from your words, so a later model that may not receive it loses the content but keeps your message.
 
+**Pinned sources.** Under **More › Context**, pin up to four files, folders, collections, conversations or kept documents to the conversation, and four to its project. They are read again for every message, within their own share of about 3,000 tokens, and never added to the stored history. A pin grants nothing: one that cannot be read, or may not go to the model's destination, is left out with its reason and the message goes ahead. **Context** also names where messages go, the tools, skills and helper calls, the date and time, and the excerpts and pins the last request was given.
+
 ## Files the conversation keeps (artifacts)
 
 Images, imports, extractions and Code Lab outputs are kept as **conversation files** (artifacts). Each version is immutable and identified by its content hash. The **Images** tab lists them, with **Images** or **All files** and filters by source.
 
 - **Import…** keeps a private copy of a file and asks which destinations may process it.
 - **Save as…** writes a copy anywhere you choose. When the model exports a file into a workspace folder, that is a reviewed change that never overwrites. Exported copies are not kept in sync.
+- Select several files and choose **ZIP…** for one archive of those exact versions with a manifest of their digests.
 - **Pin** keeps a file on the project **Shelf**. **Share with project** makes it findable from other conversations in the same project. Sharing does not add it to prompts.
 - **Remove from conversation** forgets a file here. It can also remove what was made from it (extractions, OCR text, edits saved as new files). The stored copy and its thumbnails are deleted when nothing else uses them. Exported copies elsewhere are untouched.
 - Documents are read by extraction: PDF text by page (poppler), DOCX paragraphs and tables, XLSX cells (formulas are shown with their cached values; hidden sheets are left out), CSV, JSON, XML and HTML. Macros never run and external links are never fetched. Scanned pages are reported so you can use OCR on them.
-- Recordings imported with **More › Transcribe a recording** also keep a timestamped transcript (WebVTT) as a conversation file.
+- Recordings imported with **More › Transcribe a recording** also keep a timestamped transcript (WebVTT) as a conversation file; **Media** shows them (below).
+
+**Documents.** **More › Write a document…** starts from a blank page or a template (report, decision record, meeting notes, comparison, project status). **Export as PDF or Word…** does the same for a file, a reply, a conversation or a research report: PDF, Word, a web page or Markdown. The result is a new conversation file, and the model can make one when you ask. PDF needs PAL's `pal-document` helper, which the build makes.
 
 ## Images
 
 Set up backends in **Settings › Connections › Images & analysis**:
 
-- **OpenAI** and **Google** image APIs use the API keys in Settings. They are billed cloud services: the first request from the Workbench asks you to acknowledge billing. By default the assistant asks before each image job it wants to start; you can instead let it start jobs up to a daily number of images. Provider-side limits remain the real spending cap.
+- **OpenAI**, **Google Gemini**, **Grok Imagine**, **Azure OpenAI** and **OpenRouter** use your API accounts, a named one if you choose it. They are billed cloud services: the first request from the Workbench asks you to acknowledge billing. By default the assistant asks before each image job it wants to start; you can instead let it start jobs up to a daily number of images. Provider-side limits remain the real spending cap.
 - **ComfyUI** uses your own server. Import a workflow in API format, then review the inputs PAL found (prompt, seed, size, image and mask inputs) and the nodes it uses. Workflows with cloud nodes are labeled as such. Missing models and nodes are reported by **Test**.
 
 **Create image** works whatever the chat model can do. Choose the backend, size and the other settings it supports. **Check settings** shows what will be adjusted before anything is sent.
@@ -110,9 +115,13 @@ Open **Workbench › Runs › Code Lab**. If execution is off, the setup action 
 
 **Ask the conversation model.** With Analysis enabled in an Ollama or managed API conversation, request a plan, an explanation, or a proposed revision. Review the diff before applying it. Running the edited draft is a separate action. Model-initiated code runs show the full program for review, or use a conversation-specific grant of up to ten runs over thirty minutes. You can revoke that grant in Code Lab.
 
+**Work step by step.** An **analysis session** keeps Python variables between cells, inside the same isolation and without network, with its variables listed. A result says that it can depend on earlier cells and cannot be saved as a replayable analysis; **Make a notebook** starts the same cells clean. A session ends when you stop it, after 30 idle minutes or 8 hours, or when PAL closes, and is never restored. Two can run at a time.
+
+**Take rows to a spreadsheet.** When a result table has cells that a spreadsheet would run as formulas, **Keep formulas as text for spreadsheets** adds an apostrophe to each in the export. The source version stays as it is.
+
 **Reuse the method.** Save a successful run as a named analysis and load it from another conversation in the same project. Replace unavailable inputs before running. A schedule runs while the broker is active, uses the latest authorized input versions, and pauses when its authorization, schema or runtime changes. The result ZIP contains code, parameters, runtime helpers, input hashes, selected output files and a replay command. Supply the original input files in manifest order to replay it on a compatible Linux machine.
 
-Commands in a workspace folder (folder permission **Run commands**) always ask, run isolated with that folder writable, and report the files they changed. Git inspection (status, diff, log) is read-only, with hooks and external diff programs disabled.
+Commands in a workspace folder (folder permission **Run approved commands here**) always ask when a model wants one; you can run one yourself from **Runs**. They run isolated with that folder writable and report the files they changed. Git inspection (status, diff, log) is read-only, with hooks and external diff programs disabled.
 
 If isolation cannot be established, for example because `bubblewrap` is not installed, Code Lab and commands are reported as unavailable instead of running unconfined.
 
@@ -135,7 +144,7 @@ Each one stages real outputs, such as a change set for review, image or chart fi
 
 ## Connections and tool servers
 
-**Settings › Connections › Saved connections** keeps more Ollama computers and OpenAI-compatible endpoints under names. Choose one in **New conversation**. A conversation stays on the connection it was created on; moving it to another connection asks you to confirm the new destination. The Ollama and compatible-endpoint settings above remain the defaults for new conversations. Keys are saved per endpoint address in the credentials file, never in settings.
+**Settings › Connections › Saved connections** keeps more provider accounts, Ollama computers and compatible endpoints under names; the [provider guide](PROVIDERS.md) describes checking, moving and removing them. Choose one in **New conversation**. A conversation stays on the connection it was created on; moving it to another connection asks you to confirm the new destination. The Ollama and compatible-endpoint settings above remain the defaults for new conversations. Keys are saved per endpoint address in the credentials file, never in settings.
 
 **Settings › AI assistance › Tool servers** adds MCP servers as a program (stdio) or an **HTTP address** (Streamable HTTP):
 
@@ -152,7 +161,7 @@ Ready servers show when their tools were last listed. **Resources…** browses a
 
 **Backup and restore** can include conversation files: their records always, and their contents unless you turn that off. A restore checks every file's hash. Files whose contents are missing or altered come back without their contents, and the review tells you how many. Folder access, pending changes, image and analysis runs, budgets in progress and edit grants are never restored. Tools stay paused after a restore, and a backup made before you forgot something brings back no conversation files.
 
-A phone with limited access sees Workbench cards as text in Activity; folders, files, images, runs and Workbench settings stay on the desktop for it. A phone with full access uses the same services from its **Work** tab (files, changes, library and transfers, runs, research, canvas, notes, terminal) and **Settings › This computer**; see [the feature matrix](FEATURE-MATRIX.md) and [phone setup](mobile/SETUP.md#phones-with-full-access).
+A phone with limited access sees Workbench cards as text in Activity; folders, files, images, runs and Workbench settings stay on the desktop for it. A phone with full access uses the same services from its **Work** tab (files, changes, library and transfers, runs, research, canvas, shelf, notes, accounts, terminal) and **Settings › This computer**; see [the feature matrix](FEATURE-MATRIX.md) and [phone setup](mobile/SETUP.md#phones-with-full-access).
 
 ## Terminal
 
@@ -172,21 +181,39 @@ Open a report in Research or use **Read** on its conversation card. Select a cit
 
 **Canvas** shows an HTML or SVG file from a Workbench folder in an isolated browser preview (Chrome or Chromium must be installed). You can click and type in it, read its console, resize it to phone width, take screenshots, export it, and leave notes on an element; a note says which version of the page it was made on. The page cannot reach the network or PAL.
 
+**Media** keeps an audio or video file with the conversation and shows its time-coded transcript beside it. Search it, correct lines as a new version, ask about the part you select, make a clip of up to 15 minutes, export SubRip or WebVTT subtitles, and translate them with their times. A time cited in a reply opens the recording there. Playing needs `qt6-multimedia`; the transcript works without it. Only the first hour of a recording is transcribed.
+
 **Notes** opens the current project’s scratchpad. Use **New note** (+) to start a separate note or **Library** to find one across conversations and projects. Open the note’s **…** menu to rename or delete it. Edits autosave with revision checks. **Copy note** copies the whole note to the clipboard. Select a passage to use **Copy selection** instead. The **Daybook** groups conversations, finished runs, research and note edits by local date.
+
+## Accounts
+
+**Settings › Connections › Accounts** connects GitHub, Google and Microsoft with apps you register at each service; PAL ships none. Sign in through the browser, with a short code (also from the phone, except Google), or with a GitHub token. The **Accounts** tab then shows the agenda, mail, files and repositories.
+
+- **Use in this conversation** keeps a message, file or issue as a conversation file, with its own processing choice.
+- Everything written (an event, a message, a file version, an issue, a comment) is a draft first, shown in full under **Drafts** and sent by its own button, once. If an answer is lost, PAL looks at the service before it says what happened.
+- Assistants see an account only if you let them read it, or prepare changes for you to send, for the projects and kinds of model you choose. No permission bypass sends a draft.
+- Tokens stay in an owner-only file. Nothing read is cached.
+- A routine can deliver its result to an address or issue you name.
+
+The adapters were tested against local stand-ins for the three services, not against real accounts.
+
+## Code in a project
+
+**Context › Code in this project** keeps an index on this computer of what a project's TypeScript, JavaScript, C++ and QML declares and calls. Find code by name or by what it does, see what uses it and how sure that is (*possible* and *one of several* are inferred from names), and tie the project's decisions to it. It is off until you choose it for a project. Models on this computer can use it through `code_find` and `code_context`; hosted ones only if you allow it. Switching it off deletes it.
 
 ## Skills, working setups and specialists
 
 **Settings › Skills** imports `SKILL.md` packages from a folder, a ZIP or a repository pinned to the commit it resolves to. Importing runs nothing; each version is reviewed once before it is offered, and an update waits for its own review while the reviewed version stays on. Skills never grant permissions.
 
-**Settings › Working setups** combines a model, Workbench families, a style or posture, standing instructions, collections and skills. **Apply to this conversation…** shows exactly what changes and what is missing (a style that does not exist, a skill that is not enabled) before changing anything; **Start a conversation…** creates one with it. Setups never enable a skill or grant a permission, and an exported setup carries names and settings only. The five built-ins are examples: save a copy to change one.
+**Settings › Working setups** combines a model and the account it runs on, Workbench families, a style or posture, standing instructions, collections and skills. **Apply to this conversation…** shows exactly what changes and what is missing (a style that does not exist, a skill that is not enabled) before changing anything; **Start a conversation…** creates one with it. Setups never enable a skill or grant a permission, and an exported setup carries names and settings only. The five built-ins are examples: save a copy to change one.
 
-**Specialists** (on the same page) are focused helpers a conversation can ask: a code reviewer, a researcher, a document editor and a visual critic, plus your own with their own model and instructions. They read only what the conversation passes them, have no tools and cannot approve anything; a document editor's edits arrive as a change set for you to review, only for the files it was given. Each run appears in **Runs** and can be cancelled; two run at a time by default (up to four).
+**Specialists** (on the same page) are focused helpers a conversation can ask: a code reviewer, a researcher, a document editor and a visual critic, plus your own with their own model, account and instructions. They read only what the conversation passes them, have no tools and cannot approve anything; a document editor's edits arrive as a change set for you to review, only for the files it was given. Each run appears in **Runs** and can be cancelled; two run at a time by default (up to four).
 
 ## Translation and table previews
 
-A conversation's model can **translate** a text, or a text file or document it can see, into a language, keeping headings, lists and tables, leaving code as it is and applying a glossary you give. A document's translation is a new file linked to its original, which is never changed. A phone opens the same from a file's **Translate** action.
+A conversation's model can **translate** a text, or a text file or document it can see, into a language, keeping headings, lists and tables, leaving code as it is and applying a glossary you give. A document's translation is a new file linked to its original, which is never changed. The desktop opens the same from a file's **Translate…**, and a phone from its **Translate** action.
 
-A CSV or TSV file's **Columns** view (on a phone with full access, and through `tables.preview`) shows its rows, each column's inferred type and missing values, a few sample rows and parse problems before you analyze it. Cells that look like formulas stay text.
+A CSV or TSV file's **Check the table…** (its menu on the desktop, **Columns** on a phone with full access) shows its rows, each column's inferred type and missing values, a few sample rows and parse problems before you analyze it. Cells that look like formulas stay text.
 
 ## Usage and budgets
 
@@ -200,12 +227,13 @@ A reviewed recipe can run **when files change in a folder** of its conversation'
 
 | Package | Used for | When missing |
 | --- | --- | --- |
-| `gcc` (build time) | the `pal-workspacefs` helper | Files is unavailable |
+| `gcc` (build time) | the `pal-workspacefs` and `pal-terminal` helpers | Files and Terminal are unavailable |
 | `bubblewrap` | Code Lab, commands, PDF reading in isolation | Code Lab and commands are unavailable; PDFs are read without isolation |
 | `ripgrep` | regular-expression search | literal search still works |
 | `poppler` | PDF text | PDFs report that poppler is needed |
 | `tesseract`, `tesseract-data-eng` (and other languages) | OCR | OCR reports it is not installed |
 | `python` (with `numpy`, `matplotlib` for charts) | Code Lab | Code Lab is unavailable |
-| `ffmpeg`, whisper.cpp | transcription | transcription is unavailable |
+| `ffmpeg`, whisper.cpp | transcription, clips and conversion of recordings | transcription and clips are unavailable |
+| `qt6-multimedia` with `qt6-multimedia-ffmpeg` | playing recordings beside their transcript | recordings are not played; the transcript stays usable |
 
-No browser engine is required. Interactive HTML previews need an optional isolated preview module that this build does not include, so HTML files show their source and nothing in them runs.
+No browser engine is required for files: an HTML file shows its source and nothing in it runs. **Canvas** shows a page in headless Chrome or Chromium when one is installed.

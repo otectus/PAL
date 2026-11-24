@@ -140,6 +140,8 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 export class Memory {
   /** Installed by Core: delegation records are managed working copies too. */
   eraseDelegations?: (sessions: Set<string>, matches: import('./working-erasure.ts').ErasureMatcher) => () => void;
+  /** Elapsed-time anchors of forgotten messages go in the same transaction. */
+  eraseTiming?: (sessionId: string, messageIds: ReadonlySet<string>) => void;
   store: Store; settings: () => Settings; notify: () => void; service: MemoryService; ready: Promise<void>;
   controller = new AbortController(); revision = 0; scopes = new Map<string, string>(); packets = new Map<string, any>();
   /**
@@ -148,6 +150,10 @@ export class Memory {
    */
   recent = new Map<string, { nativeId: string | null; turns: string[][] }>();
   status = { state: 'idle', error: '', warning: '', total: 0, saved: 0, pending: 0, backups: [] as { created_us: number; from: number | null; to: number | null }[] };
+  /** Given each permitted observation while workspace history is on (workspace-history.ts). */
+  observed: (observation: any, current: any) => void = () => {};
+  /** The history policy last read, and who is told when it changes. */
+  historyPolicy?: any; policyChanged: (policy: any) => void = () => {};
   /** How long a turn waits for memory before it goes ahead without recalled context. */
   recallDeadlineMs = 8000;
   constructor(store: Store, settings: () => Settings, notify: () => void = () => {}) {
@@ -160,6 +166,8 @@ export class Memory {
         // or policy change also ends turns that may still be using the removed content.
         if (event.cause !== 'expiration') { this.controller.abort(Object.assign(new Error('Memory changed while PAL was replying. Send your message again.'),{code:'MEMORY_INVALIDATED'})); this.controller = new AbortController(); }
       }
+      if (event.type === 'workspace_observation') { this.observed(event.observation, event.current); return; }
+      if (event.type === 'workspace_policy') { this.historyPolicy = event; this.policyChanged(event); return; }
       if (event.type === 'worker_restarted') { this.setStatus('degraded', 'Memory stopped a request that ran too long and restarted. Replies continue meanwhile.'); return; }
       this.notify();
     });
@@ -181,8 +189,8 @@ export class Memory {
   async configure() {
     const s = this.settings();
     await this.service.call('configure', { enabled: s.memory.enabled, paused: s.paused, host: s.ollama.host,
-      extraction_provider: s.memory.extractionProvider || 'ollama',
-      embedding_provider: s.memory.embeddingProvider || 'ollama', allow_cloud_embedding: s.memory.allowCloudEmbedding ?? false,
+      extraction_provider: s.memory.extractionProvider || 'ollama', extraction_connection_id: s.memory.extractionConnectionId,
+      embedding_provider: s.memory.embeddingProvider || 'ollama', embedding_connection_id:s.memory.embeddingConnectionId, embedding_dimensions:s.memory.embeddingDimensions, embedding_pooling:s.memory.embeddingPooling, voyage_rerank_model:s.memory.voyageRerankModel, allow_cloud_embedding: s.memory.allowCloudEmbedding ?? false,
       embedding_model: s.memory.model, extraction_model: s.memory.extractionModel || defaultExtractionModel,
       allow_cloud_extraction: s.memory.allowCloudExtraction ?? true, allow_cloud_memory: s.memory.allowCloudMemory ?? false });
   }
@@ -191,6 +199,25 @@ export class Memory {
   async refresh() { const health = await this.service.call('health'); this.status.total = health.counts.artifacts; this.status.saved = health.counts.saved; this.status.pending = health.queues.outbox; this.status.backups = (health.migration_backups || []).map(({ created_us, from, to }: any) => ({ created_us, from, to })); this.notify(); return health; }
   setStatus(state: string, error = '') { this.status = { ...this.status, state, error }; this.notify(); }
   host(session: Session) { return ollamaHost(session.ollama?.host||this.settings().ollama.host); }
+  /** The project task a conversation is bound to (workflows.ts), as memory mirrors it; unset when it has none. */
+  taskBinding: (session: Session) => { binding: string; status: string } | undefined = () => undefined;
+  private mirrored = new Map<string, string>();
+  /** A7 task binding: the task's ID in this scope while it is open. Memory stays optional: a failed mirror only means no binding. */
+  private async task(session: Session, scope_id: string, signal?: AbortSignal): Promise<string | undefined> {
+    const bound = this.taskBinding(session);
+    if (!bound || !['accepted', 'active'].includes(bound.status)) return undefined;
+    const key = [scope_id, bound.binding, bound.status].join('\n');
+    if (!this.mirrored.has(key)) {
+      try { this.mirrored.set(key, (await this.service.call('task_ensure', { scope_id, ...bound }, signal)).id); } catch { signal?.throwIfAborted(); return undefined; }
+      if (this.mirrored.size > 200) this.mirrored.delete(this.mirrored.keys().next().value!);
+    }
+    return this.mirrored.get(key);
+  }
+  /** Records how a task ended in the conversation's scope, so nothing more is threaded by it. */
+  async endTask(session: Session, ended: { binding: string; status: string }) {
+    if (!this.active()) return;
+    try { await this.service.call('task_ensure', { scope_id: await this.scope(session), ...ended }); for (const key of [...this.mirrored.keys()]) if (key.includes('\n' + ended.binding + '\n')) this.mirrored.delete(key); } catch { /* the next open binding mirrors again */ }
+  }
   async scope(session: Session, signal?: AbortSignal) { await (signal ? abortable(this.ready, signal) : this.ready); const key = memoryScope(session,this.host(session)); let id = this.scopes.get(key); if (!id) { id = (await this.service.call('scope', { key, label: session.cwd }, signal)).id; this.scopes.set(key, id!); } return id!; }
   /**
    * Optional post-reply provenance. Returns captured, skipped_by_policy or degraded and
@@ -203,10 +230,10 @@ export class Memory {
     if (!this.active()) return { outcome: 'disabled' };
     let skipped = !!packet?.skipped;
     try {
-      const scope_id = await this.scope(session);
+      const scope_id = await this.scope(session), task_id = await this.task(session, scope_id, signal);
       const write=(method:string,params:Record<string,unknown>)=>{authorize?.();signal?.throwIfAborted();return this.service.call(method,params,signal);};
-      if (!packet?.observed && !packet?.skipped) await this.intake(() => write('observe_text', { scope_id, text, role: 'user', session_id: session.id, source_event_id: randomUUID() })) || (skipped = true);
-      const response = await this.intake(() => write('observe_text', { scope_id, text: answer || '(empty response)', role: 'assistant', session_id: session.id, source_event_id: randomUUID() }));
+      if (!packet?.observed && !packet?.skipped) await this.intake(() => write('observe_text', { scope_id, text, role: 'user', session_id: session.id, source_event_id: randomUUID(), ...(task_id ? { task_id } : {}) })) || (skipped = true);
+      const response = await this.intake(() => write('observe_text', { scope_id, text: answer || '(empty response)', role: 'assistant', session_id: session.id, source_event_id: randomUUID(), ...(task_id ? { task_id } : {}) }));
       if (!response) skipped = true;
       else if (packet?.snapshot) {
         // Supplied evidence is what this turn's packet and searches gave the model, plus what an
@@ -299,7 +326,9 @@ export class Memory {
       if(memoryScope(other,this.host(other))!==memoryScope(session,this.host(session)))continue;
       scopedSessions.add(other.id);
       eraseWorkingCopies(this.store,other,matches);
-      for(const message of this.store.messages(other.id))if(matches(message.text)||matches.identifies(message.id)||matches.identifies(message.turnId)){message.text='[Content removed by memory erasure]';this.store.message(message);}
+      const forgotten=new Set<string>();
+      for(const message of this.store.messages(other.id))if(matches(message.text)||matches.identifies(message.id)||matches.identifies(message.turnId)){message.text='[Content removed by memory erasure]';delete message.timing;forgotten.add(message.id);this.store.message(message);}
+      this.eraseTiming?.(other.id,forgotten);
       if(other.provider==='ollama'){const history=this.store.get<any[]>('ollama:'+other.id,[]);this.store.set('ollama:'+other.id,scrub(history));}
     }
     publishDelegations = this.eraseDelegations?.(scopedSessions, matches);
@@ -349,8 +378,9 @@ export class Memory {
     const host=this.host(session);
     route=session.provider==='ollama'?route??(await modelRoute(host,session.model,signal)).route:'cloud';
     let result: any;
-    try { result = await this.service.call('retrieve', { scope_id: await this.scope(session, signal), text: query, host, token_budget: tokenBudget,
-      model_route: route, ...(automatic ? { intent: 'automatic', relevance_floor: true, max_items: automaticItems, ...automatic } : {}) }, signal); }
+    const scope_id = await this.scope(session, signal), task_id = automatic ? await this.task(session, scope_id, signal) : undefined;
+    try { result = await this.service.call('retrieve', { scope_id, text: query, host, token_budget: tokenBudget,
+      model_route: route, ...(automatic ? { intent: 'automatic', relevance_floor: true, max_items: automaticItems, ...automatic, ...(task_id ? { task_id } : {}) } : {}) }, signal); }
     catch (error: any) { if (!this.active() || error.code === 'SOURCE_CHANGED') return { results: [], evidence: [], mode: this.active() ? 'invalidated' : 'disabled', warning: 'Memory changed during this request.' }; throw error; }
     if (!this.active()) return { results: [], evidence: [], mode: 'disabled', warning: '' };
     this.setStatus(result.coverage.length ? 'degraded' : 'ready', result.warning); return result;
@@ -436,7 +466,8 @@ export class Memory {
     }
     const scope_id = await this.scope(session, signal);
     authorize?.();signal.throwIfAborted();
-    const observation=await this.intake(() => this.service.call('observe_text', { scope_id, text, role: 'user', session_id: session.id, source_event_id: randomUUID() }, signal));
+    const task_id = await this.task(session, scope_id, signal);
+    const observation=await this.intake(() => this.service.call('observe_text', { scope_id, text, role: 'user', session_id: session.id, source_event_id: randomUUID(), ...(task_id ? { task_id } : {}) }, signal));
     signal.throwIfAborted();
     if(!observation){
       // The query itself is excluded from persistence and recall alike.
@@ -494,7 +525,7 @@ export class Memory {
     return { items: shown, text: renderPacket(shown, packet.budget?.trimmed_items || 0, items.length - shown.length) };
   }
   async graph(session: Session | undefined, method: string, params: Record<string, unknown> = {}, signal?:AbortSignal, authorize?:()=>void) {
-    const allowed = ['curation_status','curation_details','curation_preview','curation_run','curation_cancel','curation_retry','curation_list','curation_apply','curation_undo','curation_review_later','curation_confirm_note','curation_keep_local','curation_statement_correct','curation_settings','curation_configure','retention_forecast','retention_preview','retention_protect','retention_release','retention_policy_preview','retention_policy_apply','retention_policy_status','retention_policy_undo','models_probe','models_evaluate','health','stats','doctor','inspect','retrieve','deep_recall','remember','correct','resolve_conflict','identity','forget_preview','forget','erasure_status','workspace','policy_get','policy_update','rebuild','backup','restore','compact','readjudicate','freeze_episode','consolidate','pin','unpin','pins','timeline','neighborhood','ontology','delete_migration_backups'];
+    const allowed = ['curation_status','curation_details','curation_preview','curation_run','curation_cancel','curation_retry','curation_list','curation_apply','curation_undo','curation_review_later','curation_confirm_note','curation_keep_local','curation_statement_correct','curation_settings','curation_configure','retention_forecast','retention_preview','retention_protect','retention_release','retention_policy_preview','retention_policy_apply','retention_policy_status','retention_policy_undo','models_probe','models_evaluate','health','stats','doctor','inspect','retrieve','deep_recall','remember','correct','resolve_conflict','identity','identity_list','forget_preview','forget','erasure_status','workspace','policy_get','policy_update','rebuild','backup','restore','compact','readjudicate','freeze_episode','consolidate','pin','unpin','pins','timeline','neighborhood','ontology','delete_migration_backups'];
     if (!allowed.includes(method)) throw new Error('This memory method is not exposed to clients');
     const global = ['curation_settings','curation_configure','models_probe','models_evaluate','health','stats','doctor','workspace','policy_get','policy_update','rebuild','backup','restore','compact','readjudicate','erasure_status','ontology','delete_migration_backups'].includes(method);
     if (!global && !session) throw new Error('Choose a conversation to select its authorized project scope');

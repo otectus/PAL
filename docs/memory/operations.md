@@ -66,6 +66,10 @@ The broker needs the same secrets in a private JSON file whose keys are `graph` 
 
 For an installed broker, add the credential-file path through a `systemctl --user edit pal-broker` service environment override. A service restart interrupts active conversations; schedule it when idle. Do not put the passwords themselves into command-line arguments or the repository.
 
+## Services PAL can run
+
+In **Health**, **Let PAL run it** allows PAL to start Ollama, or the memory databases that `local-install` installed, and **Start it with PAL** does so when nothing answers there. Each runs as a transient systemd user unit of this profile (`pal-<profile>-ollama.service`, `pal-<profile>-memory.service`), so a service outlives a broker restart and only that unit is ever stopped. A service that something else started is shown as such and left alone. Ollama is restarted after a failure at most three times in two minutes. The log shown is the unit’s own, with the last lines of the databases’ logs; it is not exported. `memory-dependencies.sh local-state` and `local-logs` are what PAL asks.
+
 ## Inspection and recovery
 
 ```sh
@@ -99,7 +103,11 @@ Restore with `pal memory restore --input /private/path/memory.sqlite --staging /
 
 Enable the desired collector and approved roots in the graph inspector. Fish handlers can be sourced from the checkout's `broker/graph-memory/adapters/fish/pal-memory.fish` or the installed `share/pal/broker/graph-memory/adapters/fish/pal-memory.fish`. Add that explicit source command to your Fish configuration to enable it in new interactive shells. The adjacent Python emitter must remain executable. Remove the source command and restart shells to uninstall. Events fail quietly if the private socket is absent. `PAL_MEMORY_SOCKET` overrides the socket for isolated testing.
 
-Hyprland uses the session's instance socket. To capture titles, turn on **Capture titles of approved applications** and list each application class (for example `kitty`) under the title applications in the inspector; titles of unlisted applications are discarded. Kitty requires an explicitly configured read-only Unix inspection endpoint via `PAL_KITTY_INSPECT_ENDPOINT`; `PAL_KITTY_INSTANCE_ID` supplies a stable configured instance label. PAL never enables broad Kitty remote control automatically. Live Kitty validation remains pending on this development machine. Do not interpret an unknown pane, CWD, or checkout mapping as verified context.
+Hyprland uses the session's instance socket. To capture titles, turn on **Capture titles of approved applications** and list each application class (for example `kitty`) under the title applications in the inspector; titles of unlisted applications are discarded. Kitty requires a read-only Unix inspection endpoint, set in the inspector or with `PAL_KITTY_INSPECT_ENDPOINT`; `{pid}` in it stands for each running Kitty’s process ID, which is what `listen_on unix:/run/user/1000/kitty` with `allow_remote_control socket-only` produces. `PAL_KITTY_INSTANCE_ID` supplies a stable instance label. PAL never enables broad Kitty remote control automatically and reads only the list of windows. Live Kitty validation remains pending on this development machine. Do not interpret an unknown pane, CWD, or checkout mapping as verified context.
+
+For Vim, source `broker/graph-memory/adapters/editor/pal-memory.vim` from your vimrc; for Neovim, `dofile` the adjacent `pal-memory.lua`. The inspector copies either line. Another editor can call `pal-memory-editor.py` itself. Only the path and the kind of event are sent.
+
+**Workspace history** in the inspector lists what is kept, by day, and erases it; a phone with full access has the same under **This computer**.
 
 ## Diagnostics and limits
 

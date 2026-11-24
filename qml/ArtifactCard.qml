@@ -15,6 +15,8 @@ Rectangle {
     readonly property bool compact: width < Theme.formBreakpoint
     readonly property var version: info ? (info.versions || []).find(v => v.versionId === reference.versionId) || null : null
     readonly property bool image: !!version && (version.kind === "image" || version.kind === "plot")
+    // Audio, video and time-coded transcripts open beside each other in Workbench › Media.
+    readonly property bool recording: !!version && (/^(audio|video)\//.test(version.mime) || /vtt|subrip/.test(version.mime))
     implicitHeight: row.implicitHeight + Theme.gutter
     radius: Theme.radiusCard; color: Theme.input; border.color: card.error ? Theme.dangerBorder : Theme.border
     Accessible.role: Accessible.Grouping; Accessible.name: version ? "File " + version.name : "File"
@@ -33,6 +35,7 @@ Rectangle {
     }
     function openIt() {
         if (image) { WorkbenchState.selectImage(sessionId, reference.artifactId, reference.versionId); App.selectedId = sessionId; WorkbenchState.show("images"); App.rpc("images.select", { sessionId: sessionId, ref: { artifactId: reference.artifactId, versionId: reference.versionId } }); return }
+        if (recording) { App.selectedId = sessionId; WorkbenchState.openRecording(sessionId, { artifactId: reference.artifactId, versionId: reference.versionId }); return }
         if (reference.purpose === "research-report") {
             const openResearch = runId => { WorkbenchState.selectResearch(sessionId, runId, reference.versionId); App.selectedId = sessionId; WorkbenchState.show("research") }
             rpc.call("research.byArtifact", { sessionId: sessionId, artifactId: reference.artifactId }, value => {

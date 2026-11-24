@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { chmodSync, existsSync } from 'node:fs';
 import { paths, privateDir } from './paths.ts';
 import { defaultSettings } from './types.ts';
+import { storedTimeSettings } from './time.ts';
 import { assistantIdentity, defaultAssistantName, defaultPersonality, formerPalPersonality, legacyDefaultPersonality } from './personality.ts';
 import type { Session, Message, Settings, SessionFolder, AgentActivity } from './types.ts';
 const activeAgent=(agent:AgentActivity)=>['starting','running','waiting'].includes(agent.status);
@@ -162,7 +163,7 @@ export class Store {
     this.transaction(() => {
       this.db.prepare('DELETE FROM messages WHERE session_id=?').run(id);
       this.db.prepare('DELETE FROM message_bookmarks WHERE session_id=?').run(id);
-      for (const prefix of ['submission:','sendQueue:','sendQueueDispatch:','ollama:','api:','link:','workflow-run:','recalled:','recall-outcomes:','turn-plan:']) this.db.prepare('DELETE FROM meta WHERE key=?').run(prefix + id);
+      for (const prefix of ['submission:','sendQueue:','sendQueueDispatch:','ollama:','api:','link:','workflow-run:','recalled:','recall-outcomes:','turn-plan:','temporal:','temporal-active:']) this.db.prepare('DELETE FROM meta WHERE key=?').run(prefix + id);
       if (!Number(this.db.prepare('DELETE FROM sessions WHERE id=?').run(id).changes)) throw new Error('Session no longer exists');
     });
     this.sessionsRevision++; this.catalogRevision++;
@@ -178,6 +179,8 @@ export class Store {
       speechProviders: { ...defaultSettings.speechProviders, ...saved.speechProviders },
       indextts: { ...defaultSettings.indextts, ...saved.indextts },
       elevenlabs: { ...defaultSettings.elevenlabs, ...saved.elevenlabs },
+      speechCache: { ...defaultSettings.speechCache, ...saved.speechCache },
+      localServices: { ...defaultSettings.localServices, ...saved.localServices },
       telemetry: { ...defaultSettings.telemetry, ...saved.telemetry },
       ollama: { ...defaultSettings.ollama, host: process.env.PAL_OLLAMA_HOST || process.env.CERE_OLLAMA_HOST || process.env.OLLAMA_HOST || defaultSettings.ollama.host, ...saved.ollama },
       webSearch: { ...defaultSettings.webSearch, ...saved.webSearch },
@@ -188,6 +191,7 @@ export class Store {
       workbench: { ...defaultSettings.workbench, ...saved.workbench, imageConnections: Array.isArray(saved.workbench?.imageConnections) ? saved.workbench.imageConnections : [] },
       audio: { ...defaultSettings.audio, ...saved.audio },
       voiceCommands: { ...defaultSettings.voiceCommands, ...saved.voiceCommands },
+      time: storedTimeSettings(saved.time),
       memory: { ...defaultSettings.memory, ...saved.memory } };
   }
   sessions(): Session[] { return [...this.db.prepare('SELECT data FROM sessions').all(),...this.volatile.prepare('SELECT data FROM sessions').all()].map(r => JSON.parse(r.data as string)).sort((a,b) => b.updated-a.updated); }
@@ -258,7 +262,7 @@ export class Store {
     if(!previous||catalog(previous)!==catalog(s))this.catalogRevision++;
     s.revision = String(BigInt(previous?.revision || '0') + 1n);
     s.draftRevision = String(BigInt(previous?.draftRevision || '0') + (previous && (previous.draft !== s.draft || JSON.stringify(previous.draftAttachments||[])!==JSON.stringify(s.draftAttachments||[])) ? 1n : 0n));
-    const config = (v: Session) => JSON.stringify([v.title,v.model,v.effort,v.ollama,v.api,v.mode,v.remote,v.connectionId]);
+    const config = (v: Session) => JSON.stringify([v.title,v.model,v.effort,v.ollama,v.api,v.mode,v.remote,v.connectionId,v.timeZone]);
     s.configRevision = String(BigInt(previous?.configRevision || '0') + (previous && config(previous) !== config(s) ? 1n : 0n));
     db.prepare('INSERT INTO sessions(id,data) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(s.id, JSON.stringify(s));
   }

@@ -10,6 +10,7 @@ import { privateDir } from './paths.ts';
 import { IndexEngine } from './indextts-engine.ts';
 import { IndexError, indexError, indexPaths, indexChunks, validateEmotion, defaultEmotion, previewSamples, type IndexConfig, type IndexCapabilities, type VoiceProfile, type Emotion } from './indextts-config.ts';
 import { audioSelection, playbackArgs } from './audio-devices.ts';
+import type { CachedSpeech, SpeechFacts } from './speech-cache.ts';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 type ModelState='not-installed'|'downloading'|'installed'|'loading'|'ready'|'error';
@@ -137,7 +138,7 @@ export class IndexTTS {
   });}
   async deleteProfile(id:string){if(this.busy)throw new IndexError('BUSY');const profile=this.profiles().find(p=>p.id===id);if(!profile)throw new IndexError('PROFILE_MISSING');await this.stop();this.store.set('indextts.voices',this.profiles().filter(p=>p.id!==id));await rm(dirname(profile.reference),{recursive:true,force:true});this.changed();return true;}
   previewText(profileId:string){const profile=this.profiles().find(p=>p.id===profileId);if(!profile)throw new IndexError('PROFILE_MISSING');return previewSamples[profile.language]||previewSamples.en;}
-  async play(text:string,signal:AbortSignal,tuning:{pitch:number;volume:number},overrides:{profileId?:string;language?:string;emotion?:Emotion;durationFactor?:number}={},onAudio=()=>{}){
+  async play(text:string,signal:AbortSignal,tuning:{pitch:number;volume:number},overrides:{profileId?:string;language?:string;emotion?:Emotion;durationFactor?:number}={},onAudio=()=>{},kept:(facts:SpeechFacts)=>CachedSpeech|undefined=()=>undefined){
     return this.exclusive(async()=>{
       const config=this.getConfig(),profile=this.profiles().find(p=>p.id===(overrides.profileId||config.profileId));
       if(!profile||profile.version!==config.version)throw new IndexError('PROFILE_MISSING');
@@ -146,7 +147,10 @@ export class IndexTTS {
       if(!Number.isFinite(durationFactor)||durationFactor<.5||durationFactor>2||config.version==='2'&&durationFactor!==1)throw new IndexError('INVALID_DURATION');
       const controller=this.active=new AbortController(),combined=AbortSignal.any([signal,controller.signal]);
       const id=this.generation=randomUUID();
+      const cached=kept({engine:'indextts',config,profile:{id:profile.id,updated:profile.updated,version:profile.version,reference:profile.reference,emotionReference:profile.emotionReference},language,emotion,durationFactor});
       try{
+        // Kept audio needs no model at all.
+        if(cached?.hit){await this.playChunks((async function *(){for await(const pcm of cached.through(0,async function *(){}))yield {generationId:id,pcm};})(),cached.hit.rate,combined,tuning,id,onAudio);return;}
         this.update('loading','Preparing the selected voice…');
         const caps=this.caps=await this.worker().load(config,{textEmotion:['synthesis-text','text-description'].includes(emotion.source),signal:combined});
         if(combined.aborted||this.generation!==id)throw new IndexError('CANCELLED');
@@ -154,7 +158,9 @@ export class IndexTTS {
         this.update('ready',caps.device==='cpu'?'Speaking on CPU · synthesis may be slow.':'Chunk-level pipelining · speaking.');
         const chunks=indexChunks(text,caps.lowVram?Math.min(config.chunkChars,40):config.chunkChars);
         const request={generationId:id,chunks,language,reference:profile.reference,emotion:{...emotion,reference:profile.emotionReference},durationFactor};
-        await this.playChunks(this.worker().synthesize(request,combined),caps.sampleRate,combined,tuning,id,onAudio);
+        const made=this.worker().synthesize(request,combined);
+        await this.playChunks(cached?(async function *(){for await(const chunk of made){if(chunk.generationId===id)cached.add(chunk.pcm);yield chunk;}})():made,caps.sampleRate,combined,tuning,id,onAudio);
+        cached?.finish(caps.sampleRate);
       }finally{this.active=undefined;}
     });
   }

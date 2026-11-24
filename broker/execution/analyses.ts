@@ -5,13 +5,13 @@ import { z } from 'zod';
 import type { Workbench } from '../workbench.ts';
 import type { ArtifactRef } from '../tools/contracts.ts';
 import { limitedControlled } from '../authority.ts';
-import { parseCsv, previewTable, tableLimits } from '../table-preview.ts';
+import { parseCsv, previewTable, tableLimits, spreadsheetRuns } from '../table-preview.ts';
 import { zipFilesAsync } from '../artifacts/zip.ts';
 import { helperDigest, kernelSource, recipeSource, recipes } from './recipes.ts';
 import { pythonRuntime } from './runner.ts';
 
 type Saved = { id: string; name: string; sourceSessionId: string; operationId: string; days: number; due: number; paused: string; previous?: string; device?: string; envelope?: string };
-type TableRequest = { sessionId: string; artifactId: string; versionId: string; query?: string; sort?: string; direction?: string; rows?: number[]; offset?: number; limit?: number };
+type TableRequest = { sessionId: string; artifactId: string; versionId: string; query?: string; sort?: string; direction?: string; rows?: number[]; offset?: number; limit?: number; spreadsheetSafe?: boolean };
 const day = 86_400_000;
 const refOf = (v: Pick<ArtifactRef, 'artifactId' | 'versionId'>) => ({ artifactId: v.artifactId, versionId: v.versionId });
 export class AnalysisLibrary {
@@ -149,6 +149,8 @@ export class AnalysisLibrary {
     this.session(sessionId);
     const op = this.workbench.operations.get(operationId);
     if (op.sessionId !== sessionId || op.kind !== 'codelab.run' || op.state !== 'completed' || op.details?.exitCode !== 0) throw new Error('Choose a successful analysis to save');
+    // §15.2: a session cell may depend on cells before it, so it is never presented as something that replays.
+    if (op.details?.sessionKernel) throw new Error('This ran in an analysis session and may depend on earlier cells. Make a notebook of the session, run it, and save that.');
     const name = z.string().trim().min(1).max(120).parse(label);
     await this.open(sessionId, op.id);
     const old = this.db.prepare('SELECT data FROM saved_analyses WHERE operation_id=? AND name=?').get(op.id, name);
@@ -177,6 +179,7 @@ export class AnalysisLibrary {
   }
   async export(sessionId: string, operationId: unknown, selected?: unknown) {
     const spec = await this.open(sessionId, operationId), op = this.workbench.operations.get(operationId);
+    if (op.details?.sessionKernel) throw new Error('This ran in an analysis session and may depend on earlier cells, so it cannot be exported for replay. Make a notebook of the session, run it, and export that.');
     const chosen = selected === undefined ? op.results : z.array(z.uuid()).max(20).parse(selected).map(id => {
       const ref = op.results.find(r => r.versionId === id);
       if (!ref) throw new Error('Choose an output from this analysis');
@@ -244,9 +247,11 @@ export class AnalysisLibrary {
       const ids = p.rows ? new Set(z.array(z.number().int().positive()).max(tableLimits.rows).parse(p.rows)) : undefined;
       const selected = ids ? rows.filter(r => ids.has(r.row)) : rows;
       if (ids && selected.length !== ids.size) throw new Error('A selected record is outside this result');
-      const encode = (values: string[]) => values.map(v => '"' + v.replaceAll('"', '""') + '"').join(',');
+      // Text for a spreadsheet: a cell it would run gets a leading apostrophe. The source version stays as it is.
+      const safe = p.spreadsheetSafe === true; let escaped = 0;
+      const encode = (values: string[]) => values.map(v => { const runs = safe && spreadsheetRuns(v); if (runs) escaped++; return '"' + (runs ? "'" : '') + v.replaceAll('"', '""') + '"'; }).join(',');
       const result = await this.artifacts.install({ sessionId: p.sessionId, name: 'selected.csv', source: 'derived', bytes: Buffer.from([encode(columns), ...selected.map(r => encode(r.values))].join('\r\n') + '\r\n'),
-        parents: [{ ...refOf(version), relation: 'source-table' }], policy: version.policy, provenance: { kind: 'table-selection', rows: selected.length, ...(ids ? { sourceRecords: [...ids].map(String) } : {}), query, sort: p.sort || '', direction: p.direction || 'asc' } });
+        parents: [{ ...refOf(version), relation: 'source-table' }], policy: version.policy, provenance: { kind: 'table-selection', rows: selected.length, ...(safe ? { spreadsheetSafe: true, escapedCells: escaped } : {}), ...(ids ? { sourceRecords: [...ids].map(String) } : {}), query, sort: p.sort || '', direction: p.direction || 'asc' } });
       return refOf(result);
     }
     const offset = z.number().int().min(0).parse(p.offset ?? 0), limit = z.number().int().min(1).max(200).parse(p.limit ?? 50);
@@ -260,7 +265,7 @@ export class AnalysisLibrary {
       return v.slice(0,cellLimit);
     }) }));
     if (shortened) problems.push('Long values are shortened in this preview. Export the matching rows for their full values.');
-    return { columns:displayColumns, rows:displayRows, total:parsed.length, matched:rows.length, problems };
+    return { columns:displayColumns, rows:displayRows, total:parsed.length, matched:rows.length, formulaCells: rows.reduce((sum, r) => sum + r.values.filter(spreadsheetRuns).length, columns.filter(spreadsheetRuns).length), problems };
   }
   schedule(sessionId: string, id: unknown, interval: unknown, device?: string) {
     const row = this.saved(sessionId, id), days = z.number().int().min(0).max(365).parse(interval);

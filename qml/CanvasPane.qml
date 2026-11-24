@@ -21,7 +21,18 @@ Item {
     property real pendingX: 0
     property real pendingY: 0
     RpcClient { id: rpc; scope: canvas.sessionId }
-    function refreshRoots() { rpc.call("workspace.roots", { sessionId: sessionId }, value => { if (!value.error) { canvas.roots = value.roots || []; if (rootBox.currentIndex < 0 && canvas.roots.length) rootBox.currentIndex = 0 } }) }
+    function refreshRoots() { rpc.call("workspace.roots", { sessionId: sessionId }, value => { if (!value.error) { canvas.roots = value.roots || []; if (rootBox.currentIndex < 0 && canvas.roots.length) rootBox.currentIndex = 0; canvas.openRequested() } }) }
+    // A page chosen in another pane (a file preview): shown here as soon as its folder is known.
+    function openRequested() {
+        if (!roots.length) return
+        const target = WorkbenchState.takeCanvasTarget(sessionId)
+        if (!target) return
+        const index = roots.findIndex(root => root.id === target.rootId)
+        if (index < 0) { error = "That page’s folder is no longer part of this conversation."; return }
+        rootBox.currentIndex = index; pagePath.text = target.path
+        rpc.call("canvas.open", { sessionId: sessionId, rootId: target.rootId, path: target.path }, value => { if (value.error) canvas.error = value.error; else { canvas.error = ""; canvas.preview = value; canvas.refreshFrame() } })
+    }
+    Connections { target: WorkbenchState; function onCanvasTargetChanged() { if (WorkbenchState.canvasTarget?.sessionId === canvas.sessionId) canvas.refreshRoots() } }
     function chooseFolder(){const path=App.chooseFolder();if(!path)return;rpc.call("workspace.addRoot",{sessionId:sessionId,path:path,policy:{write:false,organize:false,hidden:false,execute:false,destinations:{remote:false,cloud:false}}},value=>{if(value.error)canvas.error=value.error;else{canvas.error="";canvas.refreshRoots()}})}
     function choosePage(){
         const path=App.chooseFile();if(!path)return

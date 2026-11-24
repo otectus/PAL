@@ -11,17 +11,17 @@ export type SpanKind = 'turn' | 'first-token' | 'memory' | 'tool' | 'synthesis' 
 export const spanKinds: SpanKind[] = ['turn', 'first-token', 'memory', 'tool', 'synthesis', 'cancel'];
 type Span = { kind: SpanKind; ms: number; outcome: 'ok' | 'failed' | 'stopped'; detail: string; at: number };
 type Lag = { p50: number; p90: number; max: number; samples: number };
-export const spanLimits = { entries: 500, detailChars: 40 };
+export const spanLimits = { entries: 500, detailChars: 40, utterances: 256 };
 const round = (value: number) => Math.round(value * 10) / 10;
 const quantile = (sorted: number[], q: number) => sorted.length ? sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)] : 0;
 
 export class Spans {
-  private ring: Span[] = []; private histogram?: ReturnType<typeof monitorEventLoopDelay>; private since = 0; private ui?: Lag & { at: number };
+  private ring: Span[] = []; private spoken = { recent: [] as string[], total: 0, repeats: 0 }; private histogram?: ReturnType<typeof monitorEventLoopDelay>; private since = 0; private ui?: Lag & { at: number };
   enabled = false;
   /** Turning measurements on starts the loop-delay sampler; turning them off stops it and forgets everything. */
   configure(enabled: boolean) {
     if (enabled === this.enabled) return;
-    this.enabled = enabled; this.ring = []; this.ui = undefined;
+    this.enabled = enabled; this.ring = []; this.ui = undefined; this.spoken = { recent: [], total: 0, repeats: 0 };
     if (enabled) { this.since = Date.now(); this.histogram = monitorEventLoopDelay({ resolution: 20 }); this.histogram.enable(); }
     else { this.histogram?.disable(); this.histogram = undefined; this.since = 0; }
   }
@@ -29,6 +29,15 @@ export class Spans {
     if (!this.enabled || !Number.isFinite(ms) || ms < 0) return;
     this.ring.push({ kind, ms: round(ms), outcome, detail: detail.replace(/[^a-z0-9_-]/gi, '').slice(0, spanLimits.detailChars), at: Date.now() });
     if (this.ring.length > spanLimits.entries) this.ring.splice(0, this.ring.length - spanLimits.entries);
+  }
+  /**
+   * EV-02: whether the same words were spoken before with the same voice and options, among the last 256 utterances.
+   * Only a digest of an utterance is compared, in memory, and only the counts are reported.
+   */
+  utterance(key: string) {
+    if (!this.enabled) return;
+    this.spoken.total++; if (this.spoken.recent.includes(key)) this.spoken.repeats++;
+    this.spoken.recent.push(key); if (this.spoken.recent.length > spanLimits.utterances) this.spoken.recent.shift();
   }
   /** A timer for one span; when off it costs a closure and nothing else. */
   start(kind: SpanKind, detail = '') {
@@ -44,7 +53,7 @@ export class Spans {
     this.ui = { p50: round(p.p50 as number), p90: round(p.p90 as number), max: round(p.max as number), samples: Math.round(p.samples as number), at: Date.now() };
     return true;
   }
-  clear() { this.ring = []; this.ui = undefined; this.histogram?.reset(); if (this.enabled) this.since = Date.now(); }
+  clear() { this.ring = []; this.ui = undefined; this.spoken = { recent: [], total: 0, repeats: 0 }; this.histogram?.reset(); if (this.enabled) this.since = Date.now(); }
   /** Aggregates only: counts, medians, 90th percentiles and maxima in milliseconds. */
   summary() {
     if (!this.enabled) return { enabled: false as const };
@@ -55,7 +64,7 @@ export class Spans {
         stopped: spans.filter(span => span.outcome === 'stopped').length, ...(details.length ? { details } : {}) }];
     }));
     const h = this.histogram, broker = h && h.count ? { p50: round(h.percentile(50) / 1e6), p90: round(h.percentile(90) / 1e6), max: round(h.max / 1e6), samples: h.count } : { p50: 0, p90: 0, max: 0, samples: 0 };
-    return { enabled: true as const, since: new Date(this.since).toISOString(), spans: kinds, brokerLag: broker, uiLag: this.ui ? { p50: this.ui.p50, p90: this.ui.p90, max: this.ui.max, samples: this.ui.samples } : null,
+    return { enabled: true as const, since: new Date(this.since).toISOString(), spans: kinds, speech: { utterances: this.spoken.total, repeats: this.spoken.repeats, repeatShare: this.spoken.total ? Math.round(this.spoken.repeats / this.spoken.total * 1000) / 1000 : 0 }, brokerLag: broker, uiLag: this.ui ? { p50: this.ui.p50, p90: this.ui.p90, max: this.ui.max, samples: this.ui.samples } : null,
       note: 'Durations in milliseconds. No conversation text, paths, arguments or audio are recorded.' };
   }
 }

@@ -173,7 +173,7 @@ internal fun ConversationTimeline(
                     }
                 }
             }
-            items(conversation, key = { it.id }, contentType = { it.kind.ifBlank { "message" } }) { message ->
+            keyedItems(conversation, { it.id }, { it.kind.ifBlank { "message" } }) { message ->
                 val measureTail = if (message.id == tail?.id) Modifier.onSizeChanged { tailHeight = it.height } else Modifier
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Box(measureTail.widthIn(max = PALLayout.readingWidth).fillMaxWidth()) { messageContent(message) }
@@ -330,10 +330,10 @@ internal fun ActivityPanel(
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = ConversationTokens.activityHeight).consumeExpandedSheetEdgeScroll(), contentPadding = PaddingValues(horizontal = PALLayout.gutter, vertical = PALLayout.groupGap)) {
             if (agents.isNotEmpty()) {
                 item { Text(pluralStringResource(R.plurals.conversation_subagents, agents.size, agents.size), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = PALLayout.small)) }
-                items(agents, key = { "agent-${it.id}" }) { agent -> AgentActivityRow(agent, canOpenAgent(agent), onOpenAgent) }
+                keyedItems(agents, { "agent-${it.id}" }) { agent -> AgentActivityRow(agent, canOpenAgent(agent), onOpenAgent) }
                 if (activity.isNotEmpty()) item { HorizontalDivider(Modifier.padding(vertical = PALLayout.small)); Text(stringResource(R.string.conversation_tool_activity), style = MaterialTheme.typography.titleSmall) }
             }
-            items(activity, key = { it.id }) { itemContent(it) }
+            keyedItems(activity, { it.id }) { itemContent(it) }
             // Older records stay on the desktop until asked for; the list says so instead of ending.
             if (hasOlder) item(key = "olderActivity") { OutlinedButton(onLoadOlder, enabled = !loadingOlder, modifier = Modifier.fillMaxWidth().padding(vertical = PALLayout.small).testTag("olderActivity")) { Text(stringResource(if (loadingOlder) R.string.conversation_loading_older_activity else R.string.conversation_load_older_activity)) } }
         }

@@ -1,3 +1,4 @@
+import type { HostedSpeechProvider } from './hosted-speech.ts';
 import { proseLines } from './markdown-prose.ts';
 import type { Provider } from './types.ts';
 import type { ElevenLabs } from './elevenlabs.ts';
@@ -12,13 +13,15 @@ import { stripMemoryCitations } from './citations.ts';
 import type { IndexTTS } from './indextts.ts';
 import type { Emotion } from './indextts-config.ts';
 import { audioSelection, chosenDevice, playbackArgs } from './audio-devices.ts';
+import { Readable } from 'node:stream';
+import { speechKey, type CachedSpeech, type SpeechCache, type SpeechFacts, type SpeechSource } from './speech-cache.ts';
 
 export const defaultVoice = 'en_US-amy-medium';
 export const ttsTestLine = "Hello, I'm PAL. Local voice is ready. Let's make a little trouble.";
 export function voiceTestLine(name: string) { return ttsTestLine.replace("I'm PAL.", () => `I'm ${name}.`); }
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export type Voice = { id: string; model: string; config: string; sampleRate: number; language: string; backend?: 'kokoro'; runtime?: string; nativeVoice?: string };
-type SpeechSettings = { voice: string; speechEnabled: boolean; quiet: boolean; speechProviders?:Partial<Record<Provider,boolean>>; speechRate?: number; speechPitch?: number; speechVolume?: number; ttsProvider?:'local'|'indextts'|'elevenlabs' };
+type SpeechSettings = { voice: string; speechEnabled: boolean; quiet: boolean; speechProviders?:Partial<Record<Provider,boolean>>; speechRate?: number; speechPitch?: number; speechVolume?: number; ttsProvider?:'local'|'indextts'|'elevenlabs'|HostedSpeechProvider };
 type IndexOverrides={profileId?:string;language?:string;emotion?:Emotion;durationFactor?:number};
 export type VoiceTuning = { pitch: number; volume: number };
 const defaultTuning: VoiceTuning = { pitch: 0, volume: 1 };
@@ -168,10 +171,12 @@ export async function piperExecutable(env: NodeJS.ProcessEnv = process.env): Pro
 /** Local raw PCM stays in pipes: synthesizer -> optional tuning -> player.
  * Every child belongs to this utterance and is reaped before the next begins. */
 async function playLocal(command: string, args: string[], input: string, name: string, voice: Voice,
-  signal: AbortSignal, env: NodeJS.ProcessEnv, tuning: VoiceTuning): Promise<void> {
+  signal: AbortSignal, env: NodeJS.ProcessEnv, tuning: VoiceTuning, cached?: CachedSpeech): Promise<void> {
   signal.throwIfAborted();
   await new Promise<void>((done, reject) => {
-    const synth = spawn(command, args, {env, stdio:['pipe','pipe','pipe']});
+    // Kept audio (M11) takes the synthesizer's place; what follows it is the same either way.
+    const synth = cached?.hit ? undefined : spawn(command, args, {env, stdio:['pipe','pipe','pipe']});
+    const source = synth ? synth.stdout : Readable.from(cached!.through(voice.sampleRate, async function *() {}));
     const format = ['-t','raw','-r',String(voice.sampleRate),'-e','signed-integer','-b','16','-L','-c','1'];
     const adjusted = tuning.pitch !== 0 || tuning.volume !== 1;
     // SoX's pitch effect uses cents and preserves duration. Rate remains the
@@ -180,9 +185,10 @@ async function playLocal(command: string, args: string[], input: string, name: s
       ...(tuning.volume !== 1 ? ['vol',String(tuning.volume)] : [])];
     const filter = adjusted ? spawn(env.PAL_SOX_BIN || env.CERE_SOX_BIN || 'sox', ['-q','-D',...format,'-',...format,'-',...effects], {env,stdio:['pipe','pipe','pipe']}) : undefined;
     const player = spawn(env.PAL_APLAY_BIN || env.CERE_APLAY_BIN || 'aplay', [...playbackArgs(audioSelection().output),'-q','-t','raw','-r',String(voice.sampleRate),'-f','S16_LE','-c','1'], {env,stdio:['pipe','ignore','ignore']});
-    const children = [{proc:synth,label:name}, ...(filter ? [{proc:filter,label:'Voice tuning (SoX)'}] : []), {proc:player,label:'aplay'}];
+    const children = [...(synth ? [{proc:synth,label:name}] : []), ...(filter ? [{proc:filter,label:'Voice tuning (SoX)'}] : []), {proc:player,label:'aplay'}];
     let remaining=children.length, failure:Error|undefined, bytes=0, killTimer:NodeJS.Timeout|undefined;
     const terminate = () => {
+      if (!synth) source.destroy();
       for (const {proc} of children) proc.kill('SIGTERM');
       killTimer ||= setTimeout(() => { for (const {proc} of children) proc.kill('SIGKILL'); },750);
       killTimer.unref();
@@ -191,10 +197,11 @@ async function playLocal(command: string, args: string[], input: string, name: s
     const timeout=setTimeout(() => fail(new Error(`${name} playback timed out`)),15*60*1000);timeout.unref();
     signal.addEventListener('abort',terminate,{once:true});
     // Pipe backpressure bounds memory even if audio output is slower than synthesis.
-    if(filter) synth.stdout.pipe(filter.stdin);
-    const output=filter ? filter.stdout : synth.stdout;
+    if(synth && cached) synth.stdout.on('data', data => cached.add(data));
+    if(filter) source.pipe(filter.stdin);
+    const output=filter ? filter.stdout : source;
     output.on('data',data => { bytes+=data.length; });output.pipe(player.stdin);
-    synth.stdin.on('error',()=>{});
+    synth?.stdin.on('error',()=>{});
     filter?.stdin.on('error',()=>fail(new Error('Voice tuning closed before synthesis finished')));
     player.stdin.on('error',()=>fail(new Error('Audio output closed before speech finished')));
     for(const {proc,label} of children){
@@ -210,30 +217,36 @@ async function playLocal(command: string, args: string[], input: string, name: s
         if(signal.aborted)reject(signal.reason);
         else if(failure)reject(failure);
         else if(!bytes)reject(new Error(`${name} produced no audio`));
-        else done();
+        else { if(synth) cached?.finish(voice.sampleRate); done(); }
       });
     }
-    synth.stdin.end(input);
+    synth?.stdin.end(input);
   });
 }
 
-export async function playPiper(text: string, voice: Voice, signal: AbortSignal, env: NodeJS.ProcessEnv = process.env, rate = 1, tuning: VoiceTuning = defaultTuning): Promise<void> {
+export async function playPiper(text: string, voice: Voice, signal: AbortSignal, env: NodeJS.ProcessEnv = process.env, rate = 1, tuning: VoiceTuning = defaultTuning, cached?: CachedSpeech): Promise<void> {
   const executable = await piperExecutable(env);
   const rateArgs = rate === 1 ? [] : ['--length_scale', String(1 / rate)];
-  await playLocal(executable, ['--model',voice.model,'--config',voice.config,...rateArgs,'--output_raw'],text+'\n','Piper',voice,signal,env,tuning);
+  await playLocal(executable, ['--model',voice.model,'--config',voice.config,...rateArgs,'--output_raw'],text+'\n','Piper',voice,signal,env,tuning,cached);
 }
 
-export async function playKokoro(text:string,voice:Voice,signal:AbortSignal,env:NodeJS.ProcessEnv=process.env,rate=1,tuning:VoiceTuning=defaultTuning):Promise<void>{
+export async function playKokoro(text:string,voice:Voice,signal:AbortSignal,env:NodeJS.ProcessEnv=process.env,rate=1,tuning:VoiceTuning=defaultTuning,cached?:CachedSpeech):Promise<void>{
   if(voice.backend!=='kokoro'||!voice.runtime||!voice.nativeVoice)throw new Error('Kokoro voice metadata is incomplete');
   await playLocal(voice.runtime,[join(root,'broker/kokoro-synth.py'),'--model',voice.model,'--voices',voice.config,'--voice',voice.nativeVoice,'--speed',String(rate)],
-    JSON.stringify({text})+'\n','Kokoro',voice,signal,env,tuning);
+    JSON.stringify({text})+'\n','Kokoro',voice,signal,env,tuning,cached);
+}
+/** A replaced voice file is another voice, whatever its name. */
+async function localFacts(voice:Voice,rate:number):Promise<SpeechFacts>{
+  const file=async(path:string)=>{const info=await stat(path);return `${info.size}:${info.mtimeMs}`;};
+  return {engine:voice.backend||'piper',voice:voice.id,model:await file(voice.model),config:await file(voice.config),sampleRate:voice.sampleRate,language:voice.language,rate};
 }
 
 export class Speech {
   indextts?:IndexTTS;
   elevenlabs?:ElevenLabs;
+  hosted?:(provider:HostedSpeechProvider,text:string,signal:AbortSignal)=>AsyncIterable<Buffer>;
   state: SpeechState = { state: 'idle', backend: '', voice: defaultVoice, error: '', fallback: '' };
-  queue: { text: string; voice: string; rate: number; pitch: number; volume: number; sessionId?: string; replyId?: string; provider?:'local'|'indextts'|'elevenlabs'; sourceProvider?:Provider; indexOverrides?:IndexOverrides }[] = [];
+  queue: { text: string; voice: string; rate: number; pitch: number; volume: number; sessionId?: string; replyId?: string; provider?:'local'|'indextts'|'elevenlabs'|HostedSpeechProvider; sourceProvider?:Provider; indexOverrides?:IndexOverrides; source?:SpeechSource }[] = [];
   private activeSession?: string;
   private activeProvider?:Provider;
   private controller?: AbortController;
@@ -246,6 +259,18 @@ export class Speech {
     this.settings = settings; this.changed = changed; this.env = env;
   }
   snapshot() { return { ...this.state, queued: this.queue.length }; }
+  /** M11: audio made for saved messages, when the person keeps it. */
+  cache?: SpeechCache;
+  /** The voice and options a hosted engine would use, so kept audio is never another voice's. */
+  hostedFacts?: (provider: HostedSpeechProvider) => SpeechFacts;
+  /** EV-02: an utterance's identity, for counting repeats while measurements are on. */
+  observed?: (key: string) => void;
+  private kept(facts: SpeechFacts | undefined, item: Speech['queue'][number]) {
+    if (!facts) return undefined;
+    const whole = { ...facts, text: item.text };
+    this.observed?.(speechKey({ ...whole, playback: [item.rate, item.pitch, item.volume] }));
+    return this.cache?.use(whole, item.source);
+  }
   /** M16: time from an utterance starting to its first audio, reported when measurements are on. */
   timing?: (ms: number, outcome: 'ok' | 'failed' | 'stopped', backend: string) => void;
   private utteranceStarted = 0;
@@ -259,7 +284,7 @@ export class Speech {
     if (patch.state === 'idle' || patch.state === 'error') delete this.state.replyId;
     this.changed();
   }
-  speak(text: string, test = false, sessionId?: string, replyId?: string, indexOverrides?:IndexOverrides, sourceProvider?:Provider): boolean {
+  speak(text: string, test = false, sessionId?: string, replyId?: string, indexOverrides?:IndexOverrides, sourceProvider?:Provider, source?:SpeechSource): boolean {
     const settings = this.settings();
     if (this.closed || (this.env.PAL_TTS_DISABLED || this.env.CERE_TTS_DISABLED) === '1' || settings.speechVolume === 0 || !test && (!settings.speechEnabled || settings.quiet)) return false;
     if(!test&&sourceProvider&&settings.speechProviders?.[sourceProvider]===false)return false;
@@ -278,7 +303,7 @@ export class Speech {
     const rate = Number.isFinite(settings.speechRate) && settings.speechRate! >= .5 && settings.speechRate! <= 2 ? settings.speechRate! : 1;
     const pitch = Number.isFinite(settings.speechPitch) && settings.speechPitch! >= -6 && settings.speechPitch! <= 6 ? settings.speechPitch! : 0;
     const volume = Number.isFinite(settings.speechVolume) && settings.speechVolume! >= 0 && settings.speechVolume! <= 1 ? settings.speechVolume! : 1;
-    this.queue.push({ text, sourceProvider, voice: settings.voice, rate, pitch, volume, provider:indexOverrides?'indextts':settings.ttsProvider,indexOverrides, ...(sessionId ? {sessionId,replyId} : {}) });
+    this.queue.push({ text, sourceProvider, voice: settings.voice, rate, pitch, volume, provider:indexOverrides?'indextts':settings.ttsProvider,indexOverrides, ...(source ? {source} : {}), ...(sessionId ? {sessionId,replyId} : {}) });
     this.pump();
     return true;
   }
@@ -294,23 +319,32 @@ export class Speech {
       // M10: a chosen speaker must be connected; otherwise PipeWire would quietly use another one.
       await chosenDevice('output');
       controller.signal.throwIfAborted();
+      if(item.provider && !['local','indextts','elevenlabs'].includes(item.provider)){
+        const {playProviderPcm}=await import('./elevenlabs.ts');
+        const provider=item.provider as HostedSpeechProvider;
+        if(!this.hosted)throw new Error('Hosted speech is unavailable');
+        this.update({backend:provider});
+        const cached=this.kept({engine:provider,...this.hostedFacts?.(provider)},item),make=(signal:AbortSignal)=>this.hosted!(provider,item.text,signal);
+        await playProviderPcm(controller.signal,item,()=>this.update({state:'speaking'}),signal=>cached?cached.through(24000,()=>make(signal)):make(signal),this.env);
+        this.update({state:'idle'});return;
+      }
       if(item.provider==='elevenlabs'){
         if(!this.elevenlabs)throw new Error('ElevenLabs is unavailable');
         this.update({backend:'elevenlabs'});
-        await this.elevenlabs.play(item.text,controller.signal,item,()=>this.update({state:'speaking'}));
+        await this.elevenlabs.play(item.text,controller.signal,item,()=>this.update({state:'speaking'}),facts=>this.kept(facts,item));
         this.update({state:'idle'});return;
       }
       if(item.provider==='indextts'){
         if(!this.indextts)throw new Error('IndexTTS is unavailable');
         this.update({backend:'indextts'});
-        await this.indextts.play(item.text,controller.signal,item,item.indexOverrides,()=>this.update({state:'speaking'}));
+        await this.indextts.play(item.text,controller.signal,item,item.indexOverrides,()=>this.update({state:'speaking'}),facts=>this.kept(facts,item));
         this.update({state:'idle'});return;
       }
       const voice = await resolveVoice(item.voice, voiceDirectories(this.env),kokoroManifestPath(this.env));
       controller.signal.throwIfAborted();
       if(voice.backend==='kokoro'){
         this.update({state:'speaking',backend:'kokoro'});
-        await playKokoro(item.text,voice,controller.signal,this.env,item.rate,item);
+        await playKokoro(item.text,voice,controller.signal,this.env,item.rate,item,this.kept(await localFacts(voice,item.rate),item));
         this.update({state:'idle'});return;
       }
       let accepted = false, fallback = '';
@@ -324,7 +358,7 @@ export class Speech {
             env: this.env, signal: AbortSignal.any([controller.signal, connect.signal]), timeout: 15 * 60 * 1000,
             input: JSON.stringify({ text: item.text, voice: voice.id }),
             line: line => {
-              if (line === 'accepted') { accepted = true; clearTimeout(timeout); this.update({ state: 'speaking', backend: 'speech-dispatcher' }); }
+              if (line === 'accepted') { accepted = true; clearTimeout(timeout); this.observed?.(speechKey({ engine: 'speech-dispatcher', voice: voice.id, text: item.text, playback: [item.rate, item.pitch, item.volume] })); this.update({ state: 'speaking', backend: 'speech-dispatcher' }); }
             },
           });
           if (result.code !== 0 || !accepted) throw new Error(result.timedOut ? 'Speech Dispatcher playback timed out' : 'Speech Dispatcher or its PAL Piper module is unavailable');
@@ -337,7 +371,7 @@ export class Speech {
       }
       if (fallback || tuned) {
         this.update({ state: 'speaking', backend: 'piper', fallback });
-        await playPiper(item.text, voice, controller.signal, this.env, item.rate, item);
+        await playPiper(item.text, voice, controller.signal, this.env, item.rate, item, this.kept(await localFacts(voice, item.rate), item));
       }
       this.update({ state: 'idle' });
     } catch (error: any) {

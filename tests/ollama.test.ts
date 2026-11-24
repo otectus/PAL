@@ -255,7 +255,9 @@ test('truncated streams fail without replay while transient HTTP failures recove
   const s=await session(f);await f.core.send({id:s.id,text:'First'});await finished(f.core,s.id);assert.match(f.core.store.session(s.id).error||'',/disconnected/);
   assert.equal(f.requests.length,1);
   await f.core.send({id:s.id,text:'Second'});await finished(f.core,s.id);assert.equal(f.core.store.session(s.id).status,'idle');
-  assert.equal(f.requests.length,3);assert.deepEqual(f.requests[1],f.requests[2]);
+  // The retry is the same request with a fresh clock sample, and nothing else changed.
+  const unsampled=(body:any)=>JSON.parse(JSON.stringify(body).replace(/(sampled_at_utc|local_datetime): [^\\]+/g,'$1'));
+  assert.equal(f.requests.length,3);assert.deepEqual(unsampled(f.requests[1]),unsampled(f.requests[2]));
   await f.core.send({id:s.id,text:'Third'});await finished(f.core,s.id);assert.equal(f.core.store.session(s.id).status,'idle');assert.equal(f.requests.length,4);
 });
 

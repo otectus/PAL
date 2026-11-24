@@ -1,3 +1,5 @@
+import {apiModels} from '../api-providers.ts';
+import { compactModels } from '../model-catalog.ts';
 import { randomUUID, createHmac } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
@@ -39,6 +41,8 @@ export class Router {
   captures:Captures;
   /** Owner-phone operations (owner.ts), verified artifact transfers and remote terminals. */
   ownerOps:OwnerOps;transfers:Transfers;terminals:TerminalOps;
+  /** Optional push wake-ups; the gateway sets it. */
+  wake!:import('./wake.ts').Wake;
   scopeReduced?:(id:string)=>void;
   /** Set by the gateway: changes a device's role (Pairing.setRole), and ends what the old role allowed. */
   roleChange?:(params:unknown)=>Device;roleReduced?:(id:string,wasOwner:boolean)=>void;
@@ -95,9 +99,10 @@ export class Router {
   projects(device:Device):Project[] {
     if(!this.ownerDevice(device))return device.projects;
     const paths=new Set<string>(device.projects.map(project=>project.path));
-    for(const project of this.core.projects.list() as {cwd:string}[])paths.add(project.cwd);
+    const revisions=new Map(this.core.projects.list().map(project=>[project.cwd,project.revision]));
+    for(const path of revisions.keys())paths.add(path);
     for(const session of this.core.store.sessions())if(!session.temporary)paths.add(session.cwd);
-    return [...paths].map(path=>this.projectFor(device,path));
+    return [...paths].map(path=>({...this.projectFor(device,path),revision:revisions.get(path)||'0'}));
   }
   /** The project entry for a folder: the granted one, or (owner phones) a stable derived one. */
   projectFor(device:Device,path:string):Project {
@@ -109,7 +114,18 @@ export class Router {
     return {id:`${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`,name:basename(path)||path,path};
   }
   /** The reviewed destination of a conversation's turns, for the phone to sign; empty where none applies. */
-  routeRevision(s:Session) {return s.provider==='compatible'?this.compatibleRoute(s).revision:'';}
+  routeRevision(s:Session) {
+    if(s.provider==='ollama'){
+      const account=s.connectionId?this.core.chatConnections.list().find(c=>c.id===s.connectionId && c.kind==='ollama'):undefined;
+      if((account?.ollama?.host||s.ollama?.host)!=='https://ollama.com')return '';
+      if(!s.connectionId)return 'ollama-cloud:'+digest(this.core.credentials.credentialRevision('provider:ollama_cloud'));
+    }else if (!isApiProvider(s.provider)) return '';
+    if (s.connectionId) {
+      const account=this.core.chatConnections.list().find(row=>row.id===s.connectionId && row.kind===s.provider);
+      return account ? 'connection:'+account.id+':'+digest([account.revision,this.core.credentials.credentialRevision('connection:'+account.id)]) : 'missing:'+s.connectionId;
+    }
+    return s.provider==='compatible'?this.compatibleRoute(s).revision:digest(this.core.credentials.credentialRevision('provider:'+s.provider));
+  }
   /**
    * W08 and MOB-001: a hosted API provider runs from this phone only with the providers.api grant
    * naming it, a key configured on the desktop for that destination, and (compatible) the same
@@ -118,7 +134,24 @@ export class Router {
    */
   apiAccess(device:Device,id:string,session?:Session):{remoteExecution:boolean;remoteUnavailableReason?:string} {
     if(this.ownerDevice(device))return this.ownerApiAccess(id,session);
+    const options=session?.api?.options;
+    if(options?.collectionSearch||Array.isArray(options?.vectorStoreIds)&&options.vectorStoreIds.length)return {remoteExecution:false,remoteUnavailableReason:'Hosted collection search requires full desktop access.'};
+    if(options?.providerCode && !device.caps.includes('providers.execute'))return {remoteExecution:false,remoteUnavailableReason:'This conversation enables provider-hosted code execution. Grant provider execution or turn this option off.'};
+    if(!device.caps.includes('web') && (options?.webSearch || options?.xSearch || options?.fetchPages))return {remoteExecution:false,remoteUnavailableReason:'This conversation uses provider-hosted search. Grant web access or turn off hosted search in the conversation.'};
     if(!device.caps.includes('providers.api'))return {remoteExecution:false,remoteUnavailableReason:'Hosted API use is not granted to this phone. It may be billed; grant it in the desktop’s PAL Mobile settings.'};
+    if (session?.connectionId) {
+      const granted = device.apiRouteGrants?.['connection:'+session.connectionId];
+      const ownerAccess=this.ownerApiAccess(id,session);
+      if (!ownerAccess.remoteExecution) return ownerAccess;
+      if (!granted || granted !== this.routeRevision(session)) {
+        const account=this.core.chatConnections.get(session.connectionId);
+        return {remoteExecution:false,remoteUnavailableReason:'This conversation uses the connection “'+account.name+'”, which this phone is not granted. Review this account on the desktop.'};
+      }
+      return ownerAccess;
+    }
+    const pin = device.apiRouteGrants?.['provider:'+id];
+    if (pin && pin !== digest([id==='compatible'?this.core.settings.compatible.baseUrl:'',this.core.credentials.credentialRevision('provider:'+id)]))
+      return {remoteExecution:false,remoteUnavailableReason:'The account or endpoint changed. Grant the updated route on the desktop.'};
     if(!(device.apiProviders||[]).includes(id))return {remoteExecution:false,remoteUnavailableReason:'This API provider is not granted to this phone. Update its access on the desktop.'};
     if(id==='compatible') {
       const route=this.compatibleRoute(session);
@@ -138,6 +171,10 @@ export class Router {
    * the key saved for it. Missing configuration is named, never a silent fallback to another destination.
    */
   ownerApiAccess(id:string,session?:Session):{remoteExecution:boolean;remoteUnavailableReason?:string} {
+    if (session?.connectionId && isApiProvider(id) && id!=='compatible') {
+      try {return this.core.accountAccess(id,session.connectionId).key()?{remoteExecution:true}:{remoteExecution:false,remoteUnavailableReason:'Add a key to this account in Connections.'};}
+      catch {return {remoteExecution:false,remoteUnavailableReason:'This provider account is unavailable.'};}
+    }
     if(id==='compatible') {
       const route=this.compatibleRoute(session);
       if(route.missing)return {remoteExecution:false,remoteUnavailableReason:'This conversation’s compatible connection no longer exists on the desktop. Move it to another connection.'};
@@ -153,8 +190,16 @@ export class Router {
    * conversation still reaches the route the phone's action was accepted for, and that route is
    * still granted. A changed connection needs a fresh review instead of reaching a new destination.
    */
+  private ollamaAccountAllowed(device:Device,s:Session){
+    if(this.owner(device))return true;
+    const account=s.connectionId?this.core.chatConnections.list().find(c=>c.id===s.connectionId&&c.kind==='ollama'):undefined;
+    const host=account?.ollama?.host||s.ollama?.host||this.core.settings.ollama.host;
+    if(host==='https://ollama.com')return !!s.connectionId && device.caps.includes('providers.api') && device.apiRouteGrants?.['connection:'+s.connectionId]===this.routeRevision(s);
+    return this.ollamaAllowed(device,host);
+  }
   assertRoute(device:Device,sessionId:string,revision:string) {
     const s=this.core.store.session(sessionId);
+    if(s.provider==='ollama'&&!this.ollamaAccountAllowed(device,s))throw remoteError('AUTH_REVOKED','This Ollama account is not granted to this device.');
     if(this.routeRevision(s)!==revision)throw remoteError('REVISION_CONFLICT','This conversation’s connection changed on the desktop. Review it and try again.');
     if(isApiProvider(s.provider)){const access=this.apiAccess(device,s.provider,s);if(!access.remoteExecution)throw remoteError('AUTH_REVOKED',access.remoteUnavailableReason!);}
   }
@@ -183,21 +228,21 @@ export class Router {
     return p.available===true?{remoteExecution}:{remoteExecution,remoteUnavailableReason:id==='ollama'?'Ollama is unavailable on the desktop. Refresh models after checking the configured server.':'Provider is unavailable on the desktop.'};
   }
   project(device:Device,id:string):Project {this.current(device);const p=this.projects(device).find(p=>p.id===id);if(!p)throw remoteError('SCOPE_DENIED','Project is not granted to this device.');return p;}
-  inScope(device:Device,s:Session) {return !s.temporary&&(this.ownerDevice(device)||device.projects.some(p=>p.path===s.cwd)&&(s.provider!=='ollama'||this.ollamaAllowed(device,s.ollama?.host||'')));}
+  inScope(device:Device,s:Session) {return !s.temporary&&(this.ownerDevice(device)||device.projects.some(p=>p.path===s.cwd)&&(s.provider!=='ollama'||this.ollamaAccountAllowed(device,s)));}
   draftAttachments(s:Session) {return (s.draftAttachments||[]).map(a=>({id:a.id,name:a.name.slice(0,120),kind:a.kind,mime:a.mime,size:a.size,sha256:a.sha256}));}
   session(device:Device,id:string) {
     this.require(device,'chat.read');
     const s=this.core.store.sessions().find(s=>s.id===id&&this.inScope(device,s));
     if(!s)throw remoteError('SCOPE_DENIED','Session is not available to this device.');return s;
   }
-  execution(device:Device,project?:Project):RemoteExecution {const role=this.role(device);return {deviceId:device.id,projectId:project?.id||'',scopeVersion:device.scopeVersion,...(device.lifetime==='until-revoked'?{lifetime:'until-revoked' as const}:{expiresAt:device.expiresAt}),role,...(role==='owner'?{profile:workingProfile(device.profile),profileRevision:device.profileRevision||'0'}:{}),caps:[...device.caps],categories:[...device.categories],scriptIds:[...device.scriptIds],memoryHosts:[...device.ollamaHosts||[]],apiProviders:[...device.apiProviders||[]]};}
+  execution(device:Device,project?:Project):RemoteExecution {const role=this.role(device);return {deviceId:device.id,projectId:project?.id||'',scopeVersion:device.scopeVersion,...(device.lifetime==='until-revoked'?{lifetime:'until-revoked' as const}:{expiresAt:device.expiresAt}),role,...(role==='owner'?{profile:workingProfile(device.profile),profileRevision:device.profileRevision||'0'}:{}),caps:[...device.caps],categories:[...device.categories],scriptIds:[...device.scriptIds],memoryHosts:[...device.ollamaHosts||[]],apiProviders:[...device.apiProviders||[]],apiConnections:[...device.apiConnections||[]]};}
   /** Whether this phone may start or continue turns of this provider now, and the authority it needs. */
   executes(device:Device,provider:string,session?:Session) {
     if(isApiProvider(provider))return this.apiAccess(device,provider,session).remoteExecution;
     // An owner phone runs every provider the desktop runs, under the desktop's own launch policy.
     if(this.owner(device))return ['ollama','codex','claude','antigravity'].includes(provider);
     if(provider==='claude')return this.core.capabilities.claude?.remoteRestricted===true&&device.caps.includes('providers.execute');
-    return provider==='ollama'||(provider==='codex'&&device.caps.includes('providers.execute'));
+    return provider==='ollama'&&(!session||this.ollamaAccountAllowed(device,session))||(provider==='codex'&&device.caps.includes('providers.execute'));
   }
   /**
    * MOB-003: whether PAL's desktop tools can be on for this conversation's route, for the
@@ -207,7 +252,7 @@ export class Router {
   toolsAvailability(s:Session):{toolsAvailable?:boolean|null;toolsUnavailableReason?:string} {
     if(s.provider==='ollama')return {toolsAvailable:null};
     if(!isApiProvider(s.provider))return {};
-    if(s.provider!=='compatible')return {toolsAvailable:true};
+    if(s.provider!=='compatible')return this.core.toolCalling(s)?{toolsAvailable:true}:{toolsAvailable:false,toolsUnavailableReason:'Tool support has not been established for this model.'};
     const route=this.compatibleRoute(s);
     if(route.missing)return {toolsAvailable:false,toolsUnavailableReason:'This conversation’s connection no longer exists on the desktop.'};
     return route.endpoint?.tools===true?{toolsAvailable:true}:{toolsAvailable:false,toolsUnavailableReason:'This endpoint is not declared to support tools. Turn on tool calling for it in the desktop’s Settings → Connections if it does.'};
@@ -240,19 +285,20 @@ export class Router {
       // An owner phone continues any managed conversation, whoever controlled it last; a limited phone only its own.
       canSend:restrictedProvider&&device.caps.includes('chat.write')&&s.mode==='managed'&&(owner||!s.remote||s.remote.deviceId===device.id),
       controller:this.controllerDto(device,s),
-      queuedCount:s.queuedCount||0,canQueue:s.provider==='ollama'&&!!s.remote,canConfigure:this.canConfigure(device,s),pinned:!!s.pinned,archived:!!s.archived,unread:!!s.unread,readAt:s.readAt??0,folderId:s.folderId??null,folderName:folder?.name??null,draftAttachmentCount,draftAttachmentHint:draftAttachmentCount?`${draftAttachmentCount} desktop draft attachment${draftAttachmentCount===1?' is':'s are'} waiting. Review ${draftAttachmentCount===1?'it':'them'} before editing or sending.`:null,
+      queuedCount:s.queuedCount||0,pendingUpdates:this.core.pings.waiting(s.id),canQueue:s.provider==='ollama'&&!!s.remote,canConfigure:this.canConfigure(device,s),pinned:!!s.pinned,archived:!!s.archived,unread:!!s.unread,readAt:s.readAt??0,folderId:s.folderId??null,folderName:folder?.name??null,draftAttachmentCount,draftAttachmentHint:draftAttachmentCount?`${draftAttachmentCount} desktop draft attachment${draftAttachmentCount===1?' is':'s are'} waiting. Review ${draftAttachmentCount===1?'it':'them'} before editing or sending.`:null,
       // W10: the desktop draft's attachments (name, kind, size and digest, never a path) travel with its text.
       draftAttachments:includeDraft?this.draftAttachments(s):[],
-      updated:s.updated,activity:s.activity,agents:this.agentsDto(s),parentId:s.parentId,
+      updated:s.updated,activity:s.activity,agents:this.agentsDto(s),parentId:s.parentId,timeZone:s.timeZone??null,
       // The stored choice for the provider PAL runs (Ollama or a hosted API), and separately whether this route allows it.
       tools:(s.provider==='ollama'?s.ollama?.tools:isApiProvider(s.provider)?s.api?.tools:false)===true,...this.toolsAvailability(s),
-      ...(route?{routeRevision:route.revision,imagesAvailable:route.endpoint?.images===true,...(s.connectionId&&route.name?{connectionName:route.name.slice(0,60)}:{})}:{}),
+      ...(isApiProvider(s.provider)?{routeRevision:this.routeRevision(s),providerOptions:s.api?.options,imagesAvailable:this.core.apiModelGate(s.provider,s.model||'',s.connectionId,'images')}:{}),
+      ...(s.connectionId?{connectionId:s.connectionId,connectionName:this.core.chatConnections.list().find(c=>c.id===s.connectionId)?.name}:{}),
       ...this.workbenchDto(device,s),
-      ...(owner?{capabilities:this.workbenchAll(s),effectivePolicy:s.effectivePolicy||null}:{}),
+      ...(owner?{capabilities:this.workbenchAll(s),effectivePolicy:s.effectivePolicy||null,task:s.task?{id:s.task.id,text:s.task.text}:null}:{}),
       ollamaHost:s.provider==='ollama'?s.ollama?.host:undefined,error:s.error?'The desktop provider reported an error. Review Activity.':undefined};
   }
   /** sessions.create for an owner phone: the desktop's own creation path, attributed to the phone. */
-  async ownerCreate(device:Device,p:any) {
+  async ownerCreate(device:Device,p:any,onSave?:(s:Session)=>void) {
     let cwd:string;
     if(p.cwd!==undefined) {
       try{cwd=await realpath(p.cwd);}catch{throw remoteError('INVALID_ARGUMENT','That folder does not exist on the desktop.');}
@@ -261,7 +307,7 @@ export class Router {
     const project=this.projectFor(device,cwd),execution=this.execution(device,project);
     const check=()=>{this.current(device);if(!this.owner(device))throw remoteError('AUTH_REVOKED','Owner access changed.');};check();
     const {projectId:_project,cwd:_cwd,handoffDraft,capabilities,connectionId,...rest}=p;
-    return this.core.create({...rest,cwd,trusted:true,...(capabilities?{capabilities}:{}),...(connectionId!==undefined?{connectionId}:{})},check,{remote:execution,effectivePolicy:'desktop',draft:handoffDraft});
+    return this.core.create({...rest,cwd,trusted:true,...(capabilities?{capabilities}:{}),...(connectionId!==undefined?{connectionId}:{})},check,{remote:execution,effectivePolicy:'desktop',draft:handoffDraft,onSave});
   }
   /** Who controls this conversation now: the desktop, this phone or another phone, and with which role. */
   controllerDto(device:Device,s:Session) {
@@ -317,7 +363,7 @@ export class Router {
       role:this.role(device),storedRole:deviceRole(device.role),access,workingProfile:access.profileId,profileRevision:device.profileRevision||'0',
       bypassCliPermissions:owner?s.bypassCliPermissions:false,bypassComputerPermissions:owner?s.bypassComputerPermissions:false};
   }
-  settings(device:Device) {this.current(device);const ollamaAllowed=this.ollamaAllowed(device,this.core.settings.ollama.host);return {assistantName:this.core.settings.assistantName,personality:this.core.settings.personality,revision:this.core.store.get('settingsRevision','0'),showMemoryCitations:this.core.settings.showMemoryCitations===true,webSearch:{enabled:this.core.settings.webSearch.enabled&&device.caps.includes('web'),provider:this.core.settings.webSearch.provider},defaultModel:ollamaAllowed?this.core.settings.ollama.model:'',ollamaHost:ollamaAllowed?ollamaHost(this.core.settings.ollama.host):''};}
+  settings(device:Device) {this.current(device);const ollamaAllowed=this.ollamaAllowed(device,this.core.settings.ollama.host);return {assistantName:this.core.settings.assistantName,personality:this.core.settings.personality,revision:this.core.store.get('settingsRevision','0'),showMemoryCitations:this.core.settings.showMemoryCitations===true,time:{enabled:this.core.settings.time.enabled,conversationTiming:this.core.settings.time.conversationTiming,zoneMode:this.core.settings.time.zoneMode,fixedZone:this.core.settings.time.fixedZone,clockFormat:this.core.settings.time.clockFormat},webSearch:{enabled:this.core.settings.webSearch.enabled&&device.caps.includes('web'),provider:this.core.settings.webSearch.provider},defaultModel:ollamaAllowed?this.core.settings.ollama.model:'',ollamaHost:ollamaAllowed?ollamaHost(this.core.settings.ollama.host):''};}
   messages(device:Device,id:string,before?:string,limit=100) {
     this.session(device,id);return mobilePage(this.core.store,id,before,limit);
   }
@@ -328,12 +374,17 @@ export class Router {
     const initial=sessions.slice(0,50),selectedSession=sessions.find(s=>s.id===selected);
     if(selectedSession&&!initial.some(s=>s.id===selected))initial.push(selectedSession);
     const messagePage=selectedSession?this.messages(device,selectedSession.id):{items:[],before:null};
+    const accounts = this.core.chatConnections.list().filter(c=>this.owner(device) || device.apiRouteGrants?.['connection:'+c.id]===this.routeRevision({provider:c.kind,connectionId:c.id} as Session));
     const snapshot={cursor:this.cursor(device),cacheEpoch:this.core.store.get('transcriptEpoch',this.registry.epoch),sessionIds:sessions.map(s=>s.id),nextSessionOffset:sessions.length>50?50:null,sessions:initial.map(s=>this.sessionDto(device,s,s.id===selected)),projects:this.projects(device),
       approvals:device.caps.includes('approvals.answer')?[...this.core.approvals.values()].filter(a=>ids.has(a.value.sessionId)).map(a=>this.approvalDto(device,a.value)):[],
-      providers:Object.fromEntries(Object.entries(this.core.capabilities).map(([id,p]:[string,any])=>{const access=this.providerAccess(device,id,p),allowed=id==='ollama'?this.ollamaAllowed(device,this.core.settings.ollama.host):isApiProvider(id)?access.remoteExecution:device.caps.includes('providers.execute');return [id,{available:p.available===true,models:allowed?p.models||[]:[],modelsStatus:allowed?p.modelsStatus||'unknown':'unavailable',...(allowed&&p.modelsUnlisted===true?{modelsUnlisted:true}:{}),...access,traits:this.mobileTraits(id)}];})),
+      providers:Object.fromEntries(Object.entries(this.core.capabilities).map(([id,p]:[string,any])=>{const access=this.providerAccess(device,id,p),allowed=id==='ollama'?this.ollamaAllowed(device,this.core.settings.ollama.host):isApiProvider(id)?access.remoteExecution:device.caps.includes('providers.execute');const connections=accounts.filter(c=>c.kind===id).map(c=>({id:c.id,name:c.name,variant:c.variant,revision:c.revision,processing:c.task?.processing}));return [id,{available:p.available===true||connections.length>0,connections,models:allowed?compactModels(p.models||[],Infinity).items:[],modelsStatus:allowed?p.modelsStatus||'unknown':'unavailable',...(allowed&&p.modelsUnlisted===true?{modelsUnlisted:true}:{}),...access,defaultRemoteExecution:access.remoteExecution,...(connections.length?{remoteExecution:true}:{}),traits:this.mobileTraits(id)}];})),
       permissions:this.permissions(device),settings:this.settings(device),messages:messagePage.items,messagesBefore:messagePage.before};
     // Reserve room for request/event envelopes. Extra history remains pageable.
     const tooLarge=()=>Buffer.byteLength(JSON.stringify(snapshot))>1024*1024-4096;
+    // A phone asks for a catalog when it needs one (providers.models), so catalogs are never what keeps it from
+    // connecting: the largest are left out first.
+    const catalogs=Object.values(snapshot.providers).filter(p=>p.models.length).map(p=>({p,bytes:Buffer.byteLength(JSON.stringify(p.models))})).sort((a,b)=>b.bytes-a.bytes);
+    for(let total=catalogs.reduce((sum,row)=>sum+row.bytes,0);catalogs.length&&total>400_000;){const row=catalogs.shift()!;total-=row.bytes;row.p.models=[];row.p.modelsStatus='unknown';}
     while(tooLarge()&&snapshot.messages.length){snapshot.messages.shift();snapshot.messagesBefore=snapshot.messages[0]?.id??null;}
     while(tooLarge()&&snapshot.sessions.length>1){const index=snapshot.sessions.findLastIndex(s=>s.id!==selected);if(index<0)break;snapshot.sessions.splice(index,1);snapshot.nextSessionOffset=Math.min(snapshot.nextSessionOffset??50,index);}
     if(tooLarge())snapshot.approvals=snapshot.approvals.map(a=>({...a,detail:'Review this pending request on the desktop.',questions:[],fields:{},canAnswer:false}));
@@ -347,7 +398,7 @@ export class Router {
     // Whether PAL's tools can be on, for a new conversation on this provider's default route; a
     // conversation's own route is in its session (toolsAvailable).
     const toolCalling=t.tools==='native'?'native':id==='ollama'?'per-model':id==='compatible'?(this.core.settings.compatible?.tools===true?'yes':'no'):'yes';
-    return {label:id==='compatible'?(this.core.settings.compatible?.label||t.label):t.label,kind:t.kind,modelRequired:t.modelRequired,customModel:t.customModel,effort:t.effort,images,tools:t.tools,toolCalling,webSearch:t.webSearch,queue:t.queue,configure:t.configure,billed:t.billed,remoteNote:t.remoteNote};
+    return {...t,label:id==='compatible'?(this.core.settings.compatible?.label||t.label):t.label,kind:t.kind,modelRequired:t.modelRequired,customModel:t.customModel,effort:t.effort,images,tools:t.tools,toolCalling,webSearch:t.webSearch,queue:t.queue,configure:t.configure,billed:t.billed,remoteNote:t.remoteNote};
   }
   /**
    * W09: memory belongs to a conversation's project on its memory server, whatever the provider (the
@@ -400,17 +451,17 @@ export class Router {
         // An owner phone starts conversations exactly as the desktop's New conversation does: any folder, a saved
         // connection, Workbench families and every provider. A limited phone keeps its granted projects and providers.
         if(this.owner(device))return this.sessionDto(device,await this.ownerCreate(device,p));
-        if(p.cwd!==undefined||p.capabilities!==undefined||p.connectionId!==undefined||p.provider==='antigravity')throw remoteError('SCOPE_DENIED','This phone has limited access. Choose a granted project and provider.');
+        if(p.cwd!==undefined||p.capabilities!==undefined||p.connectionId!==undefined&&((!isApiProvider(p.provider)&&p.provider!=='ollama')||!device.apiConnections?.includes(p.connectionId))||p.provider==='antigravity')throw remoteError('SCOPE_DENIED','This phone has limited access. Choose a granted project and provider.');
         const project=this.project(device,p.projectId);
-        if(isApiProvider(p.provider)){const access=this.apiAccess(device,p.provider);if(!access.remoteExecution)throw remoteError('SCOPE_DENIED',access.remoteUnavailableReason!);this.apiModel(p.provider,p.model);}
+        if(isApiProvider(p.provider)){const access=this.apiAccess(device,p.provider,p.connectionId?{provider:p.provider,connectionId:p.connectionId} as Session:undefined);if(!access.remoteExecution)throw remoteError('SCOPE_DENIED',access.remoteUnavailableReason!);this.apiModel(p.provider,p.model);}
         else if(p.provider!=='ollama')this.require(device,'providers.execute');
         // A new conversation takes the default route; tools only where it declares them.
-        if(p.provider==='compatible'&&p.tools===true&&this.core.settings.compatible?.tools!==true)throw remoteError('INVALID_ARGUMENT','This endpoint is not declared to support tools. Turn on tool calling for it in the desktop’s Settings → Connections if it does.');
+        if(p.provider==='compatible'&&p.tools===true&&!this.core.apiModelGate('compatible',p.model,p.connectionId,'local-tools'))throw remoteError('INVALID_ARGUMENT','This endpoint is not declared to support tools. Turn on tool calling for it in the desktop’s Settings → Connections if it does.');
         if(p.provider==='claude'&&this.core.capabilities.claude?.remoteRestricted!==true)throw remoteError('PROVIDER_POLICY_UNSAFE','This Claude Code version cannot enforce PAL restricted mode. Update Claude Code on the desktop.');
-        const host=p.provider==='ollama'?ollamaHost(this.core.settings.ollama.host):'';
-        const check=()=>{this.current(device);if(p.provider==='ollama'&&(!this.ollamaAllowed(device,host)||ollamaHost(this.core.settings.ollama.host)!==host))throw remoteError('SCOPE_DENIED','The desktop Ollama server changed. Update device scopes locally.');};check();
+        const host=p.provider==='ollama'?ollamaHost(p.connectionId?this.core.chatConnections.get(p.connectionId,'ollama').ollama!.host:this.core.settings.ollama.host):'';
+        const check=()=>{this.current(device);if(p.provider==='ollama'&&(!this.ollamaAccountAllowed(device,{provider:'ollama',connectionId:p.connectionId,ollama:{host}} as Session)||(!p.connectionId&&ollamaHost(this.core.settings.ollama.host)!==host)))throw remoteError('SCOPE_DENIED','The desktop Ollama server changed. Update device scopes locally.');};check();
         // PAL runs Ollama and API conversations itself under the phone's restrictions; restricted Claude enforces them natively.
-        const session=await this.core.create({...p,cwd:project.path,trusted:true,...(host?{ollamaHost:host}:{})},()=>{check();if(isApiProvider(p.provider)&&!this.apiAccess(device,p.provider).remoteExecution)throw remoteError('AUTH_REVOKED','Hosted API access changed.');},{remote:this.execution(device,project),effectivePolicy:p.provider==='ollama'||p.provider==='claude'||isApiProvider(p.provider)?'restricted':'unknown',...(p.handoffDraft!==undefined?{draft:p.handoffDraft}:{})});
+        const session=await this.core.create({...p,cwd:project.path,trusted:true,...(host?{ollamaHost:host}:{})},()=>{check();if(isApiProvider(p.provider)&&!this.apiAccess(device,p.provider,p.connectionId?{provider:p.provider,connectionId:p.connectionId} as Session:undefined).remoteExecution)throw remoteError('AUTH_REVOKED','Hosted API access changed.');},{remote:this.execution(device,project),effectivePolicy:p.provider==='ollama'||p.provider==='claude'||isApiProvider(p.provider)?'restricted':'unknown',...(p.handoffDraft!==undefined?{draft:p.handoffDraft}:{})});
         return this.sessionDto(device,session);
       }
       case 'sessions.send': {
@@ -429,6 +480,7 @@ export class Router {
           if(JSON.stringify([...acknowledged].sort())!==JSON.stringify([...families].sort()))throw remoteError('REVISION_CONFLICT','The conversation’s Files, Images or Analysis selection changed on the desktop. Review it again.');
         }
         const unacknowledged=()=>{if(!ownedBefore&&!this.owner(device)&&this.workbenchSelected(this.core.store.session(session.id)).some(family=>!acknowledged.includes(family)))throw remoteError('REVISION_CONFLICT','The conversation’s Files, Images or Analysis selection changed on the desktop. Review it again.');};
+        if(p.originalFiles?.length&&!this.owner(device))throw remoteError('SCOPE_DENIED','Original provider files require owner access.');
         if(p.attachments.length||p.desktopAttachments?.length)this.require(device,'attachments.write');
         const images=this.media.resolve(device,session.id,p.attachments);
         if(busy(session)&&!this.core.sendQueue.shouldQueue(session))throw remoteError('SESSION_BUSY','This session is busy.');
@@ -443,8 +495,19 @@ export class Router {
           const result={commandId,status:typeof outcome==='object'&&outcome.queued?'queued':'accepted',turnId};this.registry.finish(device.id,commandId!,{status:'completed',result});return result;
         } catch(error:any) {
           if(accepting||error?.code==='OUTCOME_UNKNOWN')throw remoteError('OUTCOME_UNKNOWN','The provider may have accepted this turn. Reconcile its status before sending again.');
+          this.assertRoute(device,session.id,route);
           throw error;
         }
+      }
+      // Clock reads come from the desktop; the phone supplies at most a zone to read it in.
+      case 'time.now': { this.require(device,'chat.read');const s=this.session(device,p.sessionId),choice=this.core.temporal.preview(s.id);return {...this.core.temporal.now(s.id,p.timeZone),...(p.timeZone===undefined&&choice.reason?{reason:choice.reason}:{}),enabled:this.core.temporal.enabled(),conversationTiming:this.core.temporal.timingEnabled()}; }
+      case 'time.elapsed': { this.require(device,'chat.read');const s=this.session(device,p.sessionId);return this.core.temporal.elapsed(s.id,p.anchor,p.messageId); }
+      case 'sessions.timeZone': {
+        this.require(device,'chat.write');const s=this.session(device,p.sessionId);
+        if(s.remote&&s.remote.deviceId!==device.id&&!this.owner(device))throw remoteError('SCOPE_DENIED','Another phone controls this conversation.');
+        if((s.configRevision||'0')!==p.expectedConfigRevision)throw remoteError('REVISION_CONFLICT','Session configuration changed.');
+        let saved:Session;try{saved=this.core.temporal.setZone(s.id,p.timeZone);}catch(error:any){throw remoteError('INVALID_ARGUMENT',error.message);}
+        return this.sessionDto(device,saved);
       }
       case 'sessions.stop':this.session(device,p.sessionId);return this.core.stop(p.sessionId);
       case 'sessions.disconnect':this.require(device,'chat.write');this.session(device,p.sessionId);return this.core.disconnect(p.sessionId);
@@ -548,27 +611,30 @@ export class Router {
         return {items};
       }
       case 'providers.models': {
-        this.require(device,'chat.read');const session=p.sessionId?this.session(device,p.sessionId):undefined;
+        this.require(device,'chat.read');const session=p.connectionId?{provider:p.provider,connectionId:p.connectionId} as Session:p.sessionId?this.session(device,p.sessionId):undefined;
         if(session&&session.provider!==p.provider)throw remoteError('INVALID_ARGUMENT','Choose this session’s provider.');
         // A conversation's catalog comes from its own route (MOB-001): never another connection's.
         if(isApiProvider(p.provider)){const access=this.apiAccess(device,p.provider,session);if(!access.remoteExecution)throw remoteError('SCOPE_DENIED',access.remoteUnavailableReason!);}
         else if(p.provider!=='ollama')this.require(device,'providers.execute');
         const host=session?.ollama?.host||this.core.settings.ollama.host;
-        if(p.provider==='ollama'&&!this.ollamaAllowed(device,host))throw remoteError('SCOPE_DENIED','This Ollama server is not granted to the device.');
+        if(p.provider==='ollama'&&!this.ollamaAccountAllowed(device,session||{provider:'ollama',ollama:{host}} as Session))throw remoteError('SCOPE_DENIED','This Ollama server is not granted to the device.');
         const currentOllama=p.provider==='ollama'&&ollamaHost(this.core.settings.ollama.host)===ollamaHost(host);
         const route=p.provider==='compatible'?this.compatibleRoute(session):undefined;
-        const models:any[]=currentOllama?await this.core.refreshProviderModels('ollama'):p.provider==='ollama'?await ollamaModels(host):session?await this.core.sessionModels(session):await this.core.refreshProviderModels(p.provider);
+        if(p.connectionId && !isApiProvider(p.provider) && !this.owner(device) && !(p.provider==='ollama' && device.apiConnections?.includes(p.connectionId))) throw remoteError('SCOPE_DENIED','Choose a granted provider account.');
+        const models:any[]=p.connectionId?await this.core.accountModels(this.core.chatConnections.get(p.connectionId,p.provider),p.operation):p.operation&&p.operation!=='chat'&&isApiProvider(p.provider)?await apiModels(p.provider,this.core.accountAccess(p.provider,session?.connectionId),p.operation):currentOllama?await this.core.refreshProviderModels('ollama'):p.provider==='ollama'?await ollamaModels(host):session?await this.core.sessionModels(session):await this.core.refreshProviderModels(p.provider);
         this.current(device);
         if(isApiProvider(p.provider)) {
           // The destination and its grant must still be the ones the catalog was read from.
-          const now=session?this.core.store.session(session.id):undefined,access=this.apiAccess(device,p.provider,now);
+          const now=session?.id?this.core.store.session(session.id):session,access=this.apiAccess(device,p.provider,now);
           if(!access.remoteExecution)throw remoteError('AUTH_REVOKED',access.remoteUnavailableReason!);
           if(route&&this.compatibleRoute(now).revision!==route.revision)throw remoteError('REVISION_CONFLICT','The conversation’s connection changed while its models loaded. Try again.');
         }
         // A compatible catalog states no capabilities; the route's own declaration applies to each model.
         const declared=route?.endpoint?[...(route.endpoint.tools?['tools']:[]),...(route.endpoint.images?['vision']:[])]:undefined;
         const items=declared?models.map(model=>({...model,capabilities:declared})):models;
-        return p.listing?{items,unlisted:(models as {unlisted?:boolean}).unlisted===true}:items;
+        // One answer is one message, and a message holds a megabyte. A model that did not fit is still chosen by its ID.
+        const fitting=compactModels(items,850_000).items;
+        return p.listing?{items:fitting,unlisted:(models as {unlisted?:boolean}).unlisted===true}:fitting;
       }
       case 'sessions.configure': {
         this.require(device,'chat.write');const s=this.session(device,p.sessionId);
@@ -578,11 +644,16 @@ export class Router {
         const route=this.routeRevision(s);
         if(p.expectedRouteRevision!==undefined&&p.expectedRouteRevision!==route)throw remoteError('REVISION_CONFLICT','This conversation’s connection changed on the desktop. Review it and try again.');
         this.apiModel(s.provider,p.model);
-        const availability=this.toolsAvailability(s);
+        const destination={...s,model:p.model,connectionId:p.connectionId??s.connectionId,api:{...s.api,tools:s.api?.tools||false,options:p.providerOptions??s.api?.options}};
+        const checkDestination=()=>{
+          if(isApiProvider(s.provider) && !this.apiAccess(device,s.provider,destination).remoteExecution || s.provider==='ollama'&&!this.ollamaAccountAllowed(device,destination))throw remoteError('SCOPE_DENIED','The selected account or hosted tools are not granted to this phone.');
+        };
+        checkDestination();
+        const availability=this.toolsAvailability(destination);
         if(p.tools===true&&availability.toolsAvailable===false)throw remoteError('INVALID_ARGUMENT',availability.toolsUnavailableReason!);
         const project=this.projectFor(device,s.cwd),execution=this.execution(device,project);
         // An option the phone leaves out keeps its current value (sessions.toolsState): a model change alone never turns tools off.
-        return this.sessionDto(device,await this.core.configureSession({id:s.id,model:p.model,...(p.effort!==undefined?{effort:p.effort}:{}),...(p.tools!==undefined?{tools:p.tools}:{}),trusted:true,expectedConfigRevision:p.expectedConfigRevision},()=>{this.current(device);const current=this.session(device,s.id);if(!this.canConfigure(device,current))throw remoteError('AUTH_REVOKED','Remote configuration authority changed.');if((current.configRevision||'0')!==p.expectedConfigRevision)throw remoteError('REVISION_CONFLICT','Session configuration changed.');this.assertRoute(device,s.id,route);},execution));
+        return this.sessionDto(device,await this.core.configureSession({id:s.id,model:p.model,connectionId:p.connectionId,destinationReviewed:p.destinationReviewed,providerOptions:p.providerOptions,...(p.effort!==undefined?{effort:p.effort}:{}),...(p.tools!==undefined?{tools:p.tools}:{}),trusted:true,expectedConfigRevision:p.expectedConfigRevision},()=>{this.current(device);checkDestination();const current=this.session(device,s.id);if(!this.canConfigure(device,current))throw remoteError('AUTH_REVOKED','Remote configuration authority changed.');if((current.configRevision||'0')!==p.expectedConfigRevision)throw remoteError('REVISION_CONFLICT','Session configuration changed.');this.assertRoute(device,s.id,route);},execution));
       }
       case 'approvals.list':return this.snapshot(device).approvals;
       case 'approvals.get':return this.approvalDto(device,this.approval(device,p.approvalId).a);
@@ -634,6 +705,10 @@ export class Router {
         setImmediate(()=>this.scopeReduced?.(device.id));
         return{scopeVersion:next.scopeVersion,reconnectRequired:true,caps:next.caps,categories:next.categories,scriptIds:next.scriptIds,projectIds:next.projects.map(project=>project.id),ollamaHosts:next.ollamaHosts,expiresAt:expiresAt??null,lifetime:expiresAt===undefined?'until-revoked':'expires'};
       }
+      // A phone's own wake-ups (wake.ts). The address and key stay on the desktop; only their state is returned.
+      case 'wake.status':return this.wake.status(device.id);
+      case 'wake.register':return this.wake.register(device,p);
+      case 'wake.clear':return this.wake.unregister(device);
       case 'devices.selfRevoke':setImmediate(()=>void this.revoke(device.id));return true;
       // A phone may always lower its own role; raising one is the desktop's decision. The phone reconnects afterwards.
       case 'devices.setSelfRole': {

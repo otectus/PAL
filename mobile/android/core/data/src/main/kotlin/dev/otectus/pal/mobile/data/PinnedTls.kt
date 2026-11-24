@@ -20,7 +20,8 @@ import java.util.concurrent.TimeUnit
 class PairingRepairException(message: String) : IllegalStateException(message)
 
 object PinnedTls {
-    fun client(desktop: PairedDesktop): OkHttpClient {
+    /** [candidate]: an address a search found, to be checked against the pin before it is used for anything. */
+    fun client(desktop: PairedDesktop, candidate: String? = null): OkHttpClient {
         val certificate = CertificateFactory.getInstance("X.509")
             .generateCertificate(ByteArrayInputStream(CanonicalJson.decodeBase64Url(desktop.certificate))) as X509Certificate
         try { certificate.checkValidity() }
@@ -34,7 +35,7 @@ object PinnedTls {
         val ssl = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }
         val pin = "sha256/${java.util.Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(certificate.publicKey.encoded))}"
         val pinner = CertificatePinner.Builder().apply {
-            desktop.endpoints.map { java.net.URI(it).host }.distinct().forEach { add(it, pin) }
+            (Endpoints.all(desktop) + listOfNotNull(candidate)).map { java.net.URI(it).host }.distinct().forEach { add(it, pin) }
         }.build()
         return OkHttpClient.Builder()
             .sslSocketFactory(ssl.socketFactory, trust)

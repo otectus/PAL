@@ -4,8 +4,8 @@ import { digest } from './crypto.ts';
 import { remoteError } from '../execution.ts';
 import { deviceRole, lapsed, type DeviceRole, type WorkingProfile } from '../authority.ts';
 
-export type Project = {id:string;name:string;path:string};
-export type Device = {id:string;name:string;connectionKey:string;actionKey:string;keyVersion:number;scopeVersion:string;
+export type Project = {id:string;name:string;path:string;revision?:string};
+export type Device = {/** A paired web browser (browser.ts): its keys work only there. Absent for a phone. */surface?:'browser';id:string;name:string;connectionKey:string;actionKey:string;keyVersion:number;scopeVersion:string;
   actionAuthentication?:'biometric'|'trusted-device';replacesDeviceId?:string;replacementPending?:boolean;
   /**
    * What this phone may control (authority.ts): observer, limited (every phone paired before roles) or owner.
@@ -23,10 +23,16 @@ export type Device = {id:string;name:string;connectionKey:string;actionKey:strin
   connectionRole?:DeviceRole;
   createdAt:number;expiresAt?:number;revokedAt?:number;lastSeen?:number;projects:Project[];caps:string[];categories:string[];scriptIds:string[];ollamaHosts:string[];
   /** Hosted API providers this phone may run (with the providers.api grant); the compatible endpoint is bound to the origin granted. */
-  apiProviders?:string[];compatibleEndpoint?:string;
+  apiProviders?:string[];apiConnections?:string[];apiRouteGrants?:Record<string,string>;compatibleEndpoint?:string;
   /** The phone that promoted or approved this one, when an owner phone enrolled it. */
-  enrolledBy?:string};
-export type RemoteConfig = {enabled:boolean;addresses:string[];port:number;name:string};
+  enrolledBy?:string;
+  /** How this phone asked to be woken, and whether the owner allowed it (wake.ts). */
+  wake?:import('./wake.ts').WakeRegistration};
+export type RemoteConfig = {enabled:boolean;addresses:string[];port:number;name:string;
+  /** Announce the gateway on the local network, so a paired phone can find its address. Off unless chosen. */
+  discovery?:boolean;
+  /** A08: the browser companion's own listener (browser.ts). Off unless chosen; no addresses means this computer only. */
+  browser?:{enabled:boolean;addresses:string[];port:number;proxy?:string}};
 export class RemoteStore {
   store: Store; epoch=randomUUID();
   constructor(store: Store) {

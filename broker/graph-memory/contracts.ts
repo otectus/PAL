@@ -114,6 +114,12 @@ export const policySchema = z
     fish_enabled: z.boolean().default(false),
     kitty_enabled: z.boolean().default(false),
     filesystem_enabled: z.boolean().default(false),
+    // Editors report documents inside approved roots; lock and suspend make desktop state unknown; a Kitty endpoint may
+    // name each instance by its process ID; history keeps typed, expiring records of work inside approved roots.
+    editor_enabled: z.boolean().default(false),
+    session_enabled: z.boolean().default(false),
+    kitty_endpoint: z.string().max(512).regex(/^(unix:[^\0\r\n]+)?$/).default(''),
+    history_days: z.number().int().min(1).max(90).default(7),
     approved_roots: z.array(z.string().min(1)).max(64).default([]),
     read_file_content: z.boolean().default(false),
     retain_evidence: z.boolean().default(true),
@@ -130,6 +136,13 @@ export const policySchema = z
   })
   .strict();
 export type Policy = z.infer<typeof policySchema>;
+/** Settings added after the first release are stored only once chosen, so an unused one never stops an older PAL from reading the policy. */
+const addedSettings = ['editor_enabled', 'session_enabled', 'kitty_endpoint', 'history_days'] as const;
+export function storedPolicy(policy: Policy): Record<string, unknown> {
+  const defaults = policySchema.parse({}), stored: Record<string, unknown> = { ...policy };
+  for (const key of addedSettings) if (stored[key] === defaults[key]) delete stored[key];
+  return stored;
+}
 export class MemoryError extends Error {
   code: string;
   constructor(code: string, message: string) {

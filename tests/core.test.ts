@@ -349,7 +349,7 @@ test('power is selected-session-only and exposes independent CLI and computer ac
   core.tokens.set('other', other.id);
   await core.rpc('power.start', { sessionIds: [other.id], minutes: 5, cli: true, computer: false });
   tools = await core.rpc('mcp.tools', { token: 'other' });
-  assert.ok(tools.every((d: any) => d.category === 'scripts'));
+  assert.ok(tools.some((d: any) => d.category === 'scripts') && tools.every((d: any) => d.category === 'scripts' || d.category === 'time'));
   assert.match((await core.action('script.run', { id: 'hello' }, other.id)).stdout, /power test/);
   assert.equal(core.approvals.size, 0);
   await assert.rejects(core.action('timer.start', { minutes: 1, label: 'Blocked' }, other.id), /disabled/);

@@ -50,9 +50,10 @@ internal fun AnnotateImage(preview: Bitmap, width: Int, height: Int, onCancel: (
     var current by remember { mutableStateOf<Mark?>(null) }
     var color by remember { mutableStateOf(PALMedia.annotationPrimary) }
     var thick by remember { mutableStateOf(false) }
+    var tooLarge by remember { mutableStateOf(false) }
     var frame by remember { mutableStateOf(Pair(Offset.Zero, Size.Zero)) }
     val image = remember(preview) { preview.asImageBitmap() }
-    fun inImage(point: Offset): Offset { val (origin, size) = frame; return Offset(((point.x - origin.x) / size.width).coerceIn(0f, 1f), ((point.y - origin.y) / size.height).coerceIn(0f, 1f)) }
+    fun inImage(point: Offset): Offset { val (origin, size) = frame; return Offset(((point.x - origin.x) / size.width.coerceAtLeast(1f)).coerceIn(0f, 1f), ((point.y - origin.y) / size.height.coerceAtLeast(1f)).coerceIn(0f, 1f)) }
     Dialog(onCancel, DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(PALLayout.small)) {
@@ -90,19 +91,24 @@ internal fun AnnotateImage(preview: Bitmap, width: Int, height: Int, onCancel: (
                     FilterChip(thick, { thick = !thick }, { Text(stringResource(R.string.annotation_thick)) })
                     TextButton({ marks = marks.dropLast(1) }, enabled = marks.isNotEmpty()) { Text(stringResource(R.string.annotation_undo)) }
                 }
+                if (tooLarge) Text(stringResource(R.string.picture_too_large), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PALLayout.small, Alignment.End)) {
                     TextButton(onCancel) { Text(stringResource(R.string.action_cancel)) }
                     Button({
                         // The layer at the original's size: transparent, with the strokes scaled from image coordinates.
-                        val layer = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                        val canvas = android.graphics.Canvas(layer)
-                        for (mark in marks) {
-                            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND; this.color = mark.color.toArgb(); strokeWidth = mark.width * width }
-                            val path = Path(); mark.points.forEachIndexed { index, point -> if (index == 0) path.moveTo(point.x * width, point.y * height) else path.lineTo(point.x * width, point.y * height) }
-                            canvas.drawPath(path, paint)
-                        }
-                        val out = ByteArrayOutputStream(); layer.compress(Bitmap.CompressFormat.PNG, 100, out); layer.recycle()
-                        onSave(out.toByteArray())
+                        // A very large original leaves no memory for it.
+                        val drawn = try {
+                            val layer = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                            val canvas = android.graphics.Canvas(layer)
+                            for (mark in marks) {
+                                val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND; this.color = mark.color.toArgb(); strokeWidth = mark.width * width }
+                                val path = Path(); mark.points.forEachIndexed { index, point -> if (index == 0) path.moveTo(point.x * width, point.y * height) else path.lineTo(point.x * width, point.y * height) }
+                                canvas.drawPath(path, paint)
+                            }
+                            val out = ByteArrayOutputStream(); layer.compress(Bitmap.CompressFormat.PNG, 100, out); layer.recycle()
+                            out.toByteArray()
+                        } catch (_: OutOfMemoryError) { null } catch (_: IllegalArgumentException) { null }
+                        if (drawn == null) tooLarge = true else onSave(drawn)
                     }, enabled = marks.isNotEmpty()) { Text(stringResource(R.string.annotation_save_as_a_new_version)) }
                 }
             }

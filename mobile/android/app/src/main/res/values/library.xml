@@ -11,6 +11,10 @@
     <string name="empty_library_hint">Start a chat or open a conversation in an approved project on your desktop.</string>
     <string name="empty_cache_hint">Connect to your desktop to see your conversations.</string>
     <string name="session_unread">Unread</string>
+    <plurals name="session_results_waiting">
+        <item quantity="one">%1$d result waiting</item>
+        <item quantity="other">%1$d results waiting</item>
+    </plurals>
     <string name="session_pinned">Pinned</string>
     <string name="appearance_alerts">Appearance &amp; alerts</string>
     <string name="desktop_access">Desktop access</string>

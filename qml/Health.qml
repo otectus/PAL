@@ -79,6 +79,8 @@ CDialog {
             CButton { Layout.fillWidth:true;text:"Test voice";enabled:health.online&&health.request<0;onClicked:health.call("tts.test") }
             CButton { Layout.fillWidth:true;text:"Stop voice";enabled:health.online&&health.request<0;onClicked:health.call("tts.stop") }
         }
+        Rectangle { Layout.fillWidth:true;implicitHeight:Theme.hairline;color:Theme.line }
+        Loader { Layout.fillWidth:true;active:health.opened;sourceComponent:LocalServices {} }
     }
 
     CSection {
@@ -96,6 +98,11 @@ CDialog {
                 objectName:"span_"+modelData;Layout.fillWidth:true;font.pixelSize:Theme.secondary;color:row.count?Theme.text:Theme.muted;wrapMode:Text.Wrap
                 text:responsivenessSection.spanNames[modelData]+" · "+(row.count?row.count+" measured · median "+Math.round(row.p50)+" ms · 90% under "+Math.round(row.p90)+" ms · slowest "+Math.round(row.max)+" ms"+(row.failed?" · "+row.failed+" failed":"")+(row.stopped?" · "+row.stopped+" stopped":""):"not measured yet")
             }
+        }
+        // EV-02: how often the same words were spoken again, for deciding whether keeping audio is worth it.
+        CText {
+            objectName:"spanSpeechRepeats";visible:responsivenessSection.spans.enabled===true&&(responsivenessSection.spans.speech?.utterances||0)>0;Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:Theme.secondary
+            text:"Spoken again · "+(responsivenessSection.spans.speech?.repeats||0)+" of "+(responsivenessSection.spans.speech?.utterances||0)+" ("+Math.round((responsivenessSection.spans.speech?.repeatShare||0)*100)+"%)"
         }
         CText {
             visible:responsivenessSection.spans.enabled===true;Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:Theme.caption;color:Theme.muted

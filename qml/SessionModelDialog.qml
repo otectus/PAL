@@ -25,24 +25,31 @@ CDialog {
     property string error:""
     property string loadError:""
     property var connections:[]
-    readonly property var connection:original.connectionId?connections.find(row=>row.id===original.connectionId)||({}):({})
-    readonly property var compatibleEndpoint:original.provider==="compatible"?(original.connectionId?(connection.endpoint||({})):(App.state.settings?.compatible||({}))):({})
-    readonly property bool toolsSupported:isNative?false:isOllama?(selected.capabilities||[]).includes("tools"):original.provider!=="compatible"||compatibleEndpoint.tools===true
-    readonly property string providerLabel:original.provider==="compatible"?(original.connectionId?(connection.name||"Compatible endpoint"):(App.state.settings?.compatible?.label||"Compatible endpoint")):(labels[original.provider]||"")
+    readonly property var providerConnections:connections.filter(row=>row.kind===original.provider&&!row.migrated)
+    property string connectionId:""
+    // A conversation moves to a named account, never back to having none.
+    readonly property int unnamed:original.connectionId?0:1
+    readonly property var connection:connectionId?connections.find(row=>row.id===connectionId)||({}):({})
+    readonly property var compatibleEndpoint:original.provider==="compatible"?(connectionId?(connection.endpoint||({})):(App.state.settings?.compatible||({}))):({})
+    readonly property bool toolsSupported:isNative?false:isOllama?(selected.capabilities||[]).includes("tools"):(original.provider!=="compatible"||compatibleEndpoint.tools===true)&&(modelId!==selected.id||!(selected.capabilities||[]).includes("no-local-tools"))
+    readonly property string providerLabel:original.provider==="compatible"?(connectionId?(connection.name||"Compatible endpoint"):(App.state.settings?.compatible?.label||"Compatible endpoint")):(providerTrait.label||labels[original.provider]||original.provider||"")
+    readonly property bool supportsEffort:providerTrait.effort===true||(selected.efforts||[]).length>0
     function choose(model,effort){
         picker.currentIndex=options.findIndex(m=>m.id===model)
         reasoning.currentIndex=Math.max(0,efforts.findIndex(e=>e.id===effort))
     }
+    // A catalog that lists what a model takes, without reasoning in it, says the model does not reason.
+    function withoutReasoning(model){const takes=model?.supportedParameters;return !!takes&&takes.length>0&&takes.indexOf("reasoning")<0&&takes.indexOf("reasoning_effort")<0}
     function refresh(){
         loadError=""
-        loadRequest=App.rpc("provider.models",{provider:original.provider,sessionId:sessionId})
+        loadRequest=connectionId?App.rpc("connections.models",{id:connectionId}):App.rpc("provider.models",{provider:original.provider,sessionId:sessionId})
     }
     function submissionBlocker(){
         if(!App.connected)return "Reconnect PAL to apply this change."
         if((isNative||isOllama)&&loadRequest>=0)return "Wait for the provider’s model list."
         if(isNative&&picker.currentIndex<0)return "Choose a provider model or its default."
         if(!isNative&&!modelId)return "Choose a model or enter its model ID."
-        if(assistance.checked&&!toolsSupported)return isOllama?"This model does not support tools. Choose another model or turn desktop tools off.":"This endpoint is not declared to support tools. Turn desktop tools off, or update its saved declaration."
+        if(assistance.checked&&!toolsSupported)return isOllama||(selected.capabilities||[]).includes("no-local-tools")?"This model does not support tools. Choose another model or turn desktop tools off.":"This endpoint is not declared to support tools. Turn desktop tools off, or update its saved declaration."
         if(trust.visible&&!trust.checked)return "Confirm that you trust this project before enabling desktop tools."
         return ""
     }
@@ -52,25 +59,46 @@ CDialog {
         models=original.model?[{id:original.model,displayName:original.model,efforts:original.effort?[{id:original.effort,displayName:original.effort}]:[]}]:[]
         custom.text="";assistance.checked=!!(original.ollama?.tools||original.api?.tools);trust.checked=false
         const o=original.modelOptions||{};temperature.text=o.temperature!==undefined?String(o.temperature):"";maxOutput.text=o.maxOutputTokens?String(o.maxOutputTokens):"";contextTokens.text=o.contextTokens?String(o.contextTokens):"";keepAlive.text=o.keepAlive||""
-        connections=[];connectionsRequest=original.provider==="compatible"?App.rpc("connections.list",{}):-1
+        connections=[];connectionId=original.connectionId||"";connectionsRequest=(isApi||isOllama)?App.rpc("connections.list",{}):-1
+        providerOptionsEditor.reset(original.providerOptions||original.api?.options||{})
         choose(original.model||"",original.effort||"");refresh()
     }
-    onClosed:{loadRequest=-1;connectionsRequest=-1;saveRequest=-1;optionsRequest=-1}
+    onClosed:{modelBrowser.shown=false;loadRequest=-1;connectionsRequest=-1;saveRequest=-1;optionsRequest=-1}
     CText { Accessible.role:Accessible.Heading;text:dialog.accessibleTitle;font.pixelSize:Theme.title;font.weight:Font.DemiBold }
     CText { text:dialog.providerLabel+" · "+(dialog.original.model||"Provider default");color:Theme.accentText;font.pixelSize:Theme.secondary }
     CText { visible:dialog.isOllama||dialog.original.provider==="compatible";text:dialog.isOllama?(dialog.original.ollama?.host||""):(dialog.compatibleEndpoint.baseUrl||"Loading saved endpoint…");color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    CComboBox {
+        id:connectionPicker;objectName:"conversationAccount";visible:dialog.providerConnections.length>0;Layout.fillWidth:true
+        model:(dialog.unnamed?[dialog.providerTrait.label||dialog.original.provider+" default"]:[]).concat(dialog.providerConnections.map(row=>row.name+" · "+(row.variant?row.variant+" · ":"")+(row.host||row.endpoint?.baseUrl||"provider endpoint")))
+        Accessible.name:"Conversation provider account"
+        onActivated:index=>{dialog.connectionId=dialog.providerConnections[index-dialog.unnamed]?.id||"";dialog.models=[];dialog.refresh()}
+    }
     CText { text:"Changes apply to your next message. Your conversation stays in this session.";color:Theme.muted;font.pixelSize:Theme.secondary }
     SectionLabel { text:"MODEL";Accessible.role:Accessible.Heading }
-    RowLayout { Layout.fillWidth:true;CText{text:"Model";color:Theme.muted}CButton{text:"Refresh";enabled:dialog.loadRequest<0&&dialog.saveRequest<0;onClicked:dialog.refresh()} }
+    RowLayout { Layout.fillWidth:true;CText{text:"Model";color:Theme.muted}CButton{objectName:"conversationModelsBrowse";visible:dialog.models.length>8;text:modelBrowser.visible?"Close list":"Browse…";quiet:true;onClicked:modelBrowser.shown=!modelBrowser.shown}CButton{text:"Refresh";quiet:true;enabled:dialog.loadRequest<0&&dialog.saveRequest<0;onClicked:dialog.refresh()} }
     CComboBox {
         id:picker;objectName:"ollamaSessionModel";Layout.fillWidth:true;model:dialog.options;textRole:"displayName";valueRole:"id";Accessible.name:"Conversation model";enabled:dialog.saveRequest<0
-        onActivated:{custom.text="";reasoning.currentIndex=0;if(dialog.isOllama&&!(dialog.selected.capabilities||[]).includes("tools"))assistance.checked=false}
+        onActivated:{custom.text="";reasoning.currentIndex=0;if(!dialog.isNative&&!dialog.toolsSupported)assistance.checked=false}
+    }
+    ModelBrowser {
+        id:modelBrowser;property bool shown:false
+        visible:shown&&models.length>0;Layout.fillWidth:true
+        models:dialog.models;current:picker.currentValue||"";provider:dialog.original.provider||"";connectionId:dialog.connectionId
+        preferred:providerOptionsEditor.values.preferredProviders||[]
+        onChosen:id=>{if(dialog.saveRequest>=0)return;custom.text="";dialog.choose(id,"");if(!dialog.toolsSupported)assistance.checked=false}
+        onPrefer:list=>providerOptionsEditor.setOption("preferredProviders",list.length?list:undefined)
     }
     CField { id:custom;objectName:"conversationCustomModel";visible:dialog.isApi;Layout.fillWidth:true;maximumLength:512;placeholderText:"Or enter an API model ID";Accessible.name:"Custom conversation model ID";enabled:dialog.saveRequest<0 }
+    CText { objectName:"conversationModelFacts";visible:text.length>0&&!modelBrowser.visible;text:dialog.selected.detail||"";color:Theme.muted;font.pixelSize:Theme.caption }
     CText { text:dialog.selected.description||"";visible:!!text;color:Theme.muted;font.pixelSize:Theme.secondary }
-    CText { visible:dialog.isNative;text:"Reasoning effort";color:Theme.muted;font.pixelSize:Theme.secondary }
-    CComboBox { id:reasoning;objectName:"conversationEffort";visible:dialog.isNative;Layout.fillWidth:true;model:dialog.efforts;textRole:"displayName";valueRole:"id";Accessible.name:"Conversation reasoning effort";enabled:dialog.saveRequest<0 }
+    CText { visible:dialog.supportsEffort;text:"Reasoning effort";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CComboBox { id:reasoning;objectName:"conversationEffort";visible:dialog.supportsEffort;Layout.fillWidth:true;model:dialog.efforts;textRole:"displayName";valueRole:"id";Accessible.name:"Conversation reasoning effort";enabled:dialog.saveRequest<0 }
     CText { visible:dialog.isApi&&dialog.modelId!==dialog.original.model;text:"Messages, attachments and recorded tool results stay available. Model-specific reasoning is reset. Image and tool support depend on the model you choose.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    ColumnLayout {
+        visible:providerOptionsEditor.fields.length>0;Layout.fillWidth:true;spacing:Theme.space2
+        SectionLabel { text:"PROVIDER OPTIONS";Accessible.role:Accessible.Heading }
+        ProviderOptionsEditor { id:providerOptionsEditor;schema:dialog.providerTrait.optionsSchema||[];variant:dialog.connection.variant||"";editorEnabled:dialog.saveRequest<0;hiddenKeys:dialog.efforts.length>1||dialog.withoutReasoning(dialog.selected)?["reasoningEffort"]:[];onValuesChanged:{} }
+    }
     SectionLabel { visible:!dialog.isNative;text:"ACCESS";Accessible.role:Accessible.Heading }
     CCheckBox { id:assistance;objectName:"ollamaSessionTools";visible:!dialog.isNative;text:"Enable desktop tools and delegation";enabled:!dialog.original.temporary&&dialog.saveRequest<0&&dialog.optionsRequest<0&&(checked||dialog.toolsSupported) }
     CText { visible:!dialog.isNative;text:dialog.original.provider==="compatible"?"Tool access follows this conversation’s saved endpoint declaration. Categories come from Settings → AI assistance; web search and memory follow Settings.":"Uses categories enabled in Settings → AI assistance. Web search and memory follow Settings.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
@@ -101,7 +129,7 @@ CDialog {
             CButton { Layout.fillWidth:true;text:"Cancel";enabled:dialog.saveRequest<0&&dialog.optionsRequest<0;onClicked:dialog.close() }
             CButton { objectName:"ollamaSessionSave";Layout.fillWidth:true;text:dialog.saveRequest>=0||dialog.optionsRequest>=0?"Saving…":"Apply";primary:true;prominent:true
                 enabled:dialog.saveRequest<0&&dialog.optionsRequest<0&&!dialog.applyBlocker
-                onClicked:{dialog.error="";dialog.saveRequest=App.rpc("session.configure",{id:dialog.sessionId,model:dialog.modelId,effort:dialog.isNative?reasoning.currentValue||"":"",tools:!dialog.isNative&&assistance.checked,trusted:trust.checked,expectedConfigRevision:dialog.original.configRevision||"0"})}
+                onClicked:{dialog.error="";const routeChanged=dialog.connectionId!==(dialog.original.connectionId||"");dialog.saveRequest=App.rpc("session.configure",Object.assign({id:dialog.sessionId,model:dialog.modelId,effort:reasoning.currentValue||"",tools:!dialog.isNative&&assistance.checked,trusted:trust.checked,providerOptions:providerOptionsEditor.values,expectedConfigRevision:dialog.original.configRevision||"0"},routeChanged?{connectionId:dialog.connectionId,destinationReviewed:true}:{}))}
             }
         }
     } }
@@ -109,13 +137,13 @@ CDialog {
         if(id===dialog.connectionsRequest){
             dialog.connectionsRequest=-1
             if(value?.error)dialog.loadError=String(value.error.message||value.error)
-            else dialog.connections=value||[]
+            else {dialog.connections=value||[];connectionPicker.currentIndex=dialog.providerConnections.findIndex(row=>row.id===dialog.connectionId)+dialog.unnamed}
         } else if(id===dialog.loadRequest){
             dialog.loadRequest=-1
             if(value?.error)dialog.loadError=value.error
             else {
                 const selectedId=picker.currentIndex>=0?picker.currentValue||"":dialog.original.model||"",effort=reasoning.currentValue||""
-                let catalog=value.slice()
+                let catalog=(value.models||value||[]).slice() // a list from the broker is not an Array to Array.isArray
                 if(!dialog.isOllama&&selectedId&&!catalog.some(m=>m.id===selectedId))catalog.push({id:selectedId,displayName:selectedId+" (current)",efforts:effort?[{id:effort,displayName:effort}]:[]})
                 dialog.models=catalog;dialog.choose(selectedId,effort)
             }

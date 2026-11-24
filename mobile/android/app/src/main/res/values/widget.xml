@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="pal_widget_corner">16dp</dimen>
+    <color name="pal_widget_surface">#FDFEFE</color>
+    <color name="pal_widget_text">#13272B</color>
+    <color name="pal_widget_muted">#455B60</color>
+    <color name="pal_widget_accent">#00646A</color>
+    <color name="pal_widget_attention">#815000</color>
+    <style name="Theme.PAL.Widget" parent="android:style/Theme.DeviceDefault.DayNight" />
+</resources>

@@ -24,6 +24,10 @@ if status is-interactive
             set -l pal_binding
             if set -q KITTY_WINDOW_ID
                 set pal_binding --kitty-window-id "$KITTY_WINDOW_ID"
+                # Pane numbers repeat between Kitty processes; only Kitty's own process ID tells them apart.
+                if string match -qr '^[0-9]+$' -- "$KITTY_PID"
+                    set -a pal_binding --kitty-pid "$KITTY_PID"
+                end
             end
             command "$PAL_MEMORY_EMITTER" --event $argv[1] --session-id "$__pal_memory_session" \
                 --sequence $__pal_memory_sequence --cwd "$PWD" $argv[2..] $pal_binding >/dev/null 2>&1 &

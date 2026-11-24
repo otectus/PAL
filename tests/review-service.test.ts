@@ -218,11 +218,17 @@ test('F-030 vector purge needs only Qdrant, never the embedding model', async t 
   t.after(() => new Promise<void>(r => { qdrant.closeAllConnections(); qdrant.close(() => r()); }));
   const env = { PAL_QDRANT_URL: 'http://127.0.0.1:' + (qdrant.address() as any).port, PAL_QDRANT_API_KEY: 'secret' };
   for (const [key, value] of Object.entries(env)) { const old = process.env[key]; process.env[key] = value; t.after(() => { if (old === undefined) delete process.env[key]; else process.env[key] = old; }); }
-  const service = (vectors = new Map()) => Object.assign(Object.create(MemoryService.prototype) as MemoryService, {
-    vectors, controller: new AbortController(), configuration: { host: 'http://127.0.0.1:9' },
-    identity: async () => { throw new Error('Embedding server unavailable'); },
-    canonical: { call: async (method: string, p: any) => method === 'claim_job' ? { id: 'job' } : method === 'projection_data' ? { artifacts: [], deletedIds: ['forgotten'], generation: '1', erasureEpoch: 2 } : method === 'embedding_spaces' ? [{ fingerprint: 'fingerprint'.padEnd(64, '0'), dimension: 3 }] : method === 'finish_job' ? finished.push(p) : true },
-  });
+  const dir=await mkdtemp(join(tmpdir(),'pal-purge-'));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const service = () => {
+    const instance=new MemoryService(dir);
+    clearInterval(instance.timer);
+    instance.configuration={...instance.configuration,host:'http://127.0.0.1:9'};
+    instance.identity=async()=>{throw new Error('Embedding server unavailable');};
+    instance.canonical.call=(async(method:string,p:any)=>method==='claim_job'?{id:'job'}:method==='projection_data'?{artifacts:[],deletedIds:['forgotten'],generation:'1',erasureEpoch:2}:method==='embedding_spaces'?[{fingerprint:'fingerprint'.padEnd(64,'0'),dimension:3}]:method==='finish_job'?finished.push(p):true) as any;
+    t.after(()=>instance.close());
+    return instance;
+  };
   await service().project('vector');
   assert.deepEqual(deleted, ['forgotten']);
   assert.deepEqual(finished.at(-1), { id: 'job' });

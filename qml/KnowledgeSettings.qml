@@ -1,13 +1,12 @@
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
 ColumnLayout {
     id:knowledge
     Layout.fillWidth:true;spacing:Theme.space4
-    property var search:App.state.settings?.webSearch||({enabled:false,provider:"auto",searxngUrl:""})
     property var memory:App.state.settings?.memory||({enabled:false,model:"nomic-embed-text"})
     property var status:App.state.memory||({})
-    property int webRequest:-1
+    property var connections:[]
+    RpcClient { id:connectionRpc }
     property int memoryRequest:-1
     property int extractionRequest:-1
     property int extractionRefreshRequest:-1
@@ -23,15 +22,16 @@ ColumnLayout {
     property int extractionIndex:extractionChoices.findIndex(m=>matchesExtraction(m.id))
     property int checkRequest:-1
     // M07: an optional Markdown notes folder; the folder stays the source of truth.
-    property var vault:App.state.settings?.notesVault||({path:"",enabled:false,allowCloud:false})
+    property var vault:App.state.settings?.notesVault||({path:"",enabled:false,allowCloud:false,folders:[]})
     property int vaultRequest:-1
     property int vaultStatusRequest:-1
     property var vaultStatus:null
     property string vaultError:""
     property string vaultFeedback:""
     function updateVault(patch,done){vaultError="";vaultFeedback=done||"";vaultRequest=App.rpc("settings.update",{notesVault:patch})}
+    function counted(count,one,many){return count+" "+(count===1?one:many)}
     function scanVault(){if(App.connected&&vault.enabled)vaultStatusRequest=App.rpc("notes.status",{})}
-    Component.onCompleted:scanVault()
+    Component.onCompleted:{scanVault();connectionRpc.call("connections.list",{},value=>{if(!value.error)knowledge.connections=value})}
     // M09: switching the embedding model is reviewed first: what has vectors in the new space and what will be re-embedded.
     property int impactRequest:-1
     property var impact:null
@@ -46,28 +46,10 @@ ColumnLayout {
             +(current.error?" The current model could not be checked: "+current.error:"")
     }
     property bool checkAfterSave:false
-    property string webError:""
     property string memoryError:""
     property string checkResult:""
-    property var providers:[{id:"auto",label:"Automatic · DuckDuckGo first"},{id:"duckduckgo",label:"DuckDuckGo"},{id:"brave",label:"Brave"},{id:"mojeek",label:"Mojeek"},{id:"searxng",label:"SearXNG · your server"}]
-    CSection {
-        title:"Web search"
-        description:"Let Ollama look up current information and cite its sources. Desktop control is not required."
-        CCheckBox { objectName:"webSearchEnabled";text:"Enable web search";checked:knowledge.search.enabled;enabled:knowledge.webRequest<0;onClicked:{knowledge.webError="";knowledge.webRequest=App.rpc("settings.update",{webSearch:{enabled:checked}})} }
-        ColumnLayout {
-            visible:knowledge.search.enabled;Layout.fillWidth:true;spacing:Theme.space2
-            RowLayout {
-                Layout.fillWidth:true
-                CComboBox { id:provider;objectName:"webSearchProvider";Layout.fillWidth:true;Layout.minimumWidth:0;model:knowledge.providers;textRole:"label";valueRole:"id";Accessible.name:"Search provider";currentIndex:Math.max(0,knowledge.providers.findIndex(p=>p.id===knowledge.search.provider)) }
-                CButton { objectName:"webSearchSave";text:"Apply";enabled:knowledge.webRequest<0;onClicked:{knowledge.webError="";knowledge.webRequest=App.rpc("settings.update",{webSearch:{provider:provider.currentValue,searxngUrl:searx.text.trim()}})} }
-            }
-            CField { id:searx;objectName:"searxngUrl";visible:provider.currentValue==="searxng";Layout.fillWidth:true;placeholderText:"http://localhost:8080";text:knowledge.search.searxngUrl;Accessible.name:"SearXNG server base URL" }
-            CText { visible:provider.currentValue==="searxng";text:"Use a SearXNG base URL with JSON search enabled. Queries go only to this server.";color:Theme.muted;font.pixelSize:Theme.secondary }
-            CText { visible:provider.currentValue!=="searxng";text:"Free, with no API key. Automatic tries DuckDuckGo, then Brave and Mojeek if needed. Public search pages can block or limit requests.";color:Theme.muted;font.pixelSize:Theme.secondary }
-            CText { text:"Models with tool support decide when to search. Use Search web beside the message box to search on this turn with any Ollama chat model. Queries go to the selected provider; page reading contacts the source website.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        }
-        CText { visible:!!knowledge.webError;text:knowledge.webError;color:Theme.danger;font.pixelSize:Theme.secondary }
-    }
+    property var embeddingProviders:["ollama","openai","google","mistral","azure_openai","openrouter","litellm","compatible","perplexity","voyage","xai","edenai","huggingface"].map(id=>({id:id,label:id==="ollama"?"Ollama embeddings":id==="voyage"?"Voyage AI":((App.state.providerTraits||{})[id]?.label||id)+" embeddings"}))
+    ResearchSearchSettings { Layout.fillWidth:true }
     CSection {
         title:"Memory"
         description:"Share project facts and earlier conversations across Codex, Claude and Ollama."
@@ -75,11 +57,19 @@ ColumnLayout {
         ColumnLayout {
             visible:knowledge.memory.enabled;Layout.fillWidth:true;spacing:Theme.space2
             CComboBox {
-                objectName:"memoryEmbeddingProvider";Layout.fillWidth:true;model:[{id:"ollama",label:"Ollama embeddings"},{id:"google",label:"Gemini API embeddings"}];textRole:"label";valueRole:"id"
-                Accessible.name:"Memory embedding provider";currentIndex:knowledge.memory.embeddingProvider==="google"?1:0;enabled:knowledge.memoryRequest<0
-                onActivated:{knowledge.impact=null;knowledge.checkResult="";knowledge.memoryError="";knowledge.memoryRequest=App.rpc("settings.update",{memory:{embeddingProvider:currentValue,model:currentValue==="google"?"gemini-embedding-001":"nomic-embed-text"}})}
+                id:embeddingProvider;objectName:"memoryEmbeddingProvider";Layout.fillWidth:true;model:knowledge.embeddingProviders;textRole:"label";valueRole:"id"
+                Accessible.name:"Memory embedding provider";currentIndex:Math.max(0,knowledge.embeddingProviders.findIndex(row=>row.id===(knowledge.memory.embeddingProvider||"ollama")));enabled:knowledge.memoryRequest<0
+                onActivated:{knowledge.impact=null;knowledge.checkResult="";knowledge.memoryError="";knowledge.memoryRequest=App.rpc("settings.update",{memory:{embeddingProvider:currentValue,embeddingConnectionId:"",model:currentValue==="google"?"gemini-embedding-001":currentValue==="ollama"?"nomic-embed-text":""}})}
             }
-            CCheckBox { objectName:"cloudEmbeddingEnabled";visible:knowledge.memory.embeddingProvider==="google";text:"Allow Gemini to embed memory and search queries";checked:knowledge.memory.allowCloudEmbedding===true;onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{allowCloudEmbedding:checked}}) }
+            CComboBox {
+                visible:knowledge.connections.some(row=>row.kind===embeddingProvider.currentValue);Layout.fillWidth:true
+                readonly property var choices:[{id:"",name:"Default account"}].concat(knowledge.connections.filter(row=>row.kind===embeddingProvider.currentValue))
+                model:choices;textRole:"name";valueRole:"id";currentIndex:Math.max(0,choices.findIndex(row=>row.id===(knowledge.memory.embeddingConnectionId||"")));Accessible.name:"Embedding account"
+                onActivated:knowledge.memoryRequest=App.rpc("settings.update",{memory:{embeddingConnectionId:currentValue}})
+            }
+            CCheckBox { objectName:"cloudEmbeddingEnabled";visible:embeddingProvider.currentValue!=="ollama";text:"Allow this provider to embed eligible memory and search queries";checked:knowledge.memory.allowCloudEmbedding===true;onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{allowCloudEmbedding:checked}}) }
+            CField { visible:embeddingProvider.currentValue!=="ollama";Layout.fillWidth:true;placeholderText:"Dimensions (provider default)";text:knowledge.memory.embeddingDimensions?String(knowledge.memory.embeddingDimensions):"";validator:IntValidator{bottom:1} Accessible.name:"Embedding dimensions";onEditingFinished:knowledge.memoryRequest=App.rpc("settings.update",{memory:{embeddingDimensions:text.trim()?Number(text):0}}) }
+            CComboBox { visible:embeddingProvider.currentValue==="huggingface";Layout.fillWidth:true;model:[{id:"mean",label:"Mean pooling"},{id:"cls",label:"CLS token pooling"}];textRole:"label";valueRole:"id";currentIndex:Math.max(0,model.findIndex(row=>row.id===(knowledge.memory.embeddingPooling||"mean")));Accessible.name:"Hugging Face embedding pooling";onActivated:knowledge.memoryRequest=App.rpc("settings.update",{memory:{embeddingPooling:currentValue}}) }
             CText { text:"Embedding model";color:Theme.muted;font.pixelSize:Theme.secondary }
             RowLayout {
                 Layout.fillWidth:true
@@ -101,12 +91,24 @@ ColumnLayout {
                     CButton { objectName:"embeddingKeep";Layout.fillWidth:true;text:"Keep "+knowledge.memory.model;onClicked:{embedding.text=knowledge.memory.model;knowledge.impact=null;knowledge.impactError=""} }
                 }
             }
-            CText { text:knowledge.memory.embeddingProvider==="google"?"Uses the Gemini API key in Connections. Eligible memories and search queries are sent to Google. Local-only sources keep keyword recall. Switching providers rebuilds vectors in a separate space.":"Default: nomic-embed-text. Install it with ollama pull nomic-embed-text. The Ollama server in Connections is used for memory; Ollama conversations retain their saved server.";color:Theme.muted;font.pixelSize:Theme.secondary }
+            CText { text:embeddingProvider.currentValue==="ollama"?"Default: nomic-embed-text. Install it with ollama pull nomic-embed-text. The saved Ollama server is used for memory.":"Uses the selected provider account in Connections. Eligible memories and search queries leave this computer; local-only sources keep keyword recall. Switching provider, model or dimensions rebuilds a separate vector space.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+            CText { text:"Retrieval reranking (optional)";color:Theme.muted;font.pixelSize:Theme.secondary }
+            RowLayout {
+                Layout.fillWidth:true
+                CField { id:voyageRerank;Layout.fillWidth:true;text:knowledge.memory.voyageRerankModel||"";placeholderText:"Voyage rerank model · blank disables";Accessible.name:"Voyage rerank model" }
+                CButton { text:"Save";onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{voyageRerankModel:voyageRerank.text.trim()}}) }
+            }
             CComboBox {
                 objectName:"memoryExtractionProvider";Layout.fillWidth:true;model:knowledge.extractionProviders;textRole:"label";valueRole:"id"
                 Accessible.name:"Memory extraction provider";currentIndex:knowledge.extractionProviders.findIndex(p=>p.id===knowledge.extractionProvider)
                 enabled:knowledge.extractionRequest<0
-                onActivated:{knowledge.memoryError="";knowledge.extractionRequest=App.rpc("settings.update",{memory:{extractionProvider:currentValue,extractionModel:currentValue==="ollama"?"glm-5.3-flash:cloud":currentValue==="google"?"gemini-2.5-flash":"claude-haiku-4-5"}})}
+                onActivated:{knowledge.memoryError="";knowledge.extractionRequest=App.rpc("settings.update",{memory:{extractionProvider:currentValue,extractionConnectionId:"",extractionModel:currentValue==="ollama"?"glm-5.3-flash:cloud":currentValue==="google"?"gemini-2.5-flash":"claude-haiku-4-5"}})}
+            }
+            CComboBox {
+                objectName:"extractionAccount";visible:knowledge.extractionProvider!=="ollama"&&knowledge.connections.some(row=>row.kind===knowledge.extractionProvider);Layout.fillWidth:true
+                readonly property var choices:[{id:"",name:"Default account"}].concat(knowledge.connections.filter(row=>row.kind===knowledge.extractionProvider))
+                model:choices;textRole:"name";valueRole:"id";currentIndex:Math.max(0,choices.findIndex(row=>row.id===(knowledge.memory.extractionConnectionId||"")));Accessible.name:"Graph extraction account"
+                onActivated:knowledge.extractionRequest=App.rpc("settings.update",{memory:{extractionConnectionId:currentValue}})
             }
             CText { text:"Graph extraction model";color:Theme.muted;font.pixelSize:Theme.secondary }
             RowLayout {
@@ -120,7 +122,7 @@ ColumnLayout {
                 }
                 CButton { objectName:"extractionModelsRefresh";text:"Refresh";enabled:App.connected&&knowledge.extractionRefreshRequest<0&&knowledge.extractionCapability.modelsStatus!=="loading";onClicked:{knowledge.memoryError="";knowledge.extractionRefreshRequest=App.rpc("provider.models",{provider:knowledge.extractionProvider})} }
             }
-            CText { text:"Extraction runs in the background using the selected provider. API keys are managed in Connections. Source restrictions apply before sending text. Claims retain exact evidence and correction history.";color:Theme.muted;font.pixelSize:Theme.secondary }
+            CText { text:"Extraction runs in the background using the selected provider. API keys are managed in Connections. Source restrictions apply before sending text. Claims retain exact evidence and correction history. To use another saved account or provider, choose it for Extraction under Memory review.";color:Theme.muted;font.pixelSize:Theme.secondary }
             CText { visible:knowledge.extractionCapability.modelsStatus==="loading";text:"Loading extraction models…";color:Theme.muted;font.pixelSize:Theme.secondary }
             CText { visible:!!knowledge.extractionCapability.modelsError;text:knowledge.extractionCapability.modelsError||"";color:Theme.danger;font.pixelSize:Theme.secondary }
             CText { visible:knowledge.extractionCapability.modelsStatus==="ready"&&!(knowledge.extractionCapability.models||[]).length;text:"No models are available. Configure this provider in Connections, then Refresh.";color:Theme.amber;font.pixelSize:Theme.secondary }
@@ -136,6 +138,34 @@ ColumnLayout {
         CButton { objectName:"manageMemories";text:"Manage project memory";enabled:App.connected&&!!App.session.id&&!App.session.temporary;onClicked:manager.open() }
         CText { text:App.session.id?"Review, correct or forget shared facts and conversation passages. Memory stays separate for each project and server.":"Select a conversation to manage its project’s memory.";color:Theme.muted;font.pixelSize:Theme.secondary }
     }
+    CSection {
+        title:"Structured evaluation"
+        id:jevSection;objectName:"jevSection"
+        description:"Jev can check structured outputs as an independent service. Add its key in Connections, then choose a model. Without a model it stays off."
+        property var models:[]
+        property string problem:""
+        property string saved:""
+        function save(value){problem="";saved="";jevRpc.call("settings.update",{workbench:{jevModel:value}},result=>{if(result.error)jevSection.problem=String(result.error.message||result.error);else jevSection.saved=value?"Jev uses "+value+".":"Jev is off."})}
+        RpcClient { id:jevRpc }
+        RowLayout {
+            Layout.fillWidth:true
+            CField { id:jevModel;objectName:"jevModel";Layout.fillWidth:true;text:App.state.settings?.workbench?.jevModel||"";placeholderText:"Model name · blank keeps Jev off";Accessible.name:"Jev evaluation model";onAccepted:jevSection.save(text.trim()) }
+            CButton { objectName:"jevSave";text:"Save";enabled:App.connected&&!jevRpc.busy;onClicked:jevSection.save(jevModel.text.trim()) }
+            CButton { objectName:"jevModels";text:jevRpc.busy?"Loading…":"List models";enabled:App.connected&&!jevRpc.busy;onClicked:{jevSection.problem="";jevRpc.call("evaluation.models",{},value=>{if(value.error)jevSection.problem=String(value.error.message||value.error);else{jevSection.models=value;if(!value.length)jevSection.problem="The service lists no models."}})} }
+        }
+        Repeater {
+            model:jevSection.models
+            CButton {
+                required property var modelData
+                required property int index
+                objectName:"jevModel_"+index;Layout.fillWidth:true;alignLeft:true;quiet:true
+                text:modelData.name+(modelData.description?" · "+modelData.description:"");help:modelData.release_date?"Released "+modelData.release_date:"";primary:(App.state.settings?.workbench?.jevModel||"")===modelData.name
+                onClicked:{jevModel.text=modelData.name;jevSection.save(modelData.name)}
+            }
+        }
+        CText { visible:!!jevSection.problem;text:jevSection.problem;color:Theme.danger;font.pixelSize:Theme.secondary;Accessible.role:Accessible.AlertMessage }
+        CText { visible:!!jevSection.saved;text:jevSection.saved;color:Theme.accentText;font.pixelSize:Theme.secondary }
+    }
     MemoryCurationSettings { Layout.fillWidth:true }
     CSection {
         title:"Documents and notes"
@@ -149,8 +179,11 @@ ColumnLayout {
             CButton { objectName:"notesVaultChoose";text:knowledge.vault.path?"Change folder…":"Choose folder…";enabled:knowledge.vaultRequest<0;onClicked:{const path=App.chooseFolder();if(path)knowledge.updateVault({path:path,enabled:true},"Notes folder set.")} }
         }
         CCheckBox { objectName:"notesVaultCloud";visible:!!knowledge.vault.path;text:"Codex, Claude and cloud models may search and read notes";checked:knowledge.vault.allowCloud;enabled:knowledge.vaultRequest<0;onClicked:knowledge.updateVault({allowCloud:checked}) }
-        CText { objectName:"notesVaultStatus";visible:knowledge.vault.enabled&&!!knowledge.vaultStatus;color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true
-            text:knowledge.vaultStatus?knowledge.vaultStatus.notes+" readable notes · "+knowledge.vaultStatus.private+" private notes skipped"+(knowledge.vaultStatus.unreadable?" · "+knowledge.vaultStatus.unreadable+" notes skipped because their front matter could not be read":""):"" }
+        NotesVaultScope { visible:!!knowledge.vault.path;Layout.fillWidth:true;vault:knowledge.vault;busy:knowledge.vaultRequest>=0;onChosen:folders=>knowledge.updateVault({folders:folders},folders.length?"Only these folders are used.":"The whole notes folder is used.");onRefused:reason=>{knowledge.vaultFeedback="";knowledge.vaultError=reason} }
+        CText { objectName:"notesVaultProblem";visible:knowledge.vault.enabled&&!!knowledge.vaultStatus&&(!!knowledge.vaultStatus.problem||(knowledge.vaultStatus.missing||[]).length>0);color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true
+            text:knowledge.vaultStatus?(knowledge.vaultStatus.problem||"Not in the notes folder: "+(knowledge.vaultStatus.missing||[]).join(", ")):"" }
+        CText { objectName:"notesVaultStatus";visible:knowledge.vault.enabled&&!!knowledge.vaultStatus&&!knowledge.vaultStatus.problem;color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true
+            text:knowledge.vaultStatus?knowledge.counted(knowledge.vaultStatus.notes,"readable note","readable notes")+" · "+knowledge.counted(knowledge.vaultStatus.private,"private note","private notes")+" skipped"+(knowledge.vaultStatus.ignored?" · "+knowledge.vaultStatus.ignored+" left out by .palignore":"")+(knowledge.vaultStatus.unreadable?" · "+knowledge.counted(knowledge.vaultStatus.unreadable,"note","notes")+" skipped because the front matter could not be read":""):"" }
         CText { text:"Notes marked private: true, or whose privacy settings PAL cannot read, are never searched. Hidden folders and linked files are skipped. A model can only propose an edit: you review the exact change, it is refused if the note changed meanwhile, and the previous text is kept as a private backup.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
         RowLayout {
             visible:!!knowledge.vault.path;Layout.fillWidth:true
@@ -163,8 +196,7 @@ ColumnLayout {
     MemoryDialog { id:manager }
     KnowledgeCollections { id:collections }
     Connections { target:App;function onResult(id,value){
-        if(id===knowledge.webRequest){knowledge.webRequest=-1;if(value?.error)knowledge.webError=value.error}
-        else if(id===knowledge.memoryRequest){knowledge.memoryRequest=-1;if(value?.error)knowledge.memoryError=value.error;else if(knowledge.checkAfterSave)knowledge.checkRequest=App.rpc("memory.check",{});knowledge.checkAfterSave=false}
+        if(id===knowledge.memoryRequest){knowledge.memoryRequest=-1;if(value?.error)knowledge.memoryError=value.error;else if(knowledge.checkAfterSave)knowledge.checkRequest=App.rpc("memory.check",{});knowledge.checkAfterSave=false}
         else if(id===knowledge.extractionRequest){knowledge.extractionRequest=-1;if(value?.error)knowledge.memoryError=value.error;extraction.currentIndex=Qt.binding(()=>knowledge.extractionIndex)}
         else if(id===knowledge.extractionRefreshRequest){knowledge.extractionRefreshRequest=-1;if(value?.error)knowledge.memoryError=value.error}
         else if(id===knowledge.checkRequest){knowledge.checkRequest=-1;if(value?.error)knowledge.memoryError=value.error;else knowledge.checkResult="Ready · "+value.model}

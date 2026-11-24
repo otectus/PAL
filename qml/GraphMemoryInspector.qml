@@ -76,6 +76,7 @@ CDialog {
         Layout.fillWidth:true
         CButton { text:"Health";enabled:inspector.pending<0;onClicked:inspector.call("health",{}) }
         CButton { text:"Workspace";enabled:inspector.pending<0;onClicked:inspector.call("workspace",{}) }
+        CButton { objectName:"graphMemoryIdentity";text:"Same or different…";enabled:inspector.sessionId.length>0;onClicked:identity.openFor(inspector.sessionId,null) }
         CButton { text:"Policy";enabled:inspector.policyRequest<0;onClicked:inspector.loadPolicy() }
     }
     CField { id:query;objectName:"graphMemoryQuery";Layout.fillWidth:true;placeholderText:"Entity, task, source or project decision";Accessible.name:"Search graph memory";onAccepted:search.clicked() }
@@ -195,18 +196,8 @@ CDialog {
         CButton { text:"Resolve conflict";enabled:inspector.pending<0;onClicked:inspector.mutate("resolve_conflict") }
         CButton { text:"Archive episode";enabled:inspector.pending<0&&record.text.length>0;onClicked:{inspector.preview={};inspector.call("consolidate",{id:record.text})} }
     }
-    CText { text:"Collector policy";font.weight:Font.DemiBold }
-    CText { visible:!inspector.policyLoaded;text:inspector.policyRequest>=0?"Loading the saved collector policy…":"The saved collector policy could not be loaded; controls stay disabled.";color:Theme.muted;font.pixelSize:Theme.secondary }
-    CCheckBox { objectName:"policyHyprland";text:"Observe Hyprland workspace";enabled:inspector.policyLoaded;checked:inspector.policy.hyprland_enabled===true;onClicked:inspector.updatePolicy({hyprland_enabled:checked}) }
-    CCheckBox { objectName:"policyFish";text:"Enable Fish events";enabled:inspector.policyLoaded;checked:inspector.policy.fish_enabled===true;onClicked:inspector.updatePolicy({fish_enabled:checked}) }
-    CCheckBox { objectName:"policyKitty";text:"Inspect configured Kitty endpoint";enabled:inspector.policyLoaded;checked:inspector.policy.kitty_enabled===true;onClicked:inspector.updatePolicy({kitty_enabled:checked}) }
-    CCheckBox { objectName:"policyTitles";text:"Capture titles of approved applications";enabled:inspector.policyLoaded;checked:inspector.policy.capture_titles===true;onClicked:inspector.updatePolicy({capture_titles:checked}) }
-    CField { id:titleApps;objectName:"policyTitleApplications";Layout.fillWidth:true;enabled:inspector.policyLoaded;placeholderText:"Application classes for titles, comma-separated (for example kitty)";Accessible.name:"Approved title applications";text:(inspector.policy.title_applications||[]).join(", ") }
-    CButton { text:"Save title applications";enabled:inspector.policyLoaded;onClicked:inspector.updatePolicy({title_applications:titleApps.text.split(",").map(s=>s.trim()).filter(s=>s.length)}) }
-    CText { text:"Titles are captured only when title capture is on and the window’s application class is listed.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
-    CCheckBox { objectName:"policyHistory";text:"Retain workspace history";enabled:inspector.policyLoaded;checked:inspector.policy.history_enabled===true;onClicked:inspector.updatePolicy({history_enabled:checked}) }
-    CField { id:roots;objectName:"policyRoots";Layout.fillWidth:true;enabled:inspector.policyLoaded;placeholderText:"Approved roots (JSON array of absolute paths)";Accessible.name:"Approved filesystem roots";text:JSON.stringify(inspector.policy.approved_roots||[]) }
-    CButton { text:"Save roots";enabled:inspector.policyLoaded;onClicked:{try{inspector.updatePolicy({approved_roots:JSON.parse(roots.text)})}catch(e){inspector.error="Enter a JSON array of absolute paths."}} }
+    IdentityDecisions { id:identity }
+    CollectorPolicy { host:inspector;Layout.fillWidth:true }
     RowLayout {
         Layout.fillWidth:true
         CButton { text:"Rebuild graph";enabled:inspector.pending<0;onClicked:inspector.call("rebuild",{backend:"graph"}) }

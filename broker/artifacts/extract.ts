@@ -87,7 +87,7 @@ export class Extractor {
     let parsed: Parsed, extractor: string;
     if (version.mime === 'application/pdf') { parsed = await this.pdf(data, options, signal); extractor = 'poppler-pdftotext'; }
     else if (version.kind === 'image') { parsed = { status: 'empty', units: [{ locator: { image: version.versionId }, kind: 'metadata', text: `${version.name}: ${version.image ? `${version.image.width}×${version.image.height} ${version.image.format}` : version.mime}` }], warnings: ['Images have no text layer; use OCR or a vision pass to read their content'], stats: {} }; extractor = 'image-metadata'; }
-    else if (/^(audio|video)\//.test(version.mime)) throw Object.assign(new Error('Recordings are read through transcription (More › Transcribe a recording), which keeps timestamps'), { code: 'use_transcription' });
+    else if (/^(audio|video)\//.test(version.mime)) throw Object.assign(new Error('Recordings are read through transcription, which keeps times: open the recording and choose Transcribe'), { code: 'use_transcription' });
     else if (version.mime === 'application/octet-stream') throw Object.assign(new Error('This file type has no text PAL can extract'), { code: 'unsupported' });
     else { parsed = await this.parse(data, version.mime, version.name, options, signal); extractor = 'pal-extract'; }
     const body = parsed.units.map(unit => unit.text).join('\n');

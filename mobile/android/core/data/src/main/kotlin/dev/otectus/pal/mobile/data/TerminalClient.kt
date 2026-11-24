@@ -40,9 +40,8 @@ data class TerminalScreen(val rows: Int, val cols: Int, val lines: List<List<Ter
 
 object TerminalFrames {
     fun line(array: JsonArray): List<TerminalRun> = array.mapNotNull { element ->
-        val run = runCatching { element.jsonArray }.getOrNull() ?: return@mapNotNull null
-        if (run.size < 5) return@mapNotNull null
-        TerminalRun(run[0].jsonPrimitive.intOrNull ?: 0, run[1].jsonPrimitive.contentOrNull ?: "", run[2].jsonPrimitive.longOrNull ?: -1, run[3].jsonPrimitive.longOrNull ?: -1, run[4].jsonPrimitive.intOrNull ?: 0)
+        val run = (element as? JsonArray)?.takeIf { it.size >= 5 }?.map { it as? JsonPrimitive } ?: return@mapNotNull null
+        TerminalRun(run[0]?.intOrNull ?: 0, run[1]?.contentOrNull ?: "", run[2]?.longOrNull ?: -1, run[3]?.longOrNull ?: -1, run[4]?.intOrNull ?: 0)
     }
     private fun cursor(value: JsonArray?) = Triple(value?.getOrNull(0)?.jsonPrimitive?.intOrNull ?: 0, value?.getOrNull(1)?.jsonPrimitive?.intOrNull ?: 0, (value?.getOrNull(2)?.jsonPrimitive?.intOrNull ?: 1) == 1)
     /** A whole screen: the `screen` of terminal.attach/create, or a full `terminal.screen` frame. */
@@ -75,8 +74,9 @@ data class TerminalLease(val leaseId: String, val epoch: Int, val controllerRevi
     companion object {
         fun from(value: JsonObject?): TerminalLease? {
             value ?: return null
-            return TerminalLease(value["leaseId"]?.jsonPrimitive?.contentOrNull ?: return null, value["epoch"]?.jsonPrimitive?.intOrNull ?: return null,
-                value["controllerRevision"]?.jsonPrimitive?.contentOrNull ?: "0", value["lastSequence"]?.jsonPrimitive?.longOrNull ?: 0)
+            fun part(key: String) = value[key] as? JsonPrimitive
+            return TerminalLease(part("leaseId")?.contentOrNull ?: return null, part("epoch")?.intOrNull ?: return null,
+                part("controllerRevision")?.contentOrNull ?: "0", part("lastSequence")?.longOrNull ?: 0)
         }
     }
 }
@@ -93,9 +93,9 @@ sealed interface InputRecovery {
     data class Abandon(val reason: String) : InputRecovery
     companion object {
         fun decide(status: JsonObject, sequence: Long): InputRecovery {
-            val current = status["current"]?.jsonPrimitive?.booleanOrNull == true
+            val current = (status["current"] as? JsonPrimitive)?.booleanOrNull == true
             if (!current) return Abandon("Control of this terminal changed. Check the screen before typing again; nothing was sent twice.")
-            val last = status["lastSequence"]?.jsonPrimitive?.longOrNull ?: return Abandon("The desktop could not say what it received. Check the screen.")
+            val last = (status["lastSequence"] as? JsonPrimitive)?.longOrNull ?: return Abandon("The desktop could not say what it received. Check the screen.")
             return if (last >= sequence) Accepted else Resend
         }
     }

@@ -1,3 +1,6 @@
+import { resolveProviderEndpoint } from '../provider-registry.ts';
+import {OpenRouterImages} from './backends/openrouter.ts';
+import { XaiImages, xaiImageModels } from './backends/xai.ts';
 /**
  * Image work for every conversation, independent of its chat model: a text-only Ollama conversation can
  * ask a configured image backend for a picture. Manual Workbench actions call the same service.
@@ -32,12 +35,13 @@ import { parsePortableRecipe, portableDigest, portableRecipeLimits, type Portabl
 export const trustedConnectionLists = new WeakSet<object>();
 
 export type ImageConnection = {
-  id: string; name: string; kind: 'openai' | 'google' | 'comfyui'; model: string; enabled: boolean;
+  id: string; name: string; kind: 'openai' | 'google' | 'xai' | 'azure_openai' | 'openrouter' | 'comfyui'; model: string; enabled: boolean;
   /** ComfyUI only: the exact server origin, where it processes, and whether it interrupts by prompt ID. */
   origin?: string; route?: ProcessingRoute; targetedInterrupt?: boolean;
   workflows?: ComfyWorkflow[]; workflowId?: string;
   /** A model may start jobs on this connection without asking each time, up to this many images a day. */
   budget: { imagesPerDay: number; modelMayStart: boolean };
+  providerAccountId?:string;
   billingAcknowledged?: boolean;
   /** Optional user-supplied estimate only; PAL never assumes provider prices. */
   estimate?: { perImage: number; currency: string };
@@ -54,7 +58,7 @@ export function validConnections(value: unknown, previous: ImageConnection[]): I
   return value.map((item: any) => {
     if (!item || typeof item !== 'object') throw new Error('Invalid image connection');
     const kind = item.kind;
-    if (!['openai', 'google', 'comfyui'].includes(kind)) throw new Error('An image connection uses OpenAI, Google or ComfyUI');
+    if (!['openai', 'google', 'xai','azure_openai','openrouter', 'comfyui'].includes(kind)) throw new Error('Choose a supported image backend');
     const name = typeof item.name === 'string' && item.name.trim() && item.name.trim().length <= 60 && !/[\x00-\x1f]/.test(item.name) ? item.name.trim() : '';
     if (!name) throw new Error('Name the image connection (up to 60 characters)');
     const model = typeof item.model === 'string' ? item.model.trim() : '';
@@ -75,11 +79,12 @@ export function validConnections(value: unknown, previous: ImageConnection[]): I
       if (!item.estimate || typeof item.estimate !== 'object' || !Number.isFinite(item.estimate.perImage) || item.estimate.perImage < 0 || typeof item.estimate.currency !== 'string' || !/^[A-Za-z]{3}$/.test(item.estimate.currency)) throw new Error('An image estimate needs a nonnegative per-image amount and a three-letter currency');
       estimate = { perImage: item.estimate.perImage, currency: item.estimate.currency.toUpperCase() };
     }
-    const next: ImageConnection = { id, name, kind, model: kind === 'comfyui' ? '' : model, enabled: item.enabled !== false,
+    if(item.providerAccountId && (kind==='comfyui'||typeof item.providerAccountId!=='string'||!uuid.test(item.providerAccountId)))throw new Error('Choose a named hosted image account');
+    const next: ImageConnection = { id, name, kind, model: kind === 'comfyui' ? '' : model, enabled: item.enabled !== false, ...(item.providerAccountId?{providerAccountId:item.providerAccountId}:{}),
       ...(kind === 'comfyui' ? { origin, route: item.route || (/^(127\.|localhost$|\[?::1\]?$)/.test(new URL(origin!).hostname) ? 'local' : 'remote'), targetedInterrupt: item.targetedInterrupt === true, workflows: trusted && Array.isArray(item.workflows) ? item.workflows : before?.workflows || [], ...(typeof item.workflowId === 'string' ? { workflowId: item.workflowId } : before?.workflowId ? { workflowId: before.workflowId } : {}) } : {}),
       budget: { imagesPerDay: budget.imagesPerDay ?? before?.budget.imagesPerDay ?? 20, modelMayStart: budget.modelMayStart === true },
       ...(item.billingAcknowledged === true || before?.billingAcknowledged ? { billingAcknowledged: true } : {}), ...(estimate ? { estimate } : {}), revision: before?.revision || 1 };
-    const material = (c?: ImageConnection) => c ? JSON.stringify([c.kind, c.model, c.origin, c.route, c.targetedInterrupt, c.enabled, c.budget, c.workflowId, c.estimate]) : '';
+    const material = (c?: ImageConnection) => c ? JSON.stringify([c.kind, c.providerAccountId, c.model, c.origin, c.route, c.targetedInterrupt, c.enabled, c.budget, c.workflowId, c.estimate]) : '';
     if (before && material(before) !== material(next)) next.revision = before.revision + 1;
     return next;
   });
@@ -117,8 +122,14 @@ export class MediaService {
   private workflowsDir() { return privateDir(join(this.core.store.directory, 'media', 'workflows')); }
   async graph(workflow: ComfyWorkflow) { return JSON.parse(await readFile(join(this.workflowsDir(), workflow.id + '.json'), 'utf8')); }
   async backend(connection: ImageConnection, workflowId?: string): Promise<ImageBackend> {
-    if (connection.kind === 'openai') return new OpenAiImages(connection.model);
-    if (connection.kind === 'google') return new GoogleImages(connection.model);
+    if(connection.kind==='azure_openai'){
+      const access=this.azureImageAccess(connection);
+      return new OpenAiImages(connection.model,this.imageBase(connection),async()=>access.token?{Authorization:'Bearer '+await access.token()} as Record<string,string>:{'api-key':access.key()});
+    }
+    if(connection.kind==='openrouter')return new OpenRouterImages(connection.model,this.imageBase(connection)!);
+    if (connection.kind === 'openai') return new OpenAiImages(connection.model,this.imageBase(connection));
+    if (connection.kind === 'xai') return new XaiImages(connection.model,this.imageBase(connection));
+    if (connection.kind === 'google') return new GoogleImages(connection.model,this.imageBase(connection));
     const workflow = (connection.workflows || []).find(item => item.id === (workflowId || connection.workflowId)) || (connection.workflows || [])[0];
     if (!workflow) throw new BackendRefusal('no_workflow', `Import a reviewed workflow for ${connection.name} first`);
     return new ComfyImages({ origin: connection.origin!, route: connection.route || 'unknown', targetedInterrupt: !!connection.targetedInterrupt, workflows: connection.workflows || [], token: () => this.secret(connection.id) }, workflow, await this.graph(workflow));
@@ -135,7 +146,27 @@ export class MediaService {
     this.secrets.set(connection.id, 'TOKEN', typeof token === 'string' ? token : '');
     return { set: !!this.secret(connection.id) };
   }
-  key(connection: ImageConnection) { return connection.kind === 'openai' ? this.core.credentials.key('openai') : connection.kind === 'google' ? this.core.credentials.key('google') : this.secret(connection.id); }
+  private azureImageAccess(c:ImageConnection){
+    if(!c.providerAccountId)throw new Error('Select a named Azure OpenAI image deployment');
+    const access=this.core.accountAccess('azure_openai',c.providerAccountId),route=access.route?.();
+    if(!route?.deployment||route.variant==='legacy'||route.deployment!==c.model)throw new Error('Use the deployment name from the selected Azure OpenAI v1 account as the image model');
+    return access;
+  }
+  private imageBase(c:ImageConnection){
+    if(c.kind==='comfyui')return;
+    const account=c.providerAccountId?this.core.chatConnections.get(c.providerAccountId,c.kind):undefined;
+    if(account?.variant==='vertex')throw new Error('Select a Gemini Developer account for this image operation');
+    return resolveProviderEndpoint(c.kind,account?this.core.accountAccess(c.kind,account.id).route?.():undefined);
+  }
+  private accountWitness(c:ImageConnection){
+    if(c.kind==='comfyui')return '';
+    const account=c.providerAccountId?this.core.chatConnections.get(c.providerAccountId,c.kind):undefined;
+    return [account?.id||c.kind,account?.revision||0,this.core.credentials.credentialRevision(account?'connection:'+account.id:'provider:'+c.kind)].join('/');
+  }
+  key(c: ImageConnection) {
+    if(c.kind==='comfyui')return this.secret(c.id);
+    return c.providerAccountId?this.core.accountAccess(c.kind,c.providerAccountId).key():this.core.credentials.key(c.kind);
+  }
   private recipeCost(connection: ImageConnection, billed: boolean, count: number): ImageRecipeV1['backend']['cost'] {
     const amount = connection.estimate ? connection.estimate.perImage * count : undefined;
     return { kind: billed ? 'provider-account' : 'own-server', note: billed ? 'May be billed by the configured provider' : 'Runs on the configured server; PAL records no provider charge',
@@ -144,9 +175,10 @@ export class MediaService {
   async capabilities(connectionId?: unknown, workflowId?: string) { const connection = this.connection(connectionId); return { connection: this.publicConnection(connection), capabilities: (await this.backend(connection, workflowId)).describe() }; }
   publicConnection(connection: ImageConnection) {
     const { id, name, kind, model, origin, route, targetedInterrupt, workflowId, budget, billingAcknowledged, estimate, revision, enabled } = connection;
-    return { id, name, kind, model, origin, route: kind === 'comfyui' ? route : 'cloud', targetedInterrupt, workflowId, budget, billingAcknowledged: !!billingAcknowledged, estimate, revision, enabled,
+    let hasKey=false;try{hasKey=!!this.key(connection);}catch{}
+    return { id, name, kind, model, origin,providerAccountId:connection.providerAccountId, route: kind === 'comfyui' ? route : 'cloud', targetedInterrupt, workflowId, budget, billingAcknowledged: !!billingAcknowledged, estimate, revision, enabled,
       workflows: (connection.workflows || []).map(({ id, name, operation, digest, cloudNodes, unknownNodes, reviewedLocal, bindings }) => ({ id, name, operation, digest: digest.slice(0, 12), cloudNodes, unknownNodes, reviewedLocal, bindings: Object.keys(bindings) })),
-      hasKey: !!this.key(connection) || kind === 'comfyui', suggestions: kind === 'openai' ? openaiImageModels : kind === 'google' ? googleImageModels : [] };
+      hasKey: hasKey || kind === 'comfyui', suggestions: kind === 'openai' ? openaiImageModels : kind === 'google' ? googleImageModels : kind === 'xai' ? xaiImageModels : [] };
   }
 
   // ---------- workflows ----------
@@ -181,9 +213,13 @@ export class MediaService {
     if (connection.kind === 'comfyui') return (await this.backend(connection) as ComfyImages).check(this.fetch, signal);
     // A free metadata request: confirms the key works and the model is visible, without making an image.
     const key = this.key(connection);
-    if (!key) throw new Error(`Add a ${connection.kind === 'openai' ? 'OpenAI' : 'Google AI'} API key in Settings → Connections`);
-    const url = connection.kind === 'openai' ? 'https://api.openai.com/v1/models/' + encodeURIComponent(connection.model) : 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(connection.model);
-    const response = await this.fetch(url, { headers: connection.kind === 'openai' ? { Authorization: `Bearer ${key}` } : { 'x-goog-api-key': key }, redirect: 'error', signal });
+    if (!key) throw new Error(`Add a ${connection.kind} API key in Settings → Connections`);
+    if(connection.kind==='azure_openai'){
+      const access=this.azureImageAccess(connection);if(access.token)await access.token();
+      return {reachable:null,note:'Deployment configuration is ready. Inference access is checked when an image is requested.'};
+    }
+    const url = new URL(connection.kind==='openrouter'?'images/models':'models/'+encodeURIComponent(connection.model),this.imageBase(connection));
+    const response = await this.fetch(url, { headers: connection.kind !== 'google' ? { Authorization: `Bearer ${key}` } : { 'x-goog-api-key': key }, redirect: 'error', signal });
     await response.body?.cancel().catch(() => {});
     return { reachable: response.ok, status: response.status, note: response.ok ? 'The key works and the model is listed for your account. No image was made.' : response.status === 404 ? 'The model is not listed for your account.' : 'The provider refused the key or the request.' };
   }
@@ -266,7 +302,7 @@ export class MediaService {
     if (validated.mask && capabilities.maskBehavior === 'none' && !validated.protectOutside) throw new BackendRefusal('unsupported_parameter', 'This backend has no mask input; turn on keeping pixels outside the selection unchanged');
     const { inputs, versions } = await this.resolve(sessionId, validated, capabilities.route);
     const workflowDigest = backend instanceof ComfyImages ? backend.workflow.digest : '';
-    const digest = OperationStore.digest({ sessionId, connection: connection.id, revision: connection.revision, workflow: workflowDigest, request: validated });
+    const digest = OperationStore.digest({ sessionId, connection: connection.id, revision: connection.revision, account:this.accountWitness(connection), workflow: workflowDigest, request: validated });
     const existing = this.operations.findPrepared(sessionId, digest);
     if (existing) return { operation: existing, capabilities, adjustments, duplicate: true };
     if (connection.budget.imagesPerDay && this.operations.imagesToday(connection.id) + validated.count > connection.budget.imagesPerDay && p.origin !== 'user')
@@ -289,7 +325,7 @@ export class MediaService {
     if (raced) { await this.recipes.remove(recipe.recipeId); return { operation: raced, capabilities, adjustments, duplicate: true }; }
     const operation = this.operations.create({ sessionId, ...(p.turnId ? { turnId: p.turnId } : {}), kind: validated.operation === 'generate' || validated.operation === 'reference' ? 'image.generate' : 'image.edit', origin: p.origin,
       label: (validated.operation === 'generate' || validated.operation === 'reference' ? 'Image: ' : 'Image edit: ') + validated.prompt.slice(0, 80), payloadDigest: digest,
-      witness: { route: capabilities.route, connectionRevision: connection.revision, recipe: recipe.digest, ...(workflowSnapshot ? { workflow: workflowSnapshot.snapshotDigest, dependenciesCheckedAt: workflowSnapshot.dependencies.checkedAt } : {}), inputs: versions.map(version => ({ id: version.versionId, policy: version.policyId })) },
+      witness: { route: capabilities.route, account:this.accountWitness(connection), connectionRevision: connection.revision, recipe: recipe.digest, ...(workflowSnapshot ? { workflow: workflowSnapshot.snapshotDigest, dependenciesCheckedAt: workflowSnapshot.dependencies.checkedAt } : {}), inputs: versions.map(version => ({ id: version.versionId, policy: version.policyId })) },
       inputs: validated.references.map(ref => ({ artifactId: ref.artifactId, versionId: ref.versionId, purpose: ref.role })),
       backend: { connectionId: connection.id, kind: connection.kind, model: capabilities.model, ...(connection.kind === 'comfyui' ? { workflow: backend instanceof ComfyImages ? backend.workflow.id : p.workflowId || connection.workflowId } : {}), revision: connection.revision, route: capabilities.route },
       details: { request: { ...validated, prompt: validated.prompt.slice(0, 2000) }, adjustments, billed: capabilities.billed, notes: capabilities.notes, recipe: { schema: 1, recipeId: recipe.recipeId, digest: recipe.digest }, ...(p.replayOf ? { replayOf: p.replayOf } : {}) } });
@@ -424,7 +460,7 @@ export class MediaService {
     let operation = this.operations.get(operationId);
     if (operation.state !== 'prepared' && operation.state !== 'awaiting_approval') return operation;
     const connection = this.connection(operation.backend!.connectionId);
-    if (connection.revision !== operation.backend!.revision) { this.operations.transition(operation.id, 'expired', { error: { code: 'connection_changed', message: 'The image connection changed after this was prepared; prepare it again' } }); throw new BackendRefusal('connection_changed', 'The image connection changed; nothing was sent'); }
+    if (connection.revision !== operation.backend!.revision || operation.witness.account!==undefined && operation.witness.account!==this.accountWitness(connection)) { this.operations.transition(operation.id, 'expired', { error: { code: 'connection_changed', message: 'The image connection changed after this was prepared; prepare it again' } }); throw new BackendRefusal('connection_changed', 'The image connection changed; nothing was sent'); }
     const count = Number((operation.details?.request as any)?.count) || 1;
     this.operations.reserve(operation, { images: count });
     operation = this.operations.transition(operation.id, 'queued', { reservation: { images: count, state: 'held' } });
@@ -580,7 +616,7 @@ export class MediaService {
           signal.throwIfAborted();
           if (this.core.settings.paused) throw new BackendRefusal('paused', 'PAL actions were paused before sending');
           const current = this.connection(connection.id);
-          if (current.revision !== connection.revision) throw new BackendRefusal('connection_changed', 'The image connection changed before sending');
+          if (current.revision !== connection.revision || operation.witness.account!==undefined && operation.witness.account!==this.accountWitness(current)) throw new BackendRefusal('connection_changed', 'The image connection changed before sending');
           for (const version of versions) if (!routeAllowed(operation.backend!.route, this.artifacts.version(operation.sessionId, version.artifactId, version.versionId).policy)) throw new BackendRefusal('destination', 'An input’s processing permission changed before sending');
         },
         dispatched: (remoteId?: string) => {

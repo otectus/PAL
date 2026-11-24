@@ -4,6 +4,7 @@ import { pipeline } from 'node:stream/promises';
 import { withHttpRetry, HttpStatusError, type RetryOptions } from './http-retry.ts';
 import { indexChunks } from './indextts-config.ts';
 import { audioSelection, playbackArgs } from './audio-devices.ts';
+import type { CachedSpeech, SpeechFacts } from './speech-cache.ts';
 
 export type ElevenConfig={voiceId:string;modelId:string;allowCloud:boolean};
 export const defaultElevenConfig:ElevenConfig={voiceId:'',modelId:'eleven_flash_v2_5',allowCloud:false};
@@ -77,8 +78,15 @@ export class ElevenLabs{
       catch{signal.throwIfAborted();throw new ElevenError('STREAM');}
     }
   }
-  async play(text:string,signal:AbortSignal,tuning:{rate:number;pitch:number;volume:number},onAudio:()=>void){
-    const controller=new AbortController(),combined=AbortSignal.any([signal,controller.signal,AbortSignal.timeout(5*60*1000)]),env=this.options.env||process.env;
+  /** What decides how this service sounds; nothing while it may not be used, so kept audio never stands in for that. */
+  private facts():SpeechFacts|undefined{const c=this.settings();return c.allowCloud&&c.voiceId?{engine:'elevenlabs',voice:c.voiceId,model:c.modelId,format:'pcm_24000'}:undefined;}
+  async play(text:string,signal:AbortSignal,tuning:{rate:number;pitch:number;volume:number},onAudio:()=>void,kept:(facts:SpeechFacts|undefined)=>CachedSpeech|undefined=()=>undefined){
+    const cached=kept(this.facts());
+    return playProviderPcm(signal,tuning,onAudio,combined=>cached?cached.through(24000,()=>this.audio(text,combined)):this.audio(text,combined),this.options.env);
+  }
+}
+export async function playProviderPcm(signal:AbortSignal,tuning:{rate:number;pitch:number;volume:number},onAudio:()=>void,audio:(signal:AbortSignal)=>AsyncIterable<Buffer>,env=process.env) {
+    const controller=new AbortController(),combined=AbortSignal.any([signal,controller.signal,AbortSignal.timeout(5*60*1000)]);
     combined.throwIfAborted();
     const format=['-t','raw','-e','signed-integer','-b','16','-L','-c','1','-r','24000'];
     const filter=spawn(env.PAL_SOX_BIN||env.CERE_SOX_BIN||'sox',['-q','-D',...format,'-',...format,'-',...(tuning.rate!==1?['tempo',String(tuning.rate)]:[]),...(tuning.pitch?['pitch',String(tuning.pitch*100)]:[]),'vol',String(tuning.volume)],{env,stdio:['pipe','pipe','ignore']});
@@ -91,9 +99,8 @@ export class ElevenLabs{
     let started=false;
     const meter=new Transform({transform(chunk,_encoding,done){if(!started){started=true;onAudio();}done(null,chunk);}});
     try{
-      await Promise.all([pipeline(Readable.from(this.audio(text,combined)),filter.stdin,{signal:combined}),pipeline(filter.stdout,meter,player.stdin,{signal:combined})]);
+      await Promise.all([pipeline(Readable.from(audio(combined)),filter.stdin,{signal:combined}),pipeline(filter.stdout,meter,player.stdin,{signal:combined})]);
       await Promise.all(closed);if(failure)throw failure;if(!started)throw new ElevenError('STREAM');
     }catch(e){controller.abort();await Promise.all(closed);signal.throwIfAborted();throw failure||(e instanceof ElevenError?e:new ElevenError('STREAM'));}
     finally{combined.removeEventListener('abort',stop);stop();await Promise.all(closed);}
-  }
 }

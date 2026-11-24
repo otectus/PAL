@@ -314,3 +314,15 @@ test('two period workbooks explain revenue changes by customer and link the rank
   assert.ok(sources.rows.some((r:any)=>r.values.slice(0,3).join('/')==='North/after/2'));
   assert.match(String(op.details?.stdout),/Net change in revenue: -6/);
 });
+
+test('a table meant for a spreadsheet can be exported with its formulas kept as text', async t => {
+  const f = await workbenchFixture(t), session = await f.core.create({ provider: 'ollama', model: 'text-tools:latest', cwd: f.project, capabilities: { analysis: true } }), sessionId = session.id, csv = 'name,"=header()",amount\r\n"=HYPERLINK(""http://x"")",ok,-12.5\r\n@sum,+1,+cmd\r\n-plain,\t=x,"a=b"\r\n';
+  const source = await f.core.workbench.artifacts.install({ sessionId, name: 'rows.csv', bytes: Buffer.from(csv), source: 'user-import', provenance: { kind: 'fixture' } });
+  const rpc = (method: string, more: any = {}) => f.core.rpc(method, { sessionId, artifactId: source.artifactId, versionId: source.versionId, ...more }) as Promise<any>, text = async (ref: any) => (await f.core.workbench.artifacts.bytes(sessionId, ref.artifactId, ref.versionId)).data.toString();
+  const view = await rpc('codelab.table'); assert.equal(view.formulaCells, 6, 'numbers with a sign are numbers; a header counts too'); assert.equal((await rpc('codelab.table', { query: 'plain' })).formulaCells, 3);
+  assert.match(await text(await rpc('codelab.exportRows')), /^"name","=header\(\)","amount"\r\n"=HYPERLINK/, 'as it is unless asked for');
+  const exported = await rpc('codelab.exportRows', { spreadsheetSafe: true });
+  assert.equal(await text(exported), '"name","\'=header()","amount"\r\n"\'=HYPERLINK(""http://x"")","ok","-12.5"\r\n"\'@sum","+1","\'+cmd"\r\n"\'-plain","\'\t=x","a=b"\r\n');
+  const kept = f.core.workbench.artifacts.version(sessionId, exported.artifactId, exported.versionId); assert.deepEqual([(kept.provenance as any).spreadsheetSafe, (kept.provenance as any).escapedCells], [true, 6]);
+  assert.equal(await text(source), csv, 'the source stays as it is');
+});

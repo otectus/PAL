@@ -155,6 +155,30 @@ selected module/voice is absent, it reports `piper` and a fallback reason.
 The helper uses `speechd.SSIPClient`, bounded connection/playback timeouts and
 `cancel(SELF)`; it never sends global stop/cancel commands.
 
+## Keeping spoken audio
+
+**Settings → Voice → Keep spoken audio** (off by default) keeps the audio made for
+messages of saved conversations, for the days and space you choose, so reading one
+again needs no new synthesis. Audio is found by its text, engine, voice and every
+option that changes how it sounds; a replaced voice file is another voice. It belongs
+to the messages it was made from and goes when one of them is forgotten, or its
+conversation is deleted, and when the option is switched off. It is stored under
+PAL's state directory with mode 0600 and holds no text.
+
+Nothing is kept of temporary conversations, of text that belongs to no saved message,
+of an utterance that was stopped or failed, or of voices played through Speech
+Dispatcher, which plays them itself. A provider that is switched off is not replaced
+by kept audio. **Health → Responsiveness** counts how often the same words were spoken
+again while it measures, as numbers only.
+
+## A speech server for voice input
+
+Voice input runs whisper.cpp for each recording by default. **Local · speech server**
+asks a server on this computer instead, which keeps its model loaded: whisper.cpp's
+`whisper-server` as it is, or one with OpenAI's form when the address ends in `/v1`.
+Only loopback addresses are accepted, redirects are not followed, no key is sent, and
+PAL does not start the server or fall back to another engine when it does not answer.
+
 ## Custom voices and diagnostics
 
 Drop `NAME.onnx` and `NAME.onnx.json` (or `NAME.json`) into

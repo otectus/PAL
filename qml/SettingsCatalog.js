@@ -47,6 +47,7 @@ var categories = [
             {label: "Read replies aloud", target: "speechEnabled", keywords: "speech tts automatic"},
             {label: "Speak replies from", target: "speechProvider_codex", keywords: "providers codex claude ollama antigravity api automatic speech"},
             {label: "Speech provider", target: "ttsProvider", keywords: "local piper kokoro indextts elevenlabs engine"},
+            {label: "Keep spoken audio", target: "speechCache", keywords: "cache repeat read again recordings storage disk delete offline billed"},
             {label: "Speaking voice", target: "speechVoice", keywords: "piper kokoro heart bella"},
             {label: "Speaking speed", target: "speechRate", keywords: "rate fast slow"},
             {label: "Pitch", target: "speechPitch", keywords: "tone semitones lower higher"},
@@ -74,6 +75,7 @@ var categories = [
             {label: "Ollama server", target: "ollamaHost", keywords: "url host connect local"},
             {label: "Default Ollama model", target: "ollamaDefaultModel", keywords: "chat refresh"},
             {label: "Manage local models", target: "manageLocalModels", keywords: "download pull delete load unload vram gpu ollama models disk"},
+            {label: "Accounts", target: "accountsSettings", keywords: "github google gmail calendar drive microsoft outlook onedrive mail email oauth sign in device code agenda"},
             {label: "Command-line providers", target: "cliProviders", keywords: "codex claude code antigravity agy installed version status"},
             {label: "OpenAI API key", target: "apiKey_openai", keywords: "gpt"},
             {label: "Claude API key", target: "apiKey_anthropic", keywords: "anthropic"},
@@ -95,6 +97,7 @@ var categories = [
             {label: "Embedding model", target: "embeddingModel", keywords: "nomic embed ollama gemini google api"},
             {label: "Extraction provider", target: "memoryExtractionProvider", keywords: "gemini google claude anthropic api memory"},
             {label: "Graph extraction model", target: "extractionModel", keywords: "glm cloud extraction"},
+            {label: "Structured evaluation (Jev)", target: "jevModel", keywords: "jev typesafe evaluation model check output probability"},
             {label: "Share recalled memory with cloud models", target: "cloudMemoryEnabled", keywords: "codex claude cloud privacy"},
             {label: "Show memory citations in replies", target: "showMemoryCitations", keywords: "evidence markers references"},
             {label: "Manage project memory", target: "manageMemories", keywords: "facts notes forget correct inspector graph"},
@@ -114,6 +117,7 @@ var categories = [
             {label: "Pause AI actions", target: "pauseActions", keywords: "stop resume tools"},
             {label: "Standing grants", target: "grantHour", keywords: "one hour project grant revoke broad"},
             {label: "Tool servers (MCP)", target: "addToolServer", keywords: "mcp model context protocol extensions integrations plugins github tools servers"},
+            {label: "Service manifests", target: "manifestAdd", keywords: "provider adapter add-on extension service search speech embedding storage manifest json"},
             {label: "Custom tools", target: "addCustomTool", keywords: "http rest api request webhook command program template custom tool"}
         ]},
     {id: "scripts", group: "assistant", label: "Saved scripts", chip: "Scripts", icon: "terminal",
@@ -150,7 +154,8 @@ var categories = [
         keywords: "android phone remote pairing qr wireguard tailscale lan devices gateway this computer full access limited access observer",
         settings: [
             {label: "Disable remote access", target: "disableRemote", keywords: "off stop gateway"},
-            {label: "Pair a phone", target: "pairingResponse", keywords: "qr pairing response verify"}
+            {label: "Pair a phone", target: "pairingResponse", keywords: "qr pairing response verify"},
+            {label: "Use PAL in a web browser", target: "browserEnabled", keywords: "browser companion web page chrome firefox pair code observer laptop"}
         ]},
     {id: "telemetry", group: "system", label: "Workspace telemetry", chip: "Telemetry", icon: "context",
         blurb: "Share recent shell and file activity only from the workspaces you pick.",
@@ -163,11 +168,16 @@ var categories = [
             {label: "Include stderr from pal-run", target: "telemetryOutput", keywords: "errors output"}
         ]},
     {id: "application", group: "system", label: "Application", icon: "settings",
-        blurb: "PAL’s shortcut, how you send messages, your backups, a health check and the way out.",
-        keywords: "hyprland shortcut keybinding send key enter composer backup restore recovery health diagnostics quit exit",
+        blurb: "PAL’s shortcut, how you send messages, the date and time, your backups, a health check and the way out.",
+        keywords: "hyprland shortcut keybinding send key enter composer time date clock timezone backup restore recovery health diagnostics quit exit",
         settings: [
             {label: "Copy Hyprland shortcut", target: "copyShortcut", keywords: "keybinding super toggle"},
             {label: "Send messages with", target: "sendKey", keywords: "enter ctrl control keyboard composer newline new line send button submit"},
+            {label: "Time awareness", target: "timeEnabled", keywords: "current date time clock today now assistant model knows"},
+            {label: "Time zone", target: "timeZoneMode", keywords: "timezone zone iana utc offset travel phone device fixed"},
+            {label: "Time since earlier messages", target: "timeConversation", keywords: "elapsed duration gap ago timing conversation"},
+            {label: "Time display", target: "timeDisplay", keywords: "12-hour 24-hour am pm clock format"},
+            {label: "Open the clock", target: "openClock", keywords: "current date and time now clock view"},
             {label: "Backup and restore", target: "openBackup", keywords: "recovery export import profile"},
             {label: "Health and recovery", target: "openHealth", keywords: "diagnostics inspect logs report repair responsiveness slow latency measure timing"},
             {label: "Quit and keep sessions running", target: "quitKeepSessions", keywords: "exit close"},

@@ -20,7 +20,8 @@ ColumnLayout {
     RpcClient { id:rpc }
     function reload(){rpc.call("setups.list",{},value=>{if(value.error)setups.error=value.error;else{setups.items=value.setups||[];setups.revision=value.revision||"0"}})}
     function done(value,text){if(value.error){setups.error=value.error;setups.feedback="";return false}setups.error="";setups.feedback=text||"";setups.reload();return true}
-    function summary(s){const on=setups.families.filter(f=>s.families&&s.families[f]).map(f=>setups.familyNames[f]);return [s.provider?(s.provider+(s.model?" · "+s.model:"")):"", on.length?on.join(", "):"No Workbench", s.posture||"", s.collections.length?s.collections.length+" collections":"", s.skills.length?s.skills.length+" skills":""].filter(x=>x).join(" · ")}
+    function summary(s){const on=setups.families.filter(f=>s.families&&s.families[f]).map(f=>setups.familyNames[f]);return [s.provider?specialistAccount.label(s.provider):"", s.connection||"", s.model||"", on.length?on.join(", "):"No Workbench", s.posture||"", counted(s.collections.length,"collection"), counted(s.skills.length,"skill")].filter(x=>x).join(" · ")}
+    function counted(total,word){return total?total+" "+word+(total===1?"":"s"):""}
     function startSetup(setup,folder){rpc.call("setups.start",Object.assign({setupId:setup.id,expectedSetupRevision:String(setup.revision),cwd:folder},setup.model?{}:{model:App.state.settings?.ollama?.model||undefined}),value=>{if(setups.done(value,"Started a conversation with "+setup.name+(value.unresolved&&value.unresolved.length?". Still missing: "+value.unresolved.join(" "):"."))&&value.session)App.select(value.session.id)})}
     function chooseStart(setup){const folder=App.chooseFolder();if(!folder)return;if(setup.families?.host){hostStartSetup=setup;hostStartFolder=folder;hostStartReview.open()}else startSetup(setup,folder)}
     onVisibleChanged:if(visible){reload();loadSpecialists()}
@@ -50,7 +51,7 @@ ColumnLayout {
             }
         }
         Flow { Layout.fillWidth:true;spacing:Theme.space2
-            CButton { text:"New setup…";onClicked:{setups.editing={name:"",description:"",families:{},collections:[],skills:[]};editor.load()} }
+            CButton { objectName:"newSetup";text:"New setup…";onClicked:{setups.editing={name:"",description:"",families:{},collections:[],skills:[]};editor.load()} }
             CButton { objectName:"importSetups";text:"Import setups…";onClicked:{const file=App.chooseFile();if(file)rpc.call("setups.import",{path:file},value=>setups.done(value,value.added?("Imported "+value.added.length+" setups."):""))} }
         }
         CText { visible:!!setups.error;text:setups.error;color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
@@ -89,21 +90,21 @@ ColumnLayout {
             RowLayout {
                 required property var modelData
                 Layout.fillWidth:true
-                CText { text:modelData.name+" · "+(setups.roles[modelData.role]||modelData.role)+(modelData.model?" · "+modelData.provider+" "+modelData.model:" · helper model");Layout.fillWidth:true;elide:Text.ElideRight }
+                CText { text:modelData.name+" · "+(setups.roles[modelData.role]||modelData.role)+(modelData.model?" · "+specialistAccount.label(modelData.provider)+" "+modelData.model+(modelData.connectionId?" · "+((specialistAccount.accounts||[]).find(row=>row.id===modelData.connectionId)?.name||"account missing"):""):" · helper model");Layout.fillWidth:true;elide:Text.ElideRight }
                 CButton { visible:!modelData.builtin;text:"Delete";danger:true;quiet:true;onClicked:rpc.call("specialists.delete",{id:modelData.id},value=>{if(value.error)setups.error=value.error;else setups.loadSpecialists()}) }
             }
         }
         RowLayout { Layout.fillWidth:true
-            CField { id:specialistName;Layout.fillWidth:true;placeholderText:"New specialist name" }
+            CField { id:specialistName;objectName:"specialistName";Layout.fillWidth:true;placeholderText:"New specialist name" }
             CComboBox { id:specialistRole;model:Object.keys(setups.roles);displayText:setups.roles[currentText]||currentText;Accessible.name:"Specialist kind" }
         }
+        ProviderAccountPicker { id:specialistAccount;name:"specialist";anyLabel:"Helper model";commandLine:false;Layout.fillWidth:true }
         RowLayout { Layout.fillWidth:true
-            CField { id:specialistProvider;Layout.fillWidth:true;placeholderText:"Provider (optional: ollama, openai…)" }
-            CField { id:specialistModel;Layout.fillWidth:true;placeholderText:"Model (optional)" }
+            CField { id:specialistModel;objectName:"specialistModel";Layout.fillWidth:true;enabled:specialistAccount.provider.length>0;placeholderText:specialistAccount.provider?"Model":"Runs on the helper model" }
         }
         CField { id:specialistInstructions;Layout.fillWidth:true;placeholderText:"Standing instructions (optional)" }
-        CButton { text:"Add specialist";enabled:specialistName.text.trim().length>0
-            onClicked:rpc.call("specialists.save",{specialist:{name:specialistName.text,role:specialistRole.currentText,provider:specialistProvider.text||undefined,model:specialistModel.text||undefined,instructions:specialistInstructions.text||undefined}},value=>{if(value.error){setups.error=value.error;return}specialistName.clear();specialistModel.clear();specialistProvider.clear();specialistInstructions.clear();setups.loadSpecialists()}) }
+        CButton { objectName:"specialistAdd";text:"Add specialist";enabled:specialistName.text.trim().length>0&&(!specialistAccount.provider||specialistModel.text.trim().length>0)
+            onClicked:rpc.call("specialists.save",{specialist:{name:specialistName.text,role:specialistRole.currentText,provider:specialistAccount.provider||undefined,connectionId:specialistAccount.account||undefined,model:specialistAccount.provider?specialistModel.text||undefined:undefined,instructions:specialistInstructions.text||undefined}},value=>{if(value.error){setups.error=value.error;return}specialistName.clear();specialistModel.clear();specialistAccount.set("","");specialistInstructions.clear();setups.loadSpecialists()}) }
     }
     CDialog {
         id:applyDialog
@@ -131,16 +132,14 @@ ColumnLayout {
     }
     CDialog {
         id:editor
-        function load(){const s=setups.editing;name.text=s.name||"";description.text=s.description||"";provider.text=s.provider||"";model.text=s.model||"";style.text=s.style||"";posture.text=s.posture||"";instructions.text=s.instructions||"";collections.text=(s.collections||[]).join("\n");skillsText.text=(s.skills||[]).join("\n");voice.text=s.voice||"";chosen=Object.assign({},s.families||{});open()}
+        function load(){const s=setups.editing;name.text=s.name||"";description.text=s.description||"";account.set(s.provider,s.connection);model.text=s.model||"";style.text=s.style||"";posture.text=s.posture||"";instructions.text=s.instructions||"";collections.text=(s.collections||[]).join("\n");skillsText.text=(s.skills||[]).join("\n");voice.text=s.voice||"";chosen=Object.assign({},s.families||{});open()}
         property var chosen:({})
         function lines(t){return String(t||"").split("\n").map(x=>x.trim()).filter(x=>x)}
         CText { text:setups.editing&&setups.editing.id?"Edit setup":"New setup";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
-        CField { id:name;Layout.fillWidth:true;placeholderText:"Name";maximumLength:80 }
+        CField { id:name;objectName:"setupName";Layout.fillWidth:true;placeholderText:"Name";maximumLength:80 }
         CField { id:description;Layout.fillWidth:true;placeholderText:"What it is for" }
-        RowLayout { Layout.fillWidth:true
-            CField { id:provider;Layout.fillWidth:true;placeholderText:"Provider (optional: ollama, openai, anthropic…)" }
-            CField { id:model;Layout.fillWidth:true;placeholderText:"Model (optional)" }
-        }
+        ProviderAccountPicker { id:account;name:"setup";byName:true;Layout.fillWidth:true }
+        CField { id:model;objectName:"setupModel";Layout.fillWidth:true;placeholderText:"Model (optional)" }
         Flow { Layout.fillWidth:true;spacing:Theme.space2
             Repeater { model:setups.families;CCheckBox { required property var modelData;text:setups.familyNames[modelData];checked:!!editor.chosen[modelData];onToggled:{const next=Object.assign({},editor.chosen);next[modelData]=checked;editor.chosen=next} } }
         }
@@ -157,8 +156,8 @@ ColumnLayout {
         RowLayout { Layout.fillWidth:true
             CButton { text:"Cancel";onClicked:editor.close() }
             Item { Layout.fillWidth:true }
-            CButton { text:"Save";primary:true;enabled:name.text.trim().length>0
-                onClicked:rpc.call("setups.save",{expectedRevision:setups.revision,setup:Object.assign(setups.editing&&setups.editing.id?{id:setups.editing.id}:{},{name:name.text,description:description.text,provider:provider.text||undefined,model:model.text||undefined,families:editor.chosen,style:style.text||undefined,posture:posture.text||undefined,instructions:instructions.text||undefined,collections:editor.lines(collections.text),skills:editor.lines(skillsText.text),voice:voice.text||undefined})},value=>{if(setups.done(value,"Saved."))editor.close()}) }
+            CButton { objectName:"setupSave";text:"Save";primary:true;enabled:name.text.trim().length>0
+                onClicked:rpc.call("setups.save",{expectedRevision:setups.revision,setup:Object.assign(setups.editing&&setups.editing.id?{id:setups.editing.id}:{},{name:name.text,description:description.text,provider:account.provider||undefined,connection:account.account||undefined,model:model.text||undefined,families:editor.chosen,style:style.text||undefined,posture:posture.text||undefined,instructions:instructions.text||undefined,collections:editor.lines(collections.text),skills:editor.lines(skillsText.text),voice:voice.text||undefined})},value=>{if(setups.done(value,"Saved."))editor.close()}) }
         }
     }
 }

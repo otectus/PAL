@@ -22,6 +22,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--pipeline-status", action="append", type=int, default=[])
     result.add_argument("--duration-ms", type=int)
     result.add_argument("--kitty-window-id")
+    result.add_argument("--kitty-pid", type=int)
     result.add_argument("--socket")
     result.add_argument("--timeout-ms", type=int, default=15)
     return result
@@ -61,7 +62,7 @@ def main() -> int:
     if args.duration_ms is not None and args.duration_ms >= 0:
         params["duration_ms"] = args.duration_ms
     if args.kitty_window_id:
-        params["terminal_binding"] = {"kind": "kitty_window_id", "id": args.kitty_window_id}
+        params["terminal_binding"] = {"kind": "kitty_window_id", "id": args.kitty_window_id, **({"pid": args.kitty_pid} if args.kitty_pid else {})}
     request = {
         "protocol_version": 1,
         "request_id": str(uuid.uuid4()),

@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-// The Workbench: Files, Preview, Changes, Images, Runs and Terminal for the selected conversation. In the expanded
+// The Workbench: files, changes, images, runs, recordings and more for the selected conversation. In the expanded
 // workspace it sits beside the chat; in the compact panel it is one focused sheet with a way back.
 Rectangle {
     id: bench
@@ -12,12 +12,13 @@ Rectangle {
     readonly property bool tabsVisible: compact ? panesExpanded : WorkbenchState.layout.showPaneTabs
     readonly property string sessionId: App.selectedId
     readonly property var session: App.session || ({})
-    readonly property bool managed: ["ollama", "openai", "anthropic", "google", "compatible"].indexOf(session.provider || "") >= 0
+    readonly property var providerTrait: (App.state.providerTraits || {})[session.provider || ""] || ({})
+    readonly property bool managed: providerTrait.kind === "local" || providerTrait.kind === "api"
     readonly property var capabilities: session.capabilities || ({})
     readonly property var tabs: [
         { id: "files", label: "Files", icon: "projects" }, { id: "preview", label: "Preview", icon: "file" },
         { id: "changes", label: "Changes" + (pendingChanges ? " · " + pendingChanges : ""), icon: "edit" },
-        { id: "images", label: "Images", icon: "image" }, { id: "runs", label: "Runs", icon: "workflow" }, { id: "terminal", label: "Terminal", icon: "terminal" }, { id: "research", label: "Research", icon: "search" }, { id: "canvas", label: "Canvas", icon: "desktop" }, { id: "notes", label: "Notes", icon: "memory" }, { id: "shelf", label: "Shelf", icon: "star" } ]
+        { id: "images", label: "Images", icon: "image" }, { id: "runs", label: "Runs", icon: "workflow" }, { id: "terminal", label: "Terminal", icon: "terminal" }, { id: "research", label: "Research", icon: "search" }, { id: "canvas", label: "Canvas", icon: "desktop" }, { id: "recordings", label: "Media", icon: "play" }, { id: "notes", label: "Notes", icon: "memory" }, { id: "shelf", label: "Shelf", icon: "star" }, { id: "accounts", label: "Accounts", icon: "inbox" } ]
     readonly property int pendingChanges: (App.state.workbench?.pendingChanges || []).filter(p => p.sessionId === sessionId).length
     property var roots: []
     property var grants: []
@@ -28,6 +29,7 @@ Rectangle {
     signal closeRequested()
     signal settingsRequested(string category,string target)
     signal workflowsRequested()
+    signal researchDraftRequested(string sessionId)
     readonly property bool docked: !compact && !focusedPane
     readonly property bool narrowHeader: compact && width < Theme.narrowPane
     readonly property string currentPaneLabel: tabs[paneIndex(WorkbenchState.tab)].label
@@ -56,7 +58,7 @@ Rectangle {
         if (!sessionId) { roots = []; grants = []; return }
         rpc.call("workspace.roots", { sessionId: sessionId }, value => { if (!value.error) { roots = value.roots || []; grants = value.grants || [] } })
     }
-    readonly property var paneLoaders: [filesLoader, previewLoader, changesLoader, imagesLoader, runsLoader, terminalLoader, researchLoader, canvasLoader, notesLoader, shelfLoader]
+    readonly property var paneLoaders: [filesLoader, previewLoader, changesLoader, imagesLoader, runsLoader, terminalLoader, researchLoader, canvasLoader, recordingsLoader, notesLoader, shelfLoader, accountsLoader]
     function paneIndex(tab) { return Math.max(0, tabs.findIndex(t => t.id === tab)) }
     function focusActiveTab() {
         const active = tabRepeater.itemAt(paneIndex(WorkbenchState.tab))
@@ -334,8 +336,10 @@ Rectangle {
                     Loader { id: terminalLoader; readonly property url paneSource: "TerminalPane.qml" }
                     Loader { id: researchLoader; readonly property url paneSource: "ResearchPane.qml" }
                     Loader { id: canvasLoader; readonly property url paneSource: "CanvasPane.qml" }
+                    Loader { id: recordingsLoader; readonly property url paneSource: "RecordingPane.qml" }
                     Loader { id: notesLoader; readonly property url paneSource: "NotesPane.qml" }
                     Loader { id: shelfLoader; readonly property url paneSource: "ProjectShelf.qml" }
+                    Loader { id: accountsLoader; readonly property url paneSource: "AccountsPane.qml" }
                 }
             }
         }
@@ -346,10 +350,13 @@ Rectangle {
             function onRootsChanged() { if (previewLoader.item) previewLoader.item.roots = filesLoader.item.roots }
         }
         Connections { target:terminalLoader.item;ignoreUnknownSignals:true;function onLeaveRequested(){bench.focusActiveTab()} }
-        Connections { target:imagesLoader.item;ignoreUnknownSignals:true;function onSetupRequested(){bench.settingsRequested("connections","imageConnections")} }
+        Connections { target:imagesLoader.item;ignoreUnknownSignals:true;function onSetupRequested(){bench.settingsRequested("connections","imageConnections")} function onSettingsRequested(category,target){bench.settingsRequested(category,target)} }
+        Connections { target:previewLoader.item;ignoreUnknownSignals:true;function onSettingsRequested(category,target){bench.settingsRequested(category,target)} }
         Connections { target:runsLoader.item;ignoreUnknownSignals:true;function onSettingsRequested(category,target){bench.settingsRequested(category,target)} }
+        Connections { target:accountsLoader.item;ignoreUnknownSignals:true;function onSettingsRequested(category,target){bench.settingsRequested(category,target)} }
         Connections { target:runsLoader.item;ignoreUnknownSignals:true;function onWorkflowsRequested(){bench.workflowsRequested()} }
         Connections { target:researchLoader.item;ignoreUnknownSignals:true;function onSettingsRequested(category,target){bench.settingsRequested(category,target)} }
+        Connections { target:researchLoader.item;ignoreUnknownSignals:true;function onDraftRequested(sessionId){bench.researchDraftRequested(sessionId)} }
     }
     RootSettings { id: rootSettings; onSaved: { if (filesLoader.item) filesLoader.item.refreshRoots(); bench.refreshRoots() } }
     CDialog {

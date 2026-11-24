@@ -10,6 +10,7 @@
  * Records are kept per parent, and each transition is written before the side effect it enables. After
  * a restart nothing is replayed: unfinished records become transcript notes, as queued messages do.
  */
+import { providerLabels, type ApiProvider, type ProviderId } from './provider-catalog.ts';
 import { randomUUID } from 'node:crypto';
 import type { Core } from './core.ts';
 import type { ErasureMatcher } from './working-erasure.ts';
@@ -21,12 +22,12 @@ export type PingOutcome = {
   status: 'completed' | 'failed' | 'interrupted'; error?: string;
   reply?: string; replyMessageId?: string; replyTruncated?: boolean; elapsedMs: number;
 };
-export type FollowUp = { provider: 'codex' | 'claude'; prompt: string; model?: string; effort?: string };
+export type FollowUp = { provider: 'codex' | 'claude' | ApiProvider; prompt: string; model?: string; effort?: string };
 export type Ping = {
   id: string; parentId: string; parentTurnId?: string; childId: string;
   /** The child turn this record follows, once known. */
   childTurnId?: string;
-  provider: 'codex' | 'claude'; title: string;
+  provider: 'codex' | 'claude' | ApiProvider; title: string;
   tool: 'sessions.start' | 'sessions.send';
   /** The first 500 characters of the dispatched prompt. */
   prompt: string;
@@ -43,7 +44,7 @@ export type Ping = {
 export const pingLimits = { reply: 6000, total: 48000, perParent: 32, retained: 16, automaticTurns: 8 };
 const storeKey = (parentId: string) => 'pings:' + parentId;
 const final = (ping: Ping) => ping.state === 'consumed' || ping.state === 'delivered' || ping.state === 'dropped';
-const providerLabel = (provider: string) => provider === 'claude' ? 'Claude' : 'Codex';
+const providerLabel = (provider: string) => provider === 'claude' ? 'Claude' : providerLabels[provider as ProviderId]||provider;
 const clip = (text: string, length: number) => {
   let end = Math.min(text.length, length);
   if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1])) end--;
@@ -120,6 +121,8 @@ export class DelegationPings {
   private automatic = new Map<string, number>();
   /** Parents whose paused updates have been noted once. */
   private held = new Set<string>();
+  /** Parents whose sessions show that results wait for them, with the count last announced. */
+  private announced = new Map<string, number>();
   constructor(core: Core) { this.core = core; }
   private list(parentId: string): Ping[] {
     let list = this.records.get(parentId);
@@ -129,6 +132,15 @@ export class DelegationPings {
   private save(parentId: string) {
     const list = this.prune(parentId, this.list(parentId));
     this.records.set(parentId, list); this.core.store.set(storeKey(parentId), list);
+    this.announce(parentId);
+  }
+  /** How many results wait for this conversation: taken up when its turn ends, or held until the user's next message. */
+  waiting(parentId: string) { return (this.records.get(parentId) || []).reduce((count, ping) => count + Number(ping.state === 'ready'), 0); }
+  private announce(parentId: string) {
+    const count = this.waiting(parentId);
+    if ((this.announced.get(parentId) || 0) === count) return;
+    if (count) this.announced.set(parentId, count); else this.announced.delete(parentId);
+    if (!this.core.closed) this.core.changed();
   }
   /** Final records beyond the retained count go first, newest kept; then, only past the cap, the oldest ready ones. */
   private prune(parentId: string, list: Ping[]) {
@@ -161,7 +173,7 @@ export class DelegationPings {
 
   /** Before a delegated turn is dispatched, so a child that finishes before send() returns is not missed. */
   register(parent: Session, child: Session, tool: string, args: { prompt: string; followUp?: FollowUp }): Ping | undefined {
-    if (!this.core.settings.delegationUpdates || (child.provider !== 'codex' && child.provider !== 'claude')) return undefined;
+    if (!this.core.settings.delegationUpdates || (child.provider === 'ollama' || child.provider === 'antigravity')) return undefined;
     const list = this.list(parent.id);
     // A busy child refuses sessions_send, so an earlier registration for it can only be stale.
     for (const ping of list) if (ping.childId === child.id && ping.state === 'registered') Object.assign(ping, { state: 'dropped', reason: 'Superseded by a newer delegated turn' });
@@ -322,7 +334,7 @@ export class DelegationPings {
   }
   /** A deleted parent's records and counters. */
   forget(parentId: string) {
-    this.records.delete(parentId); this.automatic.delete(parentId); this.held.delete(parentId);
+    this.records.delete(parentId); this.automatic.delete(parentId); this.held.delete(parentId); this.announced.delete(parentId);
     for (const db of [this.core.store.db, this.core.store.volatile]) db.prepare('DELETE FROM meta WHERE key=?').run(storeKey(parentId));
   }
   /** Erasure runs inside Memory's durable transcript transaction. It fences any
@@ -351,7 +363,7 @@ export class DelegationPings {
       }
     }
     // Keep live delivery in step with SQLite. Rollback leaves the original records intact.
-    return () => { for (const [parentId, rows] of updated) this.records.set(parentId, rows); };
+    return () => { for (const [parentId, rows] of updated) { this.records.set(parentId, rows); this.announce(parentId); } };
   }
   /** A deleted child: a turn still registered can no longer end; a captured outcome stays deliverable. */
   forgetChild(child: Session) {

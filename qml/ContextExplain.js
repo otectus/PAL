@@ -104,7 +104,72 @@ var layerReasons = {
     already_supplied: "already supplied earlier",
     timed_out: "memory timed out",
     degraded: "memory unavailable",
-    withheld_for_route: "some earlier file or image content withheld: its folder does not allow this model"
+    withheld_for_route: "some earlier file or image content withheld: its folder does not allow this model",
+    setting_off: "turned off in Settings",
+    time_unavailable: "the clock could not be read",
+    not_sent_yet: "not sent yet",
+    not_supplied: "not supplied with this request"
+}
+// Time awareness: what the next message will be told, and what the last request was (broker/temporal-context.ts).
+function timeLine(time, source) {
+    if (!time) return ""
+    if (!time.enabled) return "The assistant is not told the date or time. Time awareness is off in Settings."
+    return "The next message is told the time in " + time.zone + " (" + source + ")."
+}
+function timeDetail(time) {
+    if (!time || !time.enabled) return ""
+    return time.timing ? "It also says how long it has been since your previous message." : "Time since earlier messages is left out."
+}
+var elapsedBasis = {
+    "wall-clock-estimate": "time since your previous message estimated from recorded times",
+    "no_room": "time since earlier messages left out for space",
+    "not_supplied": "no time since earlier messages"
+}
+var timeChannels = {
+    "system message": "in the system message",
+    "turn context": "as turn context",
+    "appended system prompt": "in the appended system prompt",
+    "prepended to the message": "ahead of the message"
+}
+function planTime(detail, zoneName) {
+    var parts = []
+    if (detail.local) parts.push("read at " + String(detail.local).replace("T", " "))
+    if (detail.timezone) parts.push(detail.timezone + (zoneName && detail.timezoneSource ? " (" + zoneName(detail.timezoneSource) + ")" : ""))
+    if (detail.channel) parts.push("sent " + (timeChannels[detail.channel] || "as " + detail.channel))
+    if (detail.refresh) parts.push("renewed " + detail.refresh)
+    if (detail.elapsed && elapsedBasis[detail.elapsed]) parts.push(elapsedBasis[detail.elapsed])
+    if (detail.clock === "discontinuity-observed") parts.push("the clock had jumped shortly before")
+    return parts.join(" · ")
+}
+// §11.3: which excerpts of document collections a request was given, and what was left out.
+function documentsDetail(detail) {
+    var parts = []
+    if ((detail.excerpts || []).length) parts.push(detail.excerpts.join("; "))
+    if (detail.dropped) parts.push(detail.dropped + " left out for space")
+    if (detail.duplicates) parts.push(plural(detail.duplicates, "repeat", "repeats") + " given once")
+    if (detail.conflicts) parts.push(plural(detail.conflicts, "excerpt disagrees", "excerpts disagree") + " with another")
+    if ((detail.stale || []).length) parts.push("changed since indexing: " + detail.stale.join(", "))
+    if ((detail.withheld || []).length) parts.push("withheld from this model: " + detail.withheld.join(", "))
+    return parts.join(" · ")
+}
+function pinnedDetail(detail) {
+    var parts = []
+    if ((detail.included || []).length) parts.push(detail.included.join(", "))
+    if ((detail.omitted || []).length) parts.push("left out: " + detail.omitted.join("; "))
+    return parts.join(" · ")
+}
+var routeText = { local: "this computer", remote: "your own server", cloud: "a cloud service", unknown: "an unknown place" }
+function destinationLine(route) {
+    if (!route) return ""
+    return "Messages go to " + (routeText[route.route] || route.route) + "." + (route.evidence ? " " + route.evidence + (/[.!?]$/.test(route.evidence) ? "" : ".") : "")
+}
+function toolsLine(tools) {
+    if (!tools || !tools.available) return "No Workbench tools in this conversation."
+    return plural(tools.offered, "tool is", "tools are") + " described to the model now (about " + Number(tools.tokens).toLocaleString(Qt.locale(), "f", 0) + " tokens)" + (tools.available > tools.offered ? "; " + (tools.available - tools.offered) + " more when it asks" : "") + "."
+}
+function helpersLine(helpers) {
+    if (!helpers || !helpers.calls) return "No helper calls in this conversation."
+    return plural(helpers.calls, "helper call", "helper calls") + ((helpers.models || []).length ? " with " + helpers.models.join(", ") : "") + "."
 }
 function tokens(value) { return value === null || value === undefined ? "unknown" : "≈" + Number(value).toLocaleString(Qt.locale(), "f", 0) + " tokens" }
 function planSummary(plan) {
@@ -127,7 +192,7 @@ function reportedUsage(plan) {
     if (reported.outputTokens !== undefined) counts.push(Number(reported.outputTokens).toLocaleString(Qt.locale(), "f", 0) + " out")
     return counts.length ? (reported.source || "The provider") + " reported " + counts.join(", ") + " tokens for this request." : ""
 }
-function planRows(plan) {
+function planRows(plan, zoneName) {
     if (!plan || !plan.layers) return []
     return plan.layers.map(function (layer) {
         var detail = layer.detail || {}, extra = ""
@@ -136,6 +201,9 @@ function planRows(plan) {
         else if (layer.id === "tools" && detail.count) extra = plural(detail.count, "tool", "tools")
         else if (layer.id === "personality" && detail.channel) extra = "sent as " + detail.channel
         else if (layer.id === "attachments" && (detail.files || detail.images)) extra = plural(detail.files || 0, "file", "files") + ", " + plural(detail.images || 0, "image", "images")
+        else if (layer.id === "temporal-context" && layer.included) extra = planTime(detail, zoneName)
+        else if (layer.id === "documents" && layer.included) extra = documentsDetail(detail)
+        else if (layer.id === "pinned") extra = pinnedDetail(detail)
         else if (layer.id === "conventions" && detail.files) extra = plural(detail.files.length, "file", "files") + (detail.redactions ? ", " + plural(detail.redactions, "secret", "secrets") + " redacted" : "")
         var status = layer.included ? (layer.reason ? "included · " + (layerReasons[layer.reason] || layer.reason) : "included") : (layerReasons[layer.reason] || layer.reason || "not included")
         return { id: layer.id, label: layer.label + (layer.trust === "untrusted" ? " (reference data)" : ""), size: layer.included ? tokens(layer.tokens) : "", status: status + (extra ? " · " + extra : ""), included: !!layer.included }

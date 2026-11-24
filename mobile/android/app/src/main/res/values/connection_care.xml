@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="care_check">Check</string>
+    <string name="care_check_title">Check %1$s</string>
+    <string name="care_check_action">Check the account %1$s</string>
+    <string name="care_try_action">Try %1$s with short requests</string>
+    <string name="care_state_ok">Fine</string>
+    <string name="care_state_failed">Failed</string>
+    <string name="care_state_unknown">Not known</string>
+    <string name="care_try">Try it</string>
+    <string name="care_try_heading">Try a model</string>
+    <string name="care_model">Model ID</string>
+    <string name="care_billed">Each sends one short request with this account. The service may bill it. Nothing is kept as a conversation.</string>
+    <string name="care_loads">This loads the model on its server and sends it short requests. Nothing is kept as a conversation.</string>
+    <string name="care_test_reply">Reply</string>
+    <string name="care_test_streaming">Streaming</string>
+    <string name="care_test_tools">Tool call</string>
+    <string name="care_test_images">Images</string>
+    <string name="care_test_structured">Structured reply</string>
+    <string name="care_remove">Remove</string>
+    <string name="care_remove_title">Remove %1$s?</string>
+    <string name="care_remove_action">Remove the account %1$s</string>
+    <string name="care_unused">Nothing uses this account. Its saved credential is removed with it.</string>
+    <plurals name="care_used">
+        <item quantity="one">%1$d thing uses this account. It can be removed once nothing does.</item>
+        <item quantity="other">%1$d things use this account. It can be removed once nothing does.</item>
+    </plurals>
+    <plurals name="care_more">
+        <item quantity="one">and %1$d more</item>
+        <item quantity="other">and %1$d more</item>
+    </plurals>
+    <string name="care_move_to">Move them to</string>
+    <string name="care_move_hint">Each conversation keeps its readable history and sends it to the chosen account with its next message.</string>
+    <string name="care_reviewed">Send their history to this account from now on</string>
+    <string name="care_move">Move</string>
+    <string name="care_move_action">Move what uses %1$s to %2$s</string>
+    <string name="care_no_target">There is no other account of this provider to move them to. Add one first, or delete what uses this one.</string>
+    <string name="care_kind_conversation">Conversation</string>
+    <string name="care_kind_schedule">Routine</string>
+    <string name="care_kind_helper">Helper</string>
+    <string name="care_kind_images">Image service</string>
+    <string name="care_kind_voice">Voice</string>
+    <string name="care_kind_memory">Memory</string>
+    <string name="care_kind_setup">Saved setup</string>
+    <string name="care_kind_specialist">Specialist</string>
+    <string name="care_kind_research">Research</string>
+    <string name="care_kind_other">Setting</string>
+    <string name="care_declared">What the server supports (your declaration)</string>
+    <string name="care_tools">Tool calling</string>
+    <string name="care_images">Image input</string>
+    <string name="care_streaming">Streaming replies</string>
+    <string name="care_usage">Reports token usage</string>
+    <string name="care_context">Context window in tokens (8,192 assumed)</string>
+    <string name="care_output">Output limit in tokens (optional)</string>
+    <string name="care_organization">Organization ID (optional)</string>
+    <string name="care_project">Project ID (optional)</string>
+</resources>

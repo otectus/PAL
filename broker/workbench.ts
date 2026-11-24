@@ -1,3 +1,5 @@
+import { evaluateInput, jevEvaluate } from './evaluation-services.ts';
+import { apiProviders, providerIds, type ApiProvider, isApiProvider } from './provider-catalog.ts';
 /**
  * The Workbench: files, artifacts, images and runs attached to a conversation. This facade owns the
  * services and is Core's single entry point for them: the tool registry, the interface's RPCs, session
@@ -26,6 +28,13 @@ import { registerFileTools } from './workspace/tools.ts';
 import { normalizePath } from './workspace/policy.ts';
 import { ArtifactStore, safeName } from './artifacts/store.ts';
 import { OperationStore, terminalStates } from './operations/store.ts';
+import { TimedMedia } from './media/timed.ts';
+import { Recordings } from './media/recordings.ts';
+import { Documents } from './documents/service.ts';
+import { registerAccountTools } from './accounts/tools.ts';
+import { registerCodeTools } from './code-context/tools.ts';
+import { Pins } from './workspace/pins.ts';
+import { Kernels } from './execution/kernels.ts';
 import { MediaService, validConnections, type ImageConnection } from './media/service.ts';
 import { Vision, analysisImage, type VisionSettings } from './media/vision.ts';
 import { registerImageTools, describeOperation } from './media/tools.ts';
@@ -42,18 +51,19 @@ import { References, referenceSchema } from './workspace/references.ts';
 import { Helpers, helperRoles, validHelper, type HelperSettings, type HelperRole } from './helpers.ts';
 
 /** Workbench settings: image connections, the vision helper, OCR, Code Lab and the low-memory profile. */
-export type WorkbenchSettings = { imageConnections: ImageConnection[]; vision: VisionSettings; helper?: HelperSettings; ocr: { languages: string }; codeLab: { enabled: boolean }; lowMemory: boolean };
+export type WorkbenchSettings = { jevModel?:string; imageConnections: ImageConnection[]; vision: VisionSettings; helper?: HelperSettings; ocr: { languages: string }; codeLab: { enabled: boolean }; lowMemory: boolean };
 export const defaultWorkbenchSettings: WorkbenchSettings = { imageConnections: [], vision: { provider: '', model: '' }, helper: { provider: '', model: '' }, ocr: { languages: 'eng' }, codeLab: { enabled: false }, lowMemory: false };
 export function validWorkbenchSettings(patch: unknown, current: WorkbenchSettings): WorkbenchSettings {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('Invalid Workbench settings');
   const p = patch as Record<string, any>, next = structuredClone(current);
-  for (const key of Object.keys(p)) if (!['imageConnections', 'vision', 'helper', 'ocr', 'codeLab', 'lowMemory'].includes(key)) throw new Error('Unknown Workbench setting: ' + key);
+  for (const key of Object.keys(p)) if (!['imageConnections', 'vision', 'helper', 'jevModel','ocr', 'codeLab', 'lowMemory'].includes(key)) throw new Error('Unknown Workbench setting: ' + key);
+  if ('jevModel' in p) next.jevModel=z.string().max(128).regex(/^[a-zA-Z0-9._:-]*$/).parse(p.jevModel);
   if ('helper' in p) next.helper = validHelper(p.helper);
   if ('imageConnections' in p) next.imageConnections = validConnections(p.imageConnections, current.imageConnections);
   if ('vision' in p) {
     const v = p.vision;
-    if (!v || typeof v !== 'object' || !['', 'ollama', 'openai', 'anthropic', 'google', 'compatible'].includes(v.provider ?? '') || (v.model !== undefined && (typeof v.model !== 'string' || v.model.length > 200 || /[\x00-\x1f]/.test(v.model)))) throw new Error('Choose a vision helper provider and model');
-    next.vision = { provider: v.provider ?? '', model: v.provider ? String(v.model || '').trim() : '' };
+    if (!v || typeof v !== 'object' || !['', 'ollama', ...apiProviders].includes(v.provider ?? '') || (v.model !== undefined && (typeof v.model !== 'string' || v.model.length > 200 || /[\x00-\x1f]/.test(v.model)))) throw new Error('Choose a vision helper provider and model');
+    next.vision=validHelper(v);
     if (next.vision.provider && !next.vision.model) throw new Error('Choose the vision helper’s model');
   }
   if ('ocr' in p) { if (typeof p.ocr?.languages !== 'string' || !/^[a-z_]{3,}(\+[a-z_]{3,}){0,4}$/.test(p.ocr.languages)) throw new Error('OCR languages are Tesseract codes such as eng or eng+deu'); next.ocr = { languages: p.ocr.languages }; }
@@ -73,6 +83,11 @@ export class Workbench {
   artifacts: ArtifactStore;
   operations: OperationStore;
   media: MediaService;
+  timedMedia: TimedMedia;
+  recordings: Recordings;
+  documents: Documents;
+  kernels: Kernels;
+  pins: Pins;
   vision: Vision;
   execution: Execution;
   analyses: AnalysisLibrary;
@@ -110,6 +125,11 @@ export class Workbench {
     this.artifacts.changed = () => { this.artifactRevision++; if (this.ready && !core.closed) core.changed(); };
     this.operations = new OperationStore(core.store);
     this.operations.changed = () => { if (this.ready && !core.closed) core.changed(); };
+    this.timedMedia=new TimedMedia(core);
+    this.recordings = new Recordings(this);
+    this.documents = new Documents(this);
+    this.kernels = new Kernels(this);
+    this.pins = new Pins(this);
     this.media = new MediaService(core, this.artifacts, this.operations);
     this.vision = new Vision(core, this.artifacts);
     this.execution = new Execution(this);
@@ -128,16 +148,34 @@ export class Workbench {
     this.registerHelperTool();
     this.registerSpecialistTools();
     this.registerTranslationTool();
+    this.registerDocumentTool();
+    registerAccountTools(this);
+    this.registerHistoryTool();
+    registerCodeTools(this);
     this.changes.recover();
     void this.artifacts.recover();
     // Outstanding operations never resume by themselves; a backend job with an ID is checked by status.
-    const reconcile = this.operations.recover(operation => operation.backend?.kind === 'comfyui' && !!operation.remoteId);
+    const reconcile = this.operations.recover(operation => (operation.backend?.kind === 'comfyui' || ['video.generate','music.generate'].includes(operation.kind)) && !!operation.remoteId);
     this.ready = true;
-    for (const operation of reconcile) setImmediate(() => { if (!core.closed) void this.media.reconcile(operation); });
+    for (const operation of reconcile) setImmediate(() => { if (!core.closed && operation.backend?.kind==='comfyui') void this.media.reconcile(operation); });
     void this.probe();
   }
   /** One tool for the narrow helpers: a role, a request, and inputs the conversation can already see. */
   private registerHelperTool() {
+    this.registry.register({
+      name:'jev_evaluate',family:'analysis',core:false,effects:{network:true,spend:true},input:evaluateInput,
+      description:'Ask the configured Jev service to evaluate named probability, choice and score questions about supplied text.',
+      available:session=>this.core.settings.workbench.jevModel && this.core.credentials.key('jev') && !session.remote && this.knownRoute(session.id)==='cloud'?'':'Configure Jev for cloud analysis in Workbench',
+      run:async({sessionId,signal},input)=>{
+        const model=this.core.settings.workbench.jevModel!;
+        const allow=await this.core.approval(sessionId,{kind:'provider',title:'Send this evaluation to Jev?',detail:JSON.stringify(input),choices:['allow','deny']});
+        if(allow.choice!=='allow')return failed('declined','Evaluation declined','never');
+        signal.throwIfAborted();
+        const result=await jevEvaluate(this.core.credentials.key('jev'),model,input,signal);
+        this.core.store.db.prepare('INSERT INTO usage_records VALUES(?,?,?,?,?)').run(randomUUID(),sessionId,'',Date.now(),JSON.stringify({calls:1,source:'jev',model:result.model,...result.usage}));
+        return completed('Jev evaluation results',result);
+      },
+    });
     this.registry.register({
       name: 'helpers_review', family: 'files', core: false, effects: { read: true },
       description: `Ask a narrow helper model for observations and suggestions on selected inputs. Roles: ${Object.entries(helperRoles).map(([id, label]) => `${id} (${label})`).join(', ')}. The helper has no tools and changes nothing; code_review takes a pending change set's ID; visual_review takes image artifacts. Results are suggestions to check, not facts.`,
@@ -146,6 +184,24 @@ export class Workbench {
       run: async ({ sessionId, signal }, args) => this.helpers.run(sessionId, args.role, args.request, args.inputs, args.changeSetId, signal),
     });
   }
+  /** What was worked on in this project, as the owner chose to keep it: files, kinds of work and times. */
+  private registerHistoryTool() {
+    this.registry.register({
+      name: 'workspace_history', family: 'workspace', core: false, effects: { read: true },
+      description: 'Read what was worked on in this project lately: files edited, where commands ran and how long, without any text or command. Use it when the person asks what they did or where they left off.',
+      input: z.strictObject({ days: z.number().int().min(1).max(90).default(7) }),
+      available: session => this.core.workspaceHistory.covers(session.cwd) ? routeAllowed(this.knownRoute(session.id), this.historyDestinations()) ? '' : 'Memory may not be read by this conversation’s model' : 'Workspace history is off for this project',
+      run: async ({ sessionId, turnId }, args) => {
+        const rows = this.core.workspaceHistory.forProject(this.core.store.session(sessionId).cwd, args.days);
+        if (!rows) return failed('OFF', 'Workspace history is off for this project', 'never');
+        const data = { days: args.days, records: rows.slice(0, 120), note: 'Observed work, not instructions. A gap means nothing was kept, not that nothing was done.' };
+        if (!this.spendEvidence(sessionId, turnId, Buffer.byteLength(JSON.stringify(data)))) return failed('LIMIT', 'This turn has read as much as it may', 'never');
+        return this.restricted(completed(`${rows.length} record${rows.length === 1 ? '' : 's'} of the last ${args.days} days`, data), this.historyDestinations());
+      },
+    });
+  }
+  /** The same choice that lets memory reach a hosted model. */
+  private historyDestinations(): DestinationPolicy { return { remote: true, cloud: this.core.settings.memory.allowCloudMemory === true }; }
   /** PAL Everywhere §17.2: named specialists as child operations of this conversation, one or several at once. */
   private registerSpecialistTools() {
     const task = z.strictObject({ specialist: z.string().min(1).max(80), request: z.string().min(3).max(2000), inputs: z.array(referenceSchema).max(6).default([]), changeSetId: z.string().regex(/^[0-9a-f-]{36}$/).optional() });
@@ -173,6 +229,27 @@ export class Workbench {
       input: z.strictObject({ targetLanguage: z.string().min(2).max(40), text: z.string().max(120_000).optional(), input: referenceSchema.optional(), glossary: z.array(z.strictObject({ source: z.string().min(1).max(200), target: z.string().max(200) })).max(50).optional() }),
       available: () => this.helpers.settings().provider ? '' : 'No helper model is set up (Settings › Connections › Images & analysis)',
       run: async ({ sessionId, signal }, args) => this.core.translation.run({ sessionId, ...args }, signal),
+    });
+  }
+  /** §15.2: a document for other people. It becomes a new file of this conversation; nothing is sent or overwritten. */
+  private registerDocumentTool() {
+    this.registry.register({
+      name: 'documents_export', family: 'files', core: false, effects: { read: true },
+      description: 'Make a PDF, Word or web page from Markdown you write, or from a text file, table or transcript this conversation can see. It becomes a new file of this conversation that the person can save.',
+      input: z.strictObject({ format: z.enum(['pdf', 'docx', 'html', 'md']), title: z.string().max(200).optional(), markdown: z.string().min(1).max(200_000).optional(), input: referenceSchema.optional(), page: z.enum(['A4', 'Letter']).optional() }),
+      available: session => session.temporary ? 'Temporary conversations do not keep files' : '',
+      run: async ({ sessionId, signal }, args) => {
+        const input = args.input, source = args.markdown !== undefined ? { markdown: args.markdown } : input?.kind === 'artifact' ? { artifactId: input.artifactId, versionId: input.versionId } : input?.kind === 'file' ? { rootId: input.rootId, path: input.path } : undefined;
+        if (!source || args.markdown !== undefined && input) return failed('inputs', 'Give either the Markdown or one file', 'explicit');
+        if (input) {
+          // The model may only turn into a document what it may read itself.
+          const route = (await this.route(sessionId, signal)).route;
+          const policy = input.kind === 'artifact' ? this.artifacts.version(sessionId, input.artifactId, input.versionId).policy : this.roots.get(sessionId, (input as any).rootId).policy.destinations;
+          if (!routeAllowed(route, policy)) return failed('inputs', 'That file may not be processed by this conversation’s model', 'explicit');
+        }
+        const version = await this.documents.render(sessionId, { ...source, format: args.format, ...(args.title ? { title: args.title } : {}), ...(args.page ? { page: args.page } : {}) }, signal);
+        return completed(`${version.name} is ready (${version.bytes} bytes).`, { name: version.name, mime: version.mime, bytes: version.bytes }, { artifacts: [{ artifactId: version.artifactId, versionId: version.versionId, purpose: 'document' }] } as any);
+      },
     });
   }
   private registerKnowledgeTools() {
@@ -224,6 +301,16 @@ export class Workbench {
     controller.abort(new Error('Cancelled by the user'));
     return this.operations.get(operationId);
   }
+  /** §11.3: what a person can see about a conversation's reach before its next message; counts and names, never content. */
+  async contextFacts(session: Session, signal: AbortSignal) {
+    const managed = session.provider === 'ollama' || isApiProvider(session.provider);
+    const route = managed ? await this.route(session.id, signal).then(value => ({ route: value.route, evidence: value.evidence }), () => ({ route: 'unknown' as const, evidence: '' })) : { route: 'cloud' as const, evidence: 'The provider’s own command-line program decides where it sends this conversation' };
+    const families = managed ? this.families(session) : new Set<string>(), { usable, unavailable } = this.registry.availability(session, families), offered = managed ? this.registry.advertise(session, families) : [];
+    const skills = this.core.skills.list().filter(skill => skill.status === 'enabled' && (skill.scope === 'personal' || (!!skill.project && (session.cwd === skill.project || session.cwd.startsWith(skill.project + '/')))));
+    const helpers = this.operations.usage(session.id).filter((row: any) => /^(helper|specialist|vision|translation)/.test(String(row.kind || '')));
+    return { route, tools: { offered: offered.length, available: usable.length, unavailable: unavailable.length, tokens: Math.ceil(Buffer.byteLength(JSON.stringify(offered)) / 2), families: [...families].sort() },
+      skills: skills.map(skill => ({ name: skill.name, scope: skill.scope })).slice(0, 24), helpers: { calls: helpers.reduce((sum: number, row: any) => sum + (Number(row.calls) || 1), 0), models: [...new Set(helpers.map((row: any) => String(row.model || '')).filter(Boolean))].slice(0, 6) }, pinned: this.pins.describe(session) };
+  }
   async probe() { this.problem = await confinementProblem(); this.probed = true; if (!this.core.closed) this.core.changed(); return this.problem; }
 
   // ---------- tools ----------
@@ -237,6 +324,11 @@ export class Workbench {
     if (families.has('images') || families.has('analysis') || families.has('host')) families.add('operations');
     // On-demand collection evidence follows the collections' own binding and consent rules.
     if (!session.temporary && ownerControlled(session) && !this.core.withheld(session.id, 'memory') && this.core.collections.bound(session).length) families.add('knowledge');
+    // Workspace history covers this conversation's project only while the owner keeps it (workspace-history.ts).
+    if (!session.temporary && ownerControlled(session) && !this.core.withheld(session.id, 'memory') && this.core.memory.active() && this.core.workspaceHistory?.covers(session.cwd)) families.add('workspace');
+    if (!session.temporary && ownerControlled(session) && this.core.code?.enabled(session.cwd)) families.add('code');
+    // Accounts the owner let assistants use in this project; each tool checks the model's route and the account again.
+    if (!this.core.withheld(session.id, 'extensions') && this.core.accounts?.any(session)) families.add('accounts');
     // Enabled skills for this conversation's scope; which of them the model may load is decided per request (skills.ts).
     if (!session.temporary && this.core.skills.list().some(v => v.status === 'enabled' && (v.scope === 'personal' || (!!v.project && (session.cwd === v.project || session.cwd.startsWith(v.project + '/')))))) families.add('skills');
     return families;
@@ -455,6 +547,10 @@ export class Workbench {
     switch (method) {
       case 'shelf.get': return this.shelf(this.session(p.sessionId));
       case 'references.search': { const session = this.session(p.sessionId); return { candidates: await this.references.search(session, p.query) }; }
+      // §11.3: sources kept beside every message of a conversation or project.
+      case 'references.pins': return this.pins.describe(this.session(p.sessionId));
+      case 'references.keep': return this.pins.add(this.session(p.sessionId), p);
+      case 'references.unkeep': return this.pins.remove(this.session(p.sessionId), p.id);
       case 'references.pin': return this.references.pin(this.session(p.sessionId), p.ref);
       case 'references.preview': return this.references.preview(this.session(p.sessionId), p.references, typeof p.text === 'string' ? p.text.slice(0, 2000) : '', AbortSignal.timeout(20_000));
       case 'workspace.roots': {
@@ -627,6 +723,19 @@ export class Workbench {
         const bytes = await zipFilesAsync(entries), policy = this.artifacts.inherit(session.id, p.items);
         return this.artifacts.install({ sessionId: session.id, bytes, name: safeName(p.name, 'bundle') + '.zip', mime: 'application/zip', source: 'derived', policy, parents: p.items.map((item: any) => ({ ...item, relation: 'bundled' })), provenance: { kind: 'bundle', items: manifest.length } });
       }
+      // §15.2: documents for other people.
+      case 'documents.formats': return { formats: this.documents.formats(), templates: this.documents.templates() };
+      case 'documents.fill': return this.documents.fill(this.session(p.sessionId).id, p);
+      case 'documents.save': return this.documents.save(this.session(p.sessionId).id, p);
+      case 'documents.render': return this.documents.render(this.session(p.sessionId).id, p);
+      // §16.3: recordings with time-coded transcripts, corrections, subtitles and clips.
+      case 'recordings.list': return this.recordings.list(this.session(p.sessionId).id, p);
+      case 'recordings.open': return this.recordings.open(this.session(p.sessionId).id, p);
+      case 'recordings.cues': return this.recordings.page(this.session(p.sessionId).id, p);
+      case 'recordings.transcribe': return describeForUi(this.recordings.transcribe(this.session(p.sessionId).id, p));
+      case 'recordings.correct': return this.recordings.correct(this.session(p.sessionId).id, p);
+      case 'recordings.subtitles': return this.recordings.subtitles(this.session(p.sessionId).id, p);
+      case 'recordings.clip': return describeForUi(await this.recordings.clip(this.session(p.sessionId).id, p));
       case 'images.kits': return this.imageSets.library(this.session(p.sessionId).id);
       case 'images.saveKit':
       case 'images.saveSet': return this.imageSets.save(this.session(p.sessionId).id,p,method === 'images.saveSet');
@@ -811,10 +920,11 @@ export class Workbench {
       case 'operations.check': {
         // The person asks PAL to look again: status only, never a new submission.
         const operation = owned(p.id);
+        if (['video.generate', 'music.generate'].includes(operation.kind)) return describeForUi(await this.timedMedia.rpc('poll', { sessionId: operation.sessionId, id: operation.id }));
         if (!operation.remoteId || operation.backend?.kind !== 'comfyui') throw new Error('Only a ComfyUI job with a known ID can be checked; other providers answer once');
         await this.media.reconcile(operation); return describeForUi(this.operations.get(operation.id));
       }
-      case 'operations.cancel': { const operation = owned(p.id); return describeForUi(['codelab.run', 'command.run', 'command.host', 'specialist.run'].includes(operation.kind) ? await this.cancelRun(operation.id) : await this.media.cancel(operation.id)); }
+      case 'operations.cancel': { const operation = owned(p.id); if (['video.generate', 'music.generate'].includes(operation.kind)) return describeForUi(await this.timedMedia.rpc('cancel', { sessionId: operation.sessionId, id: operation.id })); return describeForUi(['codelab.run', 'command.run', 'command.host', 'specialist.run', 'export', 'extraction'].includes(operation.kind) ? await this.cancelRun(operation.id) : await this.media.cancel(operation.id)); }
       case 'operations.retry': {
         // A retry the user asks for is a new operation linked to the uncertain one, never a replay of it.
         const previous = owned(p.id);
@@ -859,6 +969,20 @@ export class Workbench {
       }
       case 'codelab.status': return this.execution.status(p.sessionId ? this.session(p.sessionId).id : undefined);
       case 'codelab.run': return this.execution.launch(this.session(p.sessionId).id, { ...p, origin: 'user', approval: 'user', signal: undefined, turnId: undefined });
+      // §15.2: an analysis session keeps its variables between cells until the person ends it.
+      case 'codelab.session': return this.kernels.status(this.session(p.sessionId).id);
+      case 'codelab.sessionStart': return this.kernels.start(this.session(p.sessionId).id, p);
+      case 'codelab.sessionRun': {
+        const session = this.session(p.sessionId);
+        return new Promise((resolve, reject) => {
+          this.kernels.run(session.id, { code: p.code, inputs: p.inputs, purpose: p.purpose, timeoutSeconds: p.timeoutSeconds, origin: 'user', approval: 'user', accepted: operation => resolve(describeForUi(operation)) }).catch(reject);
+        });
+      }
+      case 'codelab.sessionInterrupt': return this.kernels.interrupt(this.session(p.sessionId).id);
+      case 'codelab.sessionClear': return this.kernels.clear(this.session(p.sessionId).id);
+      case 'codelab.sessionRestart': return this.kernels.restart(this.session(p.sessionId).id);
+      case 'codelab.sessionStop': return this.kernels.stop(this.session(p.sessionId).id);
+      case 'codelab.sessionNotebook': return this.kernels.notebook(this.session(p.sessionId).id);
       case 'codelab.grant': return this.execution.grantRuns({ ...p, sessionId: this.session(p.sessionId).id });
       case 'codelab.revoke': {
         if (p.sessionId && this.execution.grants.get(p.id)?.sessionId !== this.session(p.sessionId).id) throw new Error('Choose a grant from this conversation');
@@ -877,8 +1001,11 @@ export class Workbench {
       case 'codelab.table': case 'codelab.exportRows': return this.analyses.table({ ...p, sessionId: this.session(p.sessionId).id }, method === 'codelab.exportRows');
       case 'commands.run': {
         const session = this.session(p.sessionId), root = this.roots.get(session.id, p.rootId);
-        void this.execution.command(session.id, root, { argv: p.argv, cwd: p.cwd ? normalizePath(p.cwd, root.path) : '', network: p.network === true, timeoutSeconds: p.timeoutSeconds, origin: 'user' }).catch(() => {});
-        return true;
+        // A refusal (folder permission, isolation, arguments) is answered here. Once it starts, the run reports itself.
+        return new Promise((resolve, reject) => {
+          this.execution.command(session.id, root, { argv: p.argv, cwd: p.cwd ? normalizePath(p.cwd, root.path) : '', network: p.network === true, timeoutSeconds: p.timeoutSeconds, origin: 'user',
+            started: operation => resolve(describeOperation(operation)) }).catch(reject);
+        });
       }
       default: throw new Error('Unknown Workbench request');
     }
@@ -889,6 +1016,8 @@ export class Workbench {
     this.registry.forgetSession(sessionId); this.routes.delete(sessionId); this.media.selections.delete(sessionId);
     void this.artifacts.removeSession(sessionId).catch(() => {});
     void this.media.removeSession(sessionId).catch(() => {});
+    this.kernels.removeSession(sessionId);
+    this.pins.removeSession(sessionId);
     this.operations.removeSession(sessionId);
     for (const grant of [...this.grants.values()]) if (grant.sessionId === sessionId) this.grants.delete(grant.id);
     this.changes.removeSession(sessionId);
@@ -899,9 +1028,10 @@ export class Workbench {
     this.extractor.close();
     for (const timer of this.expiryTimers.values()) clearTimeout(timer); this.expiryTimers.clear(); this.grants.clear();
     for (const controller of this.runControllers.values()) controller.abort(new Error('PAL is closing'));
+    await this.kernels.close();
     // Stopped runs still record that they were interrupted; give them a bounded moment to do so.
     if (this.activeRuns.size) await Promise.race([Promise.allSettled([...this.activeRuns]), new Promise(resolve => setTimeout(resolve, 5000).unref())]);
-    await this.media.close();
+    await this.timedMedia.close();await this.media.close();
   }
 }
 

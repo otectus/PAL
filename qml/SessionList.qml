@@ -129,7 +129,12 @@ ColumnLayout {
     }
     function activeAgentCount(session){return(session.agents||[]).filter(agent=>["starting","running","waiting"].indexOf(agent.status)>=0).length}
     function pendingInputCount(session){return(App.state.approvals||[]).filter(approval=>approval.sessionId===session.id).length}
+    // Results of delegated sessions that this conversation has not been told about yet.
     function statusLabel(session) {
+        const waiting=session.pendingUpdates||0
+        return activityLabel(session)+(waiting?" · "+waiting+(waiting===1?" result waiting":" results waiting"):"")
+    }
+    function activityLabel(session) {
         const pending=pendingInputCount(session),active=activeAgentCount(session)
         if(pending)return pending===1?"waiting for input":pending+" inputs needed"
         if(active)return active===1?"1 subagent active":active+" subagents active"

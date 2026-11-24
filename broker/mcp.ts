@@ -45,7 +45,7 @@ async function handle(m: any) {
     else if (m.method === 'ping') result={};
     else if (m.method === 'tools/list') {
       const defs = await request('mcp.tools',{token});
-      result={tools:[{name:'approve',description:'Respond to a Claude Code permission request through the PAL user interface',inputSchema:{type:'object',properties:{tool_name:{type:'string'},input:{type:'object'}},required:['tool_name','input']}},...defs.map((d:any)=>({name:d.name.replaceAll('.','_'),description:d.description,inputSchema:{type:'object',properties:d.schema,required:d.required||Object.keys(d.schema),additionalProperties:false}}))]};
+      result={tools:[{name:'approve',description:'Respond to a Claude Code permission request through the PAL user interface',inputSchema:{type:'object',properties:{tool_name:{type:'string'},input:{type:'object'}},required:['tool_name','input']}},...defs.map((d:any)=>({name:d.name.replaceAll('.','_'),description:d.description,inputSchema:{type:'object',properties:d.schema,required:d.required||Object.keys(d.schema),additionalProperties:false},...(d.category==='time'?{annotations:{readOnlyHint:true,openWorldHint:false}}:{})}))]};
     } else if (m.method === 'tools/call') {
       const name = m.params.name === 'approve' ? 'approve' : m.params.name.replace('_','.');
       try {

@@ -72,4 +72,53 @@ class ConversationOptionsTest {
         assertNull(ConfigurationDraft.blockedReason(api, toolsState = true))
         assertNull(ConfigurationDraft.blockedReason(ollama, toolsState = false))
     }
+
+    @Test fun changingProviderAccountIsExplicitlyReviewed() {
+        val current = session("openai", false).copy(connectionId = "personal")
+        val draft = ConfigurationDraft("model", "", false, connectionId = "work")
+        val params = draft.params(current, "3", partial = true, routeRevision = true)
+        assertEquals("work", params["connectionId"]!!.jsonPrimitive.content)
+        assertEquals(true, params["destinationReviewed"]!!.jsonPrimitive.booleanOrNull)
+    }
+
+    @Test fun onlyAChosenAccountMovesAConversation() {
+        // The desktop moves a conversation to a named account, never back to having none, so nothing chosen changes nothing.
+        val named = session("openai", false).copy(connectionId = "personal")
+        for (chosen in listOf(null, "", "personal")) {
+            val draft = ConfigurationDraft("model", "", false, connectionId = chosen)
+            assertFalse(draft.changes(named)); assertFalse("connectionId" in draft.params(named, "3", partial = true, routeRevision = true))
+        }
+        assertTrue(ConfigurationDraft("model", "", false, connectionId = "work").changes(session("openai", false)))
+    }
+
+    @Test fun modelsComeFromTheConversationUntilAnotherAccountIsChosen() {
+        val unnamed = session("openai", false); val named = unnamed.copy(connectionId = "personal")
+        assertNull(ConfigurationDraft.catalogAccount("", unnamed)); assertNull(ConfigurationDraft.catalogAccount("", named)); assertNull(ConfigurationDraft.catalogAccount("personal", named))
+        assertEquals("work", ConfigurationDraft.catalogAccount("work", named)); assertEquals("work", ConfigurationDraft.catalogAccount("work", unnamed))
+    }
+
+    @Test fun whatACatalogRulesOutForAModelComesBeforeItsRoute() {
+        val without = ModelOption("small", capabilities = listOf("no-local-tools"))
+        assertFalse(ToolPolicy.availability(api, without).available); assertNotNull(ToolPolicy.availability(api, without).reason)
+        // The open conversation's own model may take tools; the one being chosen decides.
+        assertFalse(ToolPolicy.availability(api, without, session("openai", true, available = true), sessionReports = true).available)
+        assertTrue(ToolPolicy.availability(api, plain, session("openai", true, available = true), sessionReports = true).available)
+    }
+
+    private val catalog = listOf(
+        ModelOption("anthropic/claude", "Claude", capabilities = listOf("images", "local-tools", "reasoning")),
+        ModelOption("small/plain:free", "Plain", capabilities = listOf("no-local-tools", "no-images"), free = true),
+        ModelOption("google/gemini", "Gemini", capabilities = listOf("images", "local-tools", "no-local-tools")),
+        ModelOption("ollama-made", "Made here", capabilities = listOf("tools", "vision")),
+    )
+
+    @Test fun aLongListIsSearchedByEveryWordAndNarrowedByWhatTellsModelsApart() {
+        assertEquals(listOf("tools", "images", "reasoning", "free"), ModelSearch.offered(catalog))
+        assertEquals(emptyList<String>(), ModelSearch.offered(listOf(tooled, tooled.copy(id = "other"))))
+        fun ids(query: String = "", only: Set<String> = emptySet(), chosen: String = "") = ModelSearch.find(catalog, query, only, chosen).map { it.id }
+        assertEquals(listOf("google/gemini"), ids(" GEMINI  google ")); assertEquals(emptyList<String>(), ids("gemini claude"))
+        assertEquals(listOf("anthropic/claude", "ollama-made"), ids(only = setOf("tools"))); assertEquals(listOf("anthropic/claude"), ids(only = setOf("tools", "reasoning"))); assertEquals(listOf("small/plain:free"), ids(only = setOf("free")))
+        // What is chosen comes first until something narrows the list; nothing is listed twice.
+        assertEquals(listOf("ollama-made", "anthropic/claude", "small/plain:free", "google/gemini"), ids(chosen = "ollama-made")); assertEquals(catalog.map { it.id }, ids(chosen = "typed by hand")); assertEquals(listOf("anthropic/claude"), ids("claude", chosen = "ollama-made"))
+    }
 }

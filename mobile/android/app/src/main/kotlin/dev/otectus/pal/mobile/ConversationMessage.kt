@@ -1,7 +1,5 @@
 package dev.otectus.pal.mobile
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -47,13 +45,14 @@ internal fun MessageBubble(repository: PALRepository, state: MobileState, messag
     var loading by remember(message.id, message.revision) { mutableStateOf(false) }
     var error by remember(message.id, message.revision) { mutableStateOf<String?>(null) }
     val context = LocalContext.current
-    val clipboard = context.getSystemService(ClipboardManager::class.java)
     val uriHandler = LocalUriHandler.current
     val tone = message.tone()
     val shown = remember(content, state.showMemoryCitations) { Citations.shown(content, state.showMemoryCitations) }
     val preview = message.contentTruncated && content == message.text
     val copyLabel = stringResource(if (preview) R.string.copy_preview else R.string.copy_message)
-    val linkOpenError = stringResource(R.string.transcript_link_open_failed)
+    val linkOpenError = stringResource(R.string.transcript_link_open_failed); val copyRefused = stringResource(R.string.copy_refused)
+    var documenting by remember(message.id) { mutableStateOf(false) }
+    (context as? androidx.fragment.app.FragmentActivity)?.let { activity -> if (documenting) DocumentDialog(repository, activity, message.sessionId, DocumentSource.Reply(shown.take(120_000))) { documenting = false } }
     val label = when (tone) {
         MessageTone.Assistant -> state.assistantName
         MessageTone.User -> stringResource(R.string.your_message)
@@ -69,7 +68,8 @@ internal fun MessageBubble(repository: PALRepository, state: MobileState, messag
             bookmarked = message.bookmarked,
             bookmarkAvailable = state.supports("messages.bookmark") && message.isConversationMessage(),
             bookmarkedLabel = stringResource(R.string.session_pinned),
-            onCopy = { clipboard.setPrimaryClip(ClipData.newPlainText(copyLabel, shown)) },
+            onCopy = { error = if (copyText(context, copyLabel, shown)) null else copyRefused },
+            onDocument = if (tone == MessageTone.Assistant && !preview && shown.isNotBlank() && documentsOffered(state)) { { documenting = true } } else null,
             onBookmark = {
                 scope.launch {
                     runCatching { repository.setBookmark(message, !message.bookmarked) }
@@ -78,6 +78,7 @@ internal fun MessageBubble(repository: PALRepository, state: MobileState, messag
             },
         )
         PALMarkdown(shown)
+        if (message.recordings.isNotEmpty()) CitedTimes(repository, state, message.sessionId, shown, message.recordings)
         MessageSources(message.sources) { url ->
             runCatching { uriHandler.openUri(url) }.onFailure { error = linkOpenError }
         }
@@ -141,6 +142,7 @@ private fun MessageHeader(
     bookmarkedLabel: String,
     onCopy: () -> Unit,
     onBookmark: () -> Unit,
+    onDocument: (() -> Unit)? = null,
 ) {
     var options by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -156,6 +158,7 @@ private fun MessageHeader(
                     options = false
                     onCopy()
                 }, leadingIcon = { Icon(painterResource(R.drawable.ic_copy), null) })
+                onDocument?.let { export -> DropdownMenuItem({ Text(stringResource(R.string.docs_export_menu)) }, { options = false; export() }) }
                 if (bookmarkAvailable) DropdownMenuItem(
                     { Text(stringResource(if (bookmarked) R.string.unpin_reply else R.string.pin_reply)) },
                     { options = false; onBookmark() },

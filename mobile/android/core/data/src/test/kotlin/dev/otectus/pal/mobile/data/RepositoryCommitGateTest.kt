@@ -121,4 +121,34 @@ class RepositoryCommitGateTest {
         assertTrue(stillAuthorized("kept", authorizedAfter, authorizedAfter))
         assertTrue(stillAuthorized(null, authorizedAfter, authorizedAfter))
     }
+
+    @Test fun aReadIsAskedForAgainWhenOnlyARoutineSnapshotCameMeanwhile() = runBlocking {
+        val gate = RepositoryCommitGate(Mutex()); val state = MobileState(cacheEpoch = "epoch-1"); var asked = 0
+        suspend fun read(attempts: Int = 3, meanwhile: suspend (Int) -> Unit) = gate.settled(attempts, { gate.capture(null, 7, state.cacheEpoch) }, { gate.authorityCurrent(it) && it.holds(state, 7) }) { asked++; meanwhile(asked); "answer $asked" }
+        suspend fun snapshot() = check(gate.advance(gate.capture(null, 7, state.cacheEpoch)) != null)
+        assertEquals("answer 1", read {}); assertEquals(1, asked)
+        // The answer shown is the one asked for after the snapshot, never the one from before it.
+        asked = 0; assertEquals("answer 2", read { if (it == 1) snapshot() })
+        asked = 0; assertTrue(runCatching { read { snapshot() } }.exceptionOrNull() is StaleResultException); assertEquals(3, asked)
+        asked = 0; assertTrue(runCatching { read(1) { snapshot() } }.exceptionOrNull() is StaleResultException); assertEquals(1, asked)
+    }
+
+    @Test fun aReadAcrossAChangeOfAuthorityConnectionOrTranscriptIsNeverAskedForAgain() = runBlocking {
+        val changes = listOf<(RepositoryCommitGate, (MobileState, Long) -> Unit) -> Unit>(
+            { gate, _ -> gate.invalidate() },
+            { _, set -> set(MobileState(cacheEpoch = "epoch-2"), 7) },
+            { _, set -> set(MobileState(cacheEpoch = "epoch-1"), 8) },
+            { _, set -> set(MobileState(cacheEpoch = "epoch-1"), HeldUpserts.NONE) })
+        for (change in changes) {
+            val gate = RepositoryCommitGate(Mutex()); var state = MobileState(cacheEpoch = "epoch-1"); var connection = 7L; var asked = 0
+            val failure = runCatching { gate.settled(3, { gate.capture(null, connection, state.cacheEpoch) }, { gate.authorityCurrent(it) && it.holds(state, connection) }) { asked++; change(gate) { next, socket -> state = next; connection = socket }; "late" } }.exceptionOrNull()
+            assertTrue(failure is StaleResultException); assertEquals(1, asked)
+        }
+    }
+
+    @Test fun aReadThatFailsIsNotAskedForAgain() = runBlocking {
+        val gate = RepositoryCommitGate(Mutex()); var asked = 0
+        val failure = runCatching { gate.settled<String>(3, { gate.capture(null, 7, null) }, { true }) { asked++; error("refused") } }.exceptionOrNull()
+        assertEquals("refused", failure?.message); assertEquals(1, asked)
+    }
 }

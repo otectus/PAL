@@ -26,6 +26,8 @@ QtObject {
     property var editorDrafts: ({})
     property var fileDrafts: ({})
     property var references: ({})
+    // Ready provider-upload handles selected for the next turn. Handles are scoped to one conversation/account.
+    property var originalFiles: ({})
     // A run comparison baseline belongs to its conversation and survives pane/session switches.
     property var runBaselines: ({})
     // Project folders key scratchpad drafts. Independent library notes use their stable note IDs.
@@ -33,7 +35,7 @@ QtObject {
     /** The palette's "Create image" opens the Images pane with its Create panel showing. */
     property bool createRequested: false
     component LayoutPreferences: Settings {
-        location: App.layoutSettingsUrl
+        location: typeof App !== "undefined" ? App.layoutSettingsUrl : "file:///tmp/pal-qml-test-layout.ini"
         category: "navigation"
         property real paneWidth: Theme.paneDefault
         property bool collapsed: false
@@ -91,7 +93,7 @@ QtObject {
     }
     function imageFor(sessionId) { return images[sessionId] || ({ artifactId: "", versionId: "" }) }
     function clearImage(sessionId) { selectImage(sessionId, "", "") }
-    function selectResearch(sessionId, runId, versionId) { const next = Object.assign({}, researchSelections); if (runId) next[sessionId] = { id: runId, versionId: versionId || "" }; else delete next[sessionId]; researchSelections = next }
+    function selectResearch(sessionId, runId, versionId) { const current=researchSelections[sessionId]||{},version=versionId||"";if((current.id||"")===(runId||"")&&(current.versionId||"")===version)return;const next = Object.assign({}, researchSelections); if (runId) next[sessionId] = { id: runId, versionId: version }; else delete next[sessionId]; researchSelections = next }
     function researchFor(sessionId) { return researchSelections[sessionId] || ({ id: "", versionId: "" }) }
     function activateSession(sessionId) { const selectedFile = fileFor(sessionId), selectedImage = imageFor(sessionId); file = selectedFile; changeSetId = changeSetFor(sessionId); artifactId = selectedImage.artifactId; versionId = selectedImage.versionId }
     function rootFor(sessionId) { return roots[sessionId] || "" }
@@ -108,6 +110,27 @@ QtObject {
     signal insertIntoComposer(string sessionId, string text)
     function referencesFor(sessionId) { return references[sessionId] || [] }
     function setReferences(sessionId, list) { const next = Object.assign({}, references); next[sessionId] = list; references = next }
+    function originalFilesFor(sessionId) { return originalFiles[sessionId] || [] }
+    function setOriginalFiles(sessionId, list) { const next=Object.assign({},originalFiles);if(list&&list.length)next[sessionId]=list.slice(0,4);else delete next[sessionId];originalFiles=next }
+    function addOriginalFile(sessionId, file) {
+        if(!sessionId||!file?.id)return "Upload the original PDF first."
+        const current=originalFilesFor(sessionId)
+        if(current.some(value=>value.id===file.id))return ""
+        if(current.length>=4)return "A message can include up to four original PDFs."
+        setOriginalFiles(sessionId,current.concat([{id:file.id,name:file.name||"PDF"}]))
+        return ""
+    }
+    // A recording another pane, or a time cited in a reply, asked to open; taken once by the Media pane.
+    property var recordingTarget: null
+    // Which account service the Accounts pane opens on.
+    property string accountsService: ""
+    function openAccounts(service) { accountsService = service; show("accounts") }
+    function openRecording(sessionId, target) { recordingTarget = Object.assign({ sessionId: sessionId }, target); show("recordings") }
+    function takeRecording(sessionId) { const target = recordingTarget; if (!target || target.sessionId !== sessionId) return null; recordingTarget = null; return target }
+    // A page another pane asked the Canvas to show; taken once by the Canvas of that conversation.
+    property var canvasTarget: null
+    function openCanvas(sessionId, rootId, path) { canvasTarget = { sessionId: sessionId, rootId: rootId, path: path }; show("canvas") }
+    function takeCanvasTarget(sessionId) { const target = canvasTarget; if (!target || target.sessionId !== sessionId) return null; canvasTarget = null; return target }
     property var analysisDrafts: ({})
     property var analysisTarget: null
     // A transcript anchor is consumed by Chat only after its conversation is active.

@@ -2,4 +2,5 @@
 <!-- Full-size camera captures land here briefly; the app re-encodes them into its encrypted store and deletes the file. -->
 <paths>
     <cache-path name="camera" path="camera/" />
+    <cache-path name="shared" path="shared/" />
 </paths>

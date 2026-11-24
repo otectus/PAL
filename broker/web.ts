@@ -1,3 +1,5 @@
+import { hostedSearch } from './hosted-search.ts';
+import type { ProviderCredentials } from './credentials.ts';
 import { randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP, BlockList } from 'node:net';
@@ -12,7 +14,7 @@ export type SearchResult = Source & { snippet: string };
 export type WebPage = { text: string; status: number; url: string; contentType: string; bytes?: Buffer };
 type WebLoadOptions = { body?: string; trustedServer?: boolean; document?: boolean; sites?: string[] };
 export type WebLoader = (url: string, signal: AbortSignal, options?: WebLoadOptions) => Promise<WebPage>;
-export const searchProviders = ['auto', 'duckduckgo', 'brave', 'mojeek', 'searxng'] as const;
+export const searchProviders = ['auto', 'duckduckgo', 'brave', 'mojeek', 'searxng', 'perplexity', 'google_custom'] as const;
 const reservedV6 = new BlockList();
 reservedV6.addSubnet('2001::', 23, 'ipv6');
 reservedV6.addSubnet('2001:db8::', 32, 'ipv6');
@@ -207,6 +209,7 @@ export function sanitizeReason(value: unknown): string {
 }
 export class WebSearch {
   loader: WebLoader;
+  credentials?:ProviderCredentials;
   cache = new SearchCache<SearchResponse>();
   constructor(loader: WebLoader = loadWeb) { this.loader = loader; }
   async search(query: unknown, settings: Settings['webSearch'], signal: AbortSignal, trace?: (value: SearchTrace) => void, requested?: unknown) {
@@ -218,7 +221,7 @@ export class WebSearch {
     const report = (outcome: SearchTrace['outcome'], provider: SearchProvider | '' = '', results = 0, cached = false) => trace?.({ id: randomUUID(), time: Date.now(), query: query.trim().slice(0, 120), requested: settings.provider,
       attempts, provider, results, durationMs: Math.round(performance.now() - started), outcome, ...(described ? { constraints: described } : {}), ...(cached ? { cached: true } : {}) });
     // The cache key covers the normalized query, every constraint and the provider settings.
-    const key = SearchCache.key(query, constraints, [settings.provider, settings.provider === 'searxng' ? settings.searxngUrl : '']);
+    const key = SearchCache.key(query, constraints, [settings.provider, settings.provider === 'searxng' ? settings.searxngUrl : settings.googleEngineId || '', this.credentials && (settings.provider==='perplexity' || settings.provider==='google_custom') ? this.credentials.credentialRevision('provider:'+(settings.provider==='perplexity'?'perplexity':'google_search')) : '']);
     const hit = SearchCache.usable(constraints) ? this.cache.get(key) : undefined;
     if (hit) {
       described = hit.value.constraints;
@@ -240,9 +243,11 @@ export class WebSearch {
           url.search = new URLSearchParams({ q: compiled.query, format: 'json', categories: 'general', safesearch: '1', ...compiled.params }).toString();
         } else if (provider === 'duckduckgo') { url = new URL('https://html.duckduckgo.com/html/'); body = new URLSearchParams({ q: compiled.query, kl: 'us-en', ...compiled.params }).toString(); }
         else { url = new URL(provider === 'brave' ? 'https://search.brave.com/search' : 'https://www.mojeek.com/search'); url.searchParams.set('q', compiled.query); for (const [name, value] of Object.entries(compiled.params)) url.searchParams.set(name, value); }
-        const page = await this.loader(url.href, signal, { body, trustedServer: provider === 'searxng' });
+        const hosted = provider==='perplexity' || provider==='google_custom';
+        if (hosted && !this.credentials) throw new Error('Search credentials are unavailable');
+        const page = hosted ? {text:JSON.stringify({results:await hostedSearch(provider,compiled.query,settings,this.credentials!,signal)}),url:provider==='perplexity'?'https://api.perplexity.ai/':'https://customsearch.googleapis.com/'} : await this.loader(url.href, signal, { body, trustedServer: provider === 'searxng' });
         let results: SearchResult[];
-        if (provider === 'searxng') {
+        if (provider === 'searxng' || hosted) {
           let data: any; try { data = JSON.parse(page.text); } catch { throw new Error('Enable JSON search output on the SearXNG server'); }
           if (!Array.isArray(data.results)) throw new Error('SearXNG returned no result list');
           results = [];

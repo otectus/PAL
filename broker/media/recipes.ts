@@ -19,7 +19,7 @@ export type ImageRecipeV1 = {
   backend: {
     connectionId: string;
     connectionRevision: number;
-    kind: 'openai' | 'google' | 'comfyui';
+    kind: 'openai' | 'google' | 'xai' | 'azure_openai' | 'openrouter' | 'comfyui';
     model: string;
     route: ProcessingRoute;
     origin?: string;

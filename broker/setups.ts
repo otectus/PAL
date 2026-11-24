@@ -1,3 +1,4 @@
+import { apiProviders, providerIds, type ApiProvider } from './provider-catalog.ts';
 /**
  * Working setups (PAL Everywhere §12.3): a named combination of provider and model (or a saved connection), Workbench
  * families, a style and posture, standing output instructions, collections and skills. Applying one shows the actual
@@ -64,7 +65,7 @@ export function validSetup(p: any): Omit<Setup, 'id' | 'revision'> {
   const families = p.families ?? {};
   if (!families || typeof families !== 'object' || Array.isArray(families) || Object.entries(families).some(([key, value]) => !(workbenchFamilies as string[]).includes(key) || typeof value !== 'boolean')) throw new Error('Families are files, images, analysis and host, each on or off');
   const provider = text(p.provider, 'The provider', 40), model = text(p.model, 'The model', 512);
-  if (provider && !['ollama', 'openai', 'anthropic', 'google', 'compatible', 'codex', 'claude', 'antigravity'].includes(provider)) throw new Error('Choose a provider PAL supports');
+  if (provider && !(providerIds as readonly string[]).includes(provider)) throw new Error('Choose a provider PAL supports');
   return { name, description: text(p.description, 'The description', 400) || '', ...(provider ? { provider } : {}), ...(model ? { model } : {}), ...(text(p.connection, 'The connection', 80) ? { connection: text(p.connection, 'The connection', 80) } : {}),
     families: Object.fromEntries(Object.entries(families).filter(([, on]) => on === true)) as Setup['families'],
     ...(text(p.style, 'The style', 80) ? { style: text(p.style, 'The style', 80) } : {}), ...(text(p.posture, 'The posture', 80) ? { posture: text(p.posture, 'The posture', 80) } : {}),
@@ -96,6 +97,14 @@ export class Setups {
     this.core.store.set(storeKey, { revision: String(BigInt(stored.revision) + 1n), items: stored.items.filter(item => item.id !== p.id) }); this.core.changed();
     return true;
   }
+  /** The saved account a setup names. It is kept by name, because an exported setup carries no IDs; a missing one is said, never replaced. */
+  private account(setup: Setup) {
+    if (!setup.connection) return undefined;
+    const rows = this.core.chatConnections.list().filter(row => row.name === setup.connection && (!setup.provider || row.kind === setup.provider));
+    if (rows.length > 1) throw new Error(`Several accounts are named “${setup.connection}”. Rename them in Settings › Connections.`);
+    if (!rows.length) throw new Error(`This setup uses the account “${setup.connection}”, which is not in Settings › Connections. Add it, or choose another account in the setup.`);
+    return rows[0];
+  }
   /** What applying the setup to this conversation would change, and what it needs that is missing. Nothing changes. */
   preview(p: any, setup = this.get(p?.setupId)) {
     const session = this.core.store.session(p?.sessionId);
@@ -106,7 +115,11 @@ export class Setups {
       if (provider?.models?.length && !provider.models.some((model: any) => (model.id || model.name || model) === setup.model)) unresolved.push(`The model ${setup.model} is not available from ${session.provider} right now.`);
       else changes.push({ kind: 'model', label: 'Model', from: session.model || '(default)', to: setup.model });
     }
-    const managed = session.provider === 'ollama' || ['openai', 'anthropic', 'google', 'compatible'].includes(session.provider);
+    try {
+      const account = this.account(setup);
+      if (account && account.kind === session.provider && account.id !== session.connectionId) unresolved.push(`This setup uses the account “${account.name}”. Move this conversation in its model settings, or start a new one with the setup.`);
+    } catch (error: any) { unresolved.push(error.message); }
+    const managed = session.provider === 'ollama' || (apiProviders as readonly string[]).includes(session.provider);
     const current = Object.fromEntries(workbenchFamilies.map(family => [family, session.capabilities?.[family] === true]));
     const wanted = Object.fromEntries(workbenchFamilies.map(family => [family, setup.families[family] === true]));
     if (JSON.stringify(current) !== JSON.stringify(wanted)) {
@@ -170,10 +183,10 @@ export class Setups {
     if (p.expectedSetupRevision !== undefined && p.expectedSetupRevision !== setup.revision) throw Object.assign(new Error('This setup changed. Review the new version before starting a conversation.'), { code: 'REVISION_CONFLICT' });
     if (typeof p.cwd !== 'string' || !p.cwd.startsWith('/')) throw new Error('Choose the project folder');
     if (p.model !== undefined && (typeof p.model !== 'string' || !p.model || p.model.length > 512)) throw new Error('Choose a valid model');
-    const provider = setup.provider || p.provider || 'ollama';
+    const account = this.account(setup), provider = account?.kind || setup.provider || p.provider || 'ollama';
     const families = Object.fromEntries(workbenchFamilies.filter(family => setup.families[family]).map(family => [family, true]));
     const model = setup.model || p.model;
-    const session = await this.core.create({ provider, ...(model ? { model } : {}), cwd: p.cwd, trusted: true, ...(['ollama', 'openai', 'anthropic', 'google', 'compatible'].includes(provider) ? { tools: true, ...(Object.keys(families).length ? { capabilities: families } : {}) } : {}) } as any);
+    const session = await this.core.create({ provider, ...(account ? { connectionId: account.id } : {}), ...(model ? { model } : {}), cwd: p.cwd, trusted: true, ...(['ollama',...apiProviders].includes(provider) ? { tools: true, ...(Object.keys(families).length ? { capabilities: families } : {}) } : {}) } as any);
     const preview = this.preview({ setupId: setup.id, sessionId: session.id }, setup);
     const applied = await this.apply({ token: preview.token }, setup);
     return { session: applied.session, applied: applied.applied, unresolved: preview.unresolved, notes: preview.notes };

@@ -103,7 +103,7 @@ CSection {
             if (rows.error) { feedback = String(rows.error); return }
             const previous = connectionRef
             routes = [{ref:"default:ollama",label:"Default Ollama server",destination:"Determined from saved host and model"}].concat(rows.map(r => ({ref:"connection:"+r.id, label:r.name, destination:r.task?.processing || r.endpoint?.processing || (r.host && /localhost|127\.0\.0\.1/.test(r.host) ? "local" : "unknown")})))
-                .concat(["openai","anthropic","google"].map(k=>({ref:"native:"+k,label:k==="openai"?"OpenAI API":k==="anthropic"?"Anthropic API":"Google API",destination:"cloud"})))
+                .concat((App.state.providerOrder||[]).filter(k=>App.state.providerTraits?.[k]?.kind==="api"&&k!=="compatible"&&(["openai","anthropic","google"].includes(k)||App.state.capabilities?.[k]?.available)).map(k=>({ref:"native:"+k,label:App.state.providerTraits[k].label||k,destination:"cloud"})))
             const index = routes.findIndex(r => r.ref === previous)
             if (index >= 0 && revision >= 0) {
                 route.currentIndex = index

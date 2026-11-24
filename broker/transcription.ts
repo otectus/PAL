@@ -1,13 +1,18 @@
+import type { HostedSpeechProvider } from './hosted-speech.ts';
+import { recognizerFor, type HostedTranscribe, type Recognition, type RecognitionJob, type Recognizer } from './speech/recognizers.ts';
+import { background, waitForClose } from './speech/process.ts';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { getPriority, setPriority } from 'node:os';
-import { access, chmod, copyFile, mkdtemp, open, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, copyFile, mkdtemp, open, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { constants, createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, extname, join, resolve } from 'node:path';
 import { paths, privateDir } from './paths.ts';
 import { chosenDevice, recorderArgs } from './audio-devices.ts';
 
-export type TranscriptionSettings = { executable: string; model: string };
+export { backgroundNice } from './speech/process.ts';
+
+/** `local` runs whisper.cpp for each recording; `local-server` asks a speech server on this computer that keeps its model loaded. */
+export type TranscriptionSettings = { executable: string; model: string; serverUrl?: string; serverModel?: string; provider?:'local'|'local-server'|HostedSpeechProvider; cloudModel?:string; language?:string; region?:string;connectionId?:string;prompt?:string;timestampGranularities?:('word'|'segment')[] };
 export type TranscriptionState = 'unavailable' | 'idle' | 'recording' | 'transcribing' | 'error';
 export type TranscriptionStatus = {
   state: TranscriptionState;
@@ -26,6 +31,7 @@ export type TranscriptionResult = { sessionId: string; revision: number; text: s
   vtt?: string };
 export type RecorderCommand = { command: string; args: string[] };
 export type TranscriptionOptions = {
+  cloud?: HostedTranscribe;
   changed(): void;
   settings(): TranscriptionSettings;
   runtimeDirectory?: string;
@@ -38,7 +44,7 @@ export type TranscriptionOptions = {
 
 type Job = {
   sessionId: string; revision: number; startedAt: number; directory: string; audio: string;
-  executable: string; model: string; recorder?: ChildProcess; recorderClosed?: Promise<number | null>;
+  recognizer: Recognizer; recognize: (job: RecognitionJob) => Promise<Recognition>; recorder?: ChildProcess; recorderClosed?: Promise<number | null>;
   controller: AbortController; maximum?: NodeJS.Timeout;
 };
 
@@ -47,12 +53,6 @@ const transcriptLimit = 100_000;
 export const importLimits = { bytes: 1024 * 1024 * 1024, seconds: 3600 };
 const audioTypes = new Set(['.wav', '.mp3', '.ogg', '.oga', '.opus', '.flac', '.m4a', '.aac', '.webm', '.mp4', '.mkv', '.mov', '.m4v']);
 
-/** Lower CPU priority for background processes, so replies and the window stay responsive. */
-export const backgroundNice = 10;
-function background(child: ChildProcess) {
-  // Never raise priority: if the broker already runs nicer than this (a system tuner may renice it), keep that.
-  child.once('spawn', () => { try { if (child.pid) setPriority(child.pid, Math.max(backgroundNice, getPriority())); } catch { /* Priority is a courtesy, not a requirement. */ } });
-}
 /** M10: the chosen microphone is checked first; a missing one fails here, before any recorder starts. */
 export async function defaultRecorder(output: string): Promise<RecorderCommand> {
   const device = await chosenDevice('input');
@@ -64,14 +64,6 @@ export async function defaultRecorder(output: string): Promise<RecorderCommand> 
     await access('/usr/bin/arecord', constants.X_OK);
     return { command: '/usr/bin/arecord', args: ['-q', '-t', 'wav', '-f', 'S16_LE', '-r', '16000', '-c', '1', '-d', '60', ...recorderArgs('arecord', device), output] };
   } catch { throw new Error('No local recorder is available. Install PipeWire pw-record or ALSA arecord.'); }
-}
-
-function waitForClose(process: ChildProcess): Promise<number | null> {
-  return new Promise((resolveClose, reject) => {
-    let spawnError: Error | undefined;
-    process.once('error', error => { spawnError = error; });
-    process.once('close', code => spawnError ? reject(spawnError) : resolveClose(code));
-  });
 }
 
 async function stopProcess(process: ChildProcess, closed: Promise<unknown>, signal: NodeJS.Signals = 'SIGINT') {
@@ -86,7 +78,7 @@ async function stopProcess(process: ChildProcess, closed: Promise<unknown>, sign
   await closed.catch(() => {});
 }
 
-/** One broker-owned, local microphone and whisper.cpp lifecycle. */
+/** One broker-owned microphone and transcription at a time, whichever recognizer is chosen. */
 export class Transcription {
   private readonly options: TranscriptionOptions;
   private current?: Job;
@@ -114,10 +106,7 @@ export class Transcription {
     this.options.changed();
     let directory = '';
     try {
-      const configured = this.options.settings();
-      const executable = await this.localFile(configured?.executable, true, 'whisper.cpp executable');
-      this.assertCurrentReservation(revision);
-      const model = await this.localFile(configured?.model, false, 'whisper.cpp model');
+      const configured = { ...this.options.settings() }, recognizer = recognizerFor(configured, this.options.cloud), recognize = await recognizer.prepare(configured);
       this.assertCurrentReservation(revision);
       const root = privateDir(join(resolve(this.options.runtimeDirectory || paths().runtime), 'transcription'));
       directory = await mkdtemp(join(root, 'capture-')); await chmod(directory, 0o700);
@@ -132,7 +121,7 @@ export class Transcription {
         recorder.once('spawn', resolveStarted); recorder.once('error', reject);
       });
       const startedAt = Date.now();
-      const job: Job = { sessionId: input.sessionId, revision, startedAt, directory, audio, executable, model, recorder, recorderClosed, controller };
+      const job: Job = { sessionId: input.sessionId, revision, startedAt, directory, audio, recognizer, recognize, recorder, recorderClosed, controller };
       this.current = job;
       const maximum = Math.max(1, Math.min(60_000, this.options.maximumMilliseconds || 60_000));
       job.maximum = setTimeout(() => { void this.expire(job); }, maximum); job.maximum.unref();
@@ -159,12 +148,7 @@ export class Transcription {
       if (job.recorder) await stopProcess(job.recorder, job.recorderClosed!);
       job.controller.signal.throwIfAborted(); this.assertCurrent(job);
       if ((await stat(job.audio)).size <= 44) throw new Error('The microphone recording was empty');
-      const prefix = join(job.directory, 'transcript');
-      await this.whisper(job, prefix);
-      job.controller.signal.throwIfAborted(); this.assertCurrent(job);
-      const text = (await readFile(prefix + '.txt', 'utf8')).trim();
-      if (!text) throw new Error('whisper.cpp returned an empty transcript');
-      if (text.length > transcriptLimit) throw new Error('The transcript exceeded 100,000 characters');
+      const { text } = await this.recognized(job);
       const result = { sessionId: job.sessionId, revision: job.revision, text };
       await this.cleanup(job);
       if (this.generation !== job.revision) throw new Error('This transcription result is stale');
@@ -202,41 +186,33 @@ export class Transcription {
    * is installed; only the first hour is transcribed. The result is returned for review with its
    * source; it is never sent, and the converted audio is removed afterwards.
    */
-  async importFile(input: { sessionId: string; path: unknown }): Promise<TranscriptionResult> {
+  async importFile(input: { sessionId: string; path: unknown; name?: string }): Promise<TranscriptionResult> {
     if (this.closed) throw new Error('Voice input is closed');
     if (!input || typeof input.sessionId !== 'string' || !input.sessionId.trim()) throw new Error('Choose a session before importing audio');
     if (this.current) throw new Error('Voice input is busy. Finish or cancel it first.');
     const revision = ++this.generation, controller = new AbortController();
     let job: Job | undefined;
     try {
-      const configured = this.options.settings();
-      const executable = await this.localFile(configured?.executable, true, 'whisper.cpp executable');
-      const model = await this.localFile(configured?.model, false, 'whisper.cpp model');
+      const configured = { ...this.options.settings() }, recognizer = recognizerFor(configured, this.options.cloud), recognize = await recognizer.prepare(configured);
       if (typeof input.path !== 'string' || !input.path.startsWith('/')) throw new Error('Choose an audio or video file');
-      const source = await realpath(input.path), info = await stat(source), type = extname(source).toLowerCase();
+      // A kept recording is stored under its hash, so PAL names it; a file the user picked is named by its path.
+      const source = await realpath(input.path), info = await stat(source), label = input.name ? basename(input.name) : basename(source), type = extname(label).toLowerCase();
       if (!info.isFile()) throw new Error('Choose a regular audio or video file');
       if (!audioTypes.has(type)) throw new Error('Choose WAV, MP3, OGG, Opus, FLAC, M4A, AAC, WebM, MP4, MKV or MOV');
       if (info.size > importLimits.bytes) throw new Error('Files up to 1 GB can be transcribed');
       this.assertCurrentReservation(revision);
       const root = privateDir(join(resolve(this.options.runtimeDirectory || paths().runtime), 'transcription'));
       const directory = await mkdtemp(join(root, 'import-')); await chmod(directory, 0o700);
-      job = { sessionId: input.sessionId, revision, startedAt: Date.now(), directory, audio: join(directory, 'audio.wav'), executable, model, controller };
+      job = { sessionId: input.sessionId, revision, startedAt: Date.now(), directory, audio: join(directory, 'audio.wav'), recognizer, recognize, controller };
       this.current = job;
-      this.update({ state: 'transcribing', sessionId: input.sessionId, revision, startedAt: job.startedAt, error: '', file: basename(source) });
+      this.update({ state: 'transcribing', sessionId: input.sessionId, revision, startedAt: job.startedAt, error: '', file: label });
       const sha256 = await this.digest(source, controller.signal);
       const converted = await this.convert(job, source, type);
       job.controller.signal.throwIfAborted(); this.assertCurrent(job);
-      const prefix = join(directory, 'transcript');
-      await this.whisper(job, prefix, 30 * 60_000);
-      job.controller.signal.throwIfAborted(); this.assertCurrent(job);
-      const text = (await readFile(prefix + '.txt', 'utf8')).trim();
-      if (!text) throw new Error('whisper.cpp returned an empty transcript');
-      if (text.length > transcriptLimit) throw new Error('The transcript exceeded 100,000 characters');
-      // Segment timestamps, when whisper.cpp wrote them; the plain text above stays the draft.
-      const vtt = (await readFile(prefix + '.vtt', 'utf8').catch(() => '')).slice(0, transcriptLimit * 3);
+      const { text, vtt } = await this.recognized(job, 30 * 60_000);
       await this.cleanup(job); this.current = undefined;
       this.update({ state: this.configured() ? 'idle' : 'unavailable', sessionId: '', revision, error: '', file: undefined });
-      return { sessionId: input.sessionId, revision, text, source: { name: basename(source), size: info.size, sha256, ...converted }, ...(vtt.startsWith('WEBVTT') ? { vtt } : {}) };
+      return { sessionId: input.sessionId, revision, text, source: { name: label, size: info.size, sha256, ...converted }, ...(vtt.startsWith('WEBVTT') ? { vtt } : {}) };
     } catch (error: any) {
       if (job) await this.cleanup(job);
       if (controller.signal.aborted || this.generation !== revision) throw new Error('Voice input was cancelled');
@@ -289,41 +265,19 @@ export class Transcription {
 
   private configured() {
     const settings = this.options.settings();
-    return typeof settings?.executable === 'string' && !!settings.executable.trim() && typeof settings?.model === 'string' && !!settings.model.trim();
+    return recognizerFor(settings, this.options.cloud).configured(settings);
   }
   private update(patch: Partial<TranscriptionStatus>) { this.state = { ...this.state, ...patch }; this.options.changed(); }
   private assertCurrentReservation(revision: number) { if (this.closed || this.generation !== revision || this.current) throw new Error('Voice input start was cancelled'); }
   private assertCurrent(job: Job) { if (this.current !== job || this.generation !== job.revision) throw new Error('This transcription result is stale'); }
-  private async localFile(value: unknown, executable: boolean, label: string) {
-    if (typeof value !== 'string' || !value.startsWith('/')) throw new Error(`Configure an absolute local ${label} path`);
-    const path = await realpath(value);
-    if (!(await stat(path)).isFile()) throw new Error(`The configured ${label} is not a file`);
-    if (executable) await access(path, constants.X_OK);
-    return path;
-  }
-  private async whisper(job: Job, prefix: string, limit = 5 * 60_000) {
-    const child = spawn(job.executable, ['-m', job.model, '-f', job.audio, '--output-txt', '--output-vtt', '--output-file', prefix, '--no-timestamps'], {
-      env: this.options.env || process.env, stdio: ['ignore', 'ignore', 'pipe'],
-    });
-    // A04: transcribing a file is background work; dictation keeps normal priority.
-    if (!job.recorder) background(child);
-    let stderr = '', killTimer: NodeJS.Timeout | undefined;
-    child.stderr?.setEncoding('utf8'); child.stderr?.on('data', data => { stderr = (stderr + data).slice(-4096); });
-    const closed = waitForClose(child);
-    const terminate = () => { child.kill('SIGTERM'); killTimer ||= setTimeout(() => child.kill('SIGKILL'), 1500); killTimer.unref(); };
-    job.controller.signal.addEventListener('abort', terminate, { once: true });
-    const timeout = setTimeout(terminate, limit); timeout.unref();
-    try {
-      const code = await closed;
-      if (job.controller.signal.aborted) throw job.controller.signal.reason;
-      if (code !== 0) throw new Error(`whisper.cpp failed (exit ${code})${stderr.trim() ? `: ${stderr.trim()}` : ''}`);
-    } catch (error: any) {
-      if (error?.code === 'ENOENT') throw new Error(`Could not start whisper.cpp: ${error.message}`);
-      throw error;
-    } finally {
-      clearTimeout(timeout); if (killTimer) clearTimeout(killTimer);
-      job.controller.signal.removeEventListener('abort', terminate);
-    }
+  /** The words of this job's recording, whichever recognizer it started with, and only while the job is still wanted. */
+  private async recognized(job: Job, limitMs = 5 * 60_000): Promise<{ text: string; vtt: string }> {
+    const found = await job.recognize({ wav: job.audio, directory: job.directory, signal: job.controller.signal, limitMs, interactive: !!job.recorder, env: this.options.env || process.env });
+    job.controller.signal.throwIfAborted(); this.assertCurrent(job);
+    const text = found.text.trim();
+    if (!text) throw new Error(`${job.recognizer.name} returned an empty transcript`);
+    if (text.length > transcriptLimit) throw new Error('The transcript exceeded 100,000 characters');
+    return { text, vtt: (found.vtt || '').slice(0, transcriptLimit * 3) };
   }
   private async cleanup(job: Job) { await rm(job.directory, { recursive: true, force: true }); }
   private async expire(job: Job) {

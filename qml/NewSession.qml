@@ -65,6 +65,7 @@ CDialog {
     readonly property var selectedConnection:connectionId?providerConnections.find(c=>c.id===connectionId)||({}):({})
     readonly property var compatibleEndpoint:providerName==="compatible"?(connectionId?(selectedConnection.endpoint||({})):(App.state.settings?.compatible||({}))):({})
     readonly property bool compatibleCredentialReady:providerName!=="compatible"||!!compatibleEndpoint.baseUrl&&(compatibleEndpoint.requiresKey!==true||(connectionId?selectedConnection.keySet===true:capability.configured===true))
+    readonly property bool connectionCredentialReady:!connectionId||isOllama||selectedConnection.keySet===true||selectedConnection.endpoint?.requiresKey===false
     // Tool scope belongs to the selected endpoint, not whichever compatible endpoint is the Settings default.
     readonly property bool apiTools:providerName!=="compatible"||compatibleEndpoint.tools===true
     RpcClient { id:connectionRpc }
@@ -74,7 +75,7 @@ CDialog {
         if(connectionId){const asked=connectionId;connectionRpc.call("connections.models",{id:asked},value=>{if(sessionForm.connectionId!==asked)return;sessionForm.connectionModels=value.error?{status:"error",models:[],error:value.error}:{status:"ready",models:value.models||[]}})}
     }
     property var capability:connectionId?({modelsStatus:connectionModels.status,models:connectionModels.models,modelsError:connectionModels.error||""}):(App.state.capabilities||{})[providerName]||({})
-    readonly property bool apiCredentialReady:!isApi?true:providerName==="compatible"?compatibleCredentialReady:capability.configured===true
+    readonly property bool apiCredentialReady:!isApi?true:connectionId?connectionCredentialReady:providerName==="compatible"?compatibleCredentialReady:capability.configured===true
     readonly property bool providerSetupReady:isApi?apiCredentialReady:isOllama?capability.modelsStatus==="ready":capability.available===true
     readonly property string providerStatus:{
         if(!isApi&&!isOllama)return capability.available?"CLI found · Sign-in is checked when the conversation starts.":capability.error||"CLI executable not found on this computer."
@@ -88,8 +89,12 @@ CDialog {
     property var modelOptions:[{id:"",displayName:isApi?"Choose a model":isOllama?(savedDefault?"Default · "+savedDefault:"Choose a model"):"CLI default",description:isApi?"Select from the catalog or enter a model ID below":isOllama?"Choose a default in Settings → Connections":"Use the model configured by the CLI",efforts:[],defaultEffort:"",isDefault:true}].concat(capability.models||[]).concat((projectSettings||prefilled)&&desiredModel&&!(capability.models||[]).some(m=>m.id===desiredModel)?[{id:desiredModel,displayName:desiredModel+" · saved",description:"Saved selection. Availability is checked when you open a session.",efforts:[],defaultEffort:""}]:[])
     property var effectiveModel:isOllama?(capability.models||[]).find(m=>m.id===(modelName.currentValue||savedDefault)):selectedModel
     property var selectedModel:modelName.currentIndex>=0&&modelName.currentIndex<modelOptions.length?modelOptions[modelName.currentIndex]:modelOptions[0]
-    readonly property bool selectedToolsSupported:isConversation&&(isApi?apiTools:!!effectiveModel?.capabilities?.includes("tools"))
-    property var effortOptions:[{id:"",displayName:"CLI default",description:"Use the CLI’s configured effort"}].concat(selectedModel&&selectedModel.efforts?selectedModel.efforts:[]).concat((projectSettings||prefilled)&&desiredEffort&&!(selectedModel?.efforts||[]).some(e=>e.id===desiredEffort)?[{id:desiredEffort,displayName:desiredEffort+" · saved"}]:[])
+    readonly property bool selectedToolsSupported:isConversation&&(isApi?apiTools&&!(effectiveModel?.capabilities||[]).includes("no-local-tools"):!!effectiveModel?.capabilities?.includes("tools"))
+    property var effortOptions:[{id:"",displayName:"Provider default",description:"Use the provider or model default"}].concat(selectedModel&&selectedModel.efforts?selectedModel.efforts:[]).concat((projectSettings||prefilled)&&desiredEffort&&!(selectedModel?.efforts||[]).some(e=>e.id===desiredEffort)?[{id:desiredEffort,displayName:desiredEffort+" · saved"}]:[])
+    readonly property bool supportsEffort:providerTrait.effort===true||effortOptions.length>1
+    property var providerOptions:({})
+    // A catalog that lists what a model takes, without reasoning in it, says the model does not reason.
+    function withoutReasoning(model){const takes=model?.supportedParameters;return !!takes&&takes.length>0&&takes.indexOf("reasoning")<0&&takes.indexOf("reasoning_effort")<0}
     function chooseEffort(value) {
         const wanted=value===undefined?"":value
         const index=effortOptions.findIndex(option=>option.id===wanted)
@@ -118,7 +123,7 @@ CDialog {
             if(!sessionTitle.text.trim())return "Enter a project name."
             if(!folder.text.trim().startsWith("/"))return "Choose an absolute project folder."
             if(isApi&&!customModel.text.trim()&&!modelName.currentValue)return "Choose a model or enter its model ID."
-            if(tools.checked&&!selectedToolsSupported)return isApi?"This endpoint is not declared to support tools. Turn desktop tools off, or update its declaration.":"This model does not support tools. Choose another model or turn desktop tools off."
+            if(tools.checked&&!selectedToolsSupported)return isApi&&!apiTools?"This endpoint is not declared to support tools. Turn desktop tools off, or update its declaration.":"This model does not support tools. Choose another model or turn desktop tools off."
             return ""
         }
         if(!providerSetupReady){
@@ -127,7 +132,7 @@ CDialog {
             if(providerName==="compatible"&&!compatibleEndpoint.baseUrl)return "Set this compatible endpoint in Settings → Connections."
             return providerName==="compatible"?"Add the key required by this endpoint in Settings → Connections.":"Add this provider’s API key in Settings → Connections."
         }
-        if(tools.checked&&!selectedToolsSupported)return isApi?"This endpoint is not declared to support tools. Turn desktop tools off, or update its saved declaration.":"This model does not support tools. Choose another model or turn desktop tools off."
+        if(tools.checked&&!selectedToolsSupported)return isApi&&!apiTools?"This endpoint is not declared to support tools. Turn desktop tools off, or update its saved declaration.":"This model does not support tools. Choose another model or turn desktop tools off."
         if(!folder.text.trim().startsWith("/")&&!(isConversation&&!tools.checked&&!folder.text.trim()))return "Choose an absolute project folder. It is optional only when desktop tools are off."
         if(isOllama&&!effectiveModel)return "Choose an available Ollama model."
         if(isApi&&!customModel.text.trim()&&!modelName.currentValue)return "Choose a model or enter its model ID."
@@ -140,14 +145,14 @@ CDialog {
     // Each opening starts at the top, where the heading and the saved-defaults note are.
     onAboutToShow:scrollToTop()
     onOpened:{
-        sessionForm.loadConnections();sessionForm.connectionId="";connectionBox.currentIndex=0
+        sessionForm.loadConnections();sessionForm.connectionId="";sessionForm.providerOptions={};connectionBox.currentIndex=0
         const saved=general?App.state.settings?.conversationDefaults:null
         prefilled=!!saved
         const start=saved||imported
         sessionTitle.text=imported.title||""
         folder.text=imported.cwd||""
         provider.currentIndex=Math.max(0,providerOrder.indexOf(start.provider||"codex"))
-        desiredModel=start.model||"";desiredEffort=start.effort||""
+        desiredModel=start.model||"";desiredEffort=start.effort||"";providerOptionsEditor.reset(start.providerOptions||{})
         chooseModel(desiredModel);refreshModels()
         customModel.text="";temporary.checked=(projectSettings||prefilled)&&!!start.temporary;tools.checked=(projectSettings||prefilled)&&!!start.tools;trust.checked=projectSettings&&!!imported.trusted;favorite.checked=!!project.favorite;conventions.checked=projectSettings&&!!project.conventions;projectStage="";if(projectSettings)stylesRequest=App.rpc("presets.list",{});handoff.checked=false;saveDefaults.checked=false;error="";modelError=""
         Qt.callLater(()=>sessionTitle.forceActiveFocus())
@@ -166,7 +171,7 @@ CDialog {
     CText { text:"Provider";color:Theme.muted;font.pixelSize:Theme.secondary }
     CComboBox {
         id:provider;objectName:"sessionProvider";Layout.fillWidth:true;model:sessionForm.providerOrder.map(id=>id==="compatible"?(App.state.settings?.compatible?.label||sessionForm.traits[id]?.label||"Compatible endpoint"):(sessionForm.traits[id]?.label||({codex:"Codex",claude:"Claude Code",ollama:"Ollama",antigravity:"AntiGravity",openai:"OpenAI API",anthropic:"Claude API",google:"Google AI API"})[id]||id));enabled:!sessionForm.imported.nativeId;Accessible.name:"Session provider"
-        onActivated:{customModel.text="";tools.checked=false;if(sessionForm.projectSettings)trust.checked=false;sessionForm.desiredModel="";sessionForm.desiredEffort="";sessionForm.connectionId="";connectionBox.currentIndex=0;sessionForm.chooseModel("");sessionForm.refreshModels()}
+        onActivated:{customModel.text="";tools.checked=false;if(sessionForm.projectSettings)trust.checked=false;sessionForm.desiredModel="";sessionForm.desiredEffort="";sessionForm.connectionId="";sessionForm.providerOptions={};connectionBox.currentIndex=0;sessionForm.chooseModel("");sessionForm.refreshModels()}
     }
     CText {
         objectName:"sessionProviderStatus";Layout.fillWidth:true;wrapMode:Text.Wrap
@@ -175,8 +180,8 @@ CDialog {
     }
     CComboBox {
         id:connectionBox;objectName:"sessionConnection";Layout.fillWidth:true;visible:!sessionForm.projectSettings&&sessionForm.providerConnections.length>0
-        model:[(sessionForm.isOllama?"Ollama in Settings":"Endpoint in Settings")+" (default)"].concat(sessionForm.providerConnections.map(c=>c.name+" · "+(c.host||c.endpoint?.baseUrl||"")))
-        Accessible.name:"Connection";onActivated:index=>{sessionForm.desiredModel="";sessionForm.chooseConnection(index)}
+        model:[(sessionForm.providerTrait.label||sessionForm.providerName)+" default"].concat(sessionForm.providerConnections.map(c=>c.name+" · "+(c.variant?c.variant+" · ":"")+(c.host||c.endpoint?.baseUrl||"provider endpoint")))
+        Accessible.name:"Provider account or connection";onActivated:index=>{sessionForm.desiredModel="";sessionForm.providerOptions={};sessionForm.chooseConnection(index)}
     }
     CText { text:!sessionForm.projectSettings&&sessionForm.isConversation&&!tools.checked?"Project folder (optional)":"Project folder";color:Theme.muted;font.pixelSize:Theme.secondary }
     GridLayout {
@@ -188,23 +193,39 @@ CDialog {
     RowLayout {
         Layout.fillWidth:true
         CText { text:"Model";color:Theme.muted;font.pixelSize:Theme.secondary;Layout.fillWidth:true }
+        CButton { objectName:"sessionModelsBrowse";visible:(sessionForm.capability.models||[]).length>8;text:modelBrowser.visible?"Close list":"Browse…";quiet:true;onClicked:modelBrowser.shown=!modelBrowser.shown }
         CButton { objectName:"sessionModelsRefresh";text:sessionForm.capability.modelsStatus==="loading"?"Loading…":"Refresh";quiet:true;enabled:App.connected&&sessionForm.capability.modelsStatus!=="loading";onClicked:sessionForm.refreshModels() }
     }
     CComboBox {
         id:modelName;objectName:"sessionModel";Layout.fillWidth:true;model:sessionForm.modelOptions;textRole:"displayName";valueRole:"id";Accessible.name:"Session model"
-        onActivated:{if(!sessionForm.isApi&&!sessionForm.effectiveModel?.capabilities?.includes("tools"))tools.checked=false;sessionForm.desiredModel=currentValue||"";sessionForm.desiredEffort="";sessionForm.chooseEffort("")}
+        onActivated:{if(!sessionForm.selectedToolsSupported)tools.checked=false;sessionForm.desiredModel=currentValue||"";sessionForm.desiredEffort="";sessionForm.chooseEffort("")}
+    }
+    ModelBrowser {
+        id:modelBrowser;property bool shown:false
+        visible:shown&&models.length>0;Layout.fillWidth:true
+        models:sessionForm.capability.models||[];current:modelName.currentValue||"";provider:sessionForm.providerName;connectionId:sessionForm.connectionId
+        preferred:sessionForm.providerOptions.preferredProviders||[]
+        onChosen:id=>{if(sessionForm.isApi)customModel.text="";sessionForm.desiredEffort="";sessionForm.chooseModel(id);if(!sessionForm.selectedToolsSupported)tools.checked=false}
+        onPrefer:list=>providerOptionsEditor.setOption("preferredProviders",list.length?list:undefined)
+        onProviderChanged:shown=false
     }
     CField { id:customModel;objectName:"sessionCustomModel";visible:sessionForm.isApi;Layout.fillWidth:true;maximumLength:512;placeholderText:"Or enter an API model ID";Accessible.name:"Custom API model ID" }
-    CText { visible:sessionForm.isApi&&sessionForm.providerName!=="compatible";text:"Uses your API key from Settings → Connections. API usage may incur charges. Desktop only.";color:Theme.muted;font.pixelSize:Theme.secondary }
-    CText { visible:sessionForm.providerName==="compatible";text:sessionForm.compatibleEndpoint.baseUrl?(sessionForm.connectionId?"Uses saved connection “"+(sessionForm.selectedConnection.name||"Compatible endpoint")+"” · ":"Uses the Settings default · ")+sessionForm.compatibleEndpoint.baseUrl+". Tool and image access follow this endpoint’s declarations. Desktop only.":"Set the compatible endpoint in Settings → Connections first.";color:sessionForm.compatibleEndpoint.baseUrl?Theme.muted:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    CText { visible:sessionForm.isApi&&sessionForm.providerName!=="compatible";text:(sessionForm.connectionId?"Uses account “"+(sessionForm.selectedConnection.name||sessionForm.providerTrait.label)+"”. ":"Uses the default credential in Settings → Connections. ")+"API usage may incur charges; authorized phones use the same bound account.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    CText { visible:sessionForm.providerName==="compatible";text:sessionForm.compatibleEndpoint.baseUrl?(sessionForm.connectionId?"Uses saved connection “"+(sessionForm.selectedConnection.name||"Compatible endpoint")+"” · ":"Uses the Settings default · ")+sessionForm.compatibleEndpoint.baseUrl+". Tool and image access follow this endpoint’s declarations.":"Set the compatible endpoint in Settings → Connections first.";color:sessionForm.compatibleEndpoint.baseUrl?Theme.muted:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CText { visible:sessionForm.providerName==="antigravity";text:"Uses your agy sign-in. Actions needing approval may be skipped by headless mode. Images are not supported.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CText { visible:!sessionForm.isOllama&&sessionForm.selectedModel&&!!sessionForm.selectedModel.description;text:sessionForm.selectedModel?sessionForm.selectedModel.description:"";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
-    CText { visible:!sessionForm.isConversation;text:"Effort";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { objectName:"sessionModelFacts";visible:text.length>0&&!modelBrowser.visible;text:sessionForm.effectiveModel?.detail||"";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
+    CText { visible:sessionForm.supportsEffort;text:"Reasoning effort";color:Theme.muted;font.pixelSize:Theme.secondary }
     CComboBox {
-        id:reasoningEffort;visible:!sessionForm.isConversation;objectName:"sessionEffort";Layout.fillWidth:true;model:sessionForm.effortOptions;textRole:"displayName";valueRole:"id";Accessible.name:"Session effort"
+        id:reasoningEffort;visible:sessionForm.supportsEffort;objectName:"sessionEffort";Layout.fillWidth:true;model:sessionForm.effortOptions;textRole:"displayName";valueRole:"id";Accessible.name:"Session effort"
         onActivated:sessionForm.desiredEffort=currentValue||""
     }
     CText { visible:!!reasoningEffort.currentValue&&reasoningEffort.currentIndex>=0&&!!sessionForm.effortOptions[reasoningEffort.currentIndex].description;text:reasoningEffort.currentIndex>=0?(sessionForm.effortOptions[reasoningEffort.currentIndex].description||""):"";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
+    ColumnLayout {
+        visible:providerOptionsEditor.fields.length>0;Layout.fillWidth:true;spacing:Theme.space2
+        SectionLabel { text:"PROVIDER OPTIONS";Accessible.role:Accessible.Heading }
+        ProviderOptionsEditor { id:providerOptionsEditor;schema:sessionForm.providerTrait.optionsSchema||[];variant:sessionForm.selectedConnection.variant||"";hiddenKeys:sessionForm.effortOptions.length>1||sessionForm.withoutReasoning(sessionForm.selectedModel)?["reasoningEffort"]:[];values:sessionForm.providerOptions;onValuesChanged:sessionForm.providerOptions=values }
+    }
     CText { visible:sessionForm.isOllama;text:sessionForm.effectiveModel?.description||(sessionForm.capability.modelsStatus==="ready"?"No chat model selected. Choose a model above or pull one with Ollama and Refresh.":"Connect to Ollama in Settings → Connections.");color:Theme.muted;font.pixelSize:Theme.secondary }
     SectionLabel { text:"Access & storage";Accessible.role:Accessible.Heading;Layout.topMargin:Theme.space1 }
     CCheckBox { id:temporary;objectName:"temporarySession";visible:!sessionForm.imported.nativeId;text:"Temporary conversation";onClicked:if(checked)tools.checked=false }
@@ -250,7 +271,7 @@ CDialog {
                 objectName:"sessionOpen";Layout.fillWidth:true;text:sessionForm.requestId>=0?"Saving…":sessionForm.projectSettings?"Save defaults":"Open session";primary:true;prominent:true
                 enabled:sessionForm.requestId<0&&!sessionForm.openBlocker
                 onClicked:{
-                    const defaults={provider:sessionForm.providerName,trusted:trust.checked,temporary:temporary.visible&&temporary.checked,tools:sessionForm.isConversation&&tools.checked,model:sessionForm.isApi&&customModel.text.trim()?customModel.text.trim():modelName.currentValue||"",effort:sessionForm.isConversation?"":reasoningEffort.currentValue||""}
+                    const defaults={provider:sessionForm.providerName,trusted:trust.checked,temporary:temporary.visible&&temporary.checked,tools:sessionForm.isConversation&&tools.checked,model:sessionForm.isApi&&customModel.text.trim()?customModel.text.trim():modelName.currentValue||"",effort:reasoningEffort.currentValue||"",providerOptions:sessionForm.providerOptions}
                     sessionForm.error=""
                     sessionForm.pendingDefaults=sessionForm.general&&saveDefaults.checked?{provider:defaults.provider,model:defaults.model,effort:defaults.effort,tools:defaults.tools,temporary:defaults.temporary}:null
                     sessionForm.requestId=sessionForm.projectSettings?App.rpc("projects.save",{cwd:folder.text.trim(),name:sessionTitle.text.trim(),favorite:favorite.checked,expectedRevision:sessionForm.project.revision||"0",defaults:defaults}):App.rpc("session.create",Object.assign(defaults,sessionForm.connectionId?{connectionId:sessionForm.connectionId}:{},{cwd:folder.text.trim(),nativeId:sessionForm.imported.nativeId||"",handoffConfirmed:handoff.checked,title:sessionTitle.text.trim()||"Untitled session"},sessionForm.isConversation&&!(temporary.visible&&temporary.checked)?{capabilities:{files:capFiles.checked&&capFiles.enabled,images:capImages.checked&&capImages.enabled,analysis:capAnalysis.checked&&capAnalysis.enabled}}:{}))

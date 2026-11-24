@@ -21,10 +21,14 @@ function dto(row:any):Record<string,any> {
     const kind=m.kind in desktopResults?m.kind:'result',label=desktopResults[kind]||'A desktop result';
     return {id:m.id,sessionId:m.sessionId,role:'workbench',kind,text:`${label} · view this result on the desktop.`,time:m.time,revision:m.revision||'0',turnId:m.turnId,desktopOnly:{kind,label}};
   }
-  const sources=row.sources?JSON.parse(row.sources).slice(0,20).map((s:any)=>({title:String(s.title||'').slice(0,256),url:String(s.url||'').slice(0,4096)})):undefined;
+  const sources=row.sources?JSON.parse(row.sources).slice(0,20).map((s:any)=>({title:String(s.title||'').slice(0,256),url:String(s.url||'').slice(0,4096),
+    ...Object.fromEntries(['provider','responseId','resultId','sourceType','offsetUnit'].filter(k=>typeof s[k]==='string').map(k=>[k,s[k].slice(0,200)])),
+    ...Object.fromEntries(['startOffset','endOffset'].filter(k=>Number.isSafeInteger(s[k])&&s[k]>=0).map(k=>[k,s[k]]))})):undefined;
   return {id:m.id,sessionId:m.sessionId,role:m.role,kind:m.kind,text:row.text||'',time:m.time,revision:m.revision||'0',turnId:m.turnId,sources,
     // W11: a pinned reply (a desktop bookmark); absent when not pinned.
     ...(row.bookmarked?{bookmarked:true}:{}),
+    // §16.3: transcripts this reply was about, so a time it cites can open one; opening still needs its own permission.
+    ...(Array.isArray(m.recordings)&&m.recordings.length?{recordings:m.recordings.slice(0,8).map((r:any)=>({artifactId:r.artifactId,versionId:r.versionId,name:String(r.name||'').slice(0,120)}))}:{}),
     ...(row.chars>previewChars?{contentTruncated:true,contentBytes:row.bytes,contentChars:row.chars,textParts:{count:Math.ceil(row.chars/partChars),partChars,encoding:'unicode-scalar'}}:{})};
 }
 export function mobileMessage(store:Store,sessionId:string,messageId:string) {

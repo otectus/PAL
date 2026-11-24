@@ -1,5 +1,30 @@
 # Validation record
 
+## PAL 2.0.2 — November 24, 2026
+
+Covers the whole release: providers, time awareness, recordings and documents, analysis sessions, pinned sources, accounts, collectors and history, the code index, the browser companion, services, speech, and the phone work. Provider-specific evidence is in [docs/providers/2.0.2-validation.md](docs/providers/2.0.2-validation.md), the phone's in [docs/mobile/TESTING.md](docs/mobile/TESTING.md). The checks ran on the published source with Qt 6.12, and Node 26.13.1 unless another version is named. “As CI” means a sandbox without network that holds only the packages, fonts and QML modules the GitHub jobs install.
+
+| Check | Result |
+| --- | --- |
+| `npm run typecheck`, `npx tsc -p tsconfig.mobile.json`, `node tools/mobile-contract.ts --check` | Exit 0. |
+| `node --test tests/*.test.ts`, as CI, on Node 26.8.2 (the version it pins), three times | 1,484 tests: 1,414 passed, 70 skipped, 0 failed each time. |
+| `node --test tests/*.test.ts`, with the tools installed here | 1,484 tests: 1,439 passed, 45 skipped, 0 failed. Most skips are optional avatar authoring sources. |
+| `pal-ui-check`, every slot but the review ones, and `reviewSurfacesAtScale`, as CI, on Node 26.8.2 and 26.13.1 | 137 passed, 0 failed, 10 skipped in 25 min. Eight skips need the live compositor or Spotify. The other two need Bubblewrap and passed where it is available (`analysisSessionCells`, `runsPaneFocusedAcceptance`). |
+| `ctest` | 6/6: five offscreen, the GPU `avatar` case on the private virtual desktop. |
+| Android gates, emulator suite and paired checks | Passed; see [TESTING.md](docs/mobile/TESTING.md). |
+| Documentation screenshots, `tools/screenshots/run.sh` | 23 slots passed; every image was retaken from this source. |
+
+Found and fixed while checking:
+
+- **Send** could be pushed out of view in a narrow conversation: the row under the message box could not shrink. What a message carries now moves to a line above it (`searchSourcesForOneMessage`).
+- Interface checks clicked controls a frame before layout had placed them. One click reached **Attach** instead, whose file dialog stopped the run. The check now finishes pending layout first, and passed ten of ten under load where it had failed two of eight.
+- Clearing what an interrupted save had left could remove the file of one just started, in the first moment after PAL starts. Only what was there before is cleared now (`workbench-recovery.test.ts`).
+- A browser companion check reused a connection from before the listener restarted, which Node 26.8.2 refuses.
+- The phone's walk through every screen tapped a list that was still filling in, and missed settings below the fold of a 320 × 640 screen on Android 11.
+- The screenshot tool drew icons outside scrolled pages and did not reach **Health and recovery**.
+
+Not run: real accounts for the new Claude, Gemini and OpenAI features and for GitHub, Google and Microsoft; a physical phone; the live compositor slots; a real Kitty, editor in daily use or suspend for the collectors; another computer or browser than Chrome for the browser companion; PAL running real memory databases.
+
 ## Workbench: files, images and API expansion — November 20, 2026
 
 Implemented `PAL_Workbench_Files_Images_and_API_Expansion_Handoff.md` for the 0.1.1 release on `ui-overhaul`. It was committed together with the earlier uncommitted work in the tree, which was preserved. The user guide is [docs/WORKBENCH.md](docs/WORKBENCH.md). The phone dispositions are the Workbench rows in [docs/FEATURE-MATRIX.md](docs/FEATURE-MATRIX.md). Evidence is under `build/workbench-validation/`; logs are in `~/.cache/pal-workbench/`.

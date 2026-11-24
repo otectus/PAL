@@ -38,7 +38,7 @@ export type PortableImageRecipeV1 = {
     maskFeather?: number;
   };
   inputs: PortableInput[];
-  backend: { kind: 'openai' | 'google' | 'comfyui'; model: string; route: ProcessingRoute; billed: boolean; cost: { kind: 'provider-account' | 'own-server'; note: string; amount?: number; currency?: string; source?: 'configured estimate' } };
+  backend: { kind: 'openai' | 'google' | 'xai' | 'azure_openai' | 'openrouter' | 'comfyui'; model: string; route: ProcessingRoute; billed: boolean; cost: { kind: 'provider-account' | 'own-server'; note: string; amount?: number; currency?: string; source?: 'configured estimate' } };
   output: { destination: 'conversation-artifacts'; count: number; format: 'png' | 'jpeg' | 'webp' };
   workflow?: { name: string; graph: Record<string, unknown>; sourceDigest: string };
 };
@@ -70,7 +70,7 @@ export function parsePortableRecipe(value: unknown): PortableImageRecipeV1 {
   if (aggregate > portableRecipeLimits.aggregateAssetBytes) throw new Error('Embedded recipe assets exceed 100 MiB');
   if (!recipe.request || typeof recipe.request.prompt !== 'string' || !recipe.request.prompt.trim() || recipe.request.prompt.length > 8000 || !['generate', 'edit', 'masked-edit', 'extend', 'reference'].includes(recipe.request.operation)
     || !['png', 'jpeg', 'webp'].includes(recipe.request.format) || !Number.isInteger(recipe.request.count) || recipe.request.count < 1 || recipe.request.count > 4
-    || !['openai', 'google', 'comfyui'].includes(recipe.backend?.kind)) throw new Error('The portable image recipe is incomplete or out of bounds');
+    || !['openai', 'google', 'xai','azure_openai','openrouter', 'comfyui'].includes(recipe.backend?.kind)) throw new Error('The portable image recipe is incomplete or out of bounds');
   if (recipe.inputs.filter((input: any) => input.role === 'mask').length > 1 || recipe.inputs.filter((input: any) => input.role === 'target' || input.role === 'edit-base').length > 1) throw new Error('A portable image recipe has ambiguous target or mask inputs');
   return recipe;
 }

@@ -1,9 +1,13 @@
-import { apiJson, type ApiAccess } from '../api-providers.ts';
+import { apiProviders,type ApiProvider } from '../provider-catalog.ts';
+import { providerTokens } from '../provider-codecs/streaming.ts';
+import { claudeRules } from '../claude-models.ts';
+import { taskOutput } from '../provider-completion.ts';
+import { apiJson, apiTextRequest, type ApiAccess } from '../api-providers.ts';
 import type { CompatibleEndpoint } from '../types.ts';
 import { isCloudModel } from '../ollama.ts';
 import { emptyCapabilities, type ProviderTaskResponse, type ResolvedTaskRoute, type StructuredTaskRequest, type TaskModelCapabilities, type TaskOutputMode, type TaskProviderAdapter } from './task-models.ts';
 
-type DispatchRoute = ResolvedTaskRoute & { key(): string; dialect?: 'chat_completions' | 'responses'; runtimeModelId?: string };
+type DispatchRoute = ResolvedTaskRoute & { access?:()=>ApiAccess; key(): string; dialect?: 'chat_completions' | 'responses'; runtimeModelId?: string };
 
 function capabilities(outputModes: Partial<TaskModelCapabilities['outputModes']>, catalog: TaskModelCapabilities['catalog'] = 'supported'): TaskModelCapabilities {
   return emptyCapabilities({ completion: 'supported', catalog, outputModes: { json_schema: 'unknown', tool: 'unsupported', json_object: 'unknown', text_json: 'supported', ...outputModes } });
@@ -19,6 +23,7 @@ function finish(value: unknown): ProviderTaskResponse['finish'] {
 }
 
 function apiAccess(route: DispatchRoute): ApiAccess {
+  if(route.access) return route.access();
   if (route.adapterId !== 'compatible') return { key: route.key };
   const endpoint: CompatibleEndpoint = { baseUrl: route.endpoint, label: 'Memory task endpoint', requiresKey: !!route.key(), tools: false, images: false, streaming: false, usage: false, contextLength: 0, maxOutputTokens: 0, processing: route.processing };
   return { key: route.key, endpoint: () => endpoint };
@@ -45,7 +50,7 @@ function parseOpenAi(result: any, fallbackModel: string): ProviderTaskResponse {
   if (content.some((item: any) => item?.type === 'refusal')) return { text: '', finish: 'refusal', model: result.model || fallbackModel };
   const text = content.filter((item: any) => item?.type === 'output_text').map((item: any) => String(item.text ?? '')).join('');
   return { text, finish: text ? 'complete' : 'transport_error', model: result.model || fallbackModel,
-    usage: { inputTokens: result.usage?.input_tokens, outputTokens: result.usage?.output_tokens } };
+    usage: providerTokens(result.usage) };
 }
 
 class OpenAiTaskAdapter implements TaskProviderAdapter {
@@ -62,13 +67,18 @@ class AnthropicTaskAdapter implements TaskProviderAdapter {
   async generate(route: DispatchRoute, request: StructuredTaskRequest<unknown>, mode: TaskOutputMode, repair: boolean, signal: AbortSignal, beforeNetworkAttempt: () => Promise<void>): Promise<ProviderTaskResponse> {
     const body: any = { model: route.runtimeModelId ?? route.modelId, max_tokens: request.maxOutputTokens, system: systemContent(request, mode), messages: [{ role: 'user', content: repairInput(request, repair) }] };
     if (mode === 'json_schema') body.output_config = { format: { type: 'json_schema', schema: request.jsonSchema } };
-    else if (mode === 'tool') Object.assign(body, { tools: [{ name: 'submit_memory_task', description: 'Return the requested structured data.', input_schema: request.jsonSchema, strict: true }], tool_choice: { type: 'tool', name: 'submit_memory_task', disable_parallel_tool_use: true } });
+    else if (mode === 'tool') {
+      // Newer models refuse a forced tool; there the instruction and the strict schema say the same.
+      const forced = claudeRules(body.model).forcedTool;
+      if (!forced) body.system += '\nReturn the result only by calling submit_memory_task once.';
+      Object.assign(body, { tools: [{ name: 'submit_memory_task', description: 'Return the requested structured data.', input_schema: request.jsonSchema, strict: true }], tool_choice: { ...(forced ? { type: 'tool', name: 'submit_memory_task' } : { type: 'auto' }), disable_parallel_tool_use: true } });
+    }
     const result = await apiJson('anthropic', apiAccess(route), 'messages', body, signal, {}, 2 * 1024 * 1024, beforeNetworkAttempt);
     const content = Array.isArray(result.content) ? result.content : [];
     const tool = mode === 'tool' ? content.find((part: any) => part?.type === 'tool_use' && part.name === 'submit_memory_task') : undefined;
     const state = tool && result.stop_reason === 'tool_use' ? 'complete' : finish(result.stop_reason);
     const text = tool ? JSON.stringify(tool.input) : content.filter((part: any) => part?.type === 'text').map((part: any) => String(part.text ?? '')).join('');
-    return { text, finish: state, model: result.model || route.modelId, usage: { inputTokens: result.usage?.input_tokens, outputTokens: result.usage?.output_tokens } };
+    return { text, finish: state, model: result.model || route.modelId, usage: providerTokens(result.usage) };
   }
 }
 
@@ -87,7 +97,7 @@ class GoogleTaskAdapter implements TaskProviderAdapter {
     const text = (candidate?.content?.parts ?? []).filter((part: any) => !part?.thought && typeof part?.text === 'string').map((part: any) => part.text).join('');
     const state = reason === 'STOP' ? 'complete' : reason === 'MAX_TOKENS' ? 'output_limit' : ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST'].includes(reason) ? 'content_filter' : 'transport_error';
     return { text, finish: state, model: result.modelVersion || route.modelId, modelVersion: result.modelVersion,
-      usage: { inputTokens: result.usageMetadata?.promptTokenCount, outputTokens: result.usageMetadata?.candidatesTokenCount } };
+      usage: providerTokens(result.usageMetadata) };
   }
 }
 
@@ -95,7 +105,7 @@ function parseCompatibleChat(result: any, fallbackModel: string): ProviderTaskRe
   const choice = result.choices?.[0], message = choice?.message;
   if (message?.refusal) return { text: '', finish: 'refusal', model: result.model || fallbackModel };
   return { text: typeof message?.content === 'string' ? message.content : '', finish: finish(choice?.finish_reason), model: result.model || fallbackModel,
-    usage: { inputTokens: result.usage?.prompt_tokens, outputTokens: result.usage?.completion_tokens } };
+    usage: providerTokens(result.usage) };
 }
 
 class CompatibleTaskAdapter implements TaskProviderAdapter {
@@ -168,6 +178,17 @@ class OllamaTaskAdapter implements TaskProviderAdapter {
   }
 }
 
+class DedicatedTaskAdapter implements TaskProviderAdapter {
+  id:ApiProvider;
+  constructor(id:ApiProvider) {this.id=id;}
+  describe() { return capabilities({json_schema:'unsupported',json_object:'unsupported'},'unknown'); }
+  async generate(route:DispatchRoute,request:StructuredTaskRequest<unknown>,mode:TaskOutputMode,repair:boolean,signal:AbortSignal,beforeNetworkAttempt:()=>Promise<void>):Promise<ProviderTaskResponse> {
+    const data=await apiTextRequest(this.id,apiAccess(route),{model:route.modelId,instructions:systemContent(request,mode),input:repairInput(request,repair),maxOutputTokens:request.maxOutputTokens},signal,{},beforeNetworkAttempt);
+    const out=taskOutput(data);
+    return {...out,model:out.model||route.modelId};
+  }
+}
+
 export function taskProviderAdapters(): TaskProviderAdapter[] {
-  return [new OllamaTaskAdapter(), new OpenAiTaskAdapter(), new AnthropicTaskAdapter(), new GoogleTaskAdapter(), new CompatibleTaskAdapter()];
+  return [new OllamaTaskAdapter(), new OpenAiTaskAdapter(), new AnthropicTaskAdapter(), new GoogleTaskAdapter(), new CompatibleTaskAdapter(),...apiProviders.filter(id=>!['openai','google','anthropic','compatible'].includes(id)).map(id=>new DedicatedTaskAdapter(id))];
 }

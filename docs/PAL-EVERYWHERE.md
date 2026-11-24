@@ -1,6 +1,6 @@
 # PAL Everywhere: decisions, inventory and evidence
 
-This records the architecture decisions, the restriction inventory and the verification map for the PAL Everywhere expansion (`PAL_Everywhere_Feature_Expansion_and_Mobile_Parity_Handoff.md`). It is unreleased work on the `ui-overhaul` branch over `dd82dae` (desktop 0.1.6); the code is the authority where this file and the source disagree. User-facing behavior is described in [WORKBENCH.md](WORKBENCH.md), [mobile/SETUP.md](mobile/SETUP.md#phones-with-full-access), [mobile/SECURITY.md](mobile/SECURITY.md#device-roles-pal-everywhere), [mobile/PROTOCOL.md](mobile/PROTOCOL.md#device-roles-and-owner-parity-pal-everywhere-11-additions) and the rows added to [FEATURE-MATRIX.md](FEATURE-MATRIX.md).
+This records the architecture decisions, the restriction inventory and the verification map for the PAL Everywhere expansion (`PAL_Everywhere_Feature_Expansion_and_Mobile_Parity_Handoff.md`). The work was made over `dd82dae` (desktop 0.1.6) and released with PAL 2.0.0; parts listed below came with 2.0.2. The code is the authority where this file and the source disagree. User-facing behavior is described in [WORKBENCH.md](WORKBENCH.md), [mobile/SETUP.md](mobile/SETUP.md#phones-with-full-access), [mobile/SECURITY.md](mobile/SECURITY.md#device-roles-pal-everywhere), [mobile/PROTOCOL.md](mobile/PROTOCOL.md#device-roles-and-owner-parity-pal-everywhere-11-additions) and the rows added to [FEATURE-MATRIX.md](FEATURE-MATRIX.md).
 
 ## Decisions
 
@@ -15,22 +15,21 @@ This records the architecture decisions, the restriction inventory and the verif
 9. **New capabilities extend existing services.** Usage ledger (`usage_records`), skills (content-addressed versions, one review), research runs (evidence ledger), Canvas (headless Chrome over CDP with loopback isolation), Scratchpad/Daybook (indexes, not memory), setups (preview of real changes), specialists (helpers as child operations), translation (helper model, linked artifacts), table previews, collection snapshots, routines with folder triggers. Ollama and API users get them without Codex or Claude.
 10. **Connections follow the MCP authorization specification through the pinned SDK** (`@modelcontextprotocol/sdk` 1.32.2): discovery, dynamic registration, PKCE S256, resource indicators, refresh. Tokens are desktop-only and origin-bound. Phones use a private-use redirect bound to their flow.
 11. **External effects are reconciled, not replayed.** Non-read-only, non-idempotent tool calls are recorded; a lost answer blocks an identical request until a person resolves it.
-12. **Voice is push-to-talk plus read-aloud.** The desktop's whisper.cpp transcribes phone notes (audio deleted afterwards); the phone speaks replies with Android's engine, so audio plays only where the person listens.
+12. **Voice is push-to-talk plus read-aloud.** The desktop's recognizer (whisper.cpp unless its owner chose another) transcribes phone notes (audio deleted afterwards); the phone speaks replies with Android's engine, so audio plays only where the person listens. Live voice, added in 2.0.2, streams between the phone and a provider through the desktop.
 
 ## Deviations and work not built
 
 These handoff items are **not implemented**; they are not counted as delivered:
 
-- Native realtime voice adapters and voice activity detection (§16.1); a live camera or screen frame stream and "ask about this region" (§16.2); time-coded media playback with transcript selection on the phone (§16.3).
-- OAuth device flow; native GitHub, calendar, email and drive adapters (§14.2). Those services are reachable through MCP servers with the new sign-in, but no integration was tested against a real account.
-- Hybrid lexical/semantic retrieval changes and their evaluation corpus (§11.2); the richer Context explanation and pinned references (§11.3).
-- The P2 browser workspace (§13.2); persistent analysis kernels, PDF/DOCX export and phone-painted masks (§15); contact sheets and batch variants from the phone.
+- A live camera or screen frame stream and "ask about this region" (§16.2), and the P2 browser workspace (§13.2). The owner left both out on 2026-11-23.
 - An AntiGravity session on an owner phone is allowed by schema and router but was not exercised against a live `agy`.
-- No physical Android device, GrapheneOS, network-change or audio evidence was produced; the APK is a build artifact only.
+- No physical Android device, GrapheneOS, network-change or audio evidence was produced for this work.
+
+Built since the first version of this list, all in 2.0.2: time-coded media playback with transcript selection (§16.3); the OAuth device flow and native GitHub, calendar, email and drive adapters (§14.2); hybrid collection retrieval with its evaluation corpus (§11.2); the fuller Context and pinned references (§11.3); analysis sessions, PDF and Word export, phone-painted masks, and contact sheets and batch variants from the phone (§15). Realtime voice (§16.1) came with the provider work. The account adapters were tested against local stand-ins and not against a real account.
 
 ## Restriction inventory
 
-Every former `session.remote` restriction now names which role it applies to. Files using `ownerControlled`/`limitedControlled` (count of uses): `broker/core.ts` (12), `broker/power.ts` (6), `broker/remote/router.ts` (4), `broker/workbench.ts` (3), `broker/orchestration.ts` (3), and 2 each in `broker/workspace/roots.ts`, `broker/workflows.ts`, `broker/tools/contracts.ts`, `broker/send-queue.ts`, `broker/schedules.ts`, `broker/media/service.ts`, `broker/extensions.ts`, `broker/branching.ts`. Remaining direct `session.remote` checks are provenance, ownership, speech suppression for phone turns, and grant checks (`providers.execute`, `memory.write`), which owner devices hold.
+Every former `session.remote` restriction now names which role it applies to. `ownerControlled` and `limitedControlled` (`broker/authority.ts`) are called mainly in `broker/core.ts`, `broker/power.ts`, `broker/workbench.ts`, `broker/research/handoff.ts`, `broker/remote/router.ts` and `broker/orchestration.ts`, and in the services that act for a conversation (`broker/accounts/service.ts`, `broker/code-context/service.ts`, `broker/execution/`, `broker/extensions.ts`, `broker/media/`, `broker/research/`, `broker/schedules.ts`, `broker/send-queue.ts`, `broker/workflows.ts`, `broker/workspace/roots.ts` and others). Remaining direct `session.remote` checks are provenance, ownership, speech suppression for phone turns, and grant checks (`providers.execute`, `memory.write`), which owner devices hold.
 
 | Restriction (before) | Now | Test |
 | --- | --- | --- |

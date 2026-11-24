@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Core } from '../core.ts';
 import type { Session } from '../types.ts';
-import { ollamaJson } from '../ollama.ts';
-import { apiJson } from '../api-providers.ts';
+import { isCloudModel, ollamaJson } from '../ollama.ts';
+import { taskOutput } from '../provider-completion.ts';
+import { apiTextRequest } from '../api-providers.ts';
 import { isApiProvider } from '../provider-catalog.ts';
 
 export async function completeSessionTask(
@@ -14,6 +15,7 @@ export async function completeSessionTask(
   format?: Record<string, unknown>,
   onTruncated?: () => void,
   kind = 'research',
+  currentSession = () => core.store.session(session.id),
 ): Promise<string> {
   const timeout = AbortSignal.any([signal, AbortSignal.timeout(300_000)]),
     options = session.modelOptions || {};
@@ -33,7 +35,7 @@ export async function completeSessionTask(
   const initialRoute = routeIdentity(session);
   const checkRoute = () => {
     timeout.throwIfAborted();
-    if (initialRoute !== routeIdentity(core.store.session(session.id)))
+    if (initialRoute !== routeIdentity(currentSession()))
       throw new Error('The conversation model or destination changed. Retry with the current settings.');
   };
   const authorize = async () => {
@@ -60,7 +62,7 @@ export async function completeSessionTask(
       {
         model: session.model,
         stream: false,
-        ...(format ? { format, think: false } : {}),
+        ...(format && !isCloudModel(session.model) ? { format } : {}),
         messages,
         options: { temperature: options.temperature, num_ctx: options.contextTokens, num_predict: options.maxOutputTokens },
         keep_alive: options.keepAlive,
@@ -75,61 +77,22 @@ export async function completeSessionTask(
   const p = session.provider;
   if (!isApiProvider(p)) throw new Error('Choose an Ollama or managed API conversation for this request');
   core.usage.assertWithinBudget(p);
-  const access = core.apiAccess(p, session.id);
-  const max = options.maxOutputTokens || 4096;
-  const [path, body] =
-    p === 'openai'
-      ? ['responses', { model: session.model, store: false, input: prompt, max_output_tokens: max }]
-      : p === 'anthropic'
-        ? ['messages', { model: session.model, messages, max_tokens: max }]
-        : p === 'google'
-          ? [
-              'models/' + encodeURIComponent(session.model) + ':generateContent',
-              { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: max } },
-            ]
-          : ['chat/completions', { model: session.model, messages, max_tokens: max, stream: false }];
-  const value = await apiJson(
-    p,
-    access,
-    String(path),
-    body,
-    timeout,
-    { beforeAccept: checkRoute },
-    2 * 1024 * 1024,
-    authorize,
-  );
-  if (
-    value.status === 'incomplete' ||
-    value.stop_reason === 'max_tokens' ||
-    value.candidates?.[0]?.finishReason === 'MAX_TOKENS' ||
-    value.choices?.[0]?.finish_reason === 'length'
-  )
-    onTruncated?.();
-  const u = value.usage || value.usageMetadata || {};
-  record({
-    inputTokens: u.input_tokens ?? u.prompt_tokens ?? u.promptTokenCount,
-    outputTokens: u.output_tokens ?? u.completion_tokens ?? u.candidatesTokenCount,
-    status: 'reported',
-  });
-  const text =
-    p === 'openai'
-      ? (value.output || [])
-          .flatMap((i: any) => i.content || [])
-          .filter((i: any) => i.type === 'output_text')
-          .map((i: any) => i.text)
-          .join('\n')
-      : p === 'anthropic'
-        ? (value.content || [])
-            .filter((i: any) => i.type === 'text')
-            .map((i: any) => i.text)
-            .join('\n')
-        : p === 'google'
-          ? (value.candidates?.[0]?.content?.parts || [])
-              .filter((i: any) => !i.thought)
-              .map((i: any) => i.text)
-              .join('\n')
-          : value.choices?.[0]?.message?.content;
-  return String(text || '').slice(0, 64_000);
+  const access=core.accountAccess(p,session.connectionId);
+  const providerOptions = {...session.api?.options};
+  // This worker checkpoints the response body itself. Provider background tickets have no report body.
+  delete providerOptions.background;
+  const value = await apiTextRequest(p, access, {
+    model: session.model, input: prompt, maxOutputTokens: options.maxOutputTokens || 4096, options: providerOptions,
+  }, timeout, {beforeAccept: checkRoute}, authorize);
+  const output=taskOutput(value);
+  record({...output.usage,status:output.usage.inputTokens!==undefined?'reported':'unknown'});
+  if (output.finish==='output_limit') onTruncated?.();
+  if (!['complete','output_limit'].includes(output.finish)) throw new Error('The provider ended the task with '+output.finish);
+  return output.text.slice(0,64_000);
 }
 
-export { completeSessionTask as completeResearch };
+export function completeResearch(core: Core, session: Session, prompt: string, signal: AbortSignal,
+  authorize: (() => Promise<void>) | undefined, format: Record<string, unknown> | undefined,
+  onTruncated: (() => void) | undefined, currentSession: () => Session) {
+  return completeSessionTask(core, session, prompt, signal, authorize, format, onTruncated, 'research', currentSession);
+}

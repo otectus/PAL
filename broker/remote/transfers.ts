@@ -78,8 +78,10 @@ export class Transfers {
     const base = { id: randomUUID(), deviceId: device.id, sessionId: p.sessionId, artifactId: version.artifactId, versionId: version.versionId, expiresAt: Date.now() + transferLimits.idleMs };
     let download: Download;
     if (p.variant === 'preview') {
-      if (version.kind !== 'image' && version.kind !== 'plot') throw remoteError('INVALID_ARGUMENT', 'Only images have a reduced preview. Download the original instead.');
-      const preview = await sharp(data, { limitInputPixels: 100_000_000 }).rotate().resize(transferLimits.previewEdge, transferLimits.previewEdge, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+      if (version.kind !== 'image' && version.kind !== 'plot' && version.mime!=='video/mp4') throw remoteError('INVALID_ARGUMENT', 'Choose an image or MP4 video for a visual preview.');
+      const poster=version.mime==='video/mp4'?await artifacts.thumbnail(p.sessionId,version.artifactId,version.versionId,transferLimits.previewEdge):undefined;
+      if(version.mime==='video/mp4'&&!poster)throw remoteError('INVALID_ARGUMENT','A preview could not be generated for this video.');
+      const preview = await sharp(poster?Buffer.from(poster.split(',')[1],'base64'):data, { limitInputPixels: 100_000_000 }).rotate().resize(transferLimits.previewEdge, transferLimits.previewEdge, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
       download = { ...base, variant: 'preview', name: version.name.replace(/\.[^.]+$/, '') + ' (preview).jpg', mime: 'image/jpeg', size: preview.length, sha256: hex(preview), data: preview };
     } else {
       download = { ...base, variant: 'original', name: version.name, mime: version.mime, size: version.bytes, sha256: version.sha256, path: artifacts.objectPath(version.sha256) };

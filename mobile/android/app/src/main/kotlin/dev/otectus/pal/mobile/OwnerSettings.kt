@@ -30,6 +30,7 @@ import androidx.fragment.app.FragmentActivity
 import dev.otectus.pal.mobile.data.PALRepository
 import dev.otectus.pal.mobile.data.ConnectionState
 import dev.otectus.pal.mobile.data.MobileState
+import dev.otectus.pal.mobile.data.traits
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -50,16 +51,19 @@ private val ownerGroups = linkedMapOf(
     ),
     R.string.owner_section_connections_and_spending to listOf(
         OwnerSection("Keys and connections", R.string.owner_section_keys_and_connections),
+        OwnerSection("Accounts", R.string.owner_section_accounts),
         OwnerSection("Tool servers", R.string.owner_section_tool_servers),
         OwnerSection("Usage and budget", R.string.owner_section_usage_and_budget),
     ),
     R.string.owner_section_projects_and_automation to listOf(
+        OwnerSection("Projects", R.string.owner_section_projects),
         OwnerSection("Working setups", R.string.owner_section_working_setups),
         OwnerSection("Specialists", R.string.owner_section_specialists),
         OwnerSection("Routines", R.string.owner_section_routines),
         OwnerSection("Skills", R.string.owner_section_skills),
         OwnerSection("Knowledge collections", R.string.owner_section_knowledge_collections),
         OwnerSection("Saved scripts", R.string.owner_section_saved_scripts),
+        OwnerSection("Workspace history", R.string.owner_section_workspace_history),
     ),
     R.string.owner_section_desktop_and_maintenance to listOf(
         OwnerSection("Desktop settings", R.string.owner_section_desktop_settings),
@@ -72,7 +76,7 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.ownerSettings(
     repository: PALRepository, state: MobileState, activity: FragmentActivity,
     feedback: (String) -> Unit, failure: (String) -> Unit,
     initialToolServerId: String? = null, toolServerResult: String? = null, onOAuthStarted: (String) -> Unit = {},
-    initialSessionId: String? = null, initialSection: String? = null,
+    initialSessionId: String? = null, initialSection: String? = null, initialProvider: String? = null, loadRemote: Boolean = true,
 ) {
     item(key = "owner-settings-" + state.desktop?.deviceId.orEmpty()) {
         val strings = androidx.compose.ui.platform.LocalResources.current
@@ -113,7 +117,7 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.ownerSettings(
                     BackHandler { destination = null }
                     TextButton({ destination = null }) { Text(stringResource(R.string.settings_all_computer)) }
                     val headingAnchor = remember { BringIntoViewRequester() }
-                    Text(stringResource(ownerGroups.values.flatten().first { it.route == selected }.title), Modifier.bringIntoViewRequester(headingAnchor).semantics { heading() }, style = MaterialTheme.typography.titleLarge)
+                    Text(ownerGroups.values.flatten().firstOrNull { it.route == selected }?.let { stringResource(it.title) }.orEmpty(), Modifier.bringIntoViewRequester(headingAnchor).semantics { heading() }, style = MaterialTheme.typography.titleLarge)
                     LaunchedEffect(selected) { headingAnchor.bringIntoView() }
                 }
                 val activeRequests = remember { mutableIntStateOf(0) }
@@ -125,18 +129,21 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.ownerSettings(
                         "Access and working profile" -> AccessPanel(repository, state, activity, (state.connection as? ConnectionState.Online)?.access, saved, failed)
                         "Paired devices" -> DevicesSection(repository, state, activity, saved, failed)
                         "Power session" -> PowerSection(repository, state, activity, saved, failed)
-                        "Keys and connections" -> KeysSection(repository, activity, saved, failed)
+                        "Keys and connections" -> KeysSection(repository, state, activity, saved, failed, initialProvider, loadRemote)
                         "Desktop settings" -> DesktopSettingsSection(repository, activity, saved, failed)
                         "Usage and budget" -> UsageSection(repository, activity, saved, failed)
                         "Skills" -> SkillsSection(repository, activity, saved, failed)
                         "Knowledge collections" -> CollectionsSection(repository, state, activity, saved, failed, initialSessionId)
-                        "Saved scripts" -> ScriptsSection(repository, activity, saved, failed)
+                        "Saved scripts" -> { ScriptsSection(repository, activity, saved, failed); if (state.supports("owner.customTools.credential")) CustomToolCredentials(repository, activity, saved, failed) }
                         "Tool servers" -> ToolServersSection(repository, activity, saved, failed, initialToolServerId, toolServerResult, onOAuthStarted)
+                        "Workspace history" -> WorkspaceHistorySection(repository, state, activity, saved, failed)
+                        "Accounts" -> AccountsSection(repository, state, activity, saved, failed)
+                        "Projects" -> ProjectsSection(repository, state, activity, saved, failed)
                         "Working setups" -> SetupsSection(repository, state, activity, saved, failed, initialSessionId)
-                        "Specialists" -> SpecialistsSection(repository, activity, saved, failed)
+                        "Specialists" -> SpecialistsSection(repository, state, activity, saved, failed)
                         "Routines" -> SchedulesSection(repository, state, activity, saved, failed)
                         "Local models" -> ModelsSection(repository, activity, saved, failed)
-                        "Health and backups" -> HealthSection(repository, activity, saved, failed)
+                        "Health and backups" -> { RunningJobs(repository, state, failed); HealthSection(repository, activity, saved, failed) }
                     }
                 }
                 notice?.let { Text(it, Modifier.semantics { liveRegion = LiveRegionMode.Polite },
@@ -146,23 +153,27 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.ownerSettings(
     }
 }
 
-private val LocalOwnerRequests = staticCompositionLocalOf<MutableIntState> { error("Owner settings scope is missing") }
+/**
+ * The requests a section of This computer counts to show its progress. The same actions also work where nothing counts
+ * them, such as Conversation settings and New chat, so being without one is not an error.
+ */
+internal val LocalOwnerRequests = staticCompositionLocalOf<MutableIntState?> { null }
 
-private class OwnerActionScope(private val scope: CoroutineScope, private val requests: MutableIntState) {
+internal class OwnerActionScope(private val scope: CoroutineScope, private val requests: MutableIntState? = null) {
     fun launch(block: suspend CoroutineScope.() -> Unit) = scope.launch {
-        requests.intValue++
-        try { block() } finally { requests.intValue-- }
+        requests?.let { it.intValue++ }
+        try { block() } finally { requests?.let { it.intValue-- } }
     }
 }
 
 @Composable
-private fun rememberOwnerScope(): OwnerActionScope {
+internal fun rememberOwnerScope(): OwnerActionScope {
     val scope = rememberCoroutineScope()
     val requests = LocalOwnerRequests.current
     return remember(scope, requests) { OwnerActionScope(scope, requests) }
 }
 
-private inline fun <T> ownerCall(block: () -> T): Result<T> = try {
+internal inline fun <T> ownerCall(block: () -> T): Result<T> = try {
     Result.success(block())
 } catch (cancelled: CancellationException) {
     throw cancelled
@@ -171,7 +182,7 @@ private inline fun <T> ownerCall(block: () -> T): Result<T> = try {
 }
 
 @Composable
-private fun LabeledCheck(label: String, checked: Boolean, change: (Boolean) -> Unit) {
+internal fun LabeledCheck(label: String, checked: Boolean, change: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = PALLayout.target).toggleable(value = checked, role = Role.Checkbox, onValueChange = change),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PALLayout.groupGap)) {
         Checkbox(checked, null)
@@ -180,7 +191,7 @@ private fun LabeledCheck(label: String, checked: Boolean, change: (Boolean) -> U
 }
 
 @Composable
-private fun ConfirmRemoval(label: String, name: String, effect: String, enabled: Boolean = true, remove: () -> Unit) {
+internal fun ConfirmRemoval(label: String, name: String, effect: String, enabled: Boolean = true, remove: () -> Unit) {
     var open by rememberSaveable(name) { mutableStateOf(false) }
     TextButton({ open = true }, enabled = enabled) { Text("$label…") }
     if (open) AlertDialog({ open = false }, title = { Text("$label $name?") }, text = { Text(effect) },
@@ -277,7 +288,7 @@ private fun DevicesSection(repository: PALRepository, state: MobileState, activi
         val role = device.str("role")
         Column {
             Text(device.str("name").orEmpty() + if (device.isTrue("self")) stringResource(R.string.computer_this_phone) else "", style = MaterialTheme.typography.titleSmall)
-            Text(listOf(when (role) { "owner" -> strings.getString(R.string.full_access); "observer" -> strings.getString(R.string.computer_observer); else -> strings.getString(R.string.limited_access) }, if (device.str("lifetime") == "until-revoked") strings.getString(R.string.computer_until_revoked) else strings.getString(R.string.access_expires), if (device.str("actionAuthentication") == "trusted-device") strings.getString(R.string.computer_trusted_phone) else strings.getString(R.string.computer_fingerprint_or_pin)).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+            Text(listOfNotNull(if (device.str("surface") == "browser") strings.getString(R.string.extras_browser) else null, when (role) { "owner" -> strings.getString(R.string.full_access); "observer" -> strings.getString(R.string.computer_observer); else -> strings.getString(R.string.limited_access) }, if (device.str("lifetime") == "until-revoked") strings.getString(R.string.computer_until_revoked) else strings.getString(R.string.access_expires), if (device.str("surface") == "browser") null else if (device.str("actionAuthentication") == "trusted-device") strings.getString(R.string.computer_trusted_phone) else strings.getString(R.string.computer_fingerprint_or_pin)).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
             if (!device.isTrue("self")) Row(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                 if (role == "owner" || role == "limited") TextButton({ scope.launch {
                     ownerCall { signed(activity, repository, "owner.devices.setRole", buildJsonObject { put("deviceId", device.str("id").orEmpty()); put("role", if (role == "owner") "limited" else "observer"); put("expectedScopeVersion", device.str("scopeVersion") ?: "0") }, strings.getString(R.string.computer_reduce_s_access, device.str("name"))) }
@@ -305,6 +316,7 @@ private fun PowerSection(repository: PALRepository, state: MobileState, activity
     fun load() = scope.launch { ownerCall { repository.request("owner.permissions.get", buildJsonObject {}) as JsonObject }.onSuccess { inspect = it }.onFailure { failure(it.message ?: "") } }
     LaunchedEffect(Unit) { load() }
     Text(stringResource(R.string.computer_a_time_limited_lease_on_one_conversation_provider), style = MaterialTheme.typography.bodySmall)
+    StandingGrants(repository, inspect, feedback, failure) { load() }
     inspect?.list("power").orEmpty().filter { it.str("state") == "active" }.forEach { lease ->
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.computer_active_until, java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(lease.num("expiresAt") ?: 0))), Modifier.weight(1f))
@@ -334,20 +346,56 @@ private fun PowerSection(repository: PALRepository, state: MobileState, activity
 }
 
 @Composable
-private fun KeysSection(repository: PALRepository, activity: FragmentActivity, feedback: (String) -> Unit, failure: (String) -> Unit) {
+private fun KeysSection(repository: PALRepository, state: MobileState, activity: FragmentActivity, feedback: (String) -> Unit, failure: (String) -> Unit, initialProvider: String? = null, loadRemote: Boolean = true) {
     val strings = androidx.compose.ui.platform.LocalResources.current
 
     val scope = rememberOwnerScope()
     var settings by remember { mutableStateOf<JsonObject?>(null) }
-    var connections by remember { mutableStateOf<JsonObject?>(null) }
-    var provider by rememberSaveable { mutableStateOf("openai") }
+    var connections by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var provider by rememberSaveable { mutableStateOf(initialProvider ?: "openai") }
     var key by remember { mutableStateOf("") }
+    var editing by remember { mutableStateOf<JsonObject?>(null) }
+    var accountProvider by rememberSaveable { mutableStateOf(initialProvider ?: "openai") }
+    var accountName by rememberSaveable { mutableStateOf("") }
+    var endpoint by rememberSaveable { mutableStateOf("") }
+    var compatibleNeedsKey by rememberSaveable { mutableStateOf(false) }
+    var authHeader by rememberSaveable { mutableStateOf("") }
+    var variant by rememberSaveable(accountProvider) { mutableStateOf("") }
+    var auth by rememberSaveable(accountProvider, variant) { mutableStateOf("") }
+    var deployment by rememberSaveable { mutableStateOf("") }
+    var apiVersion by rememberSaveable { mutableStateOf("") }
+    var region by rememberSaveable { mutableStateOf("") }
+    var underlyingModel by rememberSaveable { mutableStateOf("") }
+    var accountKey by remember { mutableStateOf("") }
+    var managementKey by remember { mutableStateOf("") }
+    var organization by rememberSaveable { mutableStateOf("") }
+    var project by rememberSaveable { mutableStateOf("") }
+    var declaredTools by rememberSaveable { mutableStateOf(false) }
+    var declaredImages by rememberSaveable { mutableStateOf(false) }
+    var declaredStreaming by rememberSaveable { mutableStateOf(true) }
+    var declaredUsage by rememberSaveable { mutableStateOf(false) }
+    var declaredContext by rememberSaveable { mutableStateOf("") }
+    var declaredOutput by rememberSaveable { mutableStateOf("") }
+    var removing by remember { mutableStateOf<JsonObject?>(null) }
+    var checking by remember { mutableStateOf<JsonObject?>(null) }
+    var bridgeStatus by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     fun load() = scope.launch {
         ownerCall { repository.request("owner.settings.get", buildJsonObject {}) as JsonObject }.onSuccess { settings = it }.onFailure { failure(it.message ?: "") }
-        ownerCall { repository.request("owner.connections.list", buildJsonObject {}) as JsonObject }.onSuccess { connections = it }
+        ownerCall { repository.request("owner.connections.list", buildJsonObject {}) }.onSuccess { value ->
+            connections = when (value) { is JsonArray -> value.mapNotNull { it as? JsonObject }; is JsonObject -> value.list("connections"); else -> emptyList() }
+        }
     }
-    LaunchedEffect(Unit) { load() }
-    val labels = mapOf("openai" to strings.getString(R.string.computer_openai_api), "anthropic" to strings.getString(R.string.computer_claude_api), "google" to strings.getString(R.string.computer_google_ai_api), "compatible" to strings.getString(R.string.computer_compatible_endpoint), "elevenlabs" to strings.getString(R.string.computer_elevenlabs_voice))
+    LaunchedEffect(Unit) { if (loadRemote) load() }
+    val labels = linkedMapOf<String, String>().apply {
+        state.providers.keys.forEach { id -> if (state.traits(id).kind == "api") put(id, state.traits(id).label) }
+        put("ollama_cloud", "Ollama Cloud"); put("xai_management", "xAI Management"); put("voyage", "Voyage AI"); put("jev", "Jev"); put("azure_speech", "Azure Speech"); put("google_search", "Google Search"); put("elevenlabs", strings.getString(R.string.computer_elevenlabs_voice))
+    }
+    val accountLabels = linkedMapOf<String, String>().apply {
+        state.providers.keys.forEach { id -> if (state.traits(id).kind == "api") put(id, state.traits(id).label) }
+        if ("ollama" in state.providers) put("ollama", state.traits("ollama").label)
+    }
+    LaunchedEffect(labels.keys) { if (provider !in labels) provider = labels.keys.firstOrNull().orEmpty() }
+    LaunchedEffect(accountLabels.keys) { if (accountProvider !in accountLabels) accountProvider = accountLabels.keys.firstOrNull().orEmpty() }
     settings?.obj("credentials")?.let { credentials ->
         labels.forEach { (id, label) -> credentials.obj(id)?.let { status -> Text("$label · " + when (status.str("source")) { "saved" -> stringResource(R.string.computer_key_saved); "environment" -> stringResource(R.string.computer_from_the_environment); else -> stringResource(R.string.computer_no_key) }, style = MaterialTheme.typography.bodySmall) } }
     }
@@ -365,9 +413,103 @@ private fun KeysSection(repository: PALRepository, activity: FragmentActivity, f
                 .onSuccess { feedback(strings.getString(R.string.computer_key_removed, labels[provider])); load() }.onFailure { failure(it.message ?: "") }
         } }) { Text(stringResource(R.string.computer_remove_key)) }
     }
-    connections?.list("connections")?.let { rows ->
-        Text(stringResource(R.string.computer_saved_connections), style = MaterialTheme.typography.labelLarge)
-        rows.forEach { row -> Text("${row.str("name")} · ${row.str("kind")} · " + (row.obj("compatible")?.str("baseUrl") ?: row.obj("ollama")?.str("host") ?: ""), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+    Text(stringResource(R.string.computer_saved_connections), style = MaterialTheme.typography.labelLarge)
+    connections.forEach { row ->
+        val address = row.obj("endpoint")?.str("baseUrl") ?: row.str("host").orEmpty()
+        Column(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(listOf(row.str("name"), accountLabels[row.str("kind")] ?: row.str("kind"), row.str("variant"), address, if (row.isTrue("keySet")) "credential set" else null).filterNot { it.isNullOrBlank() }.joinToString(" · "), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                TextButton({
+                    editing = row; accountProvider = row.str("kind").orEmpty(); accountName = row.str("name").orEmpty(); endpoint = address
+                    variant = row.str("variant").orEmpty(); auth = row.str("auth").orEmpty(); deployment = row.str("deployment").orEmpty()
+                    apiVersion = row.str("apiVersion").orEmpty(); region = row.str("region").orEmpty(); underlyingModel = row.str("underlyingModel").orEmpty()
+                    compatibleNeedsKey = row.obj("endpoint")?.isTrue("requiresKey") == true; authHeader = row.obj("endpoint")?.str("authHeader").orEmpty()
+                    accountKey = ""; managementKey = ""; organization = row.str("organization").orEmpty(); project = row.str("project").orEmpty()
+                    row.obj("endpoint").let { declared -> declaredTools = declared?.isTrue("tools") == true; declaredImages = declared?.isTrue("images") == true; declaredStreaming = declared?.get("streaming")?.let { (it as? JsonPrimitive)?.booleanOrNull } != false; declaredUsage = declared?.isTrue("usage") == true
+                        declaredContext = declared?.int("contextLength")?.takeIf { it > 0 }?.toString().orEmpty(); declaredOutput = declared?.int("maxOutputTokens")?.takeIf { it > 0 }?.toString().orEmpty() }
+                }) { Text("Edit") }
+                TextButton({ removing = row }) { Text(stringResource(R.string.care_remove)) }
+            }
+            row.str("id")?.let { ConnectionModels(repository, it, failure) }
+            if (state.supports("owner.connections.check")) TextButton({ checking = row }) { Text(stringResource(R.string.care_check)) }
+            if (row.str("kind") == "litellm" && row.str("variant") == "bridge") Row(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalAlignment = Alignment.CenterVertically) {
+                if (state.supports("owner.providerBridge.chat")) { var testing by rememberSaveable(row.str("id")) { mutableStateOf(false) }; TextButton({ testing = true }) { Text(stringResource(R.string.extras_bridge_test)) }; if (testing) BridgeTest(repository, state, activity, row) { testing = false } }
+                TextButton({ scope.launch { ownerCall { repository.request("owner.providerBridge.status", buildJsonObject { put("connectionId", row.str("id")) }) as JsonObject }.onSuccess { result -> bridgeStatus = bridgeStatus + (row.str("id").orEmpty() to if (result.isTrue("running")) "Running · ${result.str("version") ?: "LiteLLM"}" else result.str("error").orEmpty().ifBlank { "Unavailable" }) }.onFailure { failure(it.message.orEmpty()) } } }) { Text("Start / test bridge") }
+                TextButton({ scope.launch { ownerCall { repository.mutate("owner.providerBridge.stop", buildJsonObject { put("connectionId", row.str("id")) }) }.onSuccess { bridgeStatus = bridgeStatus + (row.str("id").orEmpty() to "Stopped") }.onFailure { failure(it.message.orEmpty()) } } }) { Text("Stop") }
+                bridgeStatus[row.str("id")].takeIf { !it.isNullOrBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+    }
+    checking?.let { row -> ConnectionCheckDialog(repository, activity, row.str("id"), row.str("kind").orEmpty(), row.str("name").orEmpty()) { checking = null } }
+    removing?.let { row -> if (state.supports("owner.connections.uses")) ConnectionRemoveDialog(repository, activity, row.str("id").orEmpty(), row.str("name").orEmpty(), { load() }) { removing = null }
+        else ToolDialog(stringResource(R.string.care_remove_title, row.str("name").orEmpty()), { removing = null }, confirm = { Button({ removing = null; scope.launch { ownerCall { signed(activity, repository, "owner.connections.remove", buildJsonObject { put("id", row.str("id")) }, strings.getString(R.string.care_remove_action, row.str("name").orEmpty())) }.onSuccess { load() }.onFailure { failure(it.message.orEmpty()) } } }) { Text(stringResource(R.string.care_remove)) } }) {} }
+    Text(if (editing == null) "Add a named provider account" else "Edit named provider account", style = MaterialTheme.typography.labelLarge)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { accountLabels.forEach { (id, label) ->
+        FilterChip(accountProvider == id, { if (editing == null) { accountProvider = id; variant = ""; auth = "" } }, { Text(label) }, enabled = editing == null)
+    } }
+    OutlinedTextField(accountName, { accountName = it.take(60) }, Modifier.fillMaxWidth(), label = { Text("Account name") }, singleLine = true)
+    state.traits(accountProvider).variants.takeIf { it.isNotEmpty() }?.let { variants ->
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { variants.forEach { option ->
+            FilterChip(variant == option.id, { variant = option.id }, { Text(option.label) })
+        } }
+    }
+    val authMethods = state.traits(accountProvider).variants.firstOrNull { it.id == variant }?.auth?.takeIf { it.isNotEmpty() } ?: state.traits(accountProvider).auth
+    authMethods.takeIf { it.isNotEmpty() && (accountProvider == "azure_openai" || accountProvider == "google" && variant == "vertex") }?.let { methods ->
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { methods.forEach { method ->
+            FilterChip(auth == method, { auth = method }, { Text(method.replace('-', ' ').replaceFirstChar(Char::uppercase)) })
+        } }
+    }
+    OutlinedTextField(endpoint, { endpoint = it.take(2048) }, Modifier.fillMaxWidth(), label = { Text(if (accountProvider == "ollama") "Ollama host" else "Custom endpoint (optional)") }, singleLine = true)
+    if (accountProvider == "compatible") {
+        Row(Modifier.fillMaxWidth().toggleable(compatibleNeedsKey, onValueChange = { compatibleNeedsKey = it }, role = Role.Checkbox), verticalAlignment = Alignment.CenterVertically) { Checkbox(compatibleNeedsKey, null); Text("This endpoint needs an API key") }
+        if (compatibleNeedsKey) {
+            OutlinedTextField(authHeader, { authHeader = it.take(128) }, Modifier.fillMaxWidth(), label = { Text("Custom key header (blank uses Authorization: Bearer)") }, singleLine = true)
+            if (editing != null && authHeader.trim() != editing?.obj("endpoint")?.str("authHeader").orEmpty()) Text("Changing the header invalidates the saved credential. Re-enter the key below.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+        }
+    }
+    if (accountProvider == "compatible") {
+        Text(stringResource(R.string.care_declared), style = MaterialTheme.typography.labelLarge)
+        ToolCheck(stringResource(R.string.care_tools), declaredTools) { declaredTools = it }
+        ToolCheck(stringResource(R.string.care_images), declaredImages) { declaredImages = it }
+        ToolCheck(stringResource(R.string.care_streaming), declaredStreaming) { declaredStreaming = it }
+        ToolCheck(stringResource(R.string.care_usage), declaredUsage) { declaredUsage = it }
+        OutlinedTextField(declaredContext, { declaredContext = it.filter(Char::isDigit).take(8) }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.care_context)) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+        OutlinedTextField(declaredOutput, { declaredOutput = it.filter(Char::isDigit).take(7) }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.care_output)) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+    }
+    if (accountProvider == "openai") {
+        OutlinedTextField(organization, { organization = it.trim().take(72) }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.care_organization)) }, singleLine = true)
+        OutlinedTextField(project, { project = it.trim().take(72) }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.care_project)) }, singleLine = true)
+    }
+    if (accountProvider == "azure_openai") {
+        OutlinedTextField(deployment, { deployment = it.take(128) }, Modifier.fillMaxWidth(), label = { Text("Azure deployment name (required)") }, singleLine = true)
+        OutlinedTextField(underlyingModel, { underlyingModel = it.take(128) }, Modifier.fillMaxWidth(), label = { Text("Underlying model") }, singleLine = true)
+        OutlinedTextField(region, { region = it.take(128) }, Modifier.fillMaxWidth(), label = { Text("Azure region (optional)") }, singleLine = true)
+        OutlinedTextField(apiVersion, { apiVersion = it.take(128) }, Modifier.fillMaxWidth(), label = { Text("Azure API version (optional)") }, singleLine = true)
+    }
+    if (accountProvider != "ollama") OutlinedTextField(accountKey, { accountKey = it.trim() }, Modifier.fillMaxWidth(), label = { Text(if (editing?.isTrue("keySet") == true) "Replacement credential (leave empty to keep)" else "Credential for this account") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
+    if (accountProvider == "xai") OutlinedTextField(managementKey, { managementKey = it.trim() }, Modifier.fillMaxWidth(), label = { Text("Separate xAI Management API key") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
+    Button({ scope.launch {
+        val params = buildJsonObject {
+            editing?.let { put("id", it.str("id")); put("expectedRevision", it.num("revision") ?: 0) } ?: put("kind", accountProvider)
+            put("name", accountName.trim()); if (variant.isNotBlank()) put("variant", variant)
+            if (auth.isNotBlank() && (accountProvider == "azure_openai" || accountProvider == "google" && variant == "vertex")) put("auth", auth)
+            if (accountProvider == "ollama") put("host", endpoint.trim()) else put("endpoint", buildJsonObject { if (endpoint.isNotBlank()) put("baseUrl", endpoint.trim()); if (accountProvider == "compatible") { put("requiresKey", compatibleNeedsKey); put("authHeader", if (compatibleNeedsKey) authHeader.trim() else ""); put("tools", declaredTools); put("images", declaredImages); put("streaming", declaredStreaming); put("usage", declaredUsage); put("contextLength", declaredContext.toIntOrNull() ?: 0); put("maxOutputTokens", declaredOutput.toIntOrNull() ?: 0) } })
+            if (accountProvider == "openai") { put("organization", organization); put("project", project) }
+            if (accountProvider == "azure_openai") { put("deployment", deployment.trim()); if (apiVersion.isNotBlank()) put("apiVersion", apiVersion.trim()); if (region.isNotBlank()) put("region", region.trim()); if (underlyingModel.isNotBlank()) put("underlyingModel", underlyingModel.trim()) }
+        }
+        ownerCall { signed(activity, repository, "owner.connections.save", params, (if (editing == null) "Add " else "Edit ") + accountName.trim()) as JsonObject }.onSuccess { saved ->
+            val id = saved.str("id").orEmpty()
+            if (accountKey.isNotBlank()) ownerCall { signed(activity, repository, "owner.credentials.set", buildJsonObject { put("provider", accountProvider); put("connectionId", id); put("key", accountKey) }, "Replace the credential for ${accountName.trim()}") }.onFailure { failure(it.message.orEmpty()) }
+            if (accountProvider == "xai" && managementKey.isNotBlank()) ownerCall { signed(activity, repository, "owner.credentials.set", buildJsonObject { put("provider", "xai_management"); put("connectionId", id); put("key", managementKey) }, "Save the separate xAI Management key for ${accountName.trim()}") }.onFailure { failure(it.message.orEmpty()) }
+            editing = null; accountName = ""; endpoint = ""; compatibleNeedsKey = false; authHeader = ""; organization = ""; project = ""; declaredTools = false; declaredImages = false; declaredStreaming = true; declaredUsage = false; declaredContext = ""; declaredOutput = ""; deployment = ""; apiVersion = ""; region = ""; underlyingModel = ""; accountKey = ""; managementKey = ""; load(); feedback("Provider account saved on the desktop")
+        }.onFailure { failure(it.message.orEmpty()) }
+    } }, enabled = accountName.isNotBlank() && accountProvider.isNotBlank() && (accountProvider != "ollama" || endpoint.isNotBlank()) && (accountProvider != "azure_openai" || deployment.isNotBlank())) { Text(if (editing == null) "Add account" else "Save account") }
+    editing?.let { row ->
+        Row(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+            if (accountProvider != "ollama") OutlinedButton({ scope.launch { ownerCall { signed(activity, repository, "owner.credentials.set", buildJsonObject { put("provider", accountProvider); put("connectionId", row.str("id")); put("key", JsonNull) }, "Clear the credential for ${row.str("name")}") }.onSuccess { feedback("Named credential cleared"); load() }.onFailure { failure(it.message.orEmpty()) } } }) { Text("Clear credential") }
+            if (accountProvider == "xai") OutlinedButton({ scope.launch { ownerCall { signed(activity, repository, "owner.credentials.set", buildJsonObject { put("provider", "xai_management"); put("connectionId", row.str("id")); put("key", JsonNull) }, "Clear the xAI Management key for ${row.str("name")}") }.onSuccess { feedback("xAI Management credential cleared") }.onFailure { failure(it.message.orEmpty()) } } }) { Text("Clear Management key") }
+            TextButton({ editing = null; accountName = ""; endpoint = ""; compatibleNeedsKey = false; authHeader = ""; accountKey = ""; managementKey = "" }) { Text("Cancel") }
+        }
     }
 }
 
@@ -399,14 +541,48 @@ private fun DesktopSettingsSection(repository: PALRepository, activity: Fragment
     OutlinedTextField(name, { name = it.take(40) }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.computer_assistant_name)) }, singleLine = true)
     TextButton({ patch("companion", strings.getString(R.string.computer_assistant_name)) { put("assistantName", name) } }, enabled = name.isNotBlank() && name != values.str("assistantName")) { Text(stringResource(R.string.computer_save_name)) }
     toggle(strings.getString(R.string.computer_speak_replies_on_the_desktop), values.isTrue("speechEnabled"), "voice") { put("speechEnabled", it) }
+    DesktopVoice(repository, values, { title, change -> patch("voice", title, change) }, failure)
+    values.obj("speechCache")?.let { kept -> toggle(strings.getString(R.string.extras_keep_spoken_audio), kept.isTrue("enabled"), "voice") { put("speechCache", buildJsonObject { put("enabled", it) }) } }
     toggle(strings.getString(R.string.computer_quiet_desktop_companion), values.isTrue("quiet"), "appearance") { put("quiet", it) }
     toggle(strings.getString(R.string.computer_reduced_motion), values.isTrue("reducedMotion"), "appearance") { put("reducedMotion", it) }
     val web = values.obj("webSearch"); toggle(strings.getString(R.string.computer_web_search), web?.isTrue("enabled") == true, "search") { put("webSearch", JsonObject(web.orEmpty() + ("enabled" to JsonPrimitive(it)))) }
     val memory = values.obj("memory"); toggle(strings.getString(R.string.mobile_project_memory), memory?.isTrue("enabled") == true, "memory") { put("memory", JsonObject(memory.orEmpty() + ("enabled" to JsonPrimitive(it)))) }
+    values.obj("time")?.let { time -> OwnerTimeSettings(time, { label, checked, change -> toggle(label, checked, "time") { on -> put("time", buildJsonObject { change(on) }) } }) { title, change ->
+        patch("time", title) { put("time", buildJsonObject(change)) }
+    } }
     Text(stringResource(R.string.computer_automatic_approval_all_conversations), style = MaterialTheme.typography.labelLarge)
     toggle(strings.getString(R.string.computer_provider_commands_without_asking), values.isTrue("bypassCliPermissions"), "permissions", reviewEnable = true) { put("bypassCliPermissions", it) }
     toggle(strings.getString(R.string.computer_desktop_actions_without_asking), values.isTrue("bypassComputerPermissions"), "permissions", reviewEnable = true) { put("bypassComputerPermissions", it) }
     toggle(strings.getString(R.string.computer_pause_pals_desktop_actions), values.isTrue("paused"), "permissions") { put("paused", it) }
+}
+
+/** Time awareness (feature time.context.v1): the same choices as Settings › Application on the desktop. */
+@Composable
+private fun OwnerTimeSettings(time: JsonObject, toggle: @Composable (String, Boolean, JsonObjectBuilder.(Boolean) -> Unit) -> Unit, patch: (String, JsonObjectBuilder.() -> Unit) -> Unit) {
+    val strings = androidx.compose.ui.platform.LocalResources.current
+    var choosing by rememberSaveable { mutableStateOf(false) }
+    val on = (time["enabled"] as? JsonPrimitive)?.booleanOrNull != false
+    val fixed = time.str("zoneMode") == "fixed"
+    val zone = time.str("fixedZone")
+    Text(stringResource(R.string.clock_settings_heading), Modifier.semantics { heading() }, style = MaterialTheme.typography.labelLarge)
+    toggle(strings.getString(R.string.clock_settings_enabled), on) { put("enabled", it) }
+    Text(stringResource(R.string.clock_settings_enabled_detail), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    toggle(strings.getString(R.string.clock_settings_elapsed), (time["conversationTiming"] as? JsonPrimitive)?.booleanOrNull != false) { put("conversationTiming", it) }
+    Text(stringResource(R.string.clock_settings_zone), style = MaterialTheme.typography.bodyMedium)
+    val zoneTitle = strings.getString(R.string.clock_settings_zone)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+        FilterChip(!fixed, { if (fixed) patch(zoneTitle) { put("zoneMode", "automatic") } }, { Text(stringResource(R.string.clock_settings_automatic)) })
+        FilterChip(fixed, { if (!fixed) { if (zone != null) patch(zoneTitle) { put("zoneMode", "fixed") } else choosing = true } }, { Text(stringResource(R.string.clock_settings_fixed)) })
+    }
+    if (fixed) TextButton({ choosing = true }, Modifier.heightIn(min = PALLayout.target)) { Text(stringResource(R.string.clock_settings_fixed_value, zone.orEmpty())) }
+    Text(stringResource(R.string.clock_settings_display), style = MaterialTheme.typography.bodyMedium)
+    val displayTitle = strings.getString(R.string.clock_settings_display)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+        listOf("system" to R.string.clock_settings_display_system, "12h" to R.string.clock_settings_display_12, "24h" to R.string.clock_settings_display_24).forEach { (id, label) ->
+            FilterChip((time.str("clockFormat") ?: "system") == id, { patch(displayTitle) { put("clockFormat", id) } }, { Text(stringResource(label)) })
+        }
+    }
+    if (choosing) ZonePickerDialog(zone, { choosing = false }) { chosen -> choosing = false; patch(zoneTitle) { put("zoneMode", "fixed"); put("fixedZone", chosen) } }
 }
 
 /** The same ledger the desktop shows: exact counts only where providers reported them; costs only from entered prices. */
@@ -428,7 +604,7 @@ private fun UsageSection(repository: PALRepository, activity: FragmentActivity, 
     Text(stringResource(R.string.computer_requests_in_out_tokens_reported, totals?.num("calls") ?: 0, totals?.num("inputTokens") ?: 0, totals?.num("outputTokens") ?: 0) + ((totals?.num("images") ?: 0).takeIf { it > 0 }?.let { " · " + strings.getQuantityString(R.plurals.usage_image_count, it.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), it) } ?: ""))
     Text(strings.getString(R.string.computer_priced_cost_2f_s, (totals?.get("cost") as? JsonPrimitive)?.doubleOrNull ?: 0.0, currency) + ((totals?.num("unpriced") ?: 0).takeIf { it > 0 }?.let { " · " + strings.getString(R.string.unpriced_usage, it) } ?: ""), style = MaterialTheme.typography.bodySmall)
     Text(stringResource(R.string.computer_reported_estimated_unknown_subscription, totals?.num("reported") ?: 0, totals?.num("estimated") ?: 0, totals?.num("unknown") ?: 0, totals?.num("subscription") ?: 0), style = MaterialTheme.typography.bodySmall)
-    (value["warnings"] as? JsonArray)?.forEach { Text(it.jsonPrimitive.contentOrNull.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+    value.strings("warnings").forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
     value.list("byProvider").take(8).forEach { row -> Text("${row.str("key")} · ${row.num("calls")} · " + if ((row.num("priced") ?: 0) > 0) "%.2f %s".format((row["cost"] as? JsonPrimitive)?.doubleOrNull ?: 0.0, currency) else stringResource(R.string.computer_unpriced), style = MaterialTheme.typography.bodySmall) }
     val savedLimit = value.obj("policy")?.str("monthlyLimit")
     val decimal = limit.trim().takeIf { it.matches(Regex("""(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)""")) }?.toBigDecimalOrNull()
@@ -506,7 +682,7 @@ private fun SkillsSection(repository: PALRepository, activity: FragmentActivity,
                     if (changes.isTrue("instructionsChanged")) Text(stringResource(R.string.computer_standing_instructions_changed))
                     for (kind in listOf("added", "removed", "changed")) {
                         val paths = changes[kind] as? JsonArray ?: continue
-                        if (paths.isNotEmpty()) Text(kind.replaceFirstChar { it.uppercase() } + " · " + paths.joinToString { it.jsonPrimitive.content })
+                        if (paths.isNotEmpty()) Text(kind.replaceFirstChar { it.uppercase() } + " · " + paths.texts().joinToString())
                     }
                 }
                 Text(stringResource(R.string.computer_complete_instructions), style = MaterialTheme.typography.titleSmall)
@@ -519,7 +695,13 @@ private fun SkillsSection(repository: PALRepository, activity: FragmentActivity,
                     .onSuccess { feedback(strings.getString(R.string.computer_is_on, version?.str("name"))); review = null; load() }.onFailure { failure(it.message ?: "") }
             } }) { Text(stringResource(R.string.computer_enable_this_version)) }
             else TextButton({ scope.launch { ownerCall { repository.mutate("owner.skills.disable", buildJsonObject { put("versionId", version.str("id").orEmpty()) }) }.onSuccess { review = null; load() }.onFailure { failure(it.message ?: "") } } }) { Text(stringResource(R.string.computer_turn_off)) }
-        }, dismissButton = { TextButton({ review = null }) { Text(stringResource(R.string.action_close)) } })
+        }, dismissButton = { FlowRow {
+            if (version?.str("skillId") != null) ConfirmRemoval(stringResource(R.string.extras_skill_remove), version.str("name").orEmpty(), stringResource(R.string.extras_skill_remove_body)) { scope.launch {
+                ownerCall { signed(activity, repository, "owner.skills.remove", buildJsonObject { put("skillId", version.str("skillId").orEmpty()) }, strings.getString(R.string.extras_skill_remove)) }
+                    .onSuccess { feedback(strings.getString(R.string.extras_skill_removed)); review = null; load() }.onFailure { failure(it.message.orEmpty()) }
+            } }
+            TextButton({ review = null }) { Text(stringResource(R.string.action_close)) }
+        } })
     }
 }
 
@@ -533,6 +715,8 @@ private fun CollectionsSection(repository: PALRepository, state: MobileState, ac
     TargetConversation(state, target) { target = it }
     var collections by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
     var deleting by remember { mutableStateOf<JsonObject?>(null) }
+    var trying by remember { mutableStateOf<JsonObject?>(null) }
+    trying?.let { collection -> CollectionTrial(repository, collection.str("id").orEmpty(), collection.str("name").orEmpty()) { trying = null } }
     var name by remember { mutableStateOf("") }
     var source by remember { mutableStateOf("") }
     fun load() = scope.launch { ownerCall { repository.request("owner.collections.list", buildJsonObject {}) }.onSuccess { value -> collections = (value as? JsonObject)?.list("collections") ?: value.objects() }.onFailure { failure(it.message ?: "") } }
@@ -541,12 +725,25 @@ private fun CollectionsSection(repository: PALRepository, state: MobileState, ac
         val id = collection.str("id").orEmpty()
         val revision = collection.str("revision") ?: "0"
         Text(stringResource(R.string.computer_sources, collection.str("name").orEmpty(), collection.list("sources").size) + (collection.str("state")?.let { " · $it" } ?: ""), style = MaterialTheme.typography.titleSmall)
-        collection.list("sources").take(6).forEach { Text(it.str("path").orEmpty(), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+        collection.list("sources").take(20).forEach { item -> Row(verticalAlignment = Alignment.CenterVertically) {
+            val path = item.str("path").orEmpty()
+            Text(path, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+            if (path.startsWith("/")) ConfirmRemoval(stringResource(R.string.action_remove), path.substringAfterLast('/'), stringResource(R.string.extras_source_remove_body)) { scope.launch {
+                ownerCall { signed(activity, repository, "owner.collections.removeSource", buildJsonObject { put("id", id); put("expectedRevision", revision); put("path", path) }, strings.getString(R.string.computer_remove, path)) }
+                    .onSuccess { feedback(strings.getString(R.string.extras_source_removed)); load() }.onFailure { failure(it.message.orEmpty()) }
+            } }
+        } }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             TextButton({ scope.launch { ownerCall { signed(activity, repository, "owner.collections.addSource", buildJsonObject { put("id", id); put("expectedRevision", revision); put("path", source.trim()) }, strings.getString(R.string.computer_add_to, source.trim(), collection.str("name"))) }.onSuccess { source = ""; feedback(strings.getString(R.string.computer_source_added)); load() }.onFailure { failure(it.message ?: "") } } }, enabled = source.trim().startsWith("/")) { Text(stringResource(R.string.computer_add_source)) }
             TextButton({ scope.launch { ownerCall { signed(activity, repository, "owner.collections.index", buildJsonObject { put("id", id) }, strings.getString(R.string.computer_index_2, collection.str("name"))) }.onSuccess { feedback(strings.getString(R.string.computer_indexing_on_the_desktop)) }.onFailure { failure(it.message ?: "") } } }) { Text(stringResource(R.string.computer_index)) }
             TextButton({ scope.launch { ownerCall { signed(activity, repository, "owner.collections.bind", buildJsonObject { put("id", id); put("target", "global"); put("bound", true) }, strings.getString(R.string.computer_use_everywhere_2, collection.str("name"))) }.onSuccess { feedback(strings.getString(R.string.computer_used_in_every_conversation)) }.onFailure { failure(it.message ?: "") } } }) { Text(stringResource(R.string.computer_use_everywhere)) }
             target?.takeIf { id -> state.sessions.any { it.id == id } }?.let { sessionId -> TextButton({ scope.launch { ownerCall { signed(activity, repository, "owner.collections.bind", buildJsonObject { put("id", id); put("target", "project"); put("sessionId", sessionId); put("bound", true) }, strings.getString(R.string.computer_use_in_this_project, collection.str("name"))) }.onSuccess { feedback(strings.getString(R.string.computer_used_in_this_project)) }.onFailure { failure(it.message ?: "") } } }) { Text(stringResource(R.string.computer_use_in_selected_conversations_project)) } }
+            TextButton({ scope.launch { ownerCall { repository.mutate("owner.collections.cancel", buildJsonObject {}) }.onSuccess { feedback(strings.getString(R.string.extras_index_stopped)); load() }.onFailure { failure(it.message.orEmpty()) } } }) { Text(stringResource(R.string.extras_index_stop)) }
+            if (state.supports("owner.collections.search")) TextButton({ trying = collection }) { Text(stringResource(R.string.kb_try)) }
+            if (state.supports("owner.collections.update")) {
+                FilterChip(collection.isTrue("code"), { scope.launch { ownerCall { signed(activity, repository, "owner.collections.update", buildJsonObject { put("id", id); put("expectedRevision", revision); put("code", !collection.isTrue("code")) }, strings.getString(R.string.kb_code)) }.onSuccess { load() }.onFailure { failure(it.message.orEmpty()) } } }, { Text(stringResource(R.string.kb_code)) })
+                TextButton({ scope.launch { ownerCall { signed(activity, repository, "owner.collections.index", buildJsonObject { put("id", id); put("rebuild", true) }, strings.getString(R.string.kb_rebuild)) }.onSuccess { load() }.onFailure { failure(it.message.orEmpty()) } } }) { Text(stringResource(R.string.kb_rebuild)) }
+            }
             TextButton({ deleting = collection }) { Text(stringResource(R.string.computer_delete)) }
             // §11.1: a web page read once and kept as a dated snapshot; watched folders update after changes settle.
             TextButton({ scope.launch { ownerCall { signed(activity, repository, "owner.collections.addUrl", buildJsonObject { put("id", id); put("url", source.trim()) }, strings.getString(R.string.computer_add_the_page_to, source.trim(), collection.str("name"))) }.onSuccess { source = ""; feedback(strings.getString(R.string.computer_page_added_index_the_collection_to_use_it)); load() }.onFailure { failure(it.message ?: "") } } }, enabled = source.trim().startsWith("http")) { Text(stringResource(R.string.computer_add_as_web_page)) }
@@ -605,12 +802,13 @@ private fun ToolServersSection(repository: PALRepository, activity: FragmentActi
         FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             if (server.str("transport") == "http" && oauth?.isTrue("signedIn") != true) TextButton({ scope.launch {
                 ownerCall { signed(activity, repository, "owner.extensions.oauthStart", buildJsonObject { put("id", id) }, strings.getString(R.string.computer_sign_in_to_from_this_phone, name)) as JsonObject }
-                    .onSuccess { started -> onOAuthStarted(id); context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(started.str("authorizationUrl")))) }
+                    .onSuccess { started -> onOAuthStarted(id); if (started.str("authorizationUrl")?.let { context.open(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(it))) } != true) failure(strings.getString(R.string.open_refused)) }
                     .onFailure { failure(it.message ?: "") }
             } }, enabled = server.isTrue("enabled")) { Text(if (id == resultServer && resultText != null) stringResource(R.string.computer_sign_in_again) else stringResource(R.string.computer_sign_in)) }
             if (oauth?.isTrue("signedIn") == true) TextButton({ scope.launch { ownerCall { signed(activity, repository, "owner.extensions.oauthSignOut", buildJsonObject { put("id", id) }, strings.getString(R.string.computer_sign_out_of, name)) }.onSuccess { resultServer = id; resultText = strings.getString(R.string.computer_signed_out_of, name); load() }.onFailure { failure(it.message ?: "") } } }) { Text(stringResource(R.string.computer_sign_out)) }
             TextButton({ scope.launch { ownerCall { repository.mutate("owner.extensions.restart", buildJsonObject { put("id", id) }, strings.getString(R.string.computer_start_2, name)) }.onSuccess { load() }.onFailure { failure(it.message ?: ""); load() } } }, enabled = server.isTrue("enabled")) { Text(if (server.str("state") == "ready") stringResource(R.string.computer_restart) else stringResource(R.string.action_start)) }
         }
+        ToolServerDetails(repository, activity, server, feedback, failure) { load() }
     }
     if (writes.isNotEmpty()) {
         Text(stringResource(R.string.computer_requests_to_check), style = MaterialTheme.typography.titleSmall)
@@ -658,7 +856,7 @@ private fun ToolServersSection(repository: PALRepository, activity: FragmentActi
             (server["args"] as? JsonArray)?.let { Text(stringResource(R.string.computer_arguments) + if (it.isEmpty()) stringResource(R.string.computer_none) else it.toString(), fontFamily = FontFamily.Monospace) }
             server.str("cwd")?.let { Text(stringResource(R.string.computer_working_folder, it)) }
             server.list("secrets").forEach { Text(stringResource(R.string.computer_credential) + it.str("name").orEmpty() + if (it.str("value") == "missing") stringResource(R.string.computer_set_later) else stringResource(R.string.computer_value_imported)) }
-            (server["warnings"] as? JsonArray)?.forEach { Text(it.jsonPrimitive.content, color = MaterialTheme.colorScheme.error) }
+            server.strings("warnings").forEach { Text(it, color = MaterialTheme.colorScheme.error) }
             HorizontalDivider()
         }
         Row(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
@@ -683,7 +881,16 @@ private fun SetupsSection(repository: PALRepository, state: MobileState, activit
     var previewTarget by remember { mutableStateOf("") }
     var folder by remember { mutableStateOf("") }
     var model by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) { ownerCall { repository.request("owner.setups.list", buildJsonObject {}) as JsonObject }.onSuccess { setups = it.list("setups"); supportsStartRevision = it.isTrue("supportsStartRevision") }.onFailure { failure(it.message ?: "") } }
+    var setupsRevision by remember { mutableStateOf("0") }
+    var editing by remember { mutableStateOf<JsonObject?>(null) }
+    fun load() = scope.launch { ownerCall { repository.request("owner.setups.list", buildJsonObject {}) as JsonObject }.onSuccess { setups = it.list("setups"); setupsRevision = it.str("revision") ?: "0"; supportsStartRevision = it.isTrue("supportsStartRevision") }.onFailure { failure(it.message ?: "") } }
+    LaunchedEffect(Unit) { load() }
+    editing?.let { setup -> SetupEditor(state, setup, { editing = null }) { value ->
+        editing = null
+        scope.launch { ownerCall { signed(activity, repository, "owner.setups.save", buildJsonObject { put("setup", value); put("expectedRevision", setupsRevision) }, strings.getString(R.string.extras_setup_action, value.str("name").orEmpty())) }
+            .onSuccess { feedback(strings.getString(R.string.extras_setup_saved)); load() }.onFailure { failure(it.message.orEmpty()) } }
+    } }
+    TextButton({ editing = buildJsonObject { put("name", ""); put("description", "") } }) { Text(stringResource(R.string.extras_setup_new)) }
     fun startConversation(setup: JsonObject) {
         val name = setup.str("name").orEmpty()
         val host = setup.obj("families")?.isTrue("host") == true
@@ -698,7 +905,7 @@ private fun SetupsSection(repository: PALRepository, state: MobileState, activit
                 if (model.isNotBlank()) put("model", model.trim())
             }, strings.getString(R.string.computer_start_a_conversation_with_in, name, folder.trim())) as JsonObject }
                 .onSuccess { started ->
-                    val missing = (started["unresolved"] as? JsonArray).orEmpty().joinToString(" ") { it.jsonPrimitive.content }
+                    val missing = started.strings("unresolved").joinToString(" ")
                     feedback(strings.getString(R.string.computer_started_with, name) + if (missing.isNotEmpty()) strings.getString(R.string.computer_missing, missing) else "")
                     started.obj("session")?.str("id")?.let { target = it; repository.selectSession(it) }
                 }.onFailure { failure(it.message.orEmpty()) }
@@ -715,6 +922,10 @@ private fun SetupsSection(repository: PALRepository, state: MobileState, activit
             TextButton({
                 if (setup.obj("families")?.isTrue("host") == true) startReview = setup else startConversation(setup)
             }, enabled = folder.trim().startsWith("/")) { Text(stringResource(R.string.transcript_empty_title)) }
+            TextButton({ editing = setup }) { Text(stringResource(if (setup.isTrue("builtin")) R.string.extras_setup_copy else R.string.extras_setup_edit)) }
+            if (!setup.isTrue("builtin")) ConfirmRemoval(stringResource(R.string.action_delete), name, stringResource(R.string.extras_setup_delete_body)) { scope.launch {
+                ownerCall { signed(activity, repository, "owner.setups.delete", buildJsonObject { put("id", id) }, strings.getString(R.string.computer_delete_2, name)) }.onSuccess { feedback(strings.getString(R.string.extras_setup_deleted)); load() }.onFailure { failure(it.message.orEmpty()) }
+            } }
         }
     }
     OutlinedTextField(folder, { folder = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.computer_project_folder_for_new_conversations)) })
@@ -743,8 +954,8 @@ private fun SetupsSection(repository: PALRepository, state: MobileState, activit
                         }
                     } else Text("${change.str("label")}: " + (change.str("from")?.let { "$it → " } ?: "") + change.str("to").orEmpty(), style = MaterialTheme.typography.bodySmall)
                 }
-                (reviewed["unresolved"] as? JsonArray)?.forEach { Text(stringResource(R.string.computer_missing_2) + it.jsonPrimitive.content, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-                (reviewed["notes"] as? JsonArray)?.forEach { Text(it.jsonPrimitive.content, style = MaterialTheme.typography.bodySmall) }
+                reviewed.strings("unresolved").forEach { Text(stringResource(R.string.computer_missing_2) + it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                reviewed.strings("notes").forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
         }, confirmButton = { Button({ scope.launch {
             ownerCall { signed(activity, repository, "owner.setups.apply", buildJsonObject { put("token", reviewed.str("token").orEmpty()) }, strings.getString(R.string.computer_apply_to_this_conversation, reviewed.obj("setup")?.str("name"))) }
@@ -755,18 +966,21 @@ private fun SetupsSection(repository: PALRepository, state: MobileState, activit
 
 /** Specialists (§17.2): what a conversation can ask, how many run at once, and custom ones with their own model. */
 @Composable
-private fun SpecialistsSection(repository: PALRepository, activity: FragmentActivity, feedback: (String) -> Unit, failure: (String) -> Unit) {
+private fun SpecialistsSection(repository: PALRepository, state: MobileState, activity: FragmentActivity, feedback: (String) -> Unit, failure: (String) -> Unit) {
     val strings = androidx.compose.ui.platform.LocalResources.current
 
     val scope = rememberOwnerScope()
     var data by remember { mutableStateOf<JsonObject?>(null) }
     var name by remember { mutableStateOf("") }; var role by remember { mutableStateOf("code_review") }; var model by remember { mutableStateOf("") }
+    var provider by remember { mutableStateOf("") }; var account by remember { mutableStateOf("") }
+    // What it runs on: a visual critic always runs on the vision helper, and an unnamed one on the helper model.
+    fun runsOn(item: JsonObject): String { val id = item.str("provider") ?: return item.str("model")?.let { " · $it" }.orEmpty(); val named = item.str("connectionId")?.let { key -> (state.providers[id] as? JsonObject)?.list("connections")?.firstOrNull { it.str("id") == key }?.str("name") ?: strings.getString(R.string.extras_account_gone) }; return listOfNotNull(state.traits(id).label, item.str("model"), named).joinToString(" · ", " · ") }
     fun load() = scope.launch { ownerCall { repository.request("owner.specialists.list", buildJsonObject {}) as JsonObject }.onSuccess { data = it }.onFailure { failure(it.message ?: "") } }
     LaunchedEffect(Unit) { load() }
     val roles = data?.obj("roles")
     data?.list("specialists")?.forEach { item ->
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("${item.str("name")} · ${roles?.str(item.str("role").orEmpty()) ?: item.str("role")}" + (item.str("model")?.let { " · $it" } ?: ""), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+            Text("${item.str("name")} · ${roles?.str(item.str("role").orEmpty()) ?: item.str("role")}" + runsOn(item), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
             if (!item.isTrue("builtin")) ConfirmRemoval(stringResource(R.string.action_delete), item.str("name").orEmpty(), stringResource(R.string.computer_this_specialist_will_no_longer_be_available_to)) { scope.launch { ownerCall { signed(activity, repository, "owner.specialists.delete", buildJsonObject { put("id", item.str("id").orEmpty()) }, strings.getString(R.string.computer_delete_the_specialist, item.str("name"))) }.onSuccess { load() }.onFailure { failure(it.message ?: "") } } }
         }
     }
@@ -776,11 +990,19 @@ private fun SpecialistsSection(repository: PALRepository, activity: FragmentActi
     }
     OutlinedTextField(name, { name = it.take(60) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.computer_new_specialist_name)) })
     FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { roles?.keys?.forEach { id -> FilterChip(role == id, { role = id }, { Text(roles.str(id).orEmpty()) }) } }
-    OutlinedTextField(model, { model = it.trim() }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.computer_ollama_model_optional_otherwise_the_helper_model)) })
+    if (role != "visual_review") {
+        Text(stringResource(R.string.extras_specialist_runs), style = MaterialTheme.typography.labelMedium)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
+            FilterChip(provider.isEmpty(), { provider = ""; account = ""; model = "" }, { Text(stringResource(R.string.extras_specialist_helper)) })
+            state.providers.keys.filter { state.traits(it).kind.let { kind -> kind == "api" || kind == "local" } }.forEach { id -> FilterChip(provider == id, { if (provider != id) { provider = id; account = "" } }, { Text(state.traits(id).label) }) }
+        }
+        AccountChoice(state, provider, account, byName = false) { account = it }
+        if (provider.isNotEmpty()) OutlinedTextField(model, { model = it.trim().take(512) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.care_model)) })
+    }
     Button({ scope.launch {
-        ownerCall { signed(activity, repository, "owner.specialists.save", buildJsonObject { put("specialist", buildJsonObject { put("name", name.trim()); put("role", role); if (model.isNotBlank() && role != "visual_review") { put("provider", "ollama"); put("model", model) } }) }, strings.getString(R.string.computer_add_the_specialist, name.trim())) }
-            .onSuccess { name = ""; model = ""; load() }.onFailure { failure(it.message ?: "") }
-    } }, enabled = name.isNotBlank()) { Text(stringResource(R.string.computer_add)) }
+        ownerCall { signed(activity, repository, "owner.specialists.save", buildJsonObject { put("specialist", buildJsonObject { put("name", name.trim()); put("role", role); if (provider.isNotEmpty() && role != "visual_review") { put("provider", provider); put("model", model); if (account.isNotEmpty()) put("connectionId", account) } }) }, strings.getString(R.string.computer_add_the_specialist, name.trim())) }
+            .onSuccess { name = ""; model = ""; provider = ""; account = ""; load() }.onFailure { failure(it.message ?: "") }
+    } }, enabled = name.isNotBlank() && (provider.isEmpty() || role == "visual_review" || model.isNotBlank())) { Text(stringResource(R.string.computer_add)) }
     Text(stringResource(R.string.computer_specialists_have_no_tools_and_change_nothing_a), style = MaterialTheme.typography.bodySmall)
 }
 
@@ -801,7 +1023,7 @@ private fun ScriptsSection(repository: PALRepository, activity: FragmentActivity
     }
     scripts.forEach { script ->
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) { Text(script.str("name").orEmpty()); Text("${script.str("executable")} ${(script["args"] as? JsonArray).orEmpty().joinToString(" ") { it.jsonPrimitive.content }} · ${script.str("cwd")}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+            Column(Modifier.weight(1f)) { Text(script.str("name").orEmpty()); Text("${script.str("executable")} ${script.strings("args").joinToString(" ")} · ${script.str("cwd")}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
             ConfirmRemoval(stringResource(R.string.action_remove), script.str("name").orEmpty(), stringResource(R.string.computer_this_removes_the_saved_script_from_pal_on)) { save(scripts.filter { it.str("id") != script.str("id") }, strings.getString(R.string.computer_remove, script.str("name"))) }
         }
     }
@@ -812,7 +1034,7 @@ private fun ScriptsSection(repository: PALRepository, activity: FragmentActivity
     Button({
         val parsed = ownerCall { Json.parseToJsonElement(args) as JsonArray }.getOrNull()
         if (parsed == null) { failure(strings.getString(R.string.computer_arguments_must_be_a_json_array_of_strings)); return@Button }
-        save(scripts + buildJsonObject { put("id", java.util.UUID.randomUUID().toString()); put("name", name.trim()); put("executable", executable); put("args", parsed); put("cwd", cwd); put("timeout", 60) }, strings.getString(R.string.computer_add_the_saved_script, name.trim()))
+        save(scripts + buildJsonObject { put("id", java.util.UUID.randomUUID().toString()); put("name", name.trim()); put("executable", executable); put("args", parsed); put("cwd", cwd); put("timeout", 60_000) }, strings.getString(R.string.computer_add_the_saved_script, name.trim()))
     }, enabled = name.isNotBlank() && executable.startsWith("/") && cwd.startsWith("/")) { Text(stringResource(R.string.computer_add_script)) }
     Text(stringResource(R.string.computer_saved_scripts_run_as_your_desktop_account_when), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
@@ -921,6 +1143,10 @@ private fun RoutineCreator(repository: PALRepository, state: MobileState, activi
         Text(reviewed.str("prompt").orEmpty(), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
             maxLines = if (expanded) Int.MAX_VALUE else 14, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         TextButton({ expanded = !expanded }) { Text(if (expanded) stringResource(R.string.computer_collapse_prompt) else stringResource(R.string.computer_read_full_prompt)) }
+        if (state.supports("owner.recipes.createDraft")) TextButton({ scope.launch {
+            ownerCall { signed(activity, repository, "owner.recipes.createDraft", buildJsonObject { put("previewToken", reviewed.str("token").orEmpty()); put("reviewed", true) }, strings.getString(R.string.extras_recipe_draft_action)) as JsonObject }
+                .onSuccess { made -> feedback(strings.getString(R.string.extras_recipe_drafted)); made.obj("session")?.str("id")?.let { repository.selectSession(it) }; done() }.onFailure { failure(it.message.orEmpty()) }
+        } }) { Text(stringResource(R.string.extras_recipe_draft)) }
         OutlinedTextField(label, { label = it.take(80) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.computer_routine_name)) })
         FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             listOf("daily" to strings.getString(R.string.computer_every_day), "weekdays" to strings.getString(R.string.computer_weekdays), "weekly" to strings.getString(R.string.computer_chosen_days), "once" to strings.getString(R.string.computer_once), "folder" to strings.getString(R.string.computer_when_files_change)).forEach { (id, text) -> FilterChip(kind == id, { kind = id }, { Text(text) }) }
@@ -939,6 +1165,8 @@ private fun RoutineCreator(repository: PALRepository, state: MobileState, activi
             LabeledCheck(stringResource(R.string.computer_if_the_desktop_was_off_at_that_time), catchUp) { catchUp = it }
         }
         if (kind == "folder" && folder.isNotBlank()) Text(stringResource(R.string.computer_watch) + folder.trim() + stringResource(R.string.computer_after) + quiet + stringResource(R.string.computer_seconds_without_a_change))
+        val delivery = remember { mutableStateOf<JsonObject?>(null) }
+        if (state.supports("owner.accounts.list")) RoutineDelivery(repository) { delivery.value = it }
         LabeledCheck(stringResource(R.string.computer_it_may_run_while_i_am_away_permission), unattended) { unattended = it }
         Row(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             TextButton(done) { Text(stringResource(R.string.action_cancel)) }
@@ -949,7 +1177,7 @@ private fun RoutineCreator(repository: PALRepository, state: MobileState, activi
                     if (kind == "weekly") put("days", JsonArray(days.sorted().map { JsonPrimitive(it) }))
                     if (kind == "once") put("date", date)
                 }
-                ownerCall { signed(activity, repository, "owner.schedules.create", buildJsonObject { put("label", label.trim()); put("when", whenValue); put("previewToken", reviewed.str("token").orEmpty()); put("unattended", true); if (catchUp && kind != "folder") put("missed", "once") }, strings.getString(R.string.computer_schedule_to_run_while_you_are_away, label.trim())) }
+                ownerCall { signed(activity, repository, "owner.schedules.create", buildJsonObject { put("label", label.trim()); put("when", whenValue); put("previewToken", reviewed.str("token").orEmpty()); put("unattended", true); if (catchUp && kind != "folder") put("missed", "once"); delivery.value?.let { put("delivery", it) } }, strings.getString(R.string.computer_schedule_to_run_while_you_are_away, label.trim())) }
                     .onSuccess { feedback(strings.getString(R.string.computer_routine_saved_its_results_go_to_the_inbox)); done() }.onFailure { failure(it.message ?: "") }
             } }, enabled = unattended && label.isNotBlank() && (kind != "folder" || (folder.trim().startsWith("/") && quiet.toIntOrNull() in 5..3600))) { Text(stringResource(R.string.computer_save_routine)) }
         }
@@ -988,8 +1216,7 @@ private fun ModelsSection(repository: PALRepository, activity: FragmentActivity,
     var pull by remember { mutableStateOf("") }
     fun load() = scope.launch { ownerCall { repository.request("owner.models.local", buildJsonObject {}) }.onSuccess { models = it }.onFailure { failure(it.message ?: "") } }
     LaunchedEffect(Unit) { load() }
-    val rows = (models as? JsonObject)?.list("models") ?: models.objects()
-    rows.forEach { model -> Text("${model.str("name") ?: model.str("model")} · ${byteSize(model.num("size"))}" + if (model.isTrue("loaded")) stringResource(R.string.computer_loaded) else "", style = MaterialTheme.typography.bodySmall) }
+    LocalModelRows(repository, activity, models as? JsonObject ?: buildJsonObject { put("models", models ?: JsonArray(emptyList())) }, feedback, failure) { load() }
     OutlinedTextField(pull, { pull = it.trim() }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.computer_download_a_model_ollama_name)) }, singleLine = true)
     Button({ scope.launch { ownerCall { signed(activity, repository, "owner.models.pull", buildJsonObject { put("model", pull) }, strings.getString(R.string.computer_download_on_the_desktop, pull)) }.onSuccess { feedback(strings.getString(R.string.computer_downloading_on_the_desktop, pull)); load() }.onFailure { failure(it.message ?: "") } } }, enabled = pull.isNotBlank()) { Text(stringResource(R.string.computer_download)) }
 }
@@ -1046,8 +1273,8 @@ private fun HealthSection(repository: PALRepository, activity: FragmentActivity,
     TextButton({ technical = !technical }) { Text(if (technical) stringResource(R.string.computer_hide_technical_details) else stringResource(R.string.computer_show_technical_details)) }
     if (technical) {
         val details = buildJsonObject { health?.let { put("health", it) }; backup?.let { put("backup", it) } }.toString()
-        val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
-        TextButton({ clipboard.setText(androidx.compose.ui.text.AnnotatedString(details)); feedback(strings.getString(R.string.computer_technical_details_copied)) }) { Text(stringResource(R.string.computer_copy_technical_details)) }
+        val context = androidx.compose.ui.platform.LocalContext.current
+        TextButton({ if (copyText(context, strings.getString(R.string.computer_copy_technical_details), details)) feedback(strings.getString(R.string.computer_technical_details_copied)) else failure(strings.getString(R.string.copy_refused)) }) { Text(stringResource(R.string.computer_copy_technical_details)) }
         SelectionContainer { Text(details, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
     }
 }

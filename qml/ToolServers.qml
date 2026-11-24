@@ -235,7 +235,7 @@ ColumnLayout {
         }
         RowLayout {
             Layout.fillWidth:true
-            CButton { objectName:"toolServerResourceKeep";visible:!!resourcesDialog.reading&&!resourcesDialog.reading.error&&["ollama","openai","anthropic","google","compatible"].includes(App.session.provider||"")&&!App.session.temporary
+            CButton { objectName:"toolServerResourceKeep";visible:!!resourcesDialog.reading&&!resourcesDialog.reading.error&&(App.session.provider==="ollama"||App.state.providerTraits?.[App.session.provider||""]?.kind==="api")&&!App.session.temporary
                 text:"Keep in this conversation";onClicked:serverRpc.call("extensions.resource",{id:resourcesDialog.server.id,uri:resourcesDialog.reading.uri,sessionId:App.selectedId},value=>resourcesDialog.message=value.error?value.error:"Kept "+(value.kept||[]).map(k=>k.name).join(", ")+" in the conversation’s files.") }
             Item { Layout.fillWidth:true }
             CButton { text:"Close";onClicked:resourcesDialog.close() }

@@ -74,15 +74,17 @@ data class MobileState(
     val erasures: List<ErasureReceipt> = emptyList(),
     /** MOB-008: the desktop build this phone last signed in to; while offline it is the last one seen. */
     val desktopBuild: DesktopBuildSeen? = null,
+    /** Optional wake-ups through a push app the person chose; null while they are off. */
+    val wake: WakeState? = null,
 ) {
     fun supports(operation: String) = (connection as? ConnectionState.Online)?.operations?.contains(operation) == true
     fun has(feature: String) = (connection as? ConnectionState.Online)?.features?.contains(feature) == true
     /** This connection carries the desktop owner's authority (a phone given full access, on a desktop that supports it). */
     val owner: Boolean get() = (connection as? ConnectionState.Online)?.role == OwnerNegotiation.OWNER
     /** The assistant's name as the desktop shows it. */
-    val assistantName: String get() = settings["assistantName"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }?.take(40) ?: "PAL"
+    val assistantName: String get() = (settings["assistantName"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }?.take(40) ?: "PAL"
     /** The desktop's citation setting: memory citations are hidden unless it shows them. */
-    val showMemoryCitations: Boolean get() = settings["showMemoryCitations"]?.jsonPrimitive?.booleanOrNull == true
+    val showMemoryCitations: Boolean get() = (settings["showMemoryCitations"] as? JsonPrimitive)?.booleanOrNull == true
     fun draft(session: Session) = drafts[session.id] ?: LocalDraft(session.id, session.draft, session.draftRevision, session.draftRevision, false)
     /**
      * W10: whether this phone can show [session]'s desktop draft attachments, and so edit or send that
@@ -167,6 +169,10 @@ class PALRepository(context: Context) {
      */
     private val _workEvents = MutableSharedFlow<Event>(extraBufferCapacity = 512, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
     val workEvents: SharedFlow<Event> = _workEvents
+    private val _realtimeFrames = MutableSharedFlow<ByteArray>(extraBufferCapacity = 128, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
+    val realtimeFrames: SharedFlow<ByteArray> = _realtimeFrames
+    private val _realtimeEvents = MutableSharedFlow<Event>(extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
+    val realtimeEvents: SharedFlow<Event> = _realtimeEvents
     private val stateMutex = Mutex(); private val commitGate = RepositoryCommitGate(stateMutex); private val syncMutex = Mutex(); private val restoreMutex = Mutex()
     private val draftMutexes = ConcurrentHashMap<String, Mutex>()
     private val approvalRetirements = ApprovalRetirements()
@@ -198,12 +204,14 @@ class PALRepository(context: Context) {
     @Volatile private var connecting = false
     private var welcome: Welcome? = null; private var activeHello: Hello? = null
     private var reconnectJob: Job? = null; private var refreshJob: Job? = null; private var backgroundJob: Job? = null
-    private var endpointIndex = 0; private var backoffAttempt = 0; private var terminalBlocked = false
+    private val rotation = EndpointRotation(); @Volatile private var currentEndpoint: String? = null; private var backoffAttempt = 0; private var terminalBlocked = false
     private var unreachableSince: Long? = null
     @Volatile private var serverOffset = 0L
     private val authRejections = AuthRejections()
     // shouldMonitor: the background service keeps the connection. visible: the app is on screen.
-    @Volatile private var shouldMonitor = false; @Volatile private var visible = false; private var lastVerified: Long? = null
+    @Volatile private var shouldMonitor = false; @Volatile private var visible = false;
+    // waking: a push hint asked for one short connection.
+    @Volatile private var waking = 0; private val synced = MutableStateFlow(0L); private var lastVerified: Long? = null
     @Volatile private var pairingTransition = false
     // Treat startup as restore-blocked until the credential-encrypted cache has
     // been read. This prevents service/UI callbacks from persisting the default
@@ -368,6 +376,8 @@ class PALRepository(context: Context) {
                 approvals = emptyList(),
                 monitoring = false,
                 lastError = null,
+                // The new pairing is another device to the desktop, so it is asked again.
+                wake = current.wake?.copy(delivered = false, status = WakeStatus.Registering, problem = null),
             )
             store.write(cached(next, lastVerified))
             authorizedSessionIds = emptySet()
@@ -422,7 +432,7 @@ class PALRepository(context: Context) {
         currentSocket?.close(1000, "Pairing confirmation in progress")
     }
 
-    private fun keepConnected() = shouldMonitor || visible
+    private fun keepConnected() = shouldMonitor || visible || waking > 0
     /** True while the app is on screen with this conversation open; its notices need no alert. */
     fun isShowing(sessionId: String?): Boolean = visible && sessionId != null && _state.value.selectedSessionId == sessionId
 
@@ -455,7 +465,7 @@ class PALRepository(context: Context) {
     }
     @Synchronized fun networkAvailable() {
         if (!keepConnected() || restoreBlocked || socket != null || connecting || terminalBlocked) return
-        reconnectJob?.cancel(); reconnectJob = null; backoffAttempt = 0; connect()
+        rotation.networkChanged(); reconnectJob?.cancel(); reconnectJob = null; backoffAttempt = 0; connect()
     }
     /** The network that was active when the socket connected; null when none was. */
     @Volatile private var socketNetwork: android.net.Network? = null
@@ -465,7 +475,104 @@ class PALRepository(context: Context) {
      */
     @Synchronized fun networkLost(network: android.net.Network? = null) {
         val current = socket ?: return
-        if (ConnectionPolicy.dropsConnection(network, socketNetwork)) fail(current, "The network changed", false)
+        if (ConnectionPolicy.dropsConnection(network, socketNetwork)) { rotation.networkChanged(); fail(current, "The network changed", false) }
+    }
+    /**
+     * Whether [endpoint] presents the key this phone paired with. It is asked for nothing: an address another machine
+     * answers fails in the handshake, before a byte of a request is sent.
+     */
+    suspend fun verifyEndpoint(endpoint: String): Boolean = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        val desktop = _state.value.desktop ?: return@withContext false
+        runCatching {
+            PinnedTls.client(desktop, endpoint).newBuilder().callTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
+                .newCall(okhttp3.Request.Builder().url(endpoint.replaceFirst("wss://", "https://")).head().build()).execute().use { true }
+        }.getOrDefault(false)
+    }
+    /** Keeps an address the person accepted after [verifyEndpoint] passed; at most five are kept in all. */
+    suspend fun acceptFoundEndpoint(endpoint: String): Boolean {
+        val desktop = _state.value.desktop ?: return false
+        if (endpoint in Endpoints.all(desktop)) return true
+        if (Endpoints.all(desktop).size >= Endpoints.MAX || !verifyEndpoint(endpoint)) return false
+        return updateState(immediate = true, revertOnFailure = true) { current -> current.copy(desktop = current.desktop?.let { it.copy(foundEndpoints = (it.foundEndpoints + endpoint).distinct()) }) }
+    }
+    suspend fun removeFoundEndpoint(endpoint: String) { updateState(immediate = true) { current -> current.copy(desktop = current.desktop?.let { it.copy(foundEndpoints = it.foundEndpoints - endpoint) }) } }
+
+    /** Starts a registration with a push app; the app then asks it for an address. Nothing is sent to the desktop yet. */
+    suspend fun beginWake(distributor: String): WakeState {
+        val keys = WakePush.newKeys()
+        val wake = WakeState(UUID.randomUUID().toString(), distributor, keys.privateKey, keys.publicKey, keys.auth)
+        check(updateState(immediate = true, revertOnFailure = true) { it.copy(wake = wake) }) { PRIVATE_CACHE_ERROR }
+        return wake
+    }
+    /** The desktop's sending key, for push services that ask who will send; null when it cannot be read now. */
+    suspend fun wakeSenderKey(): String? = if (!_state.value.supports("wake.status")) null
+        else try { request("wake.status", buildJsonObject {}).jsonObject["senderKey"]?.jsonPrimitive?.contentOrNull } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { null }
+    /** The push app's address for [token]; the desktop gets it now, or at the next connection. */
+    suspend fun wakeEndpoint(token: String, endpoint: String) {
+        if (restoreBlocked && !restore()) return
+        if (_state.value.wake?.token != token) return
+        if (!endpoint.startsWith("https://") || endpoint.length > 1000) { wakeProblem(token, "The push app gave an address PAL cannot use. PAL needs an HTTPS push server."); return }
+        updateState(immediate = true) { current -> val wake = current.wake?.takeIf { it.token == token } ?: return@updateState current
+            if (wake.endpoint == endpoint && wake.delivered) current else current.copy(wake = wake.copy(endpoint = endpoint, delivered = false, problem = null)) }
+        deliverWake()
+    }
+    /** The current registration, reading the private cache first when the app was just started for a message. */
+    suspend fun wakeRegistration(): WakeState? { if (restoreBlocked) restore(); return _state.value.wake }
+    suspend fun wakeProblem(token: String, problem: String, refused: Boolean = true) {
+        if (restoreBlocked && !restore()) return
+        updateState(immediate = true) { current -> current.wake?.takeIf { it.token == token }?.let { current.copy(wake = it.copy(status = if (refused) WakeStatus.Refused else it.status, problem = problem)) } ?: current }
+    }
+    /** Gives the desktop the address, or asks where an earlier one stands. Never retried in a loop: the next connection asks again. */
+    suspend fun deliverWake() {
+        val wake = _state.value.wake ?: return; val endpoint = wake.endpoint ?: return
+        if (!_state.value.supports("wake.register") || wake.status == WakeStatus.Refused && wake.delivered) return
+        val result = try {
+            if (wake.delivered) request("wake.status", buildJsonObject {}) else mutate("wake.register", buildJsonObject { put("endpoint", endpoint); put("key", wake.publicKey); put("auth", wake.auth) })
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: RemoteRequestException) { wakeProblem(wake.token, error.message ?: "The desktop refused this."); return } catch (_: Exception) { return }
+        fun part(key: String) = ((result as? JsonObject)?.get(key) as? JsonPrimitive)?.contentOrNull
+        val state = part("state")
+        updateState(immediate = true) { current -> val now = current.wake?.takeIf { it.token == wake.token && it.endpoint == endpoint } ?: return@updateState current
+            current.copy(wake = now.copy(delivered = true, host = part("host") ?: now.host, problem = part("problem"),
+                status = when (state) { "on" -> WakeStatus.On; "waiting" -> WakeStatus.Waiting; "failing" -> WakeStatus.Failing; else -> WakeStatus.Refused })) }
+    }
+    /** Ends wake-ups here and on the desktop. The caller tells the push app about the registration returned. */
+    suspend fun stopWake(): WakeState? {
+        val wake = _state.value.wake ?: return null
+        if (_state.value.supports("wake.clear")) try { mutate("wake.clear", buildJsonObject {}) } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
+        updateState(immediate = true) { it.copy(wake = null) }
+        return wake
+    }
+    /** Whether a push message is a hint from this desktop that has not been seen before. Anything else is ignored. */
+    suspend fun acceptWakeHint(token: String, message: ByteArray): Boolean {
+        if (restoreBlocked && !restore()) return false
+        val wake = _state.value.wake?.takeIf { it.token == token } ?: return false
+        val time = WakePush.hintTime(WakePush.decrypt(message, wake.privateKey, wake.publicKey, wake.auth)) ?: return false
+        var fresh = false
+        updateState(immediate = true) { current -> val now = current.wake?.takeIf { it.token == token && time > it.lastHint } ?: return@updateState current; fresh = true; current.copy(wake = now.copy(lastHint = time)) }
+        return fresh
+    }
+    /** What a wake-up found: requests not announced before, and conversations that became unread. */
+    class WakeNews(val approvals: List<Approval>, val finished: List<Session>)
+    /**
+     * Connects for a moment, reads what waits and disconnects again. Signing in, scope and review are exactly those of
+     * any connection: a hint only says that now is a good time.
+     */
+    suspend fun wake(timeoutMs: Long = WAKE_MS): WakeNews? {
+        if (restoreBlocked && !restore()) return null
+        val before = _state.value
+        if (before.desktop == null || before.stagedPairing != null || terminalBlocked) return null
+        if (before.connection is ConnectionState.Online && (shouldMonitor || visible)) return WakeNews(emptyList(), emptyList())
+        val unread = before.sessions.filter { it.unread }.mapTo(HashSet(), Session::id); val start = synced.value
+        synchronized(this) { waking++; if (socket == null && !connecting) { reconnectJob?.cancel(); reconnectJob = null; connect() } }
+        return try {
+            if (withTimeoutOrNull(timeoutMs) { synced.first { it > start } } == null) return null
+            var news = emptyList<Approval>()
+            updateState(immediate = true) { current -> val wake = current.wake ?: return@updateState current
+                news = current.approvals.filter { "${it.id}:${it.digest}" !in wake.announced }
+                current.copy(wake = wake.copy(announced = current.approvals.map { "${it.id}:${it.digest}" }.take(50))) }
+            WakeNews(news, _state.value.sessions.filter { it.unread && it.id !in unread }.sortedByDescending { it.updated }.take(3))
+        } finally { synchronized(this) { waking--; if (!keepConnected()) disconnect("Background monitoring is off", OfflineKind.MonitoringOff) } }
     }
     /** Stops monitoring and disconnects now. */
     @Synchronized fun stopMonitoring(reason: String = "Monitoring off") {
@@ -637,11 +744,8 @@ class PALRepository(context: Context) {
     private fun fenceCurrent(fence: ReadFence, epoch: Boolean = true) = authorityFenceCurrent(fence, epoch) &&
         fence.snapshotGeneration == commitGate.snapshotGeneration
     /** [request] for a result shown on a screen: refused with [StaleResultException] when its fence no longer holds. */
-    suspend fun read(method: String, params: JsonObject): JsonElement {
-        val fence = fence(); val result = request(method, params)
-        if (!fenceCurrent(fence)) throw StaleResultException()
-        return result
-    }
+    suspend fun read(method: String, params: JsonObject): JsonElement =
+        commitGate.settled(if (method in ASKED_ONCE) 1 else READ_ATTEMPTS, ::fence, { authorityFenceCurrent(it) }) { request(method, params) }
     suspend fun request(method: String, params: JsonObject): JsonElement {
         check(!pairingTransition && _state.value.stagedPairing == null) { "Finish or cancel pairing confirmation first" }
         require(_state.value.supports(method)) { "The desktop isn't connected or doesn't offer this right now." }
@@ -821,7 +925,7 @@ class PALRepository(context: Context) {
      * [workbenchAcknowledged]: the Files/Images/Analysis selection the person saw would pause when
      * this phone takes the conversation over (workbench.takeover); the desktop requires exactly it.
      */
-    suspend fun prepareSend(sessionId: String, text: String, webSearch: Boolean = false, workbenchAcknowledged: List<String>? = null): PreparedAction = draftMutexes.getOrPut(sessionId) { Mutex() }.withLock {
+    suspend fun prepareSend(sessionId: String, text: String, webSearch: Boolean = false, workbenchAcknowledged: List<String>? = null, originalFiles: List<String> = emptyList(), references: List<JsonObject> = emptyList()): PreparedAction = draftMutexes.getOrPut(sessionId) { Mutex() }.withLock {
         require(_state.value.pendingCommands.none { it.sessionId == sessionId && it.method == "sessions.send" }) { "Review the previous send outcome before sending another message" }
         val initial = _state.value.sessions.first { it.id == sessionId }
         require(initial.canSend && initial.draftIncluded) { "This session is not ready to send" }
@@ -850,11 +954,16 @@ class PALRepository(context: Context) {
         prepareAction("sessions.send", buildJsonObject {
             put("sessionId", sessionId); put("text", text)
             put("attachments", JsonArray(attachments.map { JsonPrimitive(it.remoteAttachmentId!!) }))
+            // What the person referenced for this message; the desktop resolves and authorizes each again when it is sent.
+            if (references.isNotEmpty()) put("references", JsonArray(references.distinct().take(8)))
+            if (originalFiles.isNotEmpty()) put("originalFiles", JsonArray(originalFiles.distinct().map(::JsonPrimitive)))
             if (desktop.isNotEmpty()) put("desktopAttachments", JsonArray(desktop.map { buildJsonObject { put("id", it.id); put("sha256", it.sha256) } }))
             put("webSearch", webSearch); put("expectedDraftRevision", draft.remoteRevision); put("expectedConfigRevision", session.configRevision)
             // The connection this phone shows is the one the send is bound to (sessions.routeRevision).
             if (current.has("sessions.routeRevision")) session.routeRevision?.let { put("expectedRouteRevision", it) }
             if (session.workbenchTakeover == "acknowledge" && workbenchAcknowledged != null) put("workbenchAcknowledged", JsonArray(workbenchAcknowledged.map(::JsonPrimitive)))
+            // This phone's zone as it is now; a retry repeats the parameters it was accepted with, wherever the phone is by then.
+            if (current.has(ClientTime.FEATURE)) ClientTime.current()?.let { put("clientContext", it) }
         })
     }
     suspend fun keepLocalDraft(sessionId: String, reviewedRevision: String) {
@@ -937,21 +1046,21 @@ class PALRepository(context: Context) {
      * MOB-004: a provider's or conversation's catalog, saying when an endpoint lists no models
      * (models.listing) so the screen can ask for a typed ID instead of reporting a failure.
      */
-    suspend fun modelCatalog(provider: String, sessionId: String? = null): ModelCatalog {
-        if (!_state.value.has("models.listing")) return ModelCatalog(models(provider, refresh = true, sessionId = sessionId))
+    suspend fun modelCatalog(provider: String, sessionId: String? = null, connectionId: String? = null): ModelCatalog {
+        if (!_state.value.has("models.listing")) return ModelCatalog(models(provider, refresh = true, sessionId = sessionId, connectionId = connectionId))
         if (!_state.value.supports("providers.models")) return ModelCatalog(emptyList())
         val fence = fence()
-        val result = request("providers.models", buildJsonObject { put("provider", provider); sessionId?.let { put("sessionId", it) }; put("listing", true) })
+        val result = request("providers.models", buildJsonObject { put("provider", provider); sessionId?.let { put("sessionId", it) }; connectionId?.takeIf(String::isNotBlank)?.let { put("connectionId", it) }; put("listing", true) })
         val sessionStillAuthorized = sessionId == null || (sessionId in authorizedSessionIds && _state.value.sessions.any { it.id == sessionId })
         if (!authorityFenceCurrent(fence) || !sessionStillAuthorized) throw StaleResultException()
         val listing = WireCodec.json.decodeFromJsonElement(ModelListing.serializer(), result)
         return ModelCatalog(listing.items, listing.unlisted)
     }
-    suspend fun models(provider: String, refresh: Boolean = false, sessionId: String? = null): List<ModelOption> {
-        val cached = _state.value.providers[provider]?.jsonObject?.get("models")?.jsonArray.orEmpty().mapNotNull { runCatching { WireCodec.json.decodeFromJsonElement(ModelOption.serializer(), it) }.getOrNull() }
+    suspend fun models(provider: String, refresh: Boolean = false, sessionId: String? = null, connectionId: String? = null): List<ModelOption> {
+        val cached = ((_state.value.providers[provider] as? JsonObject)?.get("models") as? JsonArray).orEmpty().mapNotNull { runCatching { WireCodec.json.decodeFromJsonElement(ModelOption.serializer(), it) }.getOrNull() }
         if (!refresh && sessionId == null && cached.isNotEmpty()) return cached; if (!_state.value.supports("providers.models")) return emptyList()
         val fence = fence()
-        val result = request("providers.models", buildJsonObject { put("provider", provider); sessionId?.let { put("sessionId", it) } })
+        val result = request("providers.models", buildJsonObject { put("provider", provider); sessionId?.let { put("sessionId", it) }; connectionId?.takeIf(String::isNotBlank)?.let { put("connectionId", it) } })
         // A routine snapshot may publish while this display-only catalog request is in flight. It
         // does not revoke the desktop. A session-scoped catalog still needs that exact session in
         // the current authorized snapshot; all other resource reads remain snapshot-fenced.
@@ -1231,24 +1340,28 @@ class PALRepository(context: Context) {
         scope.launch {
             // The keystore and the platform trust store are read here, off the main thread.
             val built = runCatching {
-                if (desktop.endpoints.isEmpty()) throw PairingRepairException("This pairing has no desktop address. On the desktop, choose Update gateway addresses / certificate, then Replace pairing for this phone.")
+                if (Endpoints.all(desktop).isEmpty()) throw PairingRepairException("This pairing has no desktop address. On the desktop, choose Update gateway addresses / certificate, then Replace pairing for this phone.")
                 if (!pairing.hasSigningKeys(desktop)) throw PairingRepairException("Phone pairing keys are missing. Remove this phone pairing and pair again.")
                 // The socket is not bound to a network (a split-tunnel VPN must keep routing it); the
                 // network active now is the one it uses, so only that network's loss ends it.
-                val network = app.getSystemService(android.net.ConnectivityManager::class.java)?.activeNetwork
-                PinnedTls.client(desktop) to network
+                val manager = app.getSystemService(android.net.ConnectivityManager::class.java)
+                val network = manager?.activeNetwork
+                val vpn = network?.let { manager.getNetworkCapabilities(it) }?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true
+                Triple(PinnedTls.client(desktop), network, vpn)
             }
             synchronized(this@PALRepository) {
                 connecting = false
-                val (client, network) = built.getOrElse { error ->
+                val (client, network, vpn) = built.getOrElse { error ->
                     val reason = error.message?.takeIf(String::isNotBlank) ?: "Pinned desktop identity is invalid"
                     // Only a broken pairing stops reconnection; a phone clock that is off can recover.
                     if (error is PairingRepairException) block(reason, repair = true) else scheduleReconnect(reason)
                     return@launch
                 }
                 if (socket != null || !keepConnected() || terminalBlocked || _state.value.desktop != desktop || _state.value.stagedPairing != null) return@launch
-                val endpoint = desktop.endpoints[endpointIndex++ % desktop.endpoints.size]
-                val request = okhttp3.Request.Builder().url(endpoint).header("Sec-WebSocket-Protocol", "cere.mobile.v1").build()
+                val endpoint = rotation.next(Endpoints.all(desktop), vpn); currentEndpoint = endpoint
+                // An address that cannot be used gives way to the next one, as one that does not answer does.
+                val request = runCatching { okhttp3.Request.Builder().url(endpoint).header("Sec-WebSocket-Protocol", "cere.mobile.v1").build() }
+                    .getOrElse { scheduleReconnect("The desktop address $endpoint cannot be used"); return@launch }
                 val generation = ++connections
                 upserts.begin(generation); socketGeneration = generation; socketNetwork = network
                 socket = client.newWebSocket(request, listener)
@@ -1276,15 +1389,21 @@ class PALRepository(context: Context) {
             receive(webSocket, generation, frame)
         }
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-            if (socket !== webSocket || bytes.size <= 24) return
+            if (socket !== webSocket) return
+            val value = bytes.toByteArray()
+            if (RealtimeAudioFrame.isFrame(value)) { _realtimeFrames.tryEmit(value); return }
+            if (bytes.size <= 24) return
             if (bytes.size > FrameLimits.MAX_BINARY_BYTES) { fail(webSocket, "The desktop sent a larger image part than requested; reconnecting", false); return }
-            val frame = ByteBuffer.wrap(bytes.toByteArray()).order(ByteOrder.BIG_ENDIAN); val id = UUID(frame.long, frame.long).toString(); val offset = frame.long
+            val frame = ByteBuffer.wrap(value).order(ByteOrder.BIG_ENDIAN); val id = UUID(frame.long, frame.long).toString(); val offset = frame.long
             binaryReads.remove(id)?.complete(offset to bytes.substring(24).toByteArray())
         }
         // Answer the desktop's close so the socket ends promptly instead of waiting out OkHttp's timer.
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(1000, null) }
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
             val terminal = ConnectionPolicy.isTerminalFailure(t)
+            // An address the phone found on its network is only a hint: one that stops presenting the desktop's key is dropped, and the pairing is not touched.
+            val found = currentEndpoint?.takeIf { endpoint -> terminal && _state.value.desktop?.let { Endpoints.found(it, endpoint) } == true }
+            if (found != null) { if (socket === webSocket) scope.launch { removeFoundEndpoint(found) }; fail(webSocket, "An address found on the network no longer answers as this desktop, so it was removed", false); return }
             fail(webSocket, if (terminal) "The desktop's certificate no longer matches this pairing. Pair this phone again." else t.message?.takeIf(String::isNotBlank) ?: "Connection failed", terminal, repair = terminal)
         }
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { if (socket === webSocket) {
@@ -1369,7 +1488,7 @@ class PALRepository(context: Context) {
             )
             val scopeChanged = welcome?.scopeVersion?.let { it != frame.value.scopeVersion } == true
             if (scopeChanged) commitGate.invalidate()
-            synchronized(this) { welcome = frame.value; backoffAttempt = 0; unreachableSince = null; authRejections.reset() }
+            synchronized(this) { welcome = frame.value; backoffAttempt = 0; unreachableSince = null; authRejections.reset(); rotation.connected(currentEndpoint) }
             updateState { current ->
                 if (scopeChanged) authorizedSessionIds = emptySet()
                 current.copy(
@@ -1382,7 +1501,8 @@ class PALRepository(context: Context) {
             // A desktop with device roles learns what this client understands before the first snapshot, so the
             // snapshot already reflects the negotiated role. An older desktop keeps the welcome's view.
             if (OwnerNegotiation.FEATURE in frame.value.features && "client.features" in frame.value.operations) scope.launch { negotiate(webSocket); snapshotRequests.trySend(Unit) }
-            else snapshotRequests.trySend(Unit) }
+            else snapshotRequests.trySend(Unit)
+            if (_state.value.wake != null) scope.launch { deliverWake() } }
         is Frame.Reply -> pendingResponses.remove(frame.value.id)?.complete(frame.value)
         is Frame.Push -> handleEvent(webSocket, frame.value)
     } }
@@ -1450,6 +1570,7 @@ class PALRepository(context: Context) {
         commitGate.commit(committedFence, { fenceCurrent(committedFence) }) { retainApprovalInteractionState(visibleApprovals) }
         // Their records left the cache with the snapshot; the files follow once that is saved.
         if (outOfScope.isNotEmpty()) { flushNow(); commitGate.commit(committedFence, { !cacheDirty && fenceCurrent(committedFence) }) { outOfScope.filter { id -> _state.value.attachments.none { it.id == id } }.forEach { store.deleteBlob(it) } } }
+        synced.value += 1
         hydrateSessions(snapshot, committedFence)
         Unit
     }
@@ -1511,8 +1632,14 @@ class PALRepository(context: Context) {
             updateState(System.currentTimeMillis(), remoteFence = origin) { current -> val messages = current.messages.toMutableList(); val index = messages.indexOfFirst { it.id == message.id }; if (index < 0) messages += message else if (revisionAfter(message.revision, messages[index].revision)) messages[index] = message; current.copy(messages = messages, cursor = event.cursor) } }
         "notice" -> runCatching { WireCodec.json.decodeFromJsonElement(DesktopNotice.serializer(), event.data) }.getOrNull()?.let { _notices.tryEmit(it) }
         "transfer.progress" -> event.data["transferId"]?.jsonPrimitive?.contentOrNull?.let { transferProgress.remove(it)?.complete(event.data) }
-        else -> if (event.name.startsWith("terminal.")) _workEvents.tryEmit(event)
+        else -> if (event.name.startsWith("terminal.")) _workEvents.tryEmit(event) else if (event.name == "realtime.event") _realtimeEvents.tryEmit(event)
     } }
+
+    /** Sends an already authenticated PLRT frame on the paired socket. */
+    fun sendRealtimeFrame(frame: ByteArray) {
+        require(RealtimeAudioFrame.isFrame(frame) && frame.size <= 40 + 16 + RealtimeAudioFrame.MAX_PAYLOAD) { "Invalid realtime audio frame" }
+        if (socket?.send(ByteString.of(*frame)) != true) error("The desktop is unreachable")
+    }
     private suspend fun reconcilePendingCommands() { _state.value.pendingCommands.toList().forEach { command -> try { resolveCommand(command) } catch (cancelled: CancellationException) { throw cancelled } catch (_: CommandPendingException) { } catch (error: Throwable) { updateState { it.copy(lastError = error.message) } } } }
 
     @Synchronized private fun fail(webSocket: WebSocket, reason: String, terminal: Boolean, repair: Boolean = false) {
@@ -1533,7 +1660,7 @@ class PALRepository(context: Context) {
         val desktop = _state.value.desktop; val staged = _state.value.stagedPairing?.desktop
         synchronized(this) { socket = null; welcome = null; endConnection(); shouldMonitor = false; terminalBlocked = true; refreshJob?.cancel(); reconnectJob?.cancel(); webSocket.cancel(); failWaiters(reason) }
         synchronized(flushLock) { flushJob?.cancel(); flushJob = null }
-        if (desktop != null) runCatching { pairing.delete(desktop) }; if (staged != null) runCatching { pairing.delete(staged) }; stateMutex.withLock { authorizedSessionIds = emptySet(); store.clear(); _state.value = MobileState(restoreReady = true, connection = ConnectionState.Unpaired, lastError = reason); cacheDirty = false }
+        if (desktop != null) runCatching { pairing.delete(desktop) }; if (staged != null) runCatching { pairing.delete(staged) }; stateMutex.withLock { authorizedSessionIds = emptySet(); runCatching { store.clear() }.onFailure { Log.w(TAG, "The private cache could not be removed", it) }; _state.value = MobileState(restoreReady = true, connection = ConnectionState.Unpaired, lastError = reason); cacheDirty = false }
         pairingTransition = false; approvalRetirements.clear(); questionDraftIdentities.clear(); approvalMutationIdentities.clear()
         _questionDrafts.value = emptyMap(); _approvalMutations.value = emptySet()
     }
@@ -1566,7 +1693,7 @@ class PALRepository(context: Context) {
             _state.value = MobileState(restoreReady = true, desktop = cache.desktop, stagedPairing = cache.stagedPairing,
             connection = cache.desktop?.let { ConnectionState.Offline("Not connected", cache.lastVerifiedAt, OfflineKind.NotConnected) } ?: ConnectionState.Unpaired,
             sessions = cache.sessions, messages = cache.messages, approvals = cache.approvals, projects = cache.projects, providers = cache.providers,
-            permissions = cache.permissions, settings = cache.settings, cursor = cache.cursor, drafts = cache.drafts.associateBy(LocalDraft::sessionId), pendingCommands = cache.pendingCommands, selectedSessionId = cache.selectedSessionId, attachments = attachments, cacheEpoch = cache.cacheEpoch, scrollPositions = cache.scrollPositions, monitoring = shouldMonitor, erasures = cache.erasures, desktopBuild = cache.desktopBuild,
+            permissions = cache.permissions, settings = cache.settings, cursor = cache.cursor, drafts = cache.drafts.associateBy(LocalDraft::sessionId), pendingCommands = cache.pendingCommands, selectedSessionId = cache.selectedSessionId, attachments = attachments, cacheEpoch = cache.cacheEpoch, scrollPositions = cache.scrollPositions, monitoring = shouldMonitor, erasures = cache.erasures, desktopBuild = cache.desktopBuild, wake = cache.wake,
                 lastError = if (dangling.isNotEmpty()) "${dangling.size} image draft${if (dangling.size == 1) " was" else "s were"} lost when PAL stopped unexpectedly. Add ${if (dangling.size == 1) "it" else "them"} again." else null)
             if (dangling.isNotEmpty()) cacheDirty = true
             pairingTransition = cache.stagedPairing != null
@@ -1658,6 +1785,7 @@ class PALRepository(context: Context) {
         scrollPositions = persisted.scrollPositions,
         erasures = persisted.erasures,
         desktopBuild = persisted.desktopBuild,
+        wake = persisted.wake,
     ) }
     private suspend fun removePending(commandId: String) = updateState(immediate = true) { it.copy(pendingCommands = it.pendingCommands.filterNot { command -> command.commandId == commandId }) }
     private suspend fun markPending(commandId: String, status: String) = updateState(immediate = true) { current -> current.copy(pendingCommands = current.pendingCommands.map { if (it.commandId == commandId) it.copy(status = status) else it }) }
@@ -1702,8 +1830,13 @@ class PALRepository(context: Context) {
         /** Requests of 50 summaries per snapshot; more load when asked. */
         const val HYDRATION_BATCHES = 40
         const val REQUEST_TIMEOUT_MS = 30_000L
+        const val READ_ATTEMPTS = 3
+        /** Reads that open, compute or contact something each time: only the person asks for those again. */
+        val ASKED_ONCE = setOf("transfers.download", "workbench.images.ocr", "owner.accounts.test", "owner.collections.search", "sessions.history")
         const val PERSIST_DEBOUNCE_MS = 1_000L
         const val BACKGROUND_GRACE_MS = 30_000L
+        /** Within the time Android gives a broadcast, with a margin. */
+        const val WAKE_MS = 9_000L
         /** A pairing QR is valid for five minutes on the desktop; a minute more allows for clocks that differ. */
         const val PAIRING_RETURN_WINDOW_MS = 6 * 60_000L
         const val PAIRING_CHECK_MS = 10_000L

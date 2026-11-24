@@ -4,8 +4,9 @@
  * account, profile or desktop session), pairs the installed debug app to it over `adb reverse` with a
  * trusted-device offer, then runs the paired instrumentation tests with their explicit arguments:
  * UsbPairingSetupTest#pairFromExplicitUsbOffer, then ConnectedDesktopTest against a synthetic Ollama
- * conversation. Unlike `connectedDebugAndroidTest`, which skips these without arguments, every test
- * here must report a pass; a skip, an assumption failure or a missing result fails the gate.
+ * conversation, then OwnerScreensTest once the desktop gives the phone full access. Unlike
+ * `connectedDebugAndroidTest`, which skips these without arguments, every test here must report a
+ * pass; a skip, an assumption failure or a missing result fails the gate.
  *
  *   node tools/mobile-paired-check.ts [--serial SERIAL] [--evidence DIR] [--package ID] [--keep-pairing] [--pairing manual|network]
  *
@@ -202,15 +203,26 @@ try {
   const transcriptOk = prompts.length === 1 && (summary.desktopTranscript as any).reply === true;
   const ledger = (await brokerRequest(socketPath, 'remote.status')).devices?.find((entry: any) => entry.id === phone.deviceId);
   summary.deviceRecorded = !!ledger;
+  // A phone with full access draws sections one with granted access never does: every screen once, for a conversation
+  // of each kind (local, native and through a named account).
+  const endpoint = { baseUrl: `${ollamaHost}/v1`, requiresKey: false, tools: true, images: false };
+  const account = await brokerRequest(socketPath, 'connections.save', { kind: 'compatible', name: 'Fixture server', endpoint });
+  const walked = [session.id];
+  for (const choice of [{ provider: 'codex' }, { provider: 'compatible', model: 'fixture-chat:latest', connectionId: account.id }])
+    walked.push((await brokerRequest(socketPath, 'session.create', { cwd: project, title: `PAL mobile walk ${choice.provider}`, trusted: true, ...choice })).id);
+  await brokerRequest(socketPath, 'remote.setRole', { id: phone.deviceId, role: 'owner', confirmed: true });
+  note(`Gave device ${phone.deviceId} full access`);
+  const walk = instrument('dev.otectus.pal.mobile.OwnerScreensTest', { palExpectedDesktopId: offer.desktopId, palOwnerSessions: walked.join(',') }, 900_000);
+  results.push(await walk.done);
   for (const result of results) note(`${result.passed ? 'PASS' : 'FAIL'} ${result.name} (status codes ${result.statuses.join(',') || 'none'})`);
   note(`Desktop transcript: ${prompts.length} user row(s) for the send, reply ${(summary.desktopTranscript as any).reply ? 'present' : 'missing'}`);
   // The tests print a checkpoint after each stage; a stage that returned early leaves its line out.
   const output = await adb(['logcat', '-d', '-s', 'System.out:I'], { allowFailure: true, timeout: 30_000 });
-  const checkpoints = [pairingMode === 'network' ? 'USB_NETWORK_PAIRING:' : 'USB_SETUP:', 'CONNECTED_CHECK: pinned TLS', 'CONNECTED_CHECK: live Ollama reply received', 'CONNECTED_CHECK: revision-bound pin/archive', 'CONNECTED_CHECK: disconnect/reconnect'];
+  const checkpoints = [pairingMode === 'network' ? 'USB_NETWORK_PAIRING:' : 'USB_SETUP:', 'CONNECTED_CHECK: pinned TLS', 'CONNECTED_CHECK: live Ollama reply received', 'CONNECTED_CHECK: revision-bound pin/archive', 'CONNECTED_CHECK: disconnect/reconnect', 'OWNER_WALK: every screen opened'];
   summary.checkpoints = Object.fromEntries(checkpoints.map(checkpoint => [checkpoint, output.includes(checkpoint)]));
   const staged = checkpoints.every(checkpoint => output.includes(checkpoint));
   note(`Checkpoints: ${checkpoints.filter(checkpoint => output.includes(checkpoint)).length}/${checkpoints.length} reached`);
-  exitCode = results.length === 2 && results.every(result => result.passed) && transcriptOk && staged && summary.connectedAfterPairing === true ? 0 : 1;
+  exitCode = results.length === 3 && results.every(result => result.passed) && transcriptOk && staged && summary.connectedAfterPairing === true ? 0 : 1;
 } catch (error: any) {
   note(`ERROR ${error?.stack || error}`);
 } finally {

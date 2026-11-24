@@ -58,6 +58,7 @@ test('RC-01 the vault never searches, reads or edits a private note, whatever it
   for (const name of Object.keys(notes).filter(name => name !== 'groceries.md')) {
     await assert.rejects(vaultNotes.read(name), /Private notes are not available/, name);
     await assert.rejects(vaultNotes.editable(name), /Private notes cannot be edited/, name);
+    await assert.rejects(vaultNotes.editable(join(vault, name)), /Private notes cannot be edited/, name + ' in full');
   }
   assert.equal(await vaultNotes.editable('groceries.md'), 'groceries.md');
 });
@@ -178,4 +179,59 @@ test('M22 a proposal is used once, a folder change during approval refuses, and 
   assert.ok(results[0].artifacts.includes(join(vault, 'projects', 'orchid.md')));
   assert.ok(results[0].observed.some((action: any) => action.name === 'notes.edit'));
   void state;
+});
+
+test('RC-10 .palignore leaves notes and folders out of the index, search and editing; one that cannot be read leaves everything out', async t => {
+  const { root, vault } = await fixture(t), notes = new NotesVault(() => vault);
+  await mkdir(join(vault, 'journal', '2026'), { recursive: true }); await mkdir(join(vault, 'projects', 'drafts'), { recursive: true }); await mkdir(join(vault, 'drafts'), { recursive: true });
+  for (const [path, text] of [['journal/2026/june.md', 'june tangerines'], ['projects/drafts/a.md', 'draft tangerines'], ['drafts/b.md', 'loose tangerines'], ['projects/plan.draft.md', 'planned tangerines'], ['projects/keep.md', 'kept tangerines'], ['journal.md', 'a note named journal, tangerines']]) await writeFile(join(vault, path), text);
+  const found = async () => (await notes.search('tangerines')).results.map(note => note.path).sort();
+  assert.equal((await found()).length, 6);
+  // A trailing slash is a folder only; a slash in front counts from the vault; * stays inside one name; ! never brings back.
+  await writeFile(join(vault, '.palignore'), '\uFEFF# private\r\n\r\njournal/\r\n/drafts\r\n*.draft.md   \r\n!journal/2026/june.md\r\n!*.md\r\n');
+  assert.deepEqual(await found(), ['journal.md', 'projects/drafts/a.md', 'projects/keep.md']);
+  assert.deepEqual([notes.status.ignored, notes.status.problem], [3, '']);
+  await assert.rejects(notes.read('journal/2026/june.md'), /No readable note/);
+  for (const path of ['journal/2026/june.md', 'journal/new.md', 'projects/other.draft.md', 'drafts/new.md', './projects/../drafts/new.md', join(vault, 'drafts', 'new.md')]) await assert.rejects(notes.editable(path), /left out by the vault’s \.palignore/, path);
+  assert.equal(await notes.editable('projects/drafts/new.md'), 'projects/drafts/new.md');
+  // Rules changed while running apply at the next look, in both directions.
+  await writeFile(join(vault, '.palignore'), 'projects/**/a.md\n'); assert.ok(!(await found()).includes('projects/drafts/a.md')); assert.ok((await found()).includes('journal/2026/june.md'));
+  for (const text of ['x\n'.repeat(300), 'y'.repeat(40_000), 'z'.repeat(600)]) { await writeFile(join(vault, '.palignore'), text); assert.deepEqual(await found(), []); assert.match(notes.status.problem, /so no note is used/); await assert.rejects(notes.editable('projects/keep.md'), /so no note is used/); }
+  await rm(join(vault, '.palignore')); await symlink(join(root, 'outside.md'), join(vault, '.palignore')); assert.deepEqual(await found(), []); assert.match(notes.status.problem, /plain text file/);
+  await rm(join(vault, '.palignore')); assert.equal((await found()).length, 6);
+});
+
+test('RC-10 chosen folders are all that is searched, read or edited, and a folder that is gone is reported and never widened', async t => {
+  const { root, vault, core } = await fixture(t);
+  await mkdir(join(vault, 'projects', 'deep'), { recursive: true }); await writeFile(join(vault, 'projects', 'deep', 'x.md'), 'deep tangerines'); await writeFile(join(vault, 'plain.md'), 'plain tangerines');
+  await core.updateSettings({ notesVault: { path: vault, enabled: true, folders: [join(vault, 'projects'), 'projects/deep/', 'archive'] } });
+  assert.deepEqual(core.settings.notesVault.folders, ['archive', 'projects'], 'relative, and only once');
+  assert.deepEqual([(await core.rpc('notes.search', { query: 'tangerines' })).results.map((note: any) => note.path), (await core.rpc('notes.status', {})).missing], [['projects/deep/x.md'], []]);
+  await assert.rejects(core.rpc('notes.read', { path: 'plain' }), /No readable note/);
+  for (const path of ['plain.md', 'projectsish/x.md', '../outside.md', 'projects/../plain.md', join(vault, 'plain.md')]) await assert.rejects(core.vault.editable(path), /outside the folders chosen/, path);
+  assert.equal(await core.vault.editable('projects/new.md'), 'projects/new.md');
+  for (const folders of [['..'], ['../x'], ['/etc'], [''], ['.obsidian'], ['projects/.git'], ['.'], [vault], Array(33).fill('a'), 'projects', [1]]) await assert.rejects(core.updateSettings({ notesVault: { folders } }), /folder|Hidden|Invalid/, JSON.stringify(folders));
+  assert.deepEqual(core.settings.notesVault.folders, ['archive', 'projects'], 'a refused change changes nothing');
+  // Another vault has none of them: nothing is used, and it says so.
+  const other = join(root, 'other'); await mkdir(other); await writeFile(join(other, 'all.md'), 'other tangerines');
+  await core.updateSettings({ notesVault: { path: other } });
+  assert.deepEqual([(await core.rpc('notes.search', { query: 'tangerines' })).results, (await core.rpc('notes.status', {})).missing], [[], ['archive', 'projects']]);
+  // A chosen folder that became a link is not followed.
+  await symlink(vault, join(other, 'projects')); assert.deepEqual((await core.rpc('notes.search', { query: 'tangerines' })).results, []);
+  await core.updateSettings({ notesVault: { folders: [] } }); assert.deepEqual((await core.rpc('notes.search', { query: 'tangerines' })).results.map((note: any) => note.path), ['all.md']);
+  // The scope is part of what a conversation's notes access is bound to.
+  const session = await core.create({ provider: 'codex', cwd: root, trusted: true }); await core.updateSettings({ notesVault: { allowCloud: true } });
+  await core.callTool(session.id, 'notes_search', { query: 'tangerines' }, new AbortController().signal); (core as any).assertNotePacket(session.id);
+  await core.updateSettings({ notesVault: { path: vault, folders: ['projects'] } }); assert.throws(() => (core as any).assertNotePacket(session.id), /Notes access changed/);
+});
+
+test('RC-10 an edit approved before its folder was taken off the list is refused at the commit', async t => {
+  const { root, vault, core } = await fixture(t), signal = new AbortController().signal;
+  await core.updateSettings({ notesVault: { path: vault, enabled: true, allowCloud: true } });
+  const session = await core.create({ provider: 'codex', cwd: root, trusted: true });
+  const edit = core.callTool(session.id, 'notes_propose_edit', { path: 'projects/orchid.md', content: 'new', reason: '' }, signal), refused = assert.rejects(edit, /Notes|left out|outside/);
+  for (let index = 0; index < 100 && !core.approvals.size; index++) await new Promise(resolve => setTimeout(resolve, 5));
+  await writeFile(join(vault, '.palignore'), 'projects/\n');
+  core.answer({ id: [...core.approvals.values()][0].value.id, choice: 'allow' }); await refused;
+  assert.match(await readFile(join(vault, 'projects', 'orchid.md'), 'utf8'), /The orchid launch is on Tuesday/);
 });

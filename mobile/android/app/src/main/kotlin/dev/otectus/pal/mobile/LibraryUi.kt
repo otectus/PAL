@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -54,6 +55,7 @@ internal fun LibraryConversation(session: Session, status: String, open: () -> U
                     stringResource(R.string.session_pinned).takeIf { session.pinned },
                     stringResource(R.string.session_unread).takeIf { session.unread },
                     status.takeIf { session.status != "idle" || status != stringResource(R.string.state_idle) },
+                    if (session.pendingUpdates > 0) pluralStringResource(R.plurals.session_results_waiting, session.pendingUpdates, session.pendingUpdates) else null,
                 )
                 if (indicators.isNotEmpty()) Text(indicators.joinToString("  ·  "), style = MaterialTheme.typography.labelMedium,
                     color = if (session.status == "waiting") colors.tertiary else colors.primary)

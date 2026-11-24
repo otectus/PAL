@@ -1,13 +1,15 @@
-import { constants, openSync, closeSync, readFileSync, writeFileSync, renameSync, unlinkSync, fstatSync } from 'node:fs';
+import { constants, openSync, closeSync, readFileSync, writeFileSync, renameSync, unlinkSync, fstatSync, linkSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes, createHmac } from 'node:crypto';
 import { privateDir } from './paths.ts';
 import { apiProviders, type ApiProvider } from './provider-catalog.ts';
 
-type CredentialProvider = ApiProvider | 'elevenlabs';
-const credentialProviders:CredentialProvider[]=[...apiProviders,'elevenlabs'];
-const environment: Record<CredentialProvider, string[]> = { elevenlabs:['ELEVENLABS_API_KEY'], openai: ['OPENAI_API_KEY'], anthropic: ['ANTHROPIC_API_KEY'], google: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'], compatible: [] };
+export const serviceCredentialIds = ['elevenlabs', 'voyage', 'jev', 'azure_speech', 'google_search','ollama_cloud','xai_management'] as const;
+export type CredentialProvider = ApiProvider | typeof serviceCredentialIds[number];
+const credentialProviders:CredentialProvider[]=[...apiProviders,...serviceCredentialIds];
+const environment: Record<CredentialProvider, string[]> = { xai_management:['XAI_MANAGEMENT_API_KEY'],ollama_cloud:['OLLAMA_API_KEY'],elevenlabs:['ELEVENLABS_API_KEY'], openai: ['OPENAI_API_KEY'], anthropic: ['ANTHROPIC_API_KEY'], google: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'], azure_openai: ['AZURE_OPENAI_API_KEY'], deepseek: ['DEEPSEEK_API_KEY'], mistral: ['MISTRAL_API_KEY'], xai: ['XAI_API_KEY'], perplexity: ['PERPLEXITY_API_KEY', 'PPLX_API_KEY'], openrouter: ['OPENROUTER_API_KEY'], huggingface: ['HF_TOKEN'], litellm: ['LITELLM_API_KEY'], forge: ['FORGE_API_KEY'], edenai: ['EDENAI_API_KEY'], voyage: ['VOYAGE_API_KEY'], jev: ['TYPESAFE_API_KEY'], azure_speech: ['AZURE_SPEECH_KEY'], google_search: ['GOOGLE_SEARCH_API_KEY'], compatible: [] };
 type CredentialReference = { provider: CredentialProvider; key: string; origin?: string; revision: string };
+export type CredentialReferenceImport = { provider: CredentialProvider; key: string; origin?: string; credentialRef: string };
 type SavedCredentials = Partial<Record<CredentialProvider, string>> & {
   origins?: Partial<Record<CredentialProvider, string>>;
   revisions?: Partial<Record<CredentialProvider, string>>;
@@ -46,17 +48,36 @@ export class ProviderCredentials {
   key(provider: CredentialProvider, origin?: string, credentialRef?: string) {
     const saved = this.saved(), scoped = credentialRef ? saved.references?.[credentialRef] : undefined;
     if (scoped) return scoped.provider === provider && (scoped.origin === undefined || scoped.origin === origin) ? scoped.key : '';
-    if (provider === 'compatible' && credentialRef && credentialRef !== saved.legacyCompatibleRef) return '';
+    if (credentialRef?.startsWith('connection:') && credentialRef !== saved.legacyCompatibleRef) return '';
     const bound = saved.origins?.[provider];
     if (bound !== undefined && bound !== origin) return '';
     return saved[provider] || environment[provider].map(name => process.env[name]?.trim()).find(Boolean) || '';
+  }
+  private environmentRevision(provider:CredentialProvider) {
+    const value=environment[provider].map(name=>process.env[name]?.trim()).find(Boolean);
+    if(!value)return 'missing';
+    const file=join(privateDir(this.directory),'revision-salt');
+    let salt:Buffer;
+    try{salt=readFileSync(file);}
+    catch(e:any){
+      if(e.code!=='ENOENT')throw e;
+      const temp=join(this.directory,'.salt-'+randomUUID());
+      writeFileSync(temp,randomBytes(32),{mode:0o600,flag:'wx'});
+      try{linkSync(temp,file);}catch(err:any){if(err.code!=='EEXIST')throw err;}finally{unlinkSync(temp);}
+      salt=readFileSync(file);
+    }
+    return 'environment:'+createHmac('sha256',salt).update(provider+'\0'+value).digest('hex');
   }
   credentialRevision(credentialRef: string) {
     const saved = this.saved(), scoped = saved.references?.[credentialRef];
     if (scoped) return scoped.revision;
     if (credentialRef.startsWith('provider:')) {
       const provider = credentialRef.slice('provider:'.length) as CredentialProvider;
-      if (credentialProviders.includes(provider)) return saved.revisions?.[provider] ?? (environment[provider].some(name => process.env[name]?.trim()) ? `environment:${environment[provider].join('|')}` : 'missing');
+      if (credentialProviders.includes(provider)) {
+        if(saved[provider])return saved.revisions?.[provider] || 'legacy:'+provider;
+        const revision=this.environmentRevision(provider);
+        return revision==='missing' ? (saved.revisions?.[provider] || revision) : revision;
+      }
     }
     // Legacy compatible credentials remain origin-bound until they are next saved for a connection.
     if (credentialRef === saved.legacyCompatibleRef) return saved.revisions?.compatible ?? (saved.compatible ? 'legacy-compatible' : 'missing');
@@ -67,11 +88,18 @@ export class ProviderCredentials {
     return Object.fromEntries(credentialProviders.map(p => {
       const scoped = credentialRef ? saved.references?.[credentialRef] : undefined;
       const bound = scoped?.provider === p ? scoped.origin : saved.origins?.[p];
-      const legacyAllowed = p !== 'compatible' || !credentialRef || credentialRef === saved.legacyCompatibleRef;
+      const legacyAllowed = !credentialRef?.startsWith('connection:') || p === 'compatible' && credentialRef === saved.legacyCompatibleRef;
+      const fromEnv = !scoped && legacyAllowed && environment[p].some(k => process.env[k]?.trim());
       const usable = scoped ? scoped.provider === p && !!scoped.key && (bound === undefined || bound === origin) : legacyAllowed && !!saved[p] && (bound === undefined || bound === origin);
-      return [p, { configured: usable || environment[p].some(k => process.env[k]?.trim()),
-        source: usable ? 'saved' : environment[p].some(k => process.env[k]?.trim()) ? 'environment' : 'missing', environment: environment[p].join(' / '), ...(bound !== undefined ? { boundTo: bound } : {}) }];
+      return [p, { configured: usable || fromEnv,
+        source: usable ? 'saved' : fromEnv ? 'environment' : 'missing', environment: environment[p].join(' / '), ...(bound !== undefined ? { boundTo: bound } : {}) }];
     }));
+  }
+  private write(saved:SavedCredentials){
+    const bytes=JSON.stringify(saved);if(Buffer.byteLength(bytes)>512*1024)throw new Error('The private provider credential store is full');
+    const temporary=join(privateDir(this.directory),'.credentials-'+randomUUID());
+    try{writeFileSync(temporary,bytes,{mode:0o600,flag:'wx'});renameSync(temporary,join(this.directory,'provider-credentials.json'));}
+    finally{try{unlinkSync(temporary);}catch{}}
   }
   update(provider: unknown, key: unknown, origin?: string, credentialRef?: string) {
     if (!(typeof provider==='string'&&credentialProviders.includes(provider as CredentialProvider)) || typeof key !== 'string' || key.length > 8192 || /[\s\x00-\x1f\x7f]/.test(key)) throw new Error('Choose an API provider and enter a key without whitespace');
@@ -90,10 +118,39 @@ export class ProviderCredentials {
       saved.revisions[provider as CredentialProvider] = randomUUID();
       if (provider === 'compatible' && key) saved.origins.compatible = origin; else if (provider === 'compatible') delete saved.origins.compatible;
     }
-    const temporary = join(this.directory, `.credentials-${randomUUID()}`);
-    try { writeFileSync(temporary, JSON.stringify(saved), { mode: 0o600, flag: 'wx' }); renameSync(temporary, join(this.directory, 'provider-credentials.json')); }
-    finally { try { unlinkSync(temporary); } catch {} }
+    this.write(saved);
     return this.status(origin, credentialRef);
+  }
+  /**
+   * Atomically imports already-reviewed literal secrets into private, revisioned connection references.
+   * The returned rollback is synchronous so a caller can pair this file update with its SQLite transaction.
+   */
+  importReferences(entries:CredentialReferenceImport[]) {
+    if(!Array.isArray(entries)||entries.length>128)throw new Error('Import up to 128 credential references at a time');
+    const refs=new Set<string>();
+    for(const entry of entries){
+      if(!entry||!credentialProviders.includes(entry.provider)||typeof entry.key!=='string'||!entry.key||entry.key.length>8192||/[\s\x00-\x1f\x7f]/.test(entry.key))throw new Error('Provider imports require literal API keys without whitespace');
+      if(!/^connection:[^\s\x00-\x1f\x7f]{1,256}$/u.test(entry.credentialRef)||refs.has(entry.credentialRef))throw new Error('Provider imports require unique named-account credential references');
+      if(entry.origin!==undefined&&(typeof entry.origin!=='string'||!entry.origin||entry.origin.length>4096||/[\x00-\x1f\x7f]/.test(entry.origin)))throw new Error('Provider imports require a bounded endpoint binding');
+      refs.add(entry.credentialRef);
+    }
+    privateDir(this.directory);const before=this.saved(),next:SavedCredentials={...before,references:{...(before.references||{})}};
+    for(const entry of entries)next.references![entry.credentialRef]={provider:entry.provider,key:entry.key,revision:randomUUID(),...(entry.origin?{origin:entry.origin}:{})};
+    this.write(next);let rolledBack=false;return()=>{if(!rolledBack){rolledBack=true;this.write(before);}};
+  }
+  /** Opaque HMAC for binding an import preview to its exact source without returning a hash oracle for secrets. */
+  importProof(value:string) {
+    if(typeof value!=='string'||value.length>4_000_000)throw new Error('Invalid provider import proof');
+    const file=join(privateDir(this.directory),'import-proof-key');let key:Buffer;
+    try{key=readFileSync(file);}catch(error:any){if(error.code!=='ENOENT')throw error;const temp=join(this.directory,'.import-proof-'+randomUUID());writeFileSync(temp,randomBytes(32),{mode:0o600,flag:'wx'});try{linkSync(temp,file);}catch(inner:any){if(inner.code!=='EEXIST')throw inner;}finally{unlinkSync(temp);}key=readFileSync(file);}
+    if(key.length!==32)throw new Error('Invalid private provider import key');
+    return createHmac('sha256',key).update(value).digest('hex');
+  }
+  removeAccount(id:string){
+    const saved=this.saved(),ref='connection:'+id;
+    if(!saved.references?.[ref]&&!saved.references?.[ref+':xai-management'])return;
+    delete saved.references[ref];delete saved.references[ref+':xai-management'];
+    this.write(saved);
   }
   /** Binds the pre-reference compatible key to the one migrated default connection, never every same-origin account. */
   bindLegacyCompatible(credentialRef: string, origin: string) {
@@ -102,9 +159,7 @@ export class ProviderCredentials {
     if (!saved.compatible || saved.legacyCompatibleRef || saved.origins?.compatible !== origin) return false;
     saved.legacyCompatibleRef = credentialRef;
     privateDir(this.directory);
-    const temporary = join(this.directory, `.credentials-${randomUUID()}`);
-    try { writeFileSync(temporary, JSON.stringify(saved), { mode: 0o600, flag: 'wx' }); renameSync(temporary, join(this.directory, 'provider-credentials.json')); }
-    finally { try { unlinkSync(temporary); } catch {} }
+    this.write(saved);
     return true;
   }
 }

@@ -39,6 +39,8 @@ data class CachedState(
     val erasures: List<ErasureReceipt> = emptyList(),
     /** MOB-008: the last desktop build this phone signed in to. */
     val desktopBuild: DesktopBuildSeen? = null,
+    /** Optional wake-ups: the registration with a push app and the keys that open its hints. */
+    val wake: WakeState? = null,
 )
 
 /**

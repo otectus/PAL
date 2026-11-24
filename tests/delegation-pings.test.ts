@@ -196,7 +196,7 @@ test('DU-6 with the setting off nothing is registered and everything behaves as 
   // With automatic updates off, the model can check results on request.
   assert.match(f.requests[0].messages[0].content, /Use sessions_read when the user asks for results\.\n/);
   assert.doesNotMatch(f.requests[0].messages[0].content, /reports back by itself/);
-  assert.equal(f.requests[0].tools.find((t: any) => t.function.name === 'sessions_start').function.description, 'Start a visible Codex or Claude conversation in the current project after user approval. Returns its ID immediately; use sessions_read to check results later.');
+  assert.equal(f.requests[0].tools.find((t: any) => t.function.name === 'sessions_start').function.description, 'Start a visible provider conversation in the current project after user approval. Returns its ID immediately; use sessions_read to check results later.');
   await assert.rejects(f.core.updateSettings({ delegationUpdates: 'yes' }), /Invalid delegationUpdates/);
 });
 
@@ -472,9 +472,14 @@ test('DU-7 after eight automatic turns in a row updates wait for the user, and t
   const delivered = () => records(f, parent.id).filter(p => p.state === 'delivered').length;
   const paused = () => delegationRows(f, parent.id).filter(m => m.text === 'Automatic delegation updates paused after 8 in a row; send a message to continue.').length;
   assert.equal(delivered(), 8); assert.equal(f.core.pings.ready(parent.id).length, 1); assert.equal(paused(), 1);
+  // Both interfaces say that a result waits; nothing about it is stored with the conversation.
+  const shown = () => (f.core.snapshot().sessions as any[]).find(session => session.id === parent.id)?.pendingUpdates;
+  const revision = f.core.store.session(parent.id).revision;
+  assert.equal(shown(), 1); assert.equal(f.core.pings.waiting(parent.id), 1);
+  assert.equal('pendingUpdates' in f.core.store.session(parent.id), false); assert.equal(f.core.store.session(parent.id).revision, revision);
   await f.core.send({ id: parent.id, text: 'Please continue' });
   await until(() => delivered() === 9); await idle(f, parent.id); await settle();
-  assert.equal(paused(), 1);
+  assert.equal(paused(), 1); assert.equal(shown(), undefined); assert.equal(f.core.pings.waiting(parent.id), 0);
   assert.match(f.requests.at(-1).messages.filter((m: any) => m.role === 'user').at(-1).content, /Step 9 done\./);
 });
 

@@ -29,11 +29,14 @@ class MonitoringService : Service() {
     // Approval ID → digest already announced. A request alerts once; a changed request alerts again.
     private var announced = mapOf<String, String>()
     private var lastStatus: String? = null
+    private var refused = false
 
     override fun onCreate() {
         super.onCreate()
         PALNotifications.ensureChannels(this)
-        startForeground(PALNotifications.MONITORING_ID, PALNotifications.monitoring(this, getString(R.string.connection_connecting)))
+        // Android may start this again by itself while nothing of the app is on screen, and then refuse it the foreground.
+        // Monitoring ends there instead of the app; opening the app connects as always.
+        if (runCatching { startForeground(PALNotifications.MONITORING_ID, PALNotifications.monitoring(this, getString(R.string.connection_connecting))) }.isFailure) { refused = true; stopSelf(); return }
         getSystemService(ConnectivityManager::class.java).requestNetwork(NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
@@ -59,7 +62,7 @@ class MonitoringService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
-        return START_STICKY
+        return if (refused) START_NOT_STICKY else START_STICKY
     }
 
     override fun onDestroy() {

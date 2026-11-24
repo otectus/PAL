@@ -3,16 +3,21 @@
  * reads it on demand, follows external edits by size and modification time, and keeps no copy of
  * note text beyond an in-memory search cache. Notes marked private, notes in hidden folders, linked
  * files and notes whose front matter cannot be read are never indexed: unknown privacy fails closed.
- * Model writes are reviewed proposals (file-proposals.ts) checked against the note's current hash.
+ * A .palignore at the vault's root leaves notes and folders out, and the person can limit the vault to
+ * some of its folders; what neither allows is not read, searched or edited. Model writes are reviewed proposals (file-proposals.ts) checked against the note's current hash.
  */
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
-import { basename, extname, join, relative, sep } from 'node:path';
+import { basename, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
+import { ignored, ignoreLimits, parseIgnore, type IgnoreRule } from './ignore-rules.ts';
 import type { ToolDefinition } from './types.ts';
 
 export type VaultNote = { path: string; rel: string; title: string; aliases: string[]; tags: string[]; links: string[]; size: number; mtimeMs: number; text: string };
-export type VaultStatus = { notes: number; private: number; unreadable: number; scanned: number; root: string };
-export const vaultLimits = { notes: 5000, noteBytes: 512 * 1024, depth: 16, readChars: 40_000, results: 20 };
+export type VaultStatus = { notes: number; private: number; unreadable: number; ignored: number; missing: string[]; problem: string; scanned: number; root: string };
+export const vaultLimits = { notes: 5000, noteBytes: 512 * 1024, depth: 16, readChars: 40_000, results: 20, folders: 32 };
+const emptyStatus = { notes: 0, private: 0, unreadable: 0, ignored: 0, missing: [] as string[], problem: '' };
+/** A folder is inside another, or is it. */
+const within = (folder: string, path: string) => path === folder || path.startsWith(folder + '/');
 const ignoredFolders = new Set(['node_modules', '.obsidian', '.trash', '.git']);
 
 export const notesDefinitions: ToolDefinition[] = [
@@ -83,9 +88,9 @@ const words = (text: string): string[] => text.toLowerCase().match(/[\p{L}\p{N}]
 const key = (text: string) => text.toLowerCase().replace(/\.md$/, '').trim();
 
 export class NotesVault {
-  cache = new Map<string, VaultNote>(); status: VaultStatus = { notes: 0, private: 0, unreadable: 0, scanned: 0, root: '' };
-  root: () => string;
-  constructor(root: () => string) { this.root = root; }
+  cache = new Map<string, VaultNote>(); status: VaultStatus = { ...emptyStatus, scanned: 0, root: '' };
+  root: () => string; folders: () => string[];
+  constructor(root: () => string, folders: () => string[] = () => []) { this.root = root; this.folders = folders; }
   /** Validates a vault folder the user picked. */
   static async folder(path: unknown, state: string) {
     if (typeof path !== 'string' || !path.startsWith('/')) throw new Error('Choose the notes folder');
@@ -97,19 +102,44 @@ export class NotesVault {
     if (real === own || real.startsWith(own + sep) || own.startsWith(real + sep)) throw new Error('PAL’s own state cannot be inside the notes vault');
     return real;
   }
+  /** The folders of the vault that may be used, as paths relative to it; none means the whole vault. */
+  static async scope(root: string, value: unknown) {
+    if (!Array.isArray(value) || value.length > vaultLimits.folders || value.some(item => typeof item !== 'string' || !item.trim() || item.length > 1000)) throw new Error(`Choose up to ${vaultLimits.folders} folders of the notes folder`);
+    if (value.length && !root) throw new Error('Choose the notes folder first');
+    const chosen = new Set<string>();
+    for (const item of value as string[]) {
+      const rel = normalize(isAbsolute(item) ? relative(root, await realpath(item).catch(() => resolve(item))) : item).replace(/\/+$/, '');
+      if (!rel || rel === '.' || rel.startsWith('..') || isAbsolute(rel)) throw new Error('Choose a folder inside the notes folder');
+      if (rel.split('/').some(part => part.startsWith('.') || ignoredFolders.has(part))) throw new Error('Hidden folders are never used');
+      chosen.add(rel);
+    }
+    // A folder already inside another chosen one adds nothing.
+    return [...chosen].filter(folder => ![...chosen].some(other => other !== folder && within(other, folder))).sort();
+  }
+  /** What .palignore leaves out. One that cannot be read as a whole leaves everything out: it cannot say what may be used. */
+  private async rules(): Promise<IgnoreRule[]> {
+    const file = join(this.root(), '.palignore');
+    let info; try { info = await lstat(file); } catch (error: any) { if (error?.code === 'ENOENT') return []; throw new Error('The .palignore file could not be read, so no note is used.'); }
+    const rules = info.isFile() && info.size <= ignoreLimits.bytes ? await readFile(file, 'utf8').then(parseIgnore, () => undefined) : undefined;
+    if (!rules) throw new Error(`The .palignore file must be a plain text file of up to ${ignoreLimits.rules} lines, so no note is used.`);
+    return rules;
+  }
   /** Brings the cache up to date with the folder; unchanged notes are not read again. */
   async scan() {
     const root = this.root();
-    if (!root) { this.cache.clear(); this.status = { notes: 0, private: 0, unreadable: 0, scanned: Date.now(), root: '' }; return this.status; }
+    if (!root) { this.cache.clear(); this.status = { ...emptyStatus, scanned: Date.now(), root: '' }; return this.status; }
     if (this.status.root !== root) this.cache.clear();
-    const seen = new Set<string>(), counts = { private: 0, unreadable: 0 };
+    const seen = new Set<string>(), counts = { private: 0, unreadable: 0, ignored: 0 }, missing: string[] = [];
+    let rules: IgnoreRule[];
+    try { rules = await this.rules(); } catch (error: any) { this.cache.clear(); this.status = { ...emptyStatus, problem: error.message, scanned: Date.now(), root }; return this.status; }
     const walk = async (folder: string, depth: number) => {
       if (depth > vaultLimits.depth) return;
       for (const entry of await readdir(folder, { withFileTypes: true }).catch(() => [])) {
         if (entry.name.startsWith('.') || entry.isSymbolicLink() || ignoredFolders.has(entry.name) || seen.size >= vaultLimits.notes) continue;
-        const path = join(folder, entry.name);
+        const path = join(folder, entry.name), markdown = entry.isFile() && extname(entry.name).toLowerCase() === '.md';
+        if (!entry.isDirectory() && !markdown) continue;
+        if (ignored(rules, relative(root, path), entry.isDirectory())) { counts.ignored++; continue; }
         if (entry.isDirectory()) { await walk(path, depth + 1); continue; }
-        if (!entry.isFile() || extname(entry.name).toLowerCase() !== '.md') continue;
         try {
           const info = await stat(path);
           if (info.size > vaultLimits.noteBytes) { counts.unreadable++; continue; }
@@ -126,9 +156,17 @@ export class NotesVault {
         } catch { counts.unreadable++; }
       }
     };
-    await walk(root, 0);
+    const chosen = this.folders();
+    if (!chosen.length) await walk(root, 0);
+    for (const folder of chosen) {
+      const path = join(root, folder);
+      // A chosen folder that is gone, or is now a link to somewhere else, is not used.
+      if (await realpath(path).catch(() => '') !== path || !(await stat(path)).isDirectory()) { missing.push(folder); continue; }
+      if (ignored(rules, folder, true)) { counts.ignored++; continue; }
+      await walk(path, folder.split('/').length);
+    }
     for (const path of [...this.cache.keys()]) if (!seen.has(path)) this.cache.delete(path);
-    this.status = { notes: this.cache.size, private: counts.private, unreadable: counts.unreadable, scanned: Date.now(), root };
+    this.status = { notes: this.cache.size, ...counts, missing, problem: '', scanned: Date.now(), root };
     return this.status;
   }
   private resolve(rel: unknown) {
@@ -166,9 +204,12 @@ export class NotesVault {
   /** Whether a path may be edited: inside the vault, a visible Markdown file, and not a private note. */
   async editable(path: unknown) {
     if (typeof path !== 'string' || !path.trim().toLowerCase().endsWith('.md')) throw new Error('Notes are Markdown files ending in .md');
-    const target = join(this.root(), path.trim());
+    // The same reading of the path as the edit itself uses: one written in full is still a path in the vault.
+    const root = this.root(), wanted = path.trim(), target = join(root, wanted.startsWith(root + sep) ? relative(root, wanted) : wanted), rel = relative(root, target), chosen = this.folders();
+    if (chosen.length && !chosen.some(folder => within(folder, rel))) throw new Error('This note is outside the folders chosen for assistants');
+    if (ignored(await this.rules(), rel, false)) throw new Error('This note is left out by the vault’s .palignore');
     try { if ((await lstat(target)).isFile() && privateNote(frontMatter(await readFile(target, 'utf8')))) throw new Error('Private notes cannot be edited by a model'); }
     catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
-    return path.trim();
+    return wanted;
   }
 }

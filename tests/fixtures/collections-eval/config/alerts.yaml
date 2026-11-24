@@ -1,0 +1,9 @@
+alerts:
+  - name: queue-depth
+    threshold: 12000
+    for: 10m
+    notify: oncall
+  - name: disk-free
+    threshold: 8%
+    for: 30m
+    notify: platform

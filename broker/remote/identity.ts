@@ -38,7 +38,7 @@ export class Identity {
   directory:string; registry:RemoteStore;
   constructor(registry:RemoteStore) { this.registry=registry; this.directory=join(registry.store.directory,'remote-identity'); }
   get id():string { return this.registry.store.get('remoteDesktopId',''); }
-  reset() {rmSync(this.directory,{recursive:true,force:true});this.registry.store.set('remoteDesktopId','');this.registry.store.db.exec('DELETE FROM remote_pair_offers');}
+  reset() {rmSync(this.directory,{recursive:true,force:true});this.registry.store.set('remoteDesktopId','');this.registry.store.set('remoteWakeKey','');this.registry.store.db.exec('DELETE FROM remote_pair_offers');}
   async ensure(config:RemoteConfig) {
     privateDir(this.directory);
     if(!this.id)this.registry.store.set('remoteDesktopId',randomUUID());

@@ -651,6 +651,7 @@ Item {
             CButton { visible: browser.checkedImages.length >= 2; text: "Compare"; onClicked: browser.compare(browser.selectedImageRefs(2)) }
             CButton { visible: browser.checkedImages.length > 0; text: browser.submitting ? "Working…" : "Contact sheet"; enabled: !browser.submitting; onClicked: browser.contactSheet() }
             CButton { visible: browser.checkedImages.length > 0; text: "Production…"; onClicked: browser.openProduction(browser.selectedImageRefs(16)) }
+            CButton { objectName: "artifactBundle"; visible: browser.checkedItems.length > 0; text: browser.submitting ? "Working…" : "ZIP…"; help: "Put the selected files and a manifest in one ZIP"; enabled: !browser.submitting; onClicked: bundleDialog.show() }
             CButton { visible: browser.similarMode; text: "Back"; quiet: true; onClicked: browser.refresh(true) }
         }
         GridView {
@@ -705,6 +706,11 @@ Item {
                 CButton { text: "Analyze in Code Lab"; quiet: true; implicitHeight: Theme.compactHeight
                     onClicked: WorkbenchState.openAnalysis(browser.sessionId, {inputs: [browser.selectedRef]}) }
                 CButton { objectName: "imageView"; text: browser.selected?.kind === "image" || browser.selected?.kind === "plot" ? "View and edit" : "Open"; quiet: true; implicitHeight: Theme.compactHeight; onClicked: browser.openItem(browser.selected, browser.selectedRef.versionId) }
+                ProviderArtifactActions {
+                    sessionId:browser.sessionId;artifact:browser.selectedRef;version:browser.selectedVersion();implicitHeight:Theme.compactHeight
+                    onRefreshed:browser.refresh(true)
+                    onOriginalSelected:file=>{const problem=WorkbenchState.addOriginalFile(browser.sessionId,file);if(problem)browser.error=problem;else browser.notice="Original PDF attached to the next message."}
+                }
                 CButton { objectName: "imageAsk"; visible: browser.selected?.kind === "image" || browser.selected?.kind === "plot"; text: "Ask in chat"; quiet: true; implicitHeight: Theme.compactHeight; onClicked: browser.useInChat(browser.selectedRef, "What should I know about this image?") }
                 CButton { objectName: "imageUse"; text: "Use in chat"; quiet: true; implicitHeight: Theme.compactHeight; onClicked: browser.useInChat(browser.selectedRef, "") }
                 CButton { objectName: "imageTarget"; visible: browser.selected?.kind === "image" || browser.selected?.kind === "plot"; text: "Edit this version"; quiet: true; implicitHeight: Theme.compactHeight; onClicked: browser.setTarget(browser.selectedRef) }
@@ -717,6 +723,8 @@ Item {
                 }
                 CButton { visible: browser.selected?.kind === "image" || browser.selected?.kind === "plot"; text: "Find similar"; quiet: true; implicitHeight: Theme.compactHeight; onClicked: browser.findSimilar(browser.selected, browser.selectedVersionId) }
                 CButton { objectName: "imageSaveAs"; text: "Save as…"; quiet: true; implicitHeight: Theme.compactHeight; onClicked: { const path = App.chooseSavePath(browser.selected.name); if (path) rpc.call("artifacts.saveAs", { sessionId: browser.sessionId, artifactId: browser.selectedRef.artifactId, versionId: browser.selectedRef.versionId, path: path, replace: true }, value => browser.notice = value.error ? value.error : "Saved to " + value.path) } }
+                CButton { visible: ["audio/wav","audio/x-wav","audio/wave"].includes(browser.selectedVersion()?.mime || ""); text:"Cloud transcription…"; quiet:true; implicitHeight:Theme.compactHeight; onClicked:transcribe.openFor(browser.selectedRef) }
+                CButton { objectName: "artifactMore"; text: "More…"; quiet: true; implicitHeight: Theme.compactHeight; onClicked: documentTools.openMenu(Object.assign({}, browser.selectedRef, { mime: browser.selectedVersion()?.mime || "", kind: browser.selected?.kind || "" })) }
                 CButton { objectName: "imagePin"; text: browser.selected?.pinned ? "Unpin" : "Pin"; quiet: true; implicitHeight: Theme.compactHeight; onClicked: rpc.call("artifacts.update", { sessionId: browser.sessionId, artifactId: browser.selected.id, pinned: !browser.selected.pinned }, () => browser.refresh()) }
                 CButton { objectName: "imageShare"; text: browser.selected?.shared ? "Stop sharing with project" : "Share with project"; quiet: true; implicitHeight: Theme.compactHeight; onClicked: rpc.call("artifacts.update", { sessionId: browser.sessionId, artifactId: browser.selected.id, shared: !browser.selected.shared }, () => browser.refresh()) }
                 CButton { objectName: "imageRemove"; text: "Remove from conversation"; danger: true; quiet: true; implicitHeight: Theme.compactHeight; onClicked: removeConfirm.open() }
@@ -770,6 +778,32 @@ Item {
                         return [p.prompt ? "Prompt: " + p.prompt : "", p.revisedPrompt ? "Revised by the provider: " + p.revisedPrompt : "", p.backend ? "Made with " + (p.connection || p.backend) + (p.model ? " (" + p.model + ")" : "") + " on " + (p.route || "unknown") : "", p.parameters ? "Settings: " + p.parameters : "", p.protection || "", (v.exports || []).length ? "Saved to " + v.exports[0].destination : ""].filter(s => s).join("\n") }
                 }
             }
+        }
+    }
+    signal settingsRequested(string category, string target)
+    DocumentTools { id: documentTools; sessionId: browser.sessionId; onDone: message => browser.notice = message; onRefreshRequested: browser.refresh("stable"); onSettingsRequested: (category, target) => browser.settingsRequested(category, target) }
+    CDialog {
+        id: bundleDialog; objectName: "bundleDialog"
+        property var refs: []
+        property string problem: ""
+        function show() { refs = browser.selectedRefs(50); problem = ""; bundleName.text = "bundle"; open(); bundleName.forceActiveFocus(); bundleName.selectAll() }
+        function make() {
+            problem = ""; browser.submitting = true
+            rpc.call("artifacts.bundle", { sessionId: browser.sessionId, name: bundleName.text.trim(), items: refs.map(ref => ({ artifactId: ref.artifactId, versionId: ref.versionId })) }, value => {
+                browser.submitting = false
+                if (value.error) { bundleDialog.problem = String(value.error.message || value.error); return }
+                bundleDialog.close(); browser.checkedIds = ({}); browser.notice = value.name + " was added to this conversation’s files."
+                browser.filter = ""; kindBox.currentIndex = 1; browser.refresh(true)
+            })
+        }
+        CText { text: "ZIP " + bundleDialog.refs.length + (bundleDialog.refs.length === 1 ? " file" : " files"); font.pixelSize: Theme.title; font.weight: Font.DemiBold }
+        CText { text: "The exact selected versions and a manifest with their digests. The ZIP follows the strictest processing choice of its files."; color: Theme.muted; font.pixelSize: Theme.secondary }
+        CField { id: bundleName; objectName: "bundleName"; Layout.fillWidth: true; maximumLength: 120; placeholderText: "Name"; Accessible.name: "ZIP name"; onAccepted: if (bundleMake.enabled) bundleDialog.make() }
+        CText { visible: !!bundleDialog.problem; text: bundleDialog.problem; color: Theme.danger; font.pixelSize: Theme.secondary; Accessible.role: Accessible.AlertMessage }
+        RowLayout {
+            Layout.fillWidth: true; spacing: Theme.space2
+            CButton { id: bundleMake; objectName: "bundleMake"; Layout.fillWidth: true; primary: true; text: browser.submitting ? "Working…" : "Make the ZIP"; enabled: App.connected && !browser.submitting && bundleName.text.trim().length > 0 && bundleDialog.refs.length > 0; onClicked: bundleDialog.make() }
+            CButton { Layout.fillWidth: true; text: "Cancel"; enabled: !browser.submitting; onClicked: bundleDialog.close() }
         }
     }
     ImageWorkbench {
@@ -868,6 +902,33 @@ Item {
         CText { text: "This backend may bill you"; font.pixelSize: Theme.title; font.bold: true }
         CText { text: billing.message; wrapMode: Text.Wrap }
         RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } CButton { text: "Cancel"; onClicked: { browser.pendingReplay = ""; billing.close() } } CButton { objectName: "imagesBillingConfirm"; text: "Continue"; primary: true; onClicked: { billing.close(); if (browser.pendingReplay) browser.runRecipeId(browser.pendingReplay, true); else browser.generate(true) } } }
+    }
+    CDialog {
+        id:transcribe; objectName:"artifactTranscriptionDialog"
+        property var ref:null
+        property var connections:[]
+        readonly property var providerIds:["openai","xai","google","google_cloud","azure_speech","azure_openai","mistral","openrouter"]
+        readonly property string providerId:providerIds[provider.currentIndex]||"openai"
+        readonly property var accounts:connections.filter(row=>row.kind===providerId&&!row.migrated)
+        function openFor(value){ref=value;provider.currentIndex=0;model.text="";language.text="";region.text="";cloudUri.text="";consent.checked=false;message.text="";rpc.call("connections.list",{},result=>{if(!result.error)connections=result});open()}
+        CText { text:"Cloud transcription"; font.pixelSize:Theme.title; font.bold:true }
+        CText { text:"The selected immutable WAV version will be uploaded to the provider. PAL saves the structured result as a new Library artifact."; wrapMode:Text.Wrap; color:Theme.muted; Layout.fillWidth:true }
+        CComboBox { id:provider; Layout.fillWidth:true; model:transcribe.providerIds.map(id=>id==="google_cloud"?"Google Cloud Speech":(App.state.providerTraits?.[id]?.label||id)); Accessible.name:"Transcription provider" }
+        CComboBox { id:speechAccount; visible:transcribe.accounts.length>0; Layout.fillWidth:true; model:["Provider default"].concat(transcribe.accounts.map(row=>row.name)); Accessible.name:"Named speech account" }
+        CField { id:model; Layout.fillWidth:true; placeholderText:"Model (optional)"; Accessible.name:"Transcription model" }
+        CField { id:language; Layout.fillWidth:true; placeholderText:"Language, such as en-US (optional)"; Accessible.name:"Transcription language" }
+        CField { id:region; visible:transcribe.providerId==="azure_speech"||transcribe.providerId==="google_cloud"; Layout.fillWidth:true; placeholderText:"Region (required by some services)"; Accessible.name:"Speech region" }
+        CField { id:cloudUri; visible:transcribe.providerId==="google_cloud"; Layout.fillWidth:true; placeholderText:"Google Cloud Storage URI (optional)"; Accessible.name:"Cloud Storage URI" }
+        CCheckBox { id:consent; text:"I understand this audio will leave this computer and be processed by "+transcribe.providerId+"." }
+        CText { id:message; visible:!!text; color:Theme.danger; wrapMode:Text.Wrap; Layout.fillWidth:true }
+        RowLayout { Layout.fillWidth:true; Item { Layout.fillWidth:true }
+            CButton { text:"Cancel"; onClicked:transcribe.close() }
+            CButton { text:"Transcribe"; primary:true; enabled:consent.checked; onClicked:{
+                const settings={};if(model.text.trim())settings.model=model.text.trim();if(language.text.trim())settings.language=language.text.trim();if(region.text.trim())settings.region=region.text.trim();if(speechAccount.visible&&speechAccount.currentIndex>0)settings.connectionId=transcribe.accounts[speechAccount.currentIndex-1].id
+                const request={sessionId:browser.sessionId,artifactId:transcribe.ref.artifactId,versionId:transcribe.ref.versionId,provider:transcribe.providerId,settings:settings,acknowledgeUpload:true};if(cloudUri.visible&&cloudUri.text.trim())request.googleCloudUri=cloudUri.text.trim()
+                rpc.call("voice.transcribeArtifact",request,value=>{if(value.error)message.text=value.error;else{browser.notice="Transcription finished and was saved to the Library.";transcribe.close();browser.refresh(true)}})
+            } }
+        }
     }
     CDialog {
         id: removeConfirm; objectName: "artifactRemoveDialog"

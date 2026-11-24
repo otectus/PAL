@@ -14,14 +14,16 @@ QtObject {
     readonly property bool busy: Object.keys(pending).length > 0
     function call(method, params, callback) {
         const callScope = scope
-        const id = (endpoint || App).rpc(method, params || {})
+        const host = endpoint || (typeof App !== "undefined" ? App : null)
+        if (!host) { if(callback)Qt.callLater(()=>callback({error:"PAL is not available.",code:"DISCONNECTED"}));return -1 }
+        const id = host.rpc(method, params || {})
         if (id < 0) { if (callback) Qt.callLater(() => { if (callScope === scope) callback({ error: "PAL is reconnecting to her session broker.", code: "DISCONNECTED" }) }); return id }
         if (callback) { const next = Object.assign({}, pending); next[id] = { callback: callback, scope: callScope }; pending = next }
         return id
     }
     onScopeChanged: pending = ({})
     property Connections watcher: Connections {
-        target: client.endpoint || App
+        target: client.endpoint || (typeof App !== "undefined" ? App : null)
         function onResult(id, value) {
             const entry = client.pending[id]
             if (!entry) return
@@ -30,7 +32,7 @@ QtObject {
         }
     }
     // App.connected is notified through stateChanged; a bound copy reports the actual change.
-    property bool online: (endpoint || App).connected
+    property bool online: !!(endpoint || (typeof App !== "undefined" ? App : null))?.connected
     onOnlineChanged: {
         if (online || !Object.keys(pending).length) return
         const waiting = pending; pending = ({})

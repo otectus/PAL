@@ -218,9 +218,8 @@ test('a project PDF and public manual produce a protected, cited comparison, lib
   await f.core.rpc('research.update',{id:run.id,archived:true});
   assert.equal(f.core.research.get(run.id).archived,true);
   f.core.updateSession(session.id,{model:'cloudy:cloud'});
-  const priorCalls=f.requests.length;
-  await assert.rejects(f.core.rpc('research.ask',{id:run.id,question:'Repeat the private excerpt'}),/does not allow/);
-  assert.equal(f.requests.length,priorCalls);
+  await f.core.rpc('research.ask',{id:run.id,question:'Repeat the private excerpt'});
+  assert.equal(f.requests.at(-1)?.model, 'chat:latest', 'the research follow-up keeps its original permitted local route');
 });
 
 test('pause checkpoints the first read and continues the saved queue without refetching it',async t=>{
@@ -243,7 +242,7 @@ test('pause checkpoints the first read and continues the saved queue without ref
   waitSecond=false;await f.core.rpc('research.continue',{id:r.id});
   const done=await settled(f.core,r.id);assert.equal(done.evidence.length,2);assert.equal(readFirst,1);
   f.core.research.library.put({...done,state:'reading'});
-  new ResearchLibrary(f.core.store);assert.equal(f.core.research.get(r.id).state,'paused');
+  new ResearchLibrary(f.core.store);assert.equal(f.core.research.get(r.id).state,'interrupted');
   await f.core.rpc('research.resynthesize',{id:r.id});
   assert.equal(f.core.research.get(r.id).state,'partial');
 });
@@ -387,19 +386,19 @@ test('managed API research uses each conversation provider, records its usage an
   const calls:string[]=[];
   await f.core.updateSettings({compatible:{baseUrl:'https://model.example/v1',label:'Test model',requiresKey:false},webSearch:{enabled:true,provider:'searxng',searxngUrl:'https://search.example'}});
   f.core.credentials.key=()=> 'fixture-only';
-  const access=f.core.apiAccess.bind(f.core);
-  const targets={openai:'api.openai.com',anthropic:'api.anthropic.com',google:'generativelanguage.googleapis.com',compatible:'model.example'};
-  f.core.apiAccess=(provider,sessionId)=>({...access(provider,sessionId),fetch:async(url,init)=>{
-    assert.ok(sessionId);assert.equal(new URL(String(url)).hostname,targets[provider]);
+  const access=f.core.accountAccess.bind(f.core);
+  const targets: Record<string,string> = {openai:'api.openai.com',anthropic:'api.anthropic.com',google:'generativelanguage.googleapis.com',compatible:'model.example'};
+  f.core.accountAccess=(provider,connectionId)=>({...access(provider,connectionId),fetch:async(url,init)=>{
+    assert.equal(new URL(String(url)).hostname,targets[provider]);
     const body=JSON.parse(String(init?.body));
     const prompt=body.input??body.messages?.[0].content??body.contents?.[0].parts[0].text;
     calls.push(provider);
     const text=prompt.startsWith('Prepare focused')?'["method X"]':'Method X was measured [E1.P1], with a bogus location [E2.P42].';
     const usage={input_tokens:100,output_tokens:20};
-    if(provider==='openai')return Response.json({output:[{content:[{type:'output_text',text}]}],usage});
-    if(provider==='anthropic')return Response.json({content:[{type:'text',text}],usage});
-    if(provider==='google')return Response.json({candidates:[{content:{parts:[{text}]}}],usageMetadata:{promptTokenCount:100,candidatesTokenCount:20}});
-    return Response.json({choices:[{message:{content:text}}],usage:{prompt_tokens:100,completion_tokens:20}});
+    if(provider==='openai')return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text}]}],usage});
+    if(provider==='anthropic')return Response.json({stop_reason:'end_turn',content:[{type:'text',text}],usage});
+    if(provider==='google')return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text}]}}],usageMetadata:{promptTokenCount:100,candidatesTokenCount:20}});
+    return Response.json({choices:[{finish_reason:'stop',message:{content:text}}],usage:{prompt_tokens:100,completion_tokens:20}});
   }});
   stubWeb(f.core);
   for(const provider of ['openai','anthropic','google','compatible'] as const){
@@ -435,4 +434,153 @@ test('follow-ups search the frozen source beyond the original passages and erasu
   assert.throws(()=>f.core.research.get(run.id),/no longer exists/);
   assert.equal(f.core.store.db.prepare('SELECT count(*) AS n FROM research_source_text WHERE run_id=?').get(run.id)?.n,0);
   assert.equal(f.core.store.db.prepare('SELECT count(*) AS n FROM research_versions WHERE run_id=?').get(run.id)?.n,0);
+});
+
+test('independent Ollama research survives chat navigation and delivers cited plans to existing and new CLI conversations', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  t.after(() => release());
+  const f = await workbenchFixture(t, [async body => {
+    if (body.messages[0].content.startsWith('Prepare focused')) {
+      await gate;
+      return {content:'["method X trials"]'};
+    }
+    return {content:'Alpha measured a 40% improvement [E1.P1]. Open question: why did Beta disagree?'};
+  }]);
+  const core = f.core;
+  const sent: {sessionId:string; text:string}[] = [];
+  core.factory = (s, hooks) => ({
+    async send(text) { sent.push({sessionId:s.id, text}); hooks.event({type:'complete', text:'Received'}); },
+    async close() {}, async interrupt() {},
+  });
+  stubWeb(core);
+  await core.updateSettings({webSearch:{enabled:true, provider:'searxng', searxngUrl:'https://search.example'}});
+  const origin = await core.create({provider:'codex', cwd:f.project, trusted:true, title:'Original chat'});
+  const second = await core.create({provider:'claude', cwd:f.project, trusted:true, title:'Separate chat'});
+  const routes = await core.rpc('research.routes', {sessionId:origin.id});
+  assert.ok(routes.some((r:any) => r.provider === 'ollama' && r.model === 'plain:latest'));
+  const request = {sessionId:origin.id, provider:'ollama', model:'plain:latest', question:'Does method X improve results?', criteria:['Preserve offline use'], calls:2, requestId:'primary'};
+  const task = await core.rpc('research.start', request);
+  const duplicate = await core.rpc('research.start', request);
+  assert.equal(duplicate.id, task.id);
+  const parallel = await core.rpc('research.start', {...request, requestId:'independent', question:'UNRELATED objective'});
+  await until(() => f.requests.length === 2);
+  await core.rpc('session.hydrate', {id:second.id});
+  await core.send({id:second.id,text:'Continue chatting'});
+  await core.send({id:origin.id,text:'Another message during research'});
+  assert.equal((await core.rpc('research.tasks')).length, 2);
+  assert.equal((await core.rpc('research.list', {sessionId:second.id})).length, 0);
+  assert.equal((await core.rpc('research.cancel', {id:parallel.id})).state, 'cancelled');
+  assert.equal(core.research.get(parallel.id).report, undefined);
+  await core.rpc('session.hydrate', {id:origin.id});
+  assert.equal((await core.rpc('research.get', {id:task.id})).sessionId, origin.id);
+  core.updateSession(origin.id, {model:'different-chat-model'});
+  release();
+  const done = await settled(core, task.id);
+  assert.ok(f.requests.every(b => b.model === 'plain:latest'));
+  assert.ok(core.store.messages(origin.id).some(m => m.artifacts?.some(a => a.versionId === done.report.versionId)));
+  assert.ok(!core.store.messages(second.id).some(m => m.kind === 'research'));
+  core.draft(second.id, 'Work in progress');
+  await assert.rejects(core.rpc('research.handoff', {id:task.id,targetSessionId:second.id}), /has a draft/);
+  core.draft(second.id, '');
+  const destination = await core.rpc('research.handoff', {id:task.id,targetSessionId:second.id});
+  const created = await core.rpc('research.handoff', {id:task.id,provider:'codex',trusted:true});
+  const requestsBeforePlans = f.requests.length;
+  for (const handoff of [destination, created]) {
+    assert.equal(core.store.session(handoff.sessionId).draft, handoff.draft);
+    await core.send({id:handoff.sessionId, text:handoff.draft});
+    const text = sent.at(-1)!.text;
+    for (const part of ['implementation plan','Does method X improve results?',f.project,'Preserve offline use','alpha.example/report','40% improvement','E1.P1','why did Beta disagree']) assert.ok(text.includes(part), part);
+    assert.doesNotMatch(text, /UNRELATED/);
+  }
+  assert.equal(f.requests.length, requestsBeforePlans);
+});
+
+test('failed synthesis resumes from saved evidence and project handoff enforces the destination at send', async t => {
+  let answer = '';
+  const f = await workbenchFixture(t, [() => ({content:answer})]);
+  const {core} = f;
+  const origin = await core.create({provider:'codex',cwd:f.project,trusted:true});
+  const local = await core.create({provider:'ollama',model:'plain:latest',cwd:f.project});
+  const note = core.notebook.create(f.project, 'Private project spec');
+  core.notebook.saveNote(note.id,'Project records use fixed-width fields.',note.revision);
+  const [source] = await core.rpc('research.sources', {sessionId:origin.id,query:'Private project spec'});
+  const run = await core.rpc('research.start', {sessionId:origin.id,provider:'ollama',model:'plain:latest',scope:'project',sourceIds:[source.id],question:'Which fields should we implement?'});
+  await until(() => core.research.get(run.id).state === 'failed');
+  const failed = core.research.get(run.id);
+  answer = 'Use fixed-width fields [E1.P1].';
+  await core.rpc('research.continue', {id:run.id});
+  const done = await settled(core,run.id);
+  assert.equal(done.checkpoints, failed.checkpoints);
+  assert.deepEqual(done.evidence, failed.evidence);
+  await assert.rejects(core.rpc('research.handoff',{id:run.id,targetSessionId:origin.id}), /do not allow/);
+  const handoff = await core.rpc('research.handoff',{id:run.id,targetSessionId:local.id});
+  assert.doesNotMatch(handoff.draft,/fixed-width/);
+  await assert.rejects(core.send({id:origin.id,text:handoff.draft}), /unavailable in this conversation/);
+  core.updateSession(local.id,{model:'cloudy:cloud'});
+  await assert.rejects(core.send({id:local.id,text:handoff.draft}), /do not allow/);
+  core.updateSession(local.id,{model:'plain:latest'});
+  await core.send({id:local.id,text:handoff.draft});
+  await until(() => f.requests.some(b => b.messages.some((m:any) => m.content.includes('Treat the following report') && m.content.includes('fixed-width fields'))));
+});
+
+test('broker restart keeps the synthesized findings and resumes only the interrupted support check', async t => {
+  const {Core} = await import('../broker/core.ts');
+  const {Store} = await import('../broker/store.ts');
+  let reviews = 0, drafts = 0, release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const f = await workbenchFixture(t, [async body => {
+    if (body.messages[0].content.startsWith('Check each claim')) {
+      if (++reviews === 1) await gate;
+      return {content:'[{"index":0,"status":"supported","quote":"A blue label is required."}]'};
+    }
+    drafts++;
+    return {content:'A blue label is required [E1.P1].'};
+  }]);
+  const origin = await f.core.create({provider:'codex',cwd:f.project,trusted:true});
+  const note = f.core.notebook.create(f.project,'Labels');
+  f.core.notebook.saveNote(note.id,'A blue label is required.',note.revision);
+  const [source] = await f.core.rpc('research.sources',{sessionId:origin.id,query:'Labels'});
+  const run=await f.core.rpc('research.start',{sessionId:origin.id,provider:'ollama',model:'plain:latest',question:'What label is required?',scope:'project',sourceIds:[source.id]});
+  await until(() => reviews === 1);
+  await f.core.close();
+  release();
+  const restored = new Core(new Store(f.state));
+  try {
+    const saved = restored.research.get(run.id);
+    assert.equal(saved.state, 'interrupted');
+    assert.equal(saved.findings.length, 1);
+    assert.equal(saved.provider, 'ollama');
+    assert.equal(saved.nextRefresh, 0);
+    await restored.rpc('research.continue',{id:run.id});
+    const done = await settled(restored,run.id);
+    assert.equal(done.checkpoints, saved.checkpoints);
+    assert.equal(done.report && done.revisions.length, 1);
+    assert.equal(drafts, 1);
+    assert.equal(reviews, 2);
+  } finally { await restored.close(); }
+});
+
+test('delegated research uses the selected account and refuses a changed endpoint before a follow-up', async t => {
+  const {core,project} = await workbenchFixture(t);
+  stubWeb(core);
+  await core.updateSettings({webSearch:{enabled:true,provider:'searxng',searxngUrl:'https://search.example'}});
+  const origin = await core.create({provider:'codex',cwd:project,trusted:true});
+  const account = await core.rpc('connections.save',{kind:'compatible',name:'Research gateway',endpoint:{baseUrl:'https://research.example/v1',requiresKey:false,processing:'cloud'}});
+  const access = core.accountAccess.bind(core);
+  const attempts:string[] = [];
+  core.accountAccess = (provider,connectionId) => ({...access(provider,connectionId),fetch:async (url, init) => {
+    assert.equal(connectionId, account.id);
+    attempts.push(String(url));
+    const p = JSON.parse(String(init?.body));
+    assert.equal(p.model, 'research-model');
+    const content = p.messages[0].content.startsWith('Prepare focused') ? '["method X"]' : 'One study measured a gain [E1.P1].';
+    return Response.json({choices:[{finish_reason:'stop',message:{content}}]});
+  }});
+  const run = await core.rpc('research.start',{sessionId:origin.id,provider:'compatible',connectionId:account.id,model:'research-model',question:'What was measured?',calls:2});
+  await settled(core,run.id);
+  assert.deepEqual(attempts,['https://research.example/v1/chat/completions','https://research.example/v1/chat/completions']);
+  await core.rpc('connections.save',{id:account.id,expectedRevision:account.revision,name:account.name,endpoint:{baseUrl:'https://revised.example/v1'}});
+  await assert.rejects(core.rpc('research.ask',{id:run.id,question:'Repeat that result'}), /research connection changed/);
+  assert.equal(attempts.length,2);
 });

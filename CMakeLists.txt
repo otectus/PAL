@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(PAL VERSION 2.0.1 LANGUAGES CXX)
+project(PAL VERSION 2.0.2 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -89,6 +89,10 @@ set_target_properties(pal-peercred PROPERTIES PREFIX "" SUFFIX ".node" AUTOMOC O
 add_library(pal-telemetry MODULE native/telemetry.cpp)
 add_executable(pal-report native/report.cpp)
 set_target_properties(pal-report PROPERTIES AUTOMOC OFF)
+# Document export (broker/documents/service.ts): prints PAL's own HTML as a PDF, offscreen and without network access.
+qt_add_executable(pal-document native/document.cpp)
+target_link_libraries(pal-document PRIVATE Qt6::Gui)
+set_target_properties(pal-document PROPERTIES AUTOMOC OFF)
 # Workbench file access: descriptor-relative, beneath-root operations (openat2) for the broker.
 add_executable(pal-workspacefs native/workspacefs.cpp)
 set_target_properties(pal-workspacefs PROPERTIES AUTOMOC OFF)
@@ -184,17 +188,21 @@ install(DIRECTORY qml assets broker DESTINATION ${CMAKE_INSTALL_DATADIR}/pal
   PATTERN "*.pyc" EXCLUDE
   PATTERN "pal-memory-emitter.py" EXCLUDE
   PATTERN "cere-memory-emitter.py" EXCLUDE
+  PATTERN "pal-memory-editor.py" EXCLUDE
   PATTERN "*.kate-swp" EXCLUDE
   PATTERN "*.swp" EXCLUDE)
 install(PROGRAMS broker/graph-memory/adapters/fish/pal-memory-emitter.py DESTINATION ${CMAKE_INSTALL_DATADIR}/pal/broker/graph-memory/adapters/fish)
+install(PROGRAMS broker/graph-memory/adapters/editor/pal-memory-editor.py DESTINATION ${CMAKE_INSTALL_DATADIR}/pal/broker/graph-memory/adapters/editor)
 install(PROGRAMS broker/graph-memory/adapters/fish/cere-memory-emitter.py DESTINATION ${CMAKE_INSTALL_DATADIR}/pal/broker/graph-memory/adapters/fish)
 install(DIRECTORY protocol DESTINATION ${CMAKE_INSTALL_DATADIR}/pal)
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tts DESTINATION ${CMAKE_INSTALL_DATADIR}/pal USE_SOURCE_PERMISSIONS)
 install(FILES tools/setup-speech.ts tools/setup-kokoro.py DESTINATION ${CMAKE_INSTALL_DATADIR}/pal/tools)
+install(FILES tools/setup-litellm.py tools/litellm-lock.txt DESTINATION ${CMAKE_INSTALL_DATADIR}/pal/tools)
 install(FILES tools/setup-indextts.py DESTINATION ${CMAKE_INSTALL_DATADIR}/pal/tools)
 install(FILES packaging/indextts-manifest.json DESTINATION ${CMAKE_INSTALL_DATADIR}/pal/packaging)
 install(TARGETS pal-peercred LIBRARY DESTINATION ${CMAKE_INSTALL_DATADIR}/pal/native)
 install(TARGETS pal-telemetry LIBRARY DESTINATION ${CMAKE_INSTALL_DATADIR}/pal/native)
+install(TARGETS pal-document RUNTIME DESTINATION ${CMAKE_INSTALL_DATADIR}/pal/native)
 install(TARGETS pal-workspacefs RUNTIME DESTINATION ${CMAKE_INSTALL_DATADIR}/pal/native)
 install(TARGETS pal-terminal RUNTIME DESTINATION ${CMAKE_INSTALL_DATADIR}/pal/native)
 install(FILES native/third_party/libvterm/LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/pal/libvterm)
@@ -223,9 +231,9 @@ install(FILES README.md VALIDATION.md CHANGELOG.md DESTINATION ${CMAKE_INSTALL_D
 install(FILES reference/PAL.png DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/pal/reference)
 install(FILES docs/tts.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/pal/docs)
 install(FILES docs/workspace-telemetry.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/pal/docs)
-install(FILES docs/FEATURE-MATRIX.md docs/CONVERSATION-STATES.md docs/SERVICES-GATE.md docs/REVIEW-VALIDATION.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/pal/docs)
+install(FILES docs/PROVIDERS.md docs/FEATURE-MATRIX.md docs/CONVERSATION-STATES.md docs/SERVICES-GATE.md docs/REVIEW-VALIDATION.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/pal/docs)
 install(FILES packaging/tts-NOTICES.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/pal/packaging)
-install(DIRECTORY docs/memory docs/mobile DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/pal/docs)
+install(DIRECTORY docs/memory docs/mobile docs/providers DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/pal/docs)
 install(DIRECTORY screenshots DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/pal)
 install(FILES packaging/memory-compose.yml packaging/memory.env.example DESTINATION ${CMAKE_INSTALL_DATADIR}/pal/packaging)
 install(PROGRAMS tools/memory-dependencies.sh DESTINATION ${CMAKE_INSTALL_DATADIR}/pal/tools)

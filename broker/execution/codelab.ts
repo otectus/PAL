@@ -252,7 +252,7 @@ export class Execution {
 
   /** A reviewed argument vector in a folder that allows commands; that folder writable, everything else hidden. */
   command(...args: Parameters<Execution['commandInner']>) { return this.workbench.track(this.commandInner(...args)); }
-  private async commandInner(sessionId: string, root: WorkspaceRoot, p: { argv: unknown; cwd?: string; network?: boolean; timeoutSeconds?: number; origin: 'model' | 'user'; turnId?: string; signal?: AbortSignal }) {
+  private async commandInner(sessionId: string, root: WorkspaceRoot, p: { argv: unknown; cwd?: string; network?: boolean; timeoutSeconds?: number; origin: 'model' | 'user'; turnId?: string; signal?: AbortSignal; started?: (operation: import('../operations/store.ts').Operation) => void }) {
     if (!root.policy.execute) throw new Error(`${root.name} does not allow running commands; allow it in the folder permissions`);
     if (!Array.isArray(p.argv) || !p.argv.length || p.argv.length > labLimits.argv || p.argv.some(arg => typeof arg !== 'string' || arg.includes('\0') || Buffer.byteLength(arg) > labLimits.argBytes)) throw new Error('Give the program and its arguments as a list of up to 64 strings');
     const status = await isolation();
@@ -267,7 +267,7 @@ export class Execution {
     const signal = p.signal ? AbortSignal.any([p.signal, controller.signal]) : controller.signal;
     const removeJob = this.core.jobs.add('codelab', operation.label, () => controller.abort(new Error('Cancelled')));
     try {
-      operation = this.workbench.operations.transition(operation.id, 'queued'); operation = this.workbench.operations.transition(operation.id, 'running'); this.card(operation.id);
+      operation = this.workbench.operations.transition(operation.id, 'queued'); operation = this.workbench.operations.transition(operation.id, 'running'); this.card(operation.id); p.started?.(operation);
       let live = '', last = 0;
       const result = await sandboxed({ argv: p.argv as string[], binds: [{ source: root.path, target: root.path, writable: true }], cwd: root.path + (p.cwd ? '/' + p.cwd : ''), network: !!p.network, collectOutput: false, limits: { wallMs: timeout }, signal,
         onOutput: (_stream, text) => { live = (live + text).slice(-8000); if (Date.now() - last > 500) { last = Date.now(); this.workbench.operations.update(operation.id, { details: { ...operation.details, stdout: live } }); } } });

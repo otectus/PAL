@@ -25,6 +25,8 @@ export function parseCsv(text: string, delimiter = ','): { rows: string[][]; pro
   if (field !== '' || row.length) { row.push(field); rows.push(row); }
   return { rows: rows.filter(cells => !(cells.length === 1 && cells[0] === '')), problems };
 }
+/** A cell that a spreadsheet would run as a formula instead of showing it. */
+export const spreadsheetRuns = (cell: string) => /^[=+\-@\t\r]/.test(cell) && !isNumber(cell.trim());
 const isInteger = (v: string) => /^[+-]?\d+$/.test(v), isNumber = (v: string) => /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(v);
 const isDate = (v: string) => /^\d{4}-\d{2}-\d{2}([T ][\d:.]+(Z|[+-]\d{2}:?\d{2})?)?$/.test(v) && !Number.isNaN(Date.parse(v));
 const isBoolean = (v: string) => /^(true|false|yes|no)$/i.test(v);
@@ -36,7 +38,7 @@ export function previewTable(text: string, name = 'table.csv') {
   const header = rows[0], body = rows.slice(1), width = header.length;
   const ragged = body.filter(cells => cells.length !== width).length;
   if (ragged) problems.push(`${ragged} row${ragged === 1 ? '' : 's'} have a different number of fields than the header (${width})`);
-  if (body.some(cells => cells.some(cell => /^[=+\-@]/.test(cell) && !isNumber(cell)))) problems.push('Some cells start like spreadsheet formulas; they are kept as text and never evaluated');
+  if (body.some(cells => cells.some(spreadsheetRuns))) problems.push('Some cells start like spreadsheet formulas; they are kept as text and never evaluated');
   const columns: ColumnPreview[] = header.map((name, index) => {
     const values = body.map(cells => (cells[index] ?? '').trim()), present = values.filter(value => value !== '' && !/^(na|n\/a|null|none|-)$/i.test(value));
     const type: ColumnPreview['type'] = !present.length ? 'empty' : present.every(isInteger) ? 'integer' : present.every(isNumber) ? 'number' : present.every(isDate) ? 'date' : present.every(isBoolean) ? 'boolean' : 'text';

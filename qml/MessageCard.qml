@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "Recordings.js" as Recordings
 Rectangle {
     id: card
     property var message
@@ -11,6 +12,7 @@ Rectangle {
     signal taskProposed(string text)
     signal branchRequested(string text)
     signal exportRequested()
+    signal documentRequested(string markdown)
     // Only the conversation view handles saving a message.
     property bool canExport:false
     // The owning vertical view lets code-header controls avoid materializing outside its clip.
@@ -207,6 +209,22 @@ Rectangle {
                 }
             }
         }
+        // §16.3: times this reply cites from a transcript it was given. Each opens the recording there.
+        Flow {
+            id:times
+            readonly property var cited:card.collapsed||!(card.message.recordings||[]).length?[]:Recordings.cited(card.message.text,8)
+            visible:cited.length>0;Layout.fillWidth:true;spacing:Theme.space1
+            Repeater {
+                model:times.cited
+                CButton {
+                    required property var modelData
+                    objectName:"citedTime_"+modelData.label;text:modelData.label;iconName:"play";quiet:true;implicitHeight:Theme.compactHeight
+                    readonly property var recording:card.message.recordings[0]
+                    help:"Open "+recording.name+" at "+modelData.label;Accessible.description:help
+                    onClicked:{App.selectedId=card.message.sessionId;WorkbenchState.openRecording(card.message.sessionId,{artifactId:recording.artifactId,versionId:recording.versionId,seconds:modelData.start})}
+                }
+            }
+        }
         Repeater {
             model:card.collapsed?[]:(card.message.sources||[])
             CButton { required property var modelData;Layout.fillWidth:true;alignLeft:true;iconName:"arrow";text:modelData.title;help:modelData.url;Accessible.description:modelData.url;onClicked:if(/^https?:\/\//.test(modelData.url))Qt.openUrlExternally(modelData.url) }
@@ -234,11 +252,12 @@ Rectangle {
         CMenuItem { objectName:"copyCodeBlock"; text:"Copy code block"; visible:card.contextCode.length>0; onTriggered:App.copy(card.contextCode) }
         CMenuItem { objectName:"quoteMessage";visible:card.conversational;text:body.selectedText?"Quote selection":"Quote message";onTriggered:card.quoteRequested(body.selectedText||card.displayText) }
         CMenuItem { text:(App.state.bookmarks||[]).some(b=>b.messageId===card.message.id)?"Remove bookmark":"Bookmark";onTriggered:App.rpc("message.bookmark",{sessionId:card.message.sessionId,messageId:card.message.id,bookmarked:!(App.state.bookmarks||[]).some(b=>b.messageId===card.message.id)}) }
-        CMenuItem { text:body.selectedText?"Speak selection":"Speak message";onTriggered:App.rpc("tts.speak",{text:(body.selectedText||card.displayText).slice(0,20000)}) }
+        CMenuItem { text:body.selectedText?"Speak selection":"Speak message";onTriggered:App.rpc("tts.speak",{text:(body.selectedText||card.displayText).slice(0,20000),sessionId:card.message.sessionId,messageId:card.message.id}) }
         CMenuItem { visible:card.assistantReply;text:"Propose project decision";onTriggered:{card.proposalRequested("decision")} }
         CMenuItem { visible:card.assistantReply;text:"Propose project constraint";onTriggered:{card.proposalRequested("constraint")} }
         CMenuItem { objectName:"proposeTask";visible:card.assistantReply;text:body.selectedText?"Propose selection as a next step":"Propose as a next step";onTriggered:card.taskProposed(body.selectedText) }
         CMenuItem { visible:card.conversational;text:"Branch with reviewed context";onTriggered:card.branchRequested(body.selectedText||card.displayText) }
+        CMenuItem { objectName:"messageAsDocument";text:"Export as PDF or Word…";visible:card.canExport&&card.message.role==="assistant"&&!card.delegation&&card.displayText.trim().length>0;onTriggered:card.documentRequested(card.displayText) }
         CMenuItem { objectName:"saveMessageAs";text:"Save message as…";visible:card.canExport&&card.message.role!=="tool";onTriggered:card.exportRequested() }
         CMenuItem { visible:card.speechActive;text:"Stop speaking";onTriggered:App.rpc("tts.stop",{}) }
     }

@@ -1,0 +1,43 @@
+{
+  "note": "Questions about this repository whose answers are known. The first half was used while the index was tuned; the second was not looked at until it was done. An answer is file#Container.name; any of them counts.",
+  "tuned": [
+    { "q": "How is a push message for the phone encrypted?", "a": ["broker/remote/wake.ts#encryptPush"] },
+    { "q": "Which names count as credential files that are never read?", "a": ["broker/workspace/policy.ts#credentialName", "broker/workspace/policy.ts#credentialPatterns"] },
+    { "q": "Where are passages that contradict each other detected?", "a": ["broker/collection-ranking.ts#contradiction", "broker/collection-ranking.ts#disagreement"] },
+    { "q": "How is a note judged private?", "a": ["broker/notes-vault.ts#privateNote"] },
+    { "q": "Wait while a reply is being generated", "a": ["broker/jobs.ts#BackgroundJobs.yieldToForeground", "broker/jobs.ts#BackgroundJobs.foregroundActive"] },
+    { "q": "Refuse private or local network addresses when reading a web page", "a": ["broker/web.ts#publicAddress"] },
+    { "q": "Choose which excerpts of a collection fit the budget", "a": ["broker/collection-ranking.ts#selectExcerpts"] },
+    { "q": "Remove erased text from draft attachments and other working copies", "a": ["broker/working-erasure.ts#eraseWorkingCopies"] },
+    { "q": "Compute the next time a schedule runs", "a": ["broker/schedules.ts#nextOccurrence"] },
+    { "q": "Parse subtitle cues with their times", "a": ["broker/media/recordings.ts#parseCues"] },
+    { "q": "Open a path beneath a root without following links", "a": ["native/workspacefs.cpp#beneath", "native/workspacefs.cpp#openat2Call", "native/workspacefs.cpp#openRegular", "native/workspacefs.cpp#openRegularAt", "native/workspacefs.cpp#openRoot"] },
+    { "q": "How much has been spent this month?", "a": ["broker/usage.ts#UsageLedger.monthSpend"] },
+    { "q": "the list of pinned replies in the window", "a": ["qml/PinnedReplies.qml#PinnedReplies"] },
+    { "q": "dialog that shows what was worked on by day", "a": ["qml/WorkspaceHistory.qml#WorkspaceHistory"] },
+    { "q": "Retry a failed HTTP request after the delay the server asked for", "a": ["broker/http-retry.ts#withHttpRetry", "broker/http-retry.ts#serverDelay"] },
+    { "q": "Turn a repeating calendar event into a recurrence rule", "a": ["broker/accounts/events.ts#rrule", "broker/accounts/events.ts#validRecurrence", "broker/accounts/events.ts#graphRecurrence"] },
+    { "q": "Make a unified diff of two texts by line", "a": ["broker/file-proposals.ts#lineDiff"] },
+    { "q": "Is the chosen microphone or speaker connected?", "a": ["broker/audio-devices.ts#chosenDevice"] }
+  ],
+  "held": [
+    { "q": "Strip memory citations out of a reply", "a": ["broker/citations.ts#stripMemoryCitations"] },
+    { "q": "Check that the process on the other end of the socket belongs to the same user", "a": ["broker/peercred.ts#sameUserPeer", "broker/peercred.ts#trustedServer", "broker/peercred.ts#requirePeerCredentials"] },
+    { "q": "Start signing in to an account with a device code", "a": ["broker/accounts/oauth.ts#AccountOAuth.deviceStart"] },
+    { "q": "Announce the desktop on the local network", "a": ["broker/remote/discovery.ts#Discovery.announce", "broker/remote/discovery.ts#Discovery", "broker/remote/discovery.ts#Announcement"] },
+    { "q": "Python session that keeps its variables between cells", "a": ["broker/execution/kernels.ts#Kernels", "broker/execution/kernels.ts#Kernel", "broker/execution/kernels.ts#KernelVariable"] },
+    { "q": "Write a Word document from markdown", "a": ["broker/documents/docx.ts#renderDocx", "broker/documents/docx.ts#Writer"] },
+    { "q": "Refuse an edit when the file changed since it was proposed", "a": ["broker/file-proposals.ts#apply", "broker/file-proposals.ts#staleBase"] },
+    { "q": "Parse markdown tables and lists into blocks", "a": ["broker/documents/markdown.ts#parseMarkdown", "broker/documents/markdown.ts#Parser", "broker/documents/markdown.ts#Parser.blocks", "broker/documents/markdown.ts#Parser.table", "broker/documents/markdown.ts#Parser.list"] },
+    { "q": "Label a time zone's offset from UTC", "a": ["broker/time.ts#offsetLabel"] },
+    { "q": "The block that tells the model the current date and time", "a": ["broker/temporal-context.ts#timeBlock", "broker/temporal-context.ts#Temporal.request"] },
+    { "q": "Bound what is queued for a slow client", "a": ["broker/fanout.ts#Fanout", "broker/fanout.ts#Fanout.hold", "broker/fanout.ts#Fanout.overflow", "broker/fanout.ts#Fanout.enforceGlobal", "broker/fanout.ts#FanoutClient"] },
+    { "q": "Combine rankings from several searches into one", "a": ["broker/graph-memory/ranking.ts#rrf", "broker/graph-memory/ranking.ts#relationalRank"] },
+    { "q": "Expire a power session when its time is up", "a": ["broker/power.ts#PowerSessions.expireDue", "broker/power.ts#PowerSessions.tick"] },
+    { "q": "Choose an idle animation for the companion", "a": ["native/motion.cpp#MotionDirector.idle", "native/motion.cpp#MotionDirector.choose", "native/motion.cpp#MotionDirector.canIdle", "native/motion.cpp#MotionDirector.nextIdleDelay", "native/motion.h#MotionDirector.idle"] },
+    { "q": "SHA-256 of an open file descriptor", "a": ["native/workspacefs.cpp#hashFd", "native/workspacefs.cpp#Sha256"] },
+    { "q": "Pick a time zone from a searchable list", "a": ["qml/ZonePicker.qml#ZonePicker"] },
+    { "q": "card that asks to allow or deny a request", "a": ["qml/ApprovalCard.qml#ApprovalCard", "qml/ApprovalBubble.qml#ApprovalBubble"] },
+    { "q": "Pause between retries of background work after several failures of the push server", "a": ["broker/remote/wake.ts#Wake.hint", "broker/remote/wake.ts#Wake"] }
+  ]
+}

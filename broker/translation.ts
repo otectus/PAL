@@ -11,8 +11,9 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { Core } from './core.ts';
 import { completed, failed, routeAllowed, type ToolResultV1 } from './tools/contracts.ts';
+import { formatSrt, formatVtt, isTimedText, parseCues } from './media/recordings.ts';
 
-export const translationLimits = { chars: 120_000, segments: 400, batch: 60, glossary: 50 };
+export const translationLimits = { chars: 120_000, segments: 400, cues: 1500, batch: 60, glossary: 50 };
 type Glossary = { source: string; target: string }[];
 type Segment = { prefix: string; text: string; suffix: string; translate: boolean };
 const batchOutput = z.object({ segments: z.array(z.string().max(20_000)) });
@@ -47,7 +48,7 @@ export class Translation {
     const helper = this.core.workbench.helpers.settings();
     if (!helper.provider) return failed('unavailable', 'No text helper is set up. The user can choose one in Settings › Connections › Images & analysis.', 'explicit');
     const route = await this.core.workbench.helpers.route(signal, helper);
-    let source = '', origin: { name: string; ref: Record<string, unknown>; policy?: any } | undefined;
+    let source = '', origin: { name: string; ref: Record<string, unknown>; policy?: any; mime?: string; parent?: { artifactId: string; versionId: string } } | undefined;
     if (typeof p.text === 'string' && p.text.trim()) source = p.text;
     else if (p.input?.kind === 'file') {
       const root = this.core.workbench.roots.list(session.id).find(item => item.id === p.input.rootId);
@@ -58,12 +59,16 @@ export class Translation {
     } else if (p.input?.kind === 'artifact' || p.input?.artifactId) {
       const { version, data } = await this.core.workbench.artifacts.bytes(session.id, p.input.artifactId, p.input.versionId);
       if (!routeAllowed(route, version.policy)) return failed('inputs', `${version.name} may not be sent to the helper’s destination (${route})`, 'explicit');
-      if (!/^text\/|json|markdown|xml|vtt/.test(version.mime)) return failed('inputs', `${version.name} is not a text document`, 'explicit');
-      source = data.toString('utf8'); origin = { name: version.name, ref: { kind: 'artifact', artifactId: version.artifactId, versionId: version.versionId }, policy: version.policy };
+      if (!/^text\/|json|markdown|xml|vtt|subrip/.test(version.mime)) return failed('inputs', `${version.name} is not a text document`, 'explicit');
+      source = data.toString('utf8'); origin = { name: version.name, ref: { kind: 'artifact', artifactId: version.artifactId, versionId: version.versionId }, policy: version.policy, mime: version.mime, parent: { artifactId: version.artifactId, versionId: version.versionId } };
     } else return failed('inputs', 'Give the text to translate, or a text file or document', 'explicit');
     if (source.length > translationLimits.chars) return failed('inputs', 'Translate up to 120,000 characters at a time', 'explicit');
-    const segments = segmentText(source), work = segments.filter(segment => segment.translate);
-    if (work.length > translationLimits.segments) return failed('inputs', `This has ${work.length} lines to translate; split it (up to ${translationLimits.segments})`, 'explicit');
+    // Subtitles keep every time: only what is said is translated, one segment for each line of the transcript.
+    const cues = origin && isTimedText(origin.mime || '', origin.name) ? parseCues(source) : [];
+    const segments: Segment[] = cues.length ? cues.map(cue => ({ prefix: '', text: cue.text.replace(/\s*\n\s*/g, ' '), suffix: '', translate: true })) : segmentText(source);
+    const work = segments.filter(segment => segment.translate);
+    const most = cues.length ? translationLimits.cues : translationLimits.segments;
+    if (work.length > most) return failed('inputs', `This has ${work.length} lines to translate; split it (up to ${most})`, 'explicit');
     const terms = glossary.length ? `Always translate these terms exactly as given:\n${glossary.map(pair => `- ${pair.source} → ${pair.target}`).join('\n')}\n` : '';
     for (let start = 0; start < work.length; start += translationLimits.batch) {
       signal.throwIfAborted();
@@ -75,12 +80,14 @@ export class Translation {
       if (!parsed || parsed.length !== batch.length) return failed('helper', `The translation did not keep the ${batch.length} segments of part ${start / translationLimits.batch + 1}; nothing was saved.`, 'explicit');
       parsed.forEach((text, index) => { batch[index].text = text.replace(/\n+/g, ' '); });
     }
-    const translated = segments.map(segment => segment.prefix + segment.text + segment.suffix).join('\n');
+    const timed = cues.map((cue, index) => ({ ...cue, text: segments[index].text.trim() || cue.text }));
+    const translated = cues.length ? /\.srt$/i.test(origin!.name) || origin!.mime === 'application/x-subrip' ? formatSrt(timed) : formatVtt(timed) : segments.map(segment => segment.prefix + segment.text + segment.suffix).join('\n');
     const glossaryDigest = glossary.length ? createHash('sha256').update(JSON.stringify(glossary)).digest('hex').slice(0, 16) : null;
     this.core.store.activity({ action: 'translation', sessionId: session.id, language, status: 'completed', segments: work.length });
     if (!origin) return completed(`Translated into ${language}.`, { language, text: translated, ...(glossaryDigest ? { glossary: glossaryDigest } : {}) });
     const dot = origin.name.lastIndexOf('.'), name = dot > 0 ? `${origin.name.slice(0, dot)} (${language})${origin.name.slice(dot)}` : `${origin.name} (${language})`;
-    const version = await this.core.workbench.artifacts.install({ sessionId: session.id, bytes: Buffer.from(translated), name, mime: /\.md$/i.test(origin.name) ? 'text/markdown' : 'text/plain', source: 'derived', label: 'translation',
+    const version = await this.core.workbench.artifacts.install({ sessionId: session.id, bytes: Buffer.from(translated), name, mime: cues.length ? (/\.srt$/i.test(origin.name) ? 'application/x-subrip' : 'text/vtt') : /\.md$/i.test(origin.name) ? 'text/markdown' : 'text/plain', source: 'derived', label: cues.length ? 'transcript' : 'translation',
+      ...(origin.parent ? { parents: [{ ...origin.parent, relation: 'translation' }] } : {}),
       ...(origin.policy ? { policy: origin.policy } : {}), provenance: { kind: 'translation', source: origin.ref, language, glossary: glossaryDigest, provider: helper.provider, model: helper.model } } as any);
     return completed(`Translated ${origin.name} into ${language} as a new file, ${version.name}; the original is unchanged.`, { language, segments: work.length },
       { artifacts: [{ artifactId: version.artifactId, versionId: version.versionId, purpose: 'translation' }] } as any);

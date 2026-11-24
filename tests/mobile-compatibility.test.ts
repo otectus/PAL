@@ -15,6 +15,8 @@ import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
 import { MobileGateway } from '../broker/remote/server.ts';
 import { canonical, digest, parsePairing, pairingUri } from '../broker/remote/crypto.ts';
+import { providerIds } from '../broker/provider-catalog.ts';
+import { realtimeProviderIds } from '../broker/realtime/contracts.ts';
 import { sessionCapabilities } from '../broker/tools/contracts.ts';
 
 const keypair=()=>generateKeyPairSync('ec',{namedCurve:'prime256v1'});
@@ -104,7 +106,7 @@ async function idle(f:Fixture,id:string) {for(let i=0;i<200;i++){const s=f.core.
 
 // MOB-001: a phone granted one compatible origin reaches only conversations whose own route has
 // that origin and its key. Two real fixture origins and the desktop's real API adapter.
-test('a phone reaches a named compatible connection only when its own route is the granted origin',async t=>{
+test('a phone requires an explicit account grant pinned to the current endpoint and credentials',async t=>{
   const f=await setup(t,{real:true}),granted=await endpoint(t),other=await endpoint(t);
   await f.core.updateSettings({compatible:{baseUrl:granted.origin+'/v1',label:'Granted',requiresKey:false,tools:false,images:false}});
   const named=async(name:string,baseUrl:string,flags:any={})=>f.core.rpc('connections.save',{kind:'compatible',name,endpoint:{baseUrl,requiresKey:false,tools:false,images:false,...flags}}) as Promise<any>;
@@ -115,7 +117,7 @@ test('a phone reaches a named compatible connection only when its own route is t
   const gone=await named('Gone',granted.origin+'/gone/v1');
   const create=(connectionId:string,model='fixture-model')=>f.core.create({provider:'compatible',connectionId,cwd:f.directory,model,trusted:true});
   const onElsewhere=await create(elsewhere.id),onSame=await create(sameOrigin.id),onMoving=await create(moving.id),onKeyed=await create(keyed.id),onGone=await create(gone.id);
-  const phone=await pair(f,['chat.read','chat.write','providers.api'],{apiProviders:['compatible']});
+  const phone=await pair(f,['chat.read','chat.write','providers.api'],{apiProviders:['compatible'],apiConnections:[sameOrigin.id,moving.id,keyed.id,gone.id]});
   assert.equal(phone.device.compatibleEndpoint,granted.origin);
   let client=await connect(f,phone);
   let snapshot=(await client.request('sync.open',{})).result;
@@ -126,7 +128,7 @@ test('a phone reaches a named compatible connection only when its own route is t
   assert.equal(refused.error.code,'SCOPE_DENIED');assert.match(refused.error.message,/“Elsewhere”, which this phone is not granted/);
   assert.equal((await client.request('providers.models',{provider:'compatible',sessionId:b.id})).error.code,'SCOPE_DENIED');
   assert.equal(other.requests.length,0,'the ungranted origin receives nothing');
-  // A same-origin connection is covered by the origin grant; its catalog and declarations are its own.
+  // This same-origin account has its own explicit grant; its catalog and declarations are its own.
   const same=session(snapshot,onSame.id);assert.equal(same.canSend,true);assert.equal(same.imagesAvailable,true);assert.equal(same.toolsAvailable,true);
   const catalog=(await client.request('providers.models',{provider:'compatible',sessionId:same.id,listing:true})).result;
   assert.deepEqual(catalog.items.map((m:any)=>[m.id,m.capabilities]),[['listed-model',['tools','vision']]]);assert.equal(catalog.unlisted,false);
@@ -157,12 +159,12 @@ test('a phone reaches a named compatible connection only when its own route is t
   f.core.store.db.prepare('DELETE FROM provider_connections WHERE id=?').run(gone.id);
   snapshot=(await client.request('sync.open',{})).result;
   assert.equal(session(snapshot,onKeyed.id).canSend,false);
-  assert.equal((await client.action('sessions.send',sendParams(session(snapshot,onKeyed.id)),phone)).error.message,'The connection “Keyed” has no key on the desktop.');
+  assert.equal((await client.action('sessions.send',sendParams(session(snapshot,onKeyed.id)),phone)).error.message,'The connection “Keyed” has no key on the desktop. Add it in Settings → Connections.');
   assert.match((await client.request('providers.models',{provider:'compatible',sessionId:onGone.id})).error.message,/no longer exists/);
   // Changing the default endpoint ends unbound access but leaves a named same-origin conversation alone.
   await f.core.updateSettings({compatible:{baseUrl:other.origin+'/v1',label:'Moved default',requiresKey:false}});
   snapshot=(await client.request('sync.open',{})).result;
-  assert.equal(snapshot.providers.compatible.remoteExecution,false);assert.equal(session(snapshot,onSame.id).canSend,true);
+  assert.equal(snapshot.providers.compatible.defaultRemoteExecution,false);assert.equal(snapshot.providers.compatible.remoteExecution,true);assert.equal(session(snapshot,onSame.id).canSend,true);
   // A grant reduced while a turn prepares: the device's authority is rechecked before the request.
   const reduce=f.core.workbench.restrict;let reduced=false;
   f.core.workbench.restrict=async(id:string,messages:any,signal:AbortSignal)=>{if(id===onSame.id&&!reduced){reduced=true;const d=f.gateway.registry.live(phone.device.id)!;f.gateway.registry.saveDevice({...d,apiProviders:[],scopeVersion:String(BigInt(d.scopeVersion)+1n)});}return reduce(id,messages,signal);};
@@ -224,6 +226,15 @@ test('API conversations keep their tools choice across snapshots and model-only 
   const renamed=await client.action('sessions.configure',{sessionId:current.id,model:'another-unlisted-id',expectedConfigRevision:current.configRevision},phone);
   assert.equal(renamed.result?.model,'another-unlisted-id');assert.equal(renamed.result.tools,false);
   client.ws.terminate();
+});
+
+// The phone offers live voice by these operations alone, so they name exactly the providers the desktop starts it for.
+test('a phone is told which providers have live voice: the ones the desktop starts it for',async t=>{
+  const f=await setup(t),phone=await pair(f,['chat.read']),client=await connect(f,phone);
+  // As detection lists every provider, set up or not.
+  for(const id of providerIds)f.core.capabilities[id]={available:false,models:[],modelsStatus:'error'};
+  const {providers}=(await client.request('sync.open',{})).result;
+  assert.deepEqual(Object.keys(providers).filter(id=>providers[id].traits.operations?.includes('realtime')).sort(),[...realtimeProviderIds].sort());
 });
 
 // MOB-005: Files, Images and Analysis pause under phone control. Taking over needs the phone to name

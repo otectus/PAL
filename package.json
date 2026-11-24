@@ -1,6 +1,6 @@
 {
   "name": "pal-desktop",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -20,8 +20,11 @@
     "typescript": "5.9.3"
   },
   "dependencies": {
+    "@azure/identity": "^4.14.1",
     "@modelcontextprotocol/sdk": "1.32.2",
+    "@redis/client": "^6.4.0",
     "canonicalize": "2.1.0",
+    "google-auth-library": "^11.3.4",
     "linkedom": "0.18.13",
     "neo4j-driver": "6.2.0",
     "qrcode": "1.5.4",

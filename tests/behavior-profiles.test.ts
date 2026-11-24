@@ -96,7 +96,8 @@ test('M01 a style can withhold PAL tools but never add any, for API/Ollama and C
   const token = [...core.tokens].find(([, owner]) => owner === codex.id)![0];
   assert.ok((await core.rpc('mcp.tools', { token })).some((tool: any) => tool.name === 'timer.start'));
   await core.rpc('session.behavior', { id: codex.id, postureId: 'posture:review' });
-  assert.deepEqual(await core.rpc('mcp.tools', { token }), []);
+  // Reading the clock is not a desktop, web, memory or delegation tool, so no style withholds it.
+  assert.deepEqual((await core.rpc('mcp.tools', { token })).filter((tool: any) => tool.category !== 'time'), []);
   await assert.rejects(core.rpc('mcp.call', { token, name: 'timer.start', args: { minutes: 1, label: 'x' } }), /withholds desktop tools/);
 });
 

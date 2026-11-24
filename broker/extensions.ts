@@ -656,9 +656,15 @@ export class Extensions {
     }
     return tools;
   }
-  async call(sessionId: string, name: string, args: unknown, signal: AbortSignal) {
+  async callBound(sessionId:string,serverId:string,tool:string,args:unknown,signal:AbortSignal,authorize:()=>unknown) {
+    const name=[...this.named()].find(([,target])=>target.serverId===serverId && target.tool===tool)?.[0];
+    if (!name) throw new Error('Enable the reviewed extension server and tool for this service');
+    return this.call(sessionId,name,args,signal,authorize);
+  }
+  async call(sessionId: string, name: string, args: unknown, signal: AbortSignal, authorize?:()=>unknown) {
     const target = this.names.get(name), session = this.core.store.session(sessionId);
     const current = () => {
+      authorize?.();signal.throwIfAborted();
       const server = this.servers().find(item => item.id === target?.serverId);
       if (!target || !server || !this.inScope(server, this.core.store.session(sessionId)) || !this.eligible(this.core.store.session(sessionId))) throw new Error('This extension tool is turned off');
       if (server.hidden?.includes(target.tool)) throw new Error('This extension tool is hidden in Settings');

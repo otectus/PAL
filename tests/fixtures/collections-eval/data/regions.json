@@ -1,0 +1,6 @@
+{
+  "regions": [
+    {"code": "eu-north", "city": "Stockholm", "capacity": 340},
+    {"code": "ap-south", "city": "Mumbai", "capacity": 210}
+  ]
+}

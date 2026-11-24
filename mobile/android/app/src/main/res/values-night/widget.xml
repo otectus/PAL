@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="pal_widget_surface">#151B24</color>
+    <color name="pal_widget_text">#EDF5FC</color>
+    <color name="pal_widget_muted">#AEC1CC</color>
+    <color name="pal_widget_accent">#68ECED</color>
+    <color name="pal_widget_attention">#FFCF83</color>
+</resources>

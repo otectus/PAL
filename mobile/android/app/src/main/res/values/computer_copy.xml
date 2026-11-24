@@ -130,7 +130,6 @@
     <string name="computer_observer">Observer</string>
     <string name="computer_off">Off</string>
     <string name="computer_offer_automatically_when_a_task_fits">Offer automatically when a task fits</string>
-    <string name="computer_ollama_model_optional_otherwise_the_helper_model">Ollama model (optional; otherwise the helper model)</string>
     <string name="computer_on_offered_automatically">On · offered automatically</string>
     <string name="computer_on_when_you_name_it">On · when you name it</string>
     <string name="computer_outcome_recorded">Outcome recorded</string>

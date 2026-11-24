@@ -42,6 +42,8 @@ export function metadata(r: ResearchRun) {
   const {
     id,
     sessionId,
+    provider,
+    model,
     question,
     title,
     preset,
@@ -62,6 +64,8 @@ export function metadata(r: ResearchRun) {
   return {
     id,
     sessionId,
+    provider,
+    model,
     question,
     title,
     preset,
@@ -91,6 +95,9 @@ export class ResearchLibrary {
       CREATE INDEX IF NOT EXISTS research_due ON research_runs(due);
       CREATE TABLE IF NOT EXISTS research_source_text(run_id TEXT NOT NULL REFERENCES research_runs(id) ON DELETE CASCADE,
         hash TEXT NOT NULL, data BLOB NOT NULL, PRIMARY KEY(run_id,hash));
+      CREATE TABLE IF NOT EXISTS research_handoffs(token TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES research_runs(id) ON DELETE CASCADE, version_id TEXT NOT NULL,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS research_versions(run_id TEXT NOT NULL REFERENCES research_runs(id) ON DELETE CASCADE,
         version_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(run_id,version_id));`);
     store.transaction(() => {
@@ -120,7 +127,9 @@ export class ResearchLibrary {
           const r = this.get(m.id);
           this.put({
             ...r,
-            state: 'paused',
+            state: 'interrupted',
+            monitorDays: 0, nextRefresh: 0,
+            progress: 'Interrupted by restart',
             partial: true,
             note: 'PAL restarted. Continue from the saved sources and searches.',
           });
@@ -188,6 +197,14 @@ export class ResearchLibrary {
           state: row.state, created: row.created, updated: row.updated, summary: row.summary, researchId: row.id,
           results: row.report ? [row.report] : [], cursor: row.created + ':' + row.id };
       });
+  }
+  tasks() {
+    return this.store.db.prepare(`SELECT summary, json_extract(sessions.data, '$.title') AS owner
+      FROM research_runs JOIN sessions ON sessions.id=research_runs.session_id
+      ORDER BY json_extract(summary, '$.updated') DESC`).all().map(row => {
+      const {id, sessionId, title, state, progress, provider, model, updated, created} = JSON.parse(String(row.summary));
+      return {id, sessionId, owner: row.owner, title, state, progress, provider, model, updated, created};
+    });
   }
   request(sessionId: string, requestId: string) {
     const row = this.store.db

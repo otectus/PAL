@@ -1,3 +1,4 @@
+import { isApiProvider } from '../provider-catalog.ts';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
@@ -10,7 +11,7 @@ export type TaskOutputMode = typeof taskOutputModes[number];
 export type CapabilityState = 'supported' | 'unsupported' | 'unknown';
 
 const printable = (maximum: number) => z.string().min(1).max(maximum).refine(value => value === value.trim() && !/[\x00-\x1f\x7f]/u.test(value), 'Use printable characters without surrounding whitespace');
-const connectionRefSchema = printable(256).refine(value => /^(?:native:(?:openai|anthropic|google)|default:ollama|connection:[^:]+)$/u.test(value), 'Invalid task connection reference');
+const connectionRefSchema = printable(256).refine(value => /^(?:default:ollama|connection:[^:]+)$/u.test(value) || value.startsWith('native:') && value!=='native:compatible' && isApiProvider(value.slice(7)), 'Invalid task connection reference');
 
 export interface TaskModelBinding {
   connectionRef: string;

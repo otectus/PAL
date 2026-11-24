@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>PAL</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to the conversation</a>
+<header>
+  <h1 id="brand">PAL</h1>
+  <p id="status" role="status" aria-live="polite">Starting…</p>
+  <nav aria-label="Account">
+    <button type="button" id="showApprovals" class="quiet" hidden>Requests</button>
+    <button type="button" id="showAccess" class="quiet" hidden>This browser</button>
+  </nav>
+</header>
+<noscript>This page needs JavaScript to prove to your desktop which browser it is.</noscript>
+
+<section id="pair" class="card" hidden aria-labelledby="pairTitle">
+  <h2 id="pairTitle">Pair this browser</h2>
+  <p>On your desktop open <b>Settings › PAL Mobile › Browser</b>, choose <b>Pair a browser</b>, and type the code it shows.</p>
+  <form id="pairForm" autocomplete="off">
+    <label for="code">Code</label>
+    <input id="code" name="code" inputmode="text" autocapitalize="characters" spellcheck="false" maxlength="14" placeholder="XXXXX-XXXXX" required>
+    <label for="name">Name for this browser</label>
+    <input id="name" name="name" maxlength="48" required>
+    <button type="submit" class="primary" id="pairSubmit">Continue</button>
+  </form>
+  <p id="pairError" class="problem" role="alert" hidden></p>
+</section>
+
+<section id="compare" class="card" hidden aria-labelledby="compareTitle">
+  <h2 id="compareTitle">Compare the six words</h2>
+  <p>Your desktop now shows six words. Confirm there only if they are exactly these:</p>
+  <p id="sas" class="words" aria-live="polite"></p>
+  <p id="pairAccess" class="muted"></p>
+  <button type="button" id="pairCancel" class="quiet">Cancel</button>
+</section>
+
+<div id="workspace" hidden>
+  <aside aria-label="Conversations">
+    <label class="hidden" for="filter">Find a conversation</label>
+    <input id="filter" type="search" placeholder="Find a conversation" maxlength="200">
+    <ul id="sessions"></ul>
+    <button type="button" id="more" class="quiet" hidden>More conversations</button>
+  </aside>
+  <main id="main" tabindex="-1" aria-labelledby="title">
+    <div id="heading">
+      <button type="button" id="back" class="quiet" hidden>Conversations</button>
+      <div><h2 id="title">Choose a conversation</h2><p id="about" class="muted"></p></div>
+      <button type="button" id="stop" hidden>Stop</button>
+    </div>
+    <button type="button" id="earlier" class="quiet" hidden>Earlier messages</button>
+    <ol id="messages" aria-live="polite" aria-relevant="additions"></ol>
+    <p id="notice" class="problem" role="alert" hidden></p>
+    <form id="composer" hidden>
+      <label class="hidden" for="text">Message</label>
+      <textarea id="text" rows="3" maxlength="100000" placeholder="Message"></textarea>
+      <button type="submit" class="primary" id="send">Send</button>
+    </form>
+    <p id="readonly" class="muted" hidden></p>
+  </main>
+</div>
+
+<dialog id="approvals" aria-labelledby="approvalsTitle"><h2 id="approvalsTitle">Requests</h2><div id="approvalList"></div><button type="button" class="quiet" data-close="approvals">Close</button></dialog>
+<dialog id="access" aria-labelledby="accessTitle"><h2 id="accessTitle">This browser</h2><dl id="accessList"></dl><p id="accessProblem" class="problem" role="alert" hidden></p><div class="row"><button type="button" id="forget" class="danger">Forget this browser</button><button type="button" class="quiet" data-close="access">Close</button></div></dialog>
+<dialog id="confirm" aria-labelledby="confirmTitle"><h2 id="confirmTitle"></h2><p id="confirmBody"></p><div class="row"><button type="button" id="confirmYes" class="primary"></button><button type="button" id="confirmNo" class="quiet">Cancel</button></div></dialog>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

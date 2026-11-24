@@ -18,6 +18,8 @@ import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
 import { MobileGateway } from '../broker/remote/server.ts';
 import { canonical, digest, parsePairing, pairingUri } from '../broker/remote/crypto.ts';
+import { Temporal } from '../broker/temporal-context.ts';
+import { TimeService } from '../broker/time.ts';
 import type { Hooks } from '../broker/providers.ts';
 
 const golden = new URL('../protocol/mobile/v1/conformance.json', import.meta.url);
@@ -137,6 +139,15 @@ test('W15 gateway responses and events match the golden conformance fixtures And
   record('messages.bookmarks', 'MessagePage', await request('messages.bookmarks', { sessionId: created.id }));
   record('sessions.behavior', 'JsonObject', await request('sessions.behavior', { sessionId: created.id }));
   record('workflows.status', 'JsonObject', await request('workflows.status', { sessionId: created.id }));
+  // time.context.v1: the desktop's clock, told by a fixed one, and elapsed time with and without an answer.
+  const told = core.temporal;
+  core.temporal = new Temporal(core, new TimeService({ wallNowMs: () => Date.parse('2026-11-21T16:30:00Z'), monotonicNowMs: () => 1, instanceId: 'conformance' }, () => 'America/New_York'));
+  message('11111111-1111-4111-8111-000000000006', 'user', 'text', 'An hour earlier', { time: Date.parse('2026-11-21T15:30:00Z') });
+  record('time.now', 'TimeSnapshot', await request('time.now', { sessionId: created.id, timeZone: 'America/New_York' }));
+  record('time.now in another zone', 'TimeSnapshot', await request('time.now', { sessionId: created.id, timeZone: 'Asia/Kathmandu' }));
+  record('time.elapsed', 'ElapsedResult', await request('time.elapsed', { sessionId: created.id, anchor: 'message', messageId: '11111111-1111-4111-8111-000000000006' }));
+  record('time.elapsed unknown', 'ElapsedResult', await request('time.elapsed', { sessionId: created.id, anchor: 'message', messageId: 'not-here' }));
+  core.temporal = told;
   record('error SCOPE_DENIED', 'Error', await request('sessions.get', { sessionId: outside.id }));
   record('error REVISION_CONFLICT', 'Error', (await signed('sessions.rename', { sessionId: created.id, title: 'Renamed', expectedRevision: '999' })).response);
   record('error INVALID_ARGUMENT', 'Error', await request('sessions.unknown', {}));

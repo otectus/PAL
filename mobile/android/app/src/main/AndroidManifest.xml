@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
@@ -16,6 +16,8 @@
 
     <queries>
         <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
+        <!-- Push apps the person may choose for optional wake-ups (UnifiedPush). -->
+        <intent><action android:name="org.unifiedpush.android.distributor.REGISTER" /></intent>
     </queries>
 
     <application
@@ -46,6 +48,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="dev.otectus.cere.mobile" />
             </intent-filter>
+            <!-- A long press on the Quick Settings tile opens the Inbox. -->
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" /></intent-filter>
         </activity>
         <!-- Keep the published launcher component so pinned home-screen shortcuts survive an upgrade. -->
         <activity-alias android:name="dev.otectus.cere.mobile.MainActivity"
@@ -60,6 +64,34 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
         <receiver android:name=".DenyReceiver" android:exported="false" />
+        <!-- Monitoring on and off, and the Inbox on a long press. It approves nothing and runs nothing. -->
+        <service
+            android:name=".MonitoringTile"
+            android:exported="true"
+            android:icon="@drawable/ic_pal_notification"
+            android:label="@string/tile_monitoring"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+            <meta-data android:name="android.service.quicksettings.ACTIVE_TILE" android:value="false" />
+            <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE" android:value="true" />
+        </service>
+        <receiver android:name=".StatusWidget" android:exported="false" android:label="@string/widget_name">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_status_info" />
+        </receiver>
+        <!-- A push app the person chose answers here (UnifiedPush). Only its registration token and this phone's keys count. -->
+        <receiver android:name=".WakeReceiver" android:exported="true" tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.MESSAGE" />
+                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
+                <action android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
+                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
+                <action android:name="org.unifiedpush.android.connector.TEMP_UNAVAILABLE" />
+            </intent-filter>
+        </receiver>
+        <service android:name=".WakeForegroundService" android:exported="true" tools:ignore="ExportedService">
+            <intent-filter><action android:name="org.unifiedpush.android.connector.RAISE_TO_FOREGROUND" /></intent-filter>
+        </service>
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.camera"

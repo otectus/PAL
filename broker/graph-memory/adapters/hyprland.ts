@@ -58,6 +58,8 @@ export interface HyprlandCollectorConfig {
   captureTitles?: boolean;
   titleApplicationAllowlist?: string[];
   reconcileIntervalMs?: number;
+  /** The window's process, to tell which terminal or editor it belongs to. */
+  includePids?: boolean;
 }
 
 export class HyprlandCollector implements LiveCollector {
@@ -176,6 +178,7 @@ export class HyprlandCollector implements LiveCollector {
       // Every verified snapshot refreshes class and workspace; the generation stays per window lifetime.
       window.appClass = String(client.class ?? ''); window.workspace = String(client.workspace?.id ?? '');
       const properties: Record<string, JsonValue> = { address, workspace: window.workspace, appClass: window.appClass, focused: address === String(active.address ?? '').replace(/^0x/u, '') };
+      if (this.config.includePids && Number.isInteger(client.pid) && client.pid > 0) properties.pid = client.pid;
       if (this.titleAllowed(window.appClass)) properties.title = String(client.title ?? '');
       this.emit(this.factory.observation(`window:${this.sessionId}:${address}`, window.generation, 'WINDOW_SNAPSHOT', properties));
     }

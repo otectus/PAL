@@ -44,6 +44,8 @@ class ConformanceTest {
                 "MessagePart" -> assertNotNull(result(case).jsonObject["content"])
                 "ApprovalList" -> decode<List<Approval>>(result(case))
                 "ProjectList" -> decode<List<Project>>(result(case))
+                "TimeSnapshot" -> decode<TimeSnapshot>(result(case))
+                "ElapsedResult" -> decode<ElapsedResult>(result(case))
                 "JsonObject" -> result(case).jsonObject
                 "Error" -> (frame(case) as Frame.Reply).value.error.let { error ->
                     assertNotNull(name, error); assertTrue(name, error!!.code.matches(Regex("^[A-Z_]+$"))); assertTrue(name, error.message.isNotBlank())
@@ -61,6 +63,21 @@ class ConformanceTest {
         val draft = decode<Session>(result(named("sessions.get with desktop draft attachments")))
         assertEquals(listOf("notes ✓.txt"), draft.draftAttachments.map(DraftAttachment::name))
         assertEquals(draft.draftAttachmentCount, draft.draftAttachments.size)
+    }
+
+    @Test fun clockReadingsKeepTheirInstantZoneAndUnknowns() {
+        val here = decode<TimeSnapshot>(result(named("time.now")))
+        val there = decode<TimeSnapshot>(result(named("time.now in another zone")))
+        // Two zones, one instant: the same UTC reading with different local fields is not a disagreement.
+        assertEquals(here.utcIso, there.utcIso)
+        assertEquals("America/New_York" to -18000, here.timeZone to here.offsetSeconds)
+        assertEquals("Asia/Kathmandu" to 20700, there.timeZone to there.offsetSeconds)
+        assertEquals("22:15:00", there.localTime)
+        val known = decode<ElapsedResult>(result(named("time.elapsed")))
+        assertEquals("available" to 3_600_000L, known.status to known.durationMs)
+        val unknown = decode<ElapsedResult>(result(named("time.elapsed unknown")))
+        assertEquals("unknown", unknown.status); assertNull(unknown.durationMs); assertNull(unknown.includesSuspend)
+        assertTrue((frame(named("welcome")) as Frame.Accepted).value.features.contains("time.context.v1"))
     }
 
     @Test fun welcomeNegotiatesProtocolFeaturesAndNamesTheBuild() {

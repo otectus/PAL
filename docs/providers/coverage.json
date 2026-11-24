@@ -1,0 +1,1180 @@
+{
+  "schemaVersion": 1,
+  "release": "2.0.2",
+  "asOf": "2026-11-23",
+  "inventory": {
+    "openai": {
+      "provider": "openai"
+    },
+    "anthropic": {
+      "provider": "anthropic"
+    },
+    "google": {
+      "provider": "google"
+    },
+    "azure_openai": {
+      "provider": "azure_openai"
+    },
+    "deepseek_api": {
+      "provider": "deepseek"
+    },
+    "mistral_ai": {
+      "provider": "mistral"
+    },
+    "x_ai": {
+      "provider": "xai"
+    },
+    "perplexity": {
+      "provider": "perplexity"
+    },
+    "open_router": {
+      "provider": "openrouter"
+    },
+    "huggingface_api": {
+      "provider": "huggingface",
+      "variant": "inference"
+    },
+    "huggingface_router": {
+      "provider": "huggingface",
+      "variant": "router"
+    },
+    "ollama": {
+      "provider": "ollama"
+    },
+    "local_ai": {
+      "provider": "compatible"
+    },
+    "litellm": {
+      "provider": "litellm"
+    },
+    "forge": {
+      "provider": "forge"
+    },
+    "edenai": {
+      "provider": "edenai"
+    },
+    "api_custom_providers": {
+      "provider": "compatible"
+    }
+  },
+  "statusValues": [
+    "implemented-and-live-verified",
+    "implemented-fixture-verified",
+    "blocked-by-account-or-environment",
+    "upstream-retired",
+    "unsupported-by-upstream"
+  ],
+  "rows": [
+    {
+      "provider": "openai",
+      "variant": "default",
+      "operation": "conversation stream, terminal events and interruption",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "The shared harness iterates all API provider IDs. Account grants and specific features are tested independently."
+    },
+    {
+      "provider": "openai",
+      "variant": "default",
+      "operation": "live account text completion",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Requires an authorized OpenAI API account or configured endpoint with an accessible model."
+    },
+    {
+      "provider": "anthropic",
+      "variant": "default",
+      "operation": "conversation stream, terminal events and interruption",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "The shared harness iterates all API provider IDs. Account grants and specific features are tested independently."
+    },
+    {
+      "provider": "anthropic",
+      "variant": "default",
+      "operation": "model catalog and text completion",
+      "status": "implemented-and-live-verified",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Live REST response and nonzero input/output usage recorded."
+    },
+    {
+      "provider": "google",
+      "variant": "default",
+      "operation": "conversation stream, terminal events and interruption",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "The shared harness iterates all API provider IDs. Account grants and specific features are tested independently."
+    },
+    {
+      "provider": "google",
+      "variant": "default",
+      "operation": "model catalog and text completion",
+      "status": "implemented-and-live-verified",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Live REST response and nonzero input/output usage recorded."
+    },
+    {
+      "provider": "azure_openai",
+      "variant": "default",
+      "operation": "conversation stream, terminal events and interruption",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "The shared harness iterates all API provider IDs. Account grants and specific features are tested independently."
+    },
+    {
+      "provider": "azure_openai",
+      "variant": "default",
+      "operation": "live account text completion",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Requires an Azure OpenAI resource, authorized identity and deployment."
+    },
+    {
+      "provider": "deepseek",
+      "variant": "default",
+      "operation": "conversation stream, terminal events and interruption",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "The shared harness iterates all API provider IDs. Account grants and specific features are tested independently."
+    },
+    {
+      "provider": "deepseek",
+      "variant": "default",
+      "operation": "live account text completion",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Requires an authorized DeepSeek account or configured endpoint with an accessible model."
+    },
+    {
+      "provider": "mistral",
+      "variant": "default",
+      "operation": "conversation stream, terminal events and interruption",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "The shared harness iterates all API provider IDs. Account grants and specific features are tested independently."
+    },
+    {
+      "provider": "mistral",
+      "variant": "default",
+      "operation": "live account text completion",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Requires an authorized Mistral AI account or configured endpoint with an accessible model."
+    },
+    {
+      "provider": "xai",
+      "variant": "default",
+      "operation": "conversation stream, terminal events and interruption",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "The shared harness iterates all API provider IDs. Account grants and specific features are tested independently."
+    },
+    {
+      "provider": "xai",
+      "variant": "default",
+      "operation": "live account text completion",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Requires an authorized Grok (xAI) account or configured endpoint with an accessible model."
+    },
+    {
+      "provider": "perplexity",
+      "variant": "default",
+      "operation": "conversation stream, terminal events and interruption",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "The shared harness iterates all API provider IDs. Account grants and specific features are tested independently."
+    },
+    {
+      "provider": "perplexity",
+      "variant": "default",
+      "operation": "live account text completion",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Requires an authorized Perplexity account or configured endpoint with an accessible model."
+    },
+    {
+      "provider": "openrouter",
+      "variant": "default",
+      "operation": "conversation stream, terminal events and interruption",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "The shared harness iterates all API provider IDs. Account grants and specific features are tested independently."
+    },
+    {
+      "provider": "openrouter",
+      "variant": "default",
+      "operation": "live account text completion",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Requires an authorized OpenRouter account or configured endpoint with an accessible model."
+    },
+    {
+      "provider": "huggingface",
+      "variant": "default",
+      "operation": "conversation stream, terminal events and interruption",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "The shared harness iterates all API provider IDs. Account grants and specific features are tested independently."
+    },
+    {
+      "provider": "huggingface",
+      "variant": "default",
+      "operation": "live account text completion",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Requires an authorized Hugging Face account or configured endpoint with an accessible model."
+    },
+    {
+      "provider": "litellm",
+      "variant": "default",
+      "operation": "conversation stream, terminal events and interruption",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "The shared harness iterates all API provider IDs. Account grants and specific features are tested independently."
+    },
+    {
+      "provider": "litellm",
+      "variant": "default",
+      "operation": "live account text completion",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Requires an authorized LiteLLM account or configured endpoint with an accessible model."
+    },
+    {
+      "provider": "forge",
+      "variant": "default",
+      "operation": "conversation stream, terminal events and interruption",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "The shared harness iterates all API provider IDs. Account grants and specific features are tested independently."
+    },
+    {
+      "provider": "forge",
+      "variant": "default",
+      "operation": "live account text completion",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Requires a TensorBlock Forge endpoint and working model."
+    },
+    {
+      "provider": "edenai",
+      "variant": "default",
+      "operation": "conversation stream, terminal events and interruption",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "The shared harness iterates all API provider IDs. Account grants and specific features are tested independently."
+    },
+    {
+      "provider": "edenai",
+      "variant": "default",
+      "operation": "live account text completion",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Requires an authorized Eden AI account or configured endpoint with an accessible model."
+    },
+    {
+      "provider": "compatible",
+      "variant": "default",
+      "operation": "conversation stream, terminal events and interruption",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "The shared harness iterates all API provider IDs. Account grants and specific features are tested independently."
+    },
+    {
+      "provider": "compatible",
+      "variant": "default",
+      "operation": "live account text completion",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "No reviewed deployment or account was selected for this check."
+    },
+    {
+      "provider": "ollama",
+      "variant": "local",
+      "operation": "native chat, tools and saved history",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/ollama.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "huggingface",
+      "variant": "inference",
+      "operation": "typed task dispatch, artifact input/output, feature extraction",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-inference-core.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "huggingface",
+      "variant": "router",
+      "operation": "chat transport, provider selection",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "mistral",
+      "variant": "OCR",
+      "operation": "document inputs and per-page provenance",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-inference.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "litellm",
+      "variant": "bridge",
+      "operation": "isolated subprocess, chat and embedding contracts",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-bridge.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "deepseek",
+      "variant": "chat",
+      "operation": "reasoning_content across a tool continuation",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "openrouter",
+      "variant": "gateway",
+      "operation": "upstream routing constraints",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "edenai",
+      "variant": "V3",
+      "operation": "routing and non-streaming completion",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "perplexity",
+      "variant": "agent",
+      "operation": "effort preset and opt-in search",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "perplexity",
+      "variant": "research",
+      "operation": "durable submission, account binding and duplicate suppression",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "perplexity",
+      "variant": "search",
+      "operation": "raw web results",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "voyage",
+      "variant": "API",
+      "operation": "query/document embeddings and reranking",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "jev",
+      "variant": "System One",
+      "operation": "structured evaluation and answer validation",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "simple",
+      "variant": "SQLite",
+      "operation": "durable scoped vector query and deletion",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "qdrant",
+      "variant": "server",
+      "operation": "vector payload and collection operations",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/memory-adapters.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "xai",
+      "variant": "Imagine",
+      "operation": "video submission, polling, MP4 validation and Workbench persistence",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "openai",
+      "variant": "Whisper",
+      "operation": "multipart transcription",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "azure_speech",
+      "variant": "speech",
+      "operation": "regional synthesis and escaped SSML",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "openai",
+      "variant": "Images",
+      "operation": "image generation, edits and masks",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/workbench-images.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "google",
+      "variant": "Gemini Developer",
+      "operation": "image generation and protected edits",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/workbench-images.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "PAL",
+      "variant": "native",
+      "operation": "provider migration, backups and import",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "openai",
+      "variant": "realtime",
+      "operation": "audio, transcripts, tools, interruption and authenticated mobile frames",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/realtime.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "xai",
+      "variant": "realtime",
+      "operation": "audio, transcripts, tools, interruption and authenticated mobile frames",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/realtime.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "google",
+      "variant": "realtime",
+      "operation": "audio, transcripts, tools, interruption and authenticated mobile frames",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/realtime.test.ts",
+      "detail": "Exercised by a local fixture."
+    },
+    {
+      "provider": "google",
+      "variant": "API",
+      "operation": "embedding, 768 dimensions",
+      "status": "implemented-and-live-verified",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Observed in the account verification run."
+    },
+    {
+      "provider": "google",
+      "variant": "API",
+      "operation": "speech synthesis and transcription round trip",
+      "status": "implemented-and-live-verified",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Observed in the account verification run."
+    },
+    {
+      "provider": "google",
+      "variant": "API",
+      "operation": "realtime socket setup",
+      "status": "implemented-and-live-verified",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Observed in the account verification run."
+    },
+    {
+      "provider": "elevenlabs",
+      "variant": "API",
+      "operation": "voice catalog",
+      "status": "implemented-and-live-verified",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Observed in the account verification run."
+    },
+    {
+      "provider": "openai",
+      "variant": "embedding",
+      "operation": "batch encoding, order or dimensions",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Contract fixture. No live embedding account claim."
+    },
+    {
+      "provider": "azure_openai",
+      "variant": "embedding",
+      "operation": "batch encoding, order or dimensions",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Contract fixture. No live embedding account claim."
+    },
+    {
+      "provider": "mistral",
+      "variant": "embedding",
+      "operation": "batch encoding, order or dimensions",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Contract fixture. No live embedding account claim."
+    },
+    {
+      "provider": "perplexity",
+      "variant": "embedding",
+      "operation": "batch encoding, order or dimensions",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Contract fixture. No live embedding account claim."
+    },
+    {
+      "provider": "edenai",
+      "variant": "embedding",
+      "operation": "batch encoding, order or dimensions",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Contract fixture. No live embedding account claim."
+    },
+    {
+      "provider": "forge",
+      "variant": "embedding",
+      "operation": "batch encoding, order or dimensions",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Contract fixture. No live embedding account claim."
+    },
+    {
+      "provider": "litellm",
+      "variant": "embedding",
+      "operation": "batch encoding, order or dimensions",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Contract fixture. No live embedding account claim."
+    },
+    {
+      "provider": "compatible",
+      "variant": "embedding",
+      "operation": "batch encoding, order or dimensions",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Contract fixture. No live embedding account claim."
+    },
+    {
+      "provider": "huggingface",
+      "variant": "embedding",
+      "operation": "batch encoding, order or dimensions",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Contract fixture. No live embedding account claim."
+    },
+    {
+      "provider": "xai",
+      "variant": "Python SDK",
+      "operation": "live embedding",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "broker/graph-memory/xai-embed.py",
+      "detail": "xai-sdk 1.21.0 provides the generated Embedder RPC. A live embedding-enabled model/account is required."
+    },
+    {
+      "provider": "google",
+      "variant": "Gemini Omni",
+      "operation": "live video",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "A three-second Omni 1.2 Flash request received a job handle. The provider reported a terminal failure. No video was delivered."
+    },
+    {
+      "provider": "google",
+      "variant": "Lyria",
+      "operation": "live music",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "The short Lyria 3 Clip request returned HTTP 429. No audio was delivered."
+    },
+    {
+      "provider": "google",
+      "variant": "Cloud Speech",
+      "operation": "regional speech recognition and voice discovery",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/PROVIDERS.md",
+      "detail": "Requires an ADC-authorized Cloud Speech and TTS project."
+    },
+    {
+      "provider": "azure_speech",
+      "variant": "Speech",
+      "operation": "live transcription, synthesis and voice catalog",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/PROVIDERS.md",
+      "detail": "Requires an Azure Speech resource key and region."
+    },
+    {
+      "provider": "openai",
+      "variant": "Realtime",
+      "operation": "live audio session",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/PROVIDERS.md",
+      "detail": "Requires a realtime-enabled OpenAI API account."
+    },
+    {
+      "provider": "xai",
+      "variant": "Voice",
+      "operation": "live audio, STT and TTS",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/PROVIDERS.md",
+      "detail": "Requires a paid xAI account."
+    },
+    {
+      "provider": "xai",
+      "variant": "Imagine",
+      "operation": "live image generation and edit",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/PROVIDERS.md",
+      "detail": "Requires an xAI account with Imagine entitlement."
+    },
+    {
+      "provider": "google_search",
+      "variant": "Custom Search",
+      "operation": "live raw search",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/PROVIDERS.md",
+      "detail": "Requires an existing Custom Search customer, API key and search-engine ID."
+    },
+    {
+      "provider": "voyage",
+      "variant": "API",
+      "operation": "live embedding and rerank",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/PROVIDERS.md",
+      "detail": "Requires a Voyage key and enabled models."
+    },
+    {
+      "provider": "jev",
+      "variant": "API",
+      "operation": "live structured evaluation",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/PROVIDERS.md",
+      "detail": "Requires a TypeSafe API key."
+    },
+    {
+      "provider": "ollama",
+      "variant": "cloud",
+      "operation": "live direct-cloud execution",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/PROVIDERS.md",
+      "detail": "Requires an Ollama cloud API key."
+    },
+    {
+      "provider": "google",
+      "variant": "recognize_google",
+      "operation": "legacy input wrapper",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/PROVIDERS.md",
+      "detail": "No supported legacy SpeechRecognition deployment was available. The importer points to Google Cloud Speech."
+    },
+    {
+      "provider": "bing",
+      "variant": "legacy",
+      "operation": "raw search",
+      "status": "upstream-retired",
+      "evidence": "https://learn.microsoft.com/en-us/lifecycle/announcements/bing-search-api-retirement",
+      "detail": "Bing Search APIs retired August 11, 2025. Select a configured raw-search engine."
+    },
+    {
+      "provider": "openai",
+      "variant": "legacy",
+      "operation": "Sora / Videos",
+      "status": "upstream-retired",
+      "evidence": "https://developers.openai.com/api/docs/deprecations",
+      "detail": "OpenAI Videos API shut down September 24, 2026. Select a current video service."
+    },
+    {
+      "provider": "google",
+      "variant": "legacy",
+      "operation": "Veo 3.1 preview",
+      "status": "upstream-retired",
+      "evidence": "https://ai.google.dev/gemini-api/docs/deprecations",
+      "detail": "Choose a current Omni model for new video work."
+    },
+    {
+      "provider": "bing",
+      "variant": "recognize_bing",
+      "operation": "new legacy speech deployment",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "broker/provider-import.ts",
+      "detail": "No supported legacy deployment was available. Configure an Azure Speech resource separately."
+    },
+    {
+      "provider": "google",
+      "variant": "Gemini images",
+      "operation": "native exact mask",
+      "status": "unsupported-by-upstream",
+      "evidence": "broker/media/backends/google.ts",
+      "detail": "The provider takes image references. PAL supports local pixel protection."
+    },
+    {
+      "provider": "anthropic",
+      "variant": "Messages",
+      "operation": "direct embeddings",
+      "status": "unsupported-by-upstream",
+      "evidence": "broker/graph-memory/hosted-embeddings.ts",
+      "detail": "Choose a separate embedding service such as Voyage."
+    },
+    {
+      "provider": "google",
+      "variant": "original files",
+      "operation": "upload synthetic PDF, resolve provider reference, delete remote file",
+      "status": "implemented-and-live-verified",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Observed with private PAL fixture profile and confirmed remote deletion."
+    },
+    {
+      "provider": "anthropic",
+      "variant": "original files",
+      "operation": "upload synthetic PDF, resolve provider reference, delete remote file",
+      "status": "implemented-and-live-verified",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Observed with private PAL fixture profile and confirmed remote deletion."
+    },
+    {
+      "provider": "ollama",
+      "variant": "local",
+      "operation": "catalog and native text completion",
+      "status": "implemented-and-live-verified",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "0.34.4, 19 catalog models, one on-device response."
+    },
+    {
+      "provider": "elevenlabs",
+      "variant": "TTS",
+      "operation": "live synthesis",
+      "status": "blocked-by-account-or-environment",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "The service rejected the short request because this account has exhausted its credits."
+    },
+    {
+      "provider": "chroma",
+      "variant": "vector service",
+      "operation": "initialize, publish, scoped query, delete and local projection erasure",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-vector-services.test.ts",
+      "detail": "Local wire protocol fixture with an actual server socket."
+    },
+    {
+      "provider": "redis",
+      "variant": "vector service",
+      "operation": "initialize, publish, scoped query, delete and local projection erasure",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-vector-services.test.ts",
+      "detail": "Local wire protocol fixture with an actual server socket."
+    },
+    {
+      "provider": "elasticsearch",
+      "variant": "vector service",
+      "operation": "initialize, publish, scoped query, delete and local projection erasure",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-vector-services.test.ts",
+      "detail": "Local wire protocol fixture with an actual server socket."
+    },
+    {
+      "provider": "pinecone",
+      "variant": "vector service",
+      "operation": "initialize, publish, scoped query, delete and local projection erasure",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-vector-services.test.ts",
+      "detail": "Local wire protocol fixture with an actual server socket."
+    },
+    {
+      "provider": "PAL",
+      "variant": "broker",
+      "operation": "versioned service manifest, invocation authority and removal",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Bounded contract fixture."
+    },
+    {
+      "provider": "xai",
+      "variant": "broker",
+      "operation": "original PDF account and retention checks",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Bounded contract fixture."
+    },
+    {
+      "provider": "openrouter",
+      "variant": "broker",
+      "operation": "embedding generation",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Bounded contract fixture."
+    },
+    {
+      "provider": "openai",
+      "variant": "speech",
+      "operation": "multipart prompt and timestamps, PCM synthesis",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-hosted-speech.test.ts",
+      "detail": "Verified with the adapter contract. Account observations are recorded separately."
+    },
+    {
+      "provider": "xai",
+      "variant": "speech",
+      "operation": "regional language selection, transcription and synthesis",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-hosted-speech.test.ts",
+      "detail": "Verified with the adapter contract. Account observations are recorded separately."
+    },
+    {
+      "provider": "google",
+      "variant": "speech",
+      "operation": "Gemini transcription, WAV conversion and two-speaker synthesis",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-hosted-speech.test.ts",
+      "detail": "Verified with the adapter contract. Account observations are recorded separately."
+    },
+    {
+      "provider": "azure_speech",
+      "variant": "speech",
+      "operation": "SSML synthesis, regional STT and voice discovery",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-hosted-speech.test.ts",
+      "detail": "Verified with the adapter contract. Account observations are recorded separately."
+    },
+    {
+      "provider": "google_cloud",
+      "variant": "speech",
+      "operation": "ADC, short and long recording transcription, polling, cancellation, voices and synthesis",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-hosted-speech.test.ts",
+      "detail": "Verified with the adapter contract. Account observations are recorded separately."
+    },
+    {
+      "provider": "azure_openai",
+      "variant": "speech",
+      "operation": "regional deployment transcription and synthesis",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-hosted-speech.test.ts",
+      "detail": "Verified with the adapter contract. Account observations are recorded separately."
+    },
+    {
+      "provider": "openrouter",
+      "variant": "speech",
+      "operation": "scoped upstream transcription and synthesis",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-hosted-speech.test.ts",
+      "detail": "Verified with the adapter contract. Account observations are recorded separately."
+    },
+    {
+      "provider": "mistral",
+      "variant": "speech",
+      "operation": "Voxtral multipart transcription and segment timestamps",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-hosted-speech.test.ts",
+      "detail": "Verified with the adapter contract. Account observations are recorded separately."
+    },
+    {
+      "provider": "xai",
+      "variant": "images",
+      "operation": "image generation and reference editing",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-image-accounts.test.ts",
+      "detail": "Generation and edit payload, authorization, decoded output, and named deployment/gateway routing."
+    },
+    {
+      "provider": "openrouter",
+      "variant": "images",
+      "operation": "image generation and reference editing",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-image-accounts.test.ts",
+      "detail": "Generation and edit payload, authorization, decoded output, and named deployment/gateway routing."
+    },
+    {
+      "provider": "azure_openai",
+      "variant": "images",
+      "operation": "image generation and reference editing",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-image-accounts.test.ts",
+      "detail": "Generation and edit payload, authorization, decoded output, and named deployment/gateway routing."
+    },
+    {
+      "provider": "azure_openai",
+      "variant": "v1",
+      "operation": "deployment-scoped realtime session",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/realtime.test.ts",
+      "detail": "GA WebSocket path and API-key or Entra headers."
+    },
+    {
+      "provider": "xai",
+      "variant": "collections",
+      "operation": "collection lifecycle and attached file search",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-xai-collections.test.ts",
+      "detail": "Dedicated management credential, PDF handles, scoped search, detach, delete and revision invalidation."
+    },
+    {
+      "provider": "openai",
+      "variant": "Responses",
+      "operation": "native file search, hosted code and JSON Schema reply",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/api-providers.test.ts",
+      "detail": "Vector stores are selected explicitly. Includes request-shape assertions."
+    },
+    {
+      "provider": "openai",
+      "variant": "computer use",
+      "operation": "user-reviewed display capture and input",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Synthetic host fixture checks capture, scaling, preview, input approval, and denial."
+    },
+    {
+      "provider": "anthropic",
+      "variant": "computer use",
+      "operation": "user-reviewed display capture and input",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Synthetic host fixture checks capture, scaling, preview, input approval, and denial."
+    },
+    {
+      "provider": "edenai",
+      "variant": "Universal AI v3",
+      "operation": "asynchronous video and upstream provenance",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Fixture returns a public_id and playable MP4, records metadata and preserves Workbench lineage."
+    },
+    {
+      "provider": "google",
+      "variant": "Interactions",
+      "operation": "successful video and music completion, preview, playback file and metadata",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Synthetic successful outputs are validated using ffprobe. Live requests encountered the outcomes recorded above."
+    },
+    {
+      "provider": "PAL",
+      "variant": "import",
+      "operation": "optional named credential import and rollback",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-import-secrets.test.ts",
+      "detail": "Configuration-only import is the default. A separately acknowledged import binds literal secrets to the reviewed accounts."
+    },
+    {
+      "provider": "piper",
+      "variant": "local",
+      "operation": "local synthesis",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/tts.test.ts",
+      "detail": "Existing local execution paths exercised by the repository regression suite."
+    },
+    {
+      "provider": "indextts",
+      "variant": "local",
+      "operation": "local synthesis and cancellation",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/indextts.test.ts",
+      "detail": "Existing local execution paths exercised by the repository regression suite."
+    },
+    {
+      "provider": "whisper",
+      "variant": "local",
+      "operation": "local recording and transcription",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/transcription.test.ts",
+      "detail": "Existing local execution paths exercised by the repository regression suite."
+    },
+    {
+      "provider": "perplexity",
+      "variant": "Agent API",
+      "operation": "share_file artifacts, search and fetched-page traces, bounded expiry recovery",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-output-files.test.ts",
+      "detail": "Foreground and background responses retain typed traces. Downloads check the account and permitted host, MIME, size and current session authorization. Installed files are reused after restart."
+    },
+    {
+      "provider": "perplexity",
+      "variant": "Agent API",
+      "operation": "desktop and Android background-run lifecycle and stable request IDs",
+      "status": "implemented-fixture-verified",
+      "evidence": "broker/research/provider-jobs.ts",
+      "detail": "The Research view lists, polls and cancels saved jobs on both clients. Session-scoped idempotency and active limits include jobs older than the latest display page."
+    },
+    {
+      "provider": "perplexity",
+      "variant": "Py-GPT import",
+      "operation": "review and retain historical Sonar selections",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-import-secrets.test.ts",
+      "detail": "Import preserves retired model and source with its suggested Agent preset. The first billable selection remains explicit."
+    },
+    {
+      "provider": "PAL",
+      "variant": "desktop Workbench",
+      "operation": "choose an uploaded original or approve artifact inference under a named account",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/qml/tst_provider_artifacts.qml",
+      "detail": "Qt exercised the review dialog, account-matched file selection, refusal of other-account selection and revision-bound OCR request."
+    },
+    {
+      "provider": "mistral",
+      "variant": "Voxtral",
+      "operation": "speech synthesis with a named Mistral account and a selected voice",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-hosted-speech.test.ts",
+      "detail": "The fixture checks voice_id, format, and decoding of a base64 audio response. Requires a Voxtral TTS account for a live check."
+    },
+    {
+      "provider": "azure_openai",
+      "variant": "Azure resource",
+      "operation": "deployment discovery metadata and region/underlying model preservation",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-services.test.ts",
+      "detail": "Account editing retains the selected region and underlying model. Deployment alias is the request target."
+    },
+    {
+      "provider": "compatible",
+      "variant": "named",
+      "operation": "reviewed custom API-key headers, key rotation and rejection before dispatch",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/compatible-auth.test.ts",
+      "detail": "Discovery, chat and helpers send the secret in the configured key header. Changing the header invalidates the previous credential."
+    },
+    {
+      "provider": "PAL",
+      "variant": "paired Android",
+      "operation": "signed PDF lifecycle, research reconnect/cancellation and restricted-device denial",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/owner-parity.test.ts",
+      "detail": "A paired TLS client checks reviewed destination revisions, resumes one billed Agent job using its original request ID, and confirms that limited access excludes these actions."
+    },
+    {
+      "provider": "piper",
+      "variant": "local",
+      "operation": "offline speech with the bundled Amy voice",
+      "status": "implemented-and-live-verified",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Generated 4.78 seconds of WAV audio from a synthetic test sentence."
+    },
+    {
+      "provider": "indextts",
+      "variant": "local",
+      "operation": "offline multilingual CPU synthesis",
+      "status": "implemented-and-live-verified",
+      "evidence": "docs/providers/live-2026-11-23.json",
+      "detail": "Installed IndexTTS 2.5 generated non-empty audio in every supported language with a synthetic Piper reference; offline network denial was verified."
+    },
+    {
+      "provider": "perplexity",
+      "variant": "Sonar",
+      "operation": "retired Sonar routing and historical asynchronous requests",
+      "status": "upstream-retired",
+      "evidence": "https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/overview",
+      "detail": "Import preserves the original model as migration metadata. Current sessions explicitly choose a maintained Agent preset or model. Historical async Sonar requests are never replayed."
+    },
+    {
+      "provider": "openai",
+      "variant": "Assistants",
+      "operation": "retired Assistants API selections",
+      "status": "upstream-retired",
+      "evidence": "https://developers.openai.com/api/docs/deprecations",
+      "detail": "Imported Assistants selections receive an explicit migration notice and retain their historical selection. New conversations use Responses."
+    },
+    {
+      "provider": "openai",
+      "variant": "Responses",
+      "operation": "organization and project headers; files made by hosted code kept with the conversation",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/claude-models.test.ts, tests/hosted-outputs.test.ts",
+      "detail": "Fixture responses. Not exercised against the live service."
+    },
+    {
+      "provider": "anthropic",
+      "variant": "Messages",
+      "operation": "hosted web search, web page reading and code execution: continuation, listed steps and kept files",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/claude-models.test.ts, tests/hosted-outputs.test.ts",
+      "detail": "Fixture responses in the documented wire form. Not exercised against the live service."
+    },
+    {
+      "provider": "anthropic",
+      "variant": "Messages",
+      "operation": "per-generation rules: adaptive thinking, efforts, reasoning bound to its conversation, prompt caching",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/claude-models.test.ts",
+      "detail": "Rules dated 2026-11. Not exercised against the live service."
+    },
+    {
+      "provider": "google",
+      "variant": "Gemini",
+      "operation": "URL context and code execution, alone and beside PAL's tools",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/claude-models.test.ts",
+      "detail": "Fixture responses. Not exercised against the live service."
+    },
+    {
+      "provider": "openrouter",
+      "variant": "gateway",
+      "operation": "model lists by service, per-model efforts, prices, limits and upstream providers",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/model-catalog.test.ts",
+      "detail": "Fixtures in the form of the public lists read on 2026-11-23. No key was used."
+    },
+    {
+      "provider": "litellm",
+      "variant": "bridge",
+      "operation": "streaming, tool rounds, pictures, carried reasoning, cancellation and the managed environment",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-bridge.test.ts",
+      "detail": "LiteLLM 1.108.3 from the recorded lock was also run against local stand-ins for an OpenAI-compatible and an Anthropic server, with no other network."
+    },
+    {
+      "provider": "all",
+      "variant": "accounts",
+      "operation": "staged check, what uses an account, and moving it to another",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/connection-tools.test.ts, tests/owner-parity.test.ts",
+      "detail": "The free stages and the optional tries run against local fixtures."
+    },
+    {
+      "provider": "all",
+      "variant": "usage",
+      "operation": "input and output counted whole for cached input and thinking",
+      "status": "implemented-fixture-verified",
+      "evidence": "tests/provider-usage.test.ts",
+      "detail": "Fixture usage records."
+    }
+  ],
+  "serviceInventory": {
+    "voyage": "voyage",
+    "jev": "jev",
+    "openai_whisper": "openai",
+    "whisper": "local Whisper",
+    "recognize_google": "Google legacy recognition",
+    "google_cloud": "Google Cloud Speech / TTS",
+    "google_genai": "Google Gemini",
+    "recognize_bing": "legacy Bing Speech",
+    "x_ai": "xai",
+    "azure": "azure_speech",
+    "elevenlabs": "elevenlabs",
+    "piper": "Piper local",
+    "indextts": "IndexTTS"
+  }
+}

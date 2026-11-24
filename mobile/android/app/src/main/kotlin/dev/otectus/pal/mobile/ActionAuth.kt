@@ -23,7 +23,8 @@ import kotlinx.serialization.json.JsonObject
 internal fun authenticate(activity: FragmentActivity, title: String, action: PreparedAction, repository: PALRepository, success: (JsonElement) -> Unit, failure: (String) -> Unit) {
     var settled = false
     val finish: (Result<JsonElement>) -> Unit = { result ->
-        if (!settled) { settled = true; result.onSuccess(success).onFailure { failure(it.message ?: activity.getString(R.string.auth_the_action_failed)) } }
+        // What a screen makes of an answer it did not expect is a failure to show.
+        if (!settled) { settled = true; result.mapCatching(success).onFailure { failure(it.message ?: activity.getString(R.string.auth_the_action_failed)) } }
     }
     if (!action.requiresUserAuthentication) {
         repository.launchAction(action, { repository.signWithoutAuthentication(action) }, finish)
@@ -53,6 +54,8 @@ internal fun signedReview(activity: FragmentActivity, repository: PALRepository,
         val action = try { repository.prepareAction(method, params, boundProjectId, label) } catch (cancelled: CancellationException) { throw cancelled } catch (error: Exception) {
             failure(error.message ?: activity.getString(R.string.auth_unable_to_prepare_this_action)); return@launch
         }
-        authenticate(activity, title, action, repository, success, failure)
+        try { authenticate(activity, title, action, repository, success, failure) } catch (cancelled: CancellationException) { throw cancelled } catch (error: Exception) {
+            failure(error.message ?: activity.getString(R.string.auth_the_action_failed))
+        }
     }
 }

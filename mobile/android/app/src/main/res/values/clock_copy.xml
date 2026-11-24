@@ -1,0 +1,57 @@
+<resources>
+    <string name="clock_title">Date and time</string>
+    <string name="clock_menu">Clock and time zone</string>
+    <string name="clock_reading">Reading the desktop’s clock…</string>
+    <string name="clock_source">Clock: your desktop</string>
+    <string name="clock_source_detail">PAL does not check it against a time server.</string>
+    <string name="clock_zone_phone">%1$s · this phone’s time zone</string>
+    <string name="clock_zone_conversation">%1$s · set for this conversation</string>
+    <string name="clock_zone_fixed">%1$s · your fixed time zone</string>
+    <string name="clock_zone_desktop">%1$s · your desktop’s time zone</string>
+    <string name="clock_zone_utc">%1$s · no time zone was found</string>
+    <string name="clock_zone_chosen">%1$s</string>
+    <string name="clock_last_check">Last desktop time check: %1$s, %2$s. This is not the current desktop time.</string>
+    <string name="clock_phone">This phone’s clock: %1$s, %2$s</string>
+    <string name="clock_update_desktop">This desktop’s PAL does not share its clock with your phone yet. Update PAL on your computer to see it here.</string>
+    <string name="clock_jumped">The desktop’s clock jumped or it slept a short while ago. Times measured across that moment are uncertain.</string>
+    <string name="clock_unusable">The desktop’s clock is reporting a time PAL cannot use.</string>
+    <string name="clock_phone_ahead">This phone’s clock is %1$s ahead of the desktop’s. PAL uses the desktop’s.</string>
+    <string name="clock_phone_behind">This phone’s clock is %1$s behind the desktop’s. PAL uses the desktop’s.</string>
+    <string name="clock_conversation">This conversation</string>
+    <string name="clock_conversation_detail">Times since recorded events, including every pause between messages. They are not a measure of work.</string>
+    <string name="clock_started">Started</string>
+    <string name="clock_previous_message">Your previous message</string>
+    <string name="clock_last_reply">Last reply</string>
+    <string name="clock_not_recorded">Not recorded</string>
+    <string name="clock_inconsistent">The clock was set back since then, so this cannot be measured</string>
+    <string name="clock_moment_ago">Less than a minute ago</string>
+    <string name="clock_about_ago">About %1$s ago</string>
+    <string name="clock_about_ago_jump">About %1$s ago. The clock jumped or the desktop slept in between</string>
+    <string name="clock_two_units">%1$s %2$s</string>
+    <plurals name="clock_minutes"><item quantity="one">%1$d minute</item><item quantity="other">%1$d minutes</item></plurals>
+    <plurals name="clock_hours"><item quantity="one">%1$d hour</item><item quantity="other">%1$d hours</item></plurals>
+    <plurals name="clock_days"><item quantity="one">%1$d day</item><item quantity="other">%1$d days</item></plurals>
+    <string name="clock_zone_heading">Time zone for this conversation</string>
+    <string name="clock_zone_hint">It decides which local date and time the next message is told. Timers, schedules and other conversations keep their own.</string>
+    <string name="clock_zone_default">Default</string>
+    <string name="clock_zone_choose">Choose a time zone</string>
+    <string name="clock_zone_use_default">Use the default</string>
+    <string name="clock_zone_set">The next message uses %1$s.</string>
+    <string name="clock_zone_cleared">This conversation follows your settings again.</string>
+    <string name="clock_zone_search">Search by city or region</string>
+    <string name="clock_zone_none">No time zone matches.</string>
+    <string name="clock_zone_this_phone">This phone: %1$s</string>
+    <string name="clock_settings_heading">Time awareness</string>
+    <string name="clock_settings_enabled">Let the assistant use the current date and time</string>
+    <string name="clock_settings_enabled_detail">When off, nothing about the time is sent. Timers, schedules and the clock keep working.</string>
+    <string name="clock_settings_elapsed">Include time since earlier messages</string>
+    <string name="clock_settings_zone">Time zone</string>
+    <string name="clock_settings_automatic">Use the device sending the message</string>
+    <string name="clock_settings_fixed">Use a fixed time zone</string>
+    <string name="clock_settings_fixed_value">Fixed: %1$s</string>
+    <string name="clock_settings_display">Time display</string>
+    <string name="clock_settings_display_system">Follow the system</string>
+    <string name="clock_settings_display_12">12-hour</string>
+    <string name="clock_settings_display_24">24-hour</string>
+    <string name="clock_cancel">Cancel</string>
+</resources>

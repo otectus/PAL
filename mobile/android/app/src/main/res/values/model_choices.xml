@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="models_find">
+        <item quantity="one">Find among %1$d model</item>
+        <item quantity="other">Find among %1$d models</item>
+    </plurals>
+    <string name="models_tools">Tools</string>
+    <string name="models_images">Images</string>
+    <string name="models_reasoning">Reasoning</string>
+    <string name="models_structured">Structured replies</string>
+    <string name="models_free">Free</string>
+    <string name="models_none">No model of this list matches.</string>
+    <plurals name="models_more">
+        <item quantity="one">Show %1$d more</item>
+        <item quantity="other">Show %1$d more</item>
+    </plurals>
+    <string name="models_ends">Its provider stops serving it on %1$s.</string>
+    <string name="models_served">Who serves it</string>
+    <string name="models_served_title">Who serves %1$s</string>
+    <string name="models_served_hint">Preferred ones are asked first, in the order you choose them. OpenRouter may still use another unless fallback is off in the provider options.</string>
+    <string name="models_served_none">OpenRouter names nobody who serves this model right now.</string>
+    <string name="models_unavailable">Not available right now · %1$s</string>
+    <string name="models_prefer">Prefer</string>
+    <string name="models_preferred">Preferred</string>
+    <string name="models_prefer_one">Prefer %1$s</string>
+</resources>

@@ -22,6 +22,8 @@ Item {
     property string reviewError: ""
     readonly property string ownerKey: sessionId + ":" + (target.rootId || "") + ":" + (target.path || "")
     RpcClient { id: rpc; scope: preview.ownerKey }
+    signal settingsRequested(string category, string target)
+    DocumentTools { id: documentTools; sessionId: preview.sessionId; onSettingsRequested: (category, target) => preview.settingsRequested(category, target) }
     Timer { id: initialLoad; interval: 0; onTriggered: { preview.load(1); if (WorkbenchState.fileDraft(preview.sessionId, preview.target.rootId, preview.target.path) !== undefined) preview.startEditing() } }
     function load(from) {
         if (!target.path || target.sessionId !== sessionId) { lines = []; page = ({}); return }
@@ -83,6 +85,7 @@ Item {
                         if (value.error) preview.error = value.error
                         else WorkbenchState.openAnalysis(preview.sessionId, {inputs: [value]})
                     }) }
+                CButton { objectName: "previewMore"; visible: documentTools.offers({ path: preview.target.path || "" }); text: "More"; iconName: "more"; quiet: true; onClicked: documentTools.openMenu({ rootId: preview.target.rootId, path: preview.target.path, name: preview.target.path.split("/").pop() }) }
                 CButton { objectName: "previewOpen"; visible: !!preview.absolute; text: ""; iconName: "expand"; help: "Open in its application"; Accessible.name: "Open in its application"; onClicked: App.openPath(preview.absolute) }
                 CButton { objectName: "previewReveal"; visible: !!preview.absolute; text: ""; iconName: "projects"; help: "Show in the file manager"; Accessible.name: "Show in the file manager"; onClicked: App.openPath(preview.absolute.slice(0, preview.absolute.lastIndexOf("/"))) }
             }
@@ -91,10 +94,8 @@ Item {
         CText { visible: !!preview.reviewError; text: preview.reviewError; color: Theme.danger; font.pixelSize: Theme.secondary; Accessible.role: Accessible.AlertMessage }
         CText { visible: !!preview.page.binary; text: "This file is not text (" + (preview.page.kind || "binary") + "), so PAL does not show it here. Open it in its application instead."; color: Theme.muted }
         CText { visible: !!preview.page.versionChanged; text: "The file changed while you were viewing it."; color: Theme.amber; font.pixelSize: Theme.secondary }
-        // Interactive web previews need an isolated browser process (no cookies, network or file access);
-        // this build does not include that optional module, so the source is shown and nothing runs.
-        CText { objectName: "previewHtmlUnavailable"; visible: /\.(html?|xhtml|svg)$/i.test(preview.target.path || "") && !preview.page.binary
-            text: "Interactive preview is not available in this installation: it needs PAL’s optional isolated preview module. The source is shown instead, and nothing in it runs. Opening it in its application uses your normal browser profile."
+        CText { objectName: "previewHtmlNote"; visible: /\.(html?|xhtml|svg)$/i.test(preview.target.path || "") && !preview.page.binary
+            text: "This is the page’s source. More › Preview in Canvas shows it running in PAL’s isolated browser, without network access."
             color: Theme.muted; font.pixelSize: Theme.caption }
         ListView {
             id: body; objectName: "previewLines"

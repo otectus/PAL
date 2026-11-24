@@ -29,8 +29,9 @@ ColumnLayout {
     }
     function edit(project,thenStart,sessionName){startAfterSave=!!thenStart;draftSessionName=sessionName||"";editor.editProject(projects.find(p=>p.cwd===project.cwd)||project)}
     function start(project){
-        const d=project.defaults
-        if(!project.configured||(!d.trusted&&!App.state.settings?.bypassCliPermissions&&(!["ollama","openai","anthropic","google","compatible"].includes(d.provider)||d.tools)))edit(project,true)
+        const d=project.defaults,trait=(App.state.providerTraits||{})[d.provider]||({})
+        const managedRoute=["local","api"].includes(trait.kind)
+        if(!project.configured||(!d.trusted&&!App.state.settings?.bypassCliPermissions&&(!managedRoute||d.tools)))edit(project,true)
         else quick.start(project)
     }
     function newProjectSession(){if(filtered.length)start(filtered[Math.max(0,rows.currentIndex)]||filtered[0]);else edit({},false)}

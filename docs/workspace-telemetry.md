@@ -5,9 +5,8 @@ Git HEAD metadata and the five newest edited files in memory. Select workspaces
 under **Settings → Workspace telemetry**, enable it, then install shell hooks.
 Command text and stderr capture each require their own opt-in.
 
-Ollama and API conversations (OpenAI, Anthropic, Google and the compatible
-endpoint) receive a request-only situation report beside retrieved context, never
-in system instructions. The active workspace is resolved from the destination
+Ollama and API conversations receive a request-only situation report beside
+retrieved context, never in system instructions. The active workspace is resolved from the destination
 conversation's cwd, not the focused terminal or compositor. Internal
 memory/extraction/embedding requests and remote conversations do not receive
 telemetry.

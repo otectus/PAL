@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -26,6 +27,8 @@ import dev.otectus.pal.mobile.protocol.ApprovalQuestion
 import dev.otectus.pal.mobile.protocol.ApprovalOption
 import dev.otectus.pal.mobile.protocol.Message
 import dev.otectus.pal.mobile.protocol.Session
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import java.io.File
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -45,7 +48,8 @@ class DesignStatesTest {
         val scenes = listOf("connecting", "reconnecting", "signing-in", "disconnected", "unreachable",
             "repair", "locked", "unreadable", "approval", "empty", "streaming", "long-history", "activity", "activity-failed",
             "monitoring-off", "replacing", "request-link", "request-question", "request-submitting",
-            "request-unconfirmed", "request-offline", "markdown", "owner-settings")
+            "request-unconfirmed", "request-offline", "markdown", "owner-settings", "grok-account", "perplexity-account",
+            "grok-conversation", "perplexity-conversation")
         compose.activity.runOnUiThread {
             compose.activity.setContent {
                 val config = Configuration(LocalConfiguration.current)
@@ -84,7 +88,11 @@ class DesignStatesTest {
     }
 
     @Composable private fun RenderScene(scene: String, repository: PALRepository) {
-        val online = ConnectionState.Online("Studio desktop", setOf("approvals.answer"), Long.MAX_VALUE)
+        val providerFixtures = Json.parseToJsonElement("""{
+          "xai":{"traits":{"label":"Grok (xAI)","kind":"api","modelRequired":true,"customModel":true,"configure":true,"billed":true,"variants":[{"id":"responses","label":"Responses"}],"auth":["bearer"]},"connections":[]},
+          "perplexity":{"traits":{"label":"Perplexity","kind":"api","modelRequired":true,"customModel":true,"effort":true,"configure":true,"billed":true,"webSearch":true,"variants":[{"id":"agent","label":"Agent API"}],"auth":["bearer"]},"connections":[]}
+        }""").jsonObject
+        val online = ConnectionState.Online("Studio desktop", setOf("approvals.answer", "sessions.send"), Long.MAX_VALUE)
         val connection = when (scene) {
             "connecting", "reconnecting" -> ConnectionState.Connecting
             "signing-in" -> ConnectionState.Authenticating
@@ -93,13 +101,17 @@ class DesignStatesTest {
             "monitoring-off" -> ConnectionState.Offline("Monitoring is off", null, OfflineKind.MonitoringOff)
             "replacing" -> ConnectionState.Offline("Updating pairing", null, OfflineKind.PairingChange)
             "request-offline" -> ConnectionState.Offline("Desktop unreachable", null)
-            "owner-settings" -> online.copy(role = "owner")
+            "owner-settings", "grok-account", "perplexity-account" -> online.copy(role = "owner", operations = online.operations + setOf("owner.settings.get", "owner.connections.list"))
             "locked" -> ConnectionState.Blocked("Unlock your phone to read its encrypted cache.")
             "unreadable" -> ConnectionState.Blocked("This phone cannot open its encrypted cache.", repair = true)
             "repair" -> ConnectionState.Blocked("The desktop identity has changed.", repair = true)
             else -> online
         }
-        val session = Session("example", "ollama", "Review the weekly notes", status = if (scene == "streaming") "working" else "idle", model = "Local model")
+        val session = when (scene) {
+            "grok-conversation" -> Session("example", "xai", "Grok handoff fixture", status = "idle", model = "grok-4", mode = "managed", canSend = true, draftAttachmentCount = 0)
+            "perplexity-conversation" -> Session("example", "perplexity", "Perplexity Research fixture", status = "idle", model = "preset:high", mode = "managed", canSend = true, draftAttachmentCount = 0)
+            else -> Session("example", "ollama", "Review the weekly notes", status = if (scene == "streaming") "working" else "idle", model = "Local model")
+        }
         val basicRequest = Approval("request", session.id, kind = "tool", title = "Read the project notes",
             detail = "notes/weekly-summary.md", choices = listOf("allow", "deny"), revision = "1", digest = "sample", canAnswer = true)
         val approval = when (scene) {
@@ -115,11 +127,22 @@ class DesignStatesTest {
             "request-unconfirmed" -> "unknown"
             else -> null
         }
-        val state = MobileState(restoreReady = true, connection = connection, sessions = listOf(session),
+        val fixtureMessages = when (scene) {
+            "grok-conversation" -> listOf(
+                Message("fixture-user", session.id, role = "user", text = "Review the 2.0.2 provider handoff.", revision = "1"),
+                Message("fixture-reply", session.id, role = "assistant", text = "Fixture response — Grok is connected through the selected named account, with model options preserved per session.", revision = "1")
+            )
+            "perplexity-conversation" -> listOf(
+                Message("fixture-user", session.id, role = "user", text = "Summarize the provider handoff and cite the relevant sources.", revision = "1"),
+                Message("fixture-reply", session.id, role = "assistant", text = "Fixture response — Perplexity Research preset high found the registry, account routing, and citation requirements. [1]\n\n[1] Provider handoff evidence fixture", revision = "1")
+            )
+            else -> emptyList()
+        }
+        val state = MobileState(restoreReady = true, connection = connection, sessions = listOf(session), messages = fixtureMessages,
             approvals = if (scene == "approval" || scene.startsWith("request-")) listOf(approval) else emptyList(),
             pendingCommands = pending?.let { listOf(PendingCommand("example", "approvals.answer", createdAt = 1,
                 status = it, approvalId = approval.id, approvalDigest = approval.digest, sessionId = session.id)) }.orEmpty(),
-            cursor = "1".takeIf { scene == "reconnecting" })
+            cursor = "1".takeIf { scene == "reconnecting" }, providers = providerFixtures)
         when (scene) {
             "locked", "unreadable" -> UnreadableCacheScreen(repository, compose.activity, connection as ConnectionState.Blocked)
             "repair" -> BlockedScreen(repository, state, compose.activity, connection as ConnectionState.Blocked)
@@ -128,6 +151,18 @@ class DesignStatesTest {
             "monitoring-off", "replacing" -> RecoveryPage(state, repository::retry)
             "owner-settings" -> LazyColumn(contentPadding = PaddingValues(PALLayout.gutter)) {
                 ownerSettings(repository, state, compose.activity, feedback = {}, failure = {})
+            }
+            "grok-account" -> LazyColumn(contentPadding = PaddingValues(PALLayout.gutter)) {
+                item { Text("Fixture · provider account setup", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary) }
+                ownerSettings(repository, state, compose.activity, feedback = {}, failure = {}, initialSection = "Keys and connections", initialProvider = "xai", loadRemote = false)
+            }
+            "perplexity-account" -> LazyColumn(contentPadding = PaddingValues(PALLayout.gutter)) {
+                item { Text("Fixture · provider account setup", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary) }
+                ownerSettings(repository, state, compose.activity, feedback = {}, failure = {}, initialSection = "Keys and connections", initialProvider = "perplexity", loadRemote = false)
+            }
+            "grok-conversation", "perplexity-conversation" -> Column {
+                Text("Fixture · no live provider request", Modifier.padding(PALLayout.gutter), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
+                ChatScreen(repository, state, session, compose.activity, {}, {}, {})
             }
             "markdown" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(PALLayout.gutter)) {
                 PALMarkdown(

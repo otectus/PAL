@@ -22,7 +22,7 @@ readonly DEPS_HOME="${PAL_MEMORY_DEPS_HOME:-${CERE_MEMORY_DEPS_HOME:-$(dependenc
 readonly ENV_FILE="${PAL_MEMORY_ENV_FILE:-${CERE_MEMORY_ENV_FILE:-$(dependency_path "${XDG_CONFIG_HOME:-$HOME/.config}" dependencies.env)}}"
 
 usage() {
-  echo "usage: $0 {up|down|status|logs|local-install|local-start|local-stop|check}"
+  echo "usage: $0 {up|down|status|logs|local-install|local-start|local-stop|local-state|local-logs|check}"
 }
 
 check_env_file() {
@@ -198,6 +198,19 @@ local_stop() {
   fi
 }
 
+# What PAL's own service controls need to know before they offer to start anything.
+local_state() {
+  if [[ -x "$DEPS_HOME/neo4j/bin/neo4j" && -x "$DEPS_HOME/qdrant/qdrant" ]]; then echo installed=yes; else echo installed=no; fi
+  if check_env_file 2>/dev/null; then echo configured=yes; else echo configured=no; fi
+}
+
+local_logs() {
+  local file
+  for file in "$DEPS_HOME/neo4j/logs/neo4j.log" "$DEPS_HOME/run/qdrant.log"; do
+    if [[ -f "$file" && ! -L "$file" ]]; then echo "== $(basename -- "$file")"; tail -n 100 -- "$file"; fi
+  done
+}
+
 local_check() {
   local state_file="$DEPS_HOME/run/adapter-check-state.json"
   rm -f -- "$state_file"
@@ -219,6 +232,8 @@ case "${1:-}" in
   local-install) local_install ;;
   local-start) local_start ;;
   local-stop) local_stop ;;
+  local-state) local_state ;;
+  local-logs) local_logs ;;
   check) local_check ;;
   *) usage; exit 2 ;;
 esac

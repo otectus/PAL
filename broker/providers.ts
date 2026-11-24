@@ -24,6 +24,12 @@ export type Hooks = {
   behavior?: () => string;
   /** Whether PAL offers this session its memory tools, so the memory guidance applies. */
   memoryGuidance?: () => boolean;
+  /** The fixed words about clock samples, or nothing while time awareness is off. Never part of what relaunches a CLI. */
+  temporalGuidance?: () => string;
+  /** A clock sample for the turn being sent, taken as it leaves. `channel` says where the adapter puts it. */
+  temporal?: (channel: string) => string;
+  /** The broker's clock, for a CLI that asks its host for the time. */
+  clock?: () => number;
   restrictive?: boolean;
   policy?: (verified: boolean) => void;
 };
@@ -240,7 +246,8 @@ export class CodexAdapter implements Adapter {
       approvalPolicy: this.hooks.restrictive ? 'on-request' : config.approval_policy ?? 'on-request',
       approvalsReviewer: this.hooks.restrictive ? 'user' : config.approvals_reviewer ?? 'user',
       sandbox: this.hooks.restrictive ? (config.sandbox_mode === 'read-only' ? 'read-only' : 'workspace-write') : config.sandbox_mode ?? 'read-only',
-      developerInstructions: [config.developer_instructions, personality, memory && memoryInstructions].filter(Boolean).join('\n\n'),
+      // The clock guidance is fixed text; the sample travels with each turn, so a passing minute relaunches nothing.
+      developerInstructions: [config.developer_instructions, personality, memory && memoryInstructions, this.hooks.temporalGuidance?.()].filter(Boolean).join('\n\n'),
       config: { 'mcp_servers.pal': mcpConfig(this.hooks.token, this.session.id) } };
     if (this.session.model) params.model = this.session.model;
     // PAL owns the displayed transcript. Hydrating Codex's full turn history here
@@ -383,7 +390,7 @@ export class CodexAdapter implements Adapter {
         const resolved = external.delete(key) || answer.resolved;
         if (!resolved && !this.process.closed) reply({id:m.id,result:{action:['allow','answer'].includes(answer.choice)&&(!answer.automatic||this.hooks.automaticApprovalValid?.('provider')===true)?'accept':'decline',content:questions.length?content:{}}});
       } else if (m.method === 'currentTime/read') {
-        if (!this.process.closed) reply({ id: m.id, result: { currentTimeAt: Math.floor(Date.now() / 1000) } });
+        if (!this.process.closed) reply({ id: m.id, result: { currentTimeAt: Math.floor((this.hooks.clock?.() ?? Date.now()) / 1000) } });
       } else {
         this.hooks.event({type:'message',text:`PAL cannot handle this provider request yet: ${m.method}. Continue in the CLI.`});
         reply({ id: m.id, error: { code: -32601, message: `PAL does not support ${m.method}` } });
@@ -501,6 +508,9 @@ export class CodexAdapter implements Adapter {
       await this.ready;
     }
     const input: any[] = [{ type: 'text', text, text_elements: [] }];
+    // After the person's words, so the thread keeps being named by them.
+    const time = this.hooks.temporal?.('turn context');
+    if (time) input.push({ type: 'text', text: time, text_elements: [] });
     for (const path of images) input.push({ type: 'localImage', path });
     const permissions = this.hooks.bypassCliPermissions?.()
       ? { approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'dangerFullAccess' } } : this.normalPermissions;
@@ -610,7 +620,8 @@ export class ClaudeAdapter implements Adapter {
     const promptPath = join(promptDirectory, 'system.txt');
     let proc: RpcProcess;
     try {
-      writeFileSync(promptPath, (this.hooks.behavior?.() ?? personalityInstructions(this.hooks.personality?.() ?? defaultPersonality, this.hooks.assistantName?.())) + ((this.hooks.memoryGuidance?.() ?? true) ? '\n' + memoryInstructions : ''), { mode: 0o600 });
+      const sample = this.hooks.temporal?.('appended system prompt') || '', timeInstructions = sample ? `\n${this.hooks.temporalGuidance?.() || ''}\n${sample}\n` : '';
+      writeFileSync(promptPath, (this.hooks.behavior?.() ?? personalityInstructions(this.hooks.personality?.() ?? defaultPersonality, this.hooks.assistantName?.())) + ((this.hooks.memoryGuidance?.() ?? true) ? '\n' + memoryInstructions : '') + timeInstructions, { mode: 0o600 });
       if(this.hooks.restrictive&&images.length){
         const mediaDirectory=join(promptDirectory,'media');mkdirSync(mediaDirectory,{mode:0o700});
         images=images.map((source,index)=>{const bytes=readFileSync(source),target=join(mediaDirectory,`attachment-${index+1}${imageExtension(bytes)}`);writeFileSync(target,bytes,{mode:0o600});return target;});

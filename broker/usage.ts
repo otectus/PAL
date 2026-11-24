@@ -22,8 +22,8 @@ import { remoteError } from './execution.ts';
 export type UsageStatus = 'reported' | 'estimated' | 'unknown' | 'subscription';
 export type Price = { input: number; output: number; image?: number };
 export type UsagePolicy = { revision: string; currency: string; prices: Record<string, Price>; monthlyLimit: number | null; warnAt: number | null };
-export type UsageRow = { time: number; sessionId: string; operationId: string; kind: string; provider: string; model: string; status: UsageStatus;
-  inputTokens: number; outputTokens: number; cachedTokens: number; images: number; calls: number; estimatedInputTokens: number; cost: number | null };
+export type UsageRow = { time: number; sessionId: string; operationId: string; kind: string; provider: string; model: string; actualModel?:string;upstreamProvider?:string;status: UsageStatus;
+  inputTokens: number; outputTokens: number; cachedTokens: number;searchCalls?:number;toolCalls?:number;reasoningTokens?:number;audioTokens?:number; images: number; calls: number; estimatedInputTokens: number; cost: number | null };
 
 const defaultPolicy: UsagePolicy = { revision: '0', currency: 'USD', prices: {}, monthlyLimit: null, warnAt: null };
 const number = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0);
@@ -48,7 +48,7 @@ export class UsageLedger {
       if (!p.prices || typeof p.prices !== 'object' || Array.isArray(p.prices) || Object.keys(p.prices).length > 200) throw new Error('Prices are a map of provider:model to prices per million tokens');
       prices = {};
       for (const [key, value] of Object.entries(p.prices as Record<string, any>)) {
-        if (!/^[a-z]+:[^\s]{1,200}$/.test(key) || !value || typeof value !== 'object') throw new Error(`Invalid price entry ${key.slice(0, 60)}`);
+        if (!/^[a-z][a-z0-9_]*:[^\s]{1,200}$/.test(key) || !value || typeof value !== 'object') throw new Error(`Invalid price entry ${key.slice(0, 60)}`);
         const amounts = [value.input, value.output, ...(value.image !== undefined ? [value.image] : [])];
         if (amounts.some(rate => typeof rate !== 'number' || !Number.isFinite(rate) || rate < 0)) throw new Error(`Enter a non-negative input, output and optional image price for ${key}`);
         prices[key] = { input: value.input, output: value.output, ...(value.image !== undefined ? { image: value.image } : {}) };
@@ -70,6 +70,8 @@ export class UsageLedger {
     if (!plan.reported) return;
     const estimated = plan.layers.reduce((sum, layer: any) => sum + number(layer.tokens ?? layer.estimate), 0);
     this.insert(sessionId, { kind: 'turn', source: plan.provider, model: plan.model, status: 'reported', calls: 1, turnId: plan.turnId,
+      ...(plan.reported.actualModel?{actualModel:plan.reported.actualModel}:{}),...(plan.reported.upstreamProvider?{upstreamProvider:plan.reported.upstreamProvider}:{}),
+      ...Object.fromEntries(['cachedTokens','reasoningTokens','audioTokens','searchCalls','toolCalls'].flatMap(k=>{const n=plan.reported![k as keyof typeof plan.reported];return typeof n==='number'?[[k,n]]:[];})),
       inputTokens: number(plan.reported.inputTokens), outputTokens: number(plan.reported.outputTokens), estimatedInputTokens: estimated });
   }
   private insert(sessionId: string, data: Record<string, unknown>) {
@@ -85,9 +87,9 @@ export class UsageLedger {
       const kind = String(data.kind || 'call'), images = number(data.images ?? (kind.startsWith('image') ? data.count ?? 1 : 0));
       const status: UsageStatus = ['reported', 'estimated', 'unknown', 'subscription'].includes(data.status) ? data.status : inputTokens || outputTokens ? 'reported' : 'unknown';
       const price = this.price(provider, model);
-      const cost = status === 'subscription' || !price ? null : (inputTokens / 1e6) * price.input + (outputTokens / 1e6) * price.output + images * (price.image ?? 0);
-      return { time: Number(row.time), sessionId: String(row.session_id), operationId: String(row.operation_id), kind, provider, model, status, inputTokens, outputTokens,
-        cachedTokens: number(data.cachedTokens ?? data.cached_tokens), images, calls: number(data.calls) || 1, estimatedInputTokens: number(data.estimatedInputTokens), cost };
+      const cost = status === 'subscription' || !price || status==='unknown'&&!images ? null : (inputTokens / 1e6) * price.input + (outputTokens / 1e6) * price.output + images * (price.image ?? 0);
+      return { time: Number(row.time), sessionId: String(row.session_id), operationId: String(row.operation_id), kind, provider, model, ...(typeof data.actualModel==='string'?{actualModel:data.actualModel}:{}),...(typeof data.upstreamProvider==='string'?{upstreamProvider:data.upstreamProvider}:{}), status, inputTokens, outputTokens,
+        cachedTokens: number(data.cachedTokens ?? data.cached_tokens), ...Object.fromEntries(['reasoningTokens','audioTokens','searchCalls','toolCalls'].filter(k=>typeof data[k]==='number').map(k=>[k,number(data[k])])), images, calls: number(data.calls) || 1, estimatedInputTokens: number(data.estimatedInputTokens), cost };
     });
   }
   /** Totals for a period, by day, provider and model, and project; identical for the desktop and any phone. */

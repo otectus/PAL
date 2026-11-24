@@ -22,6 +22,9 @@ Popup {
     signal pageRequested(int page)
     signal desktopRequested(string query)
     signal workflowsRequested()
+    signal clockRequested()
+    signal accountsRequested(string service)
+    signal documentRequested()
 
     property var apps:[]
     property var windows:[]
@@ -45,6 +48,15 @@ Popup {
             {id:"page:desktop",kind:"page",title:"Desktop",detail:"Actions, apps, and windows",page:2},
             {id:"page:settings",kind:"page",title:"Settings",detail:"Configure PAL",page:3},
             {id:"page:projects",kind:"page",title:"Projects",detail:"Project folders, defaults and quick sessions",page:4},
+            {id:"page:research",kind:"page",title:"Research",detail:"Start research, follow tasks and read reports",search:"research sources cite report evidence settings tasks",page:6},
+            {id:"accounts:calendar",kind:"accounts",title:"Agenda",detail:"The calendar of a connected account",search:"agenda calendar events meetings appointments schedule google outlook",service:"calendar"},
+            {id:"accounts:mail",kind:"accounts",title:"Mail",detail:"Search, read and write mail of a connected account",search:"mail email gmail outlook inbox messages write reply",service:"mail"},
+            {id:"accounts:drive",kind:"accounts",title:"Drive files",detail:"Find files of a connected account",search:"drive files onedrive google documents cloud storage",service:"drive"},
+            {id:"accounts:github",kind:"accounts",title:"GitHub",detail:"Issues, pull requests and repositories of a connected account",search:"github issues pull requests repositories code release",service:"github"},
+            {id:"accounts:outbox",kind:"accounts",title:"Drafts to send",detail:"What you or an assistant prepared for a connected account",search:"outbox drafts send unsent mail events issues accounts",service:"outbox"},
+            {id:"document:new",kind:"document",title:"Write a document",detail:"From a template, as PDF, Word or Markdown",search:"document report template pdf word docx letter notes write export"},
+            // The desktop's own clock; it asks no model and starts no timer.
+            {id:"clock:open",kind:"clock",title:"Current date and time",detail:"The desktop’s clock, time zone and this conversation’s times",search:"current date and time clock now today timezone time zone elapsed how long ago"},
             // Opens the recipe chooser only: choosing, previewing and sending stay separate, reviewed steps.
             // Workbench: opens a pane of the current conversation's Workbench; nothing runs from here.
             {id:"workbench:open",kind:"workbench",title:"Open Workbench",detail:"Files, previews, changes, images and runs for this conversation",search:"workbench files images runs",value:""},
@@ -54,8 +66,9 @@ Popup {
             {id:"workbench:artifacts",kind:"workbench",title:"Show artifacts",detail:"Workbench › Images (all files)",search:"artifacts produced files outputs gallery",value:"images"},
             {id:"workbench:runs",kind:"workbench",title:"Show active runs",detail:"Workbench › Runs",search:"active runs jobs operations code lab",value:"runs"},
             {id:"workbench:notes",kind:"workbench",title:"Open Notes",detail:"Workbench › Notes",search:"notes notebook library scratchpad daybook",value:"notes"},
+            {id:"workbench:recordings",kind:"workbench",title:"Open Media",detail:"Workbench › Media",search:"recordings audio video transcript subtitles clip listen",value:"recordings"},
             {id:"workbench:canvas",kind:"workbench",title:"Open Canvas",detail:"Workbench › Canvas",search:"canvas preview",value:"canvas"},
-            {id:"workbench:research",kind:"workbench",title:"Research a question",detail:"Workbench › Research · a cited report from sources PAL reads",search:"research sources cite report evidence web compare",value:"research"},
+            {id:"workbench:research",kind:"workbench",title:"Open Research in Workbench",detail:"Research alongside the current conversation",search:"workbench research conversation sources evidence",value:"research"},
             {id:"workbench:terminal",kind:"workbench",title:"Open a terminal",detail:"Workbench › Terminal · Bash or Fish on this computer",search:"terminal shell bash fish zsh command line console pty",value:"terminal"},
             {id:"page:recipes",kind:"workflow",title:"Project recipes",detail:"Reviewed one-turn recipes: compare options, review a plan, prepare a handoff…",search:"project recipes workflows starters compare options review plan handoff explain subsystem diff crash release error"},
             {id:"workflow:routines",kind:"workflow",title:"Routines and schedules",detail:"Project workflows › scheduled and folder-triggered recipes",search:"routine routines schedule schedules scheduled folder trigger watched folder unattended missed run quiet period"}
@@ -83,7 +96,7 @@ Popup {
         let matches=allEntries.filter(entry=>{
             if(seen[entry.id])return false
             seen[entry.id]=true
-            if(!query){const destination=destinationId(entry);return favorites.indexOf(destination)>=0||recents.indexOf(destination)>=0||entry.kind==="page"||entry.kind==="workflow"||entry.kind==="workbench"||entry.kind==="bookmark"}
+            if(!query){const destination=destinationId(entry);return favorites.indexOf(destination)>=0||recents.indexOf(destination)>=0||entry.kind==="page"||entry.kind==="workflow"||entry.kind==="workbench"||entry.kind==="clock"||entry.kind==="bookmark"}
             return (entry.search||entry.title+" "+entry.detail+" "+entry.kind).toLowerCase().indexOf(query)>=0
         })
         matches.sort((a,b)=>{
@@ -98,7 +111,7 @@ Popup {
                 const titleA=a.title.toLowerCase(),titleB=b.title.toLowerCase()
                 const exactA=titleA===query?0:titleA.startsWith(query)?1:2,exactB=titleB===query?0:titleB.startsWith(query)?1:2
                 if(exactA!==exactB)return exactA-exactB
-                const kinds={bookmark:0,capsule:1,transcript:2,settings:3,session:4,folder:5,project:6,page:7,workflow:7,action:8,app:9,window:10,script:11}
+                const kinds={bookmark:0,capsule:1,transcript:2,settings:3,session:4,folder:5,project:6,page:7,workflow:7,clock:7,document:7,action:8,app:9,window:10,script:11}
                 const kindA=kinds[a.kind]===undefined?20:kinds[a.kind],kindB=kinds[b.kind]===undefined?20:kinds[b.kind]
                 if(kindA!==kindB)return kindA-kindB
             }
@@ -134,6 +147,9 @@ Popup {
         else if(entry.kind==="settings")settingsRequested(entry.value.category,entry.value.target)
         else if(entry.kind==="page")pageRequested(entry.page)
         else if(entry.kind==="workflow")workflowsRequested()
+        else if(entry.kind==="clock")clockRequested()
+        else if(entry.kind==="document")documentRequested()
+        else if(entry.kind==="accounts")accountsRequested(entry.service)
         else if(entry.kind==="workbench"){pageRequested(0);WorkbenchState.createRequested=entry.value==="create";WorkbenchState.show(entry.value==="create"?"images":entry.value)}
         else if(entry.kind==="script"){
             scriptReview.script=entry.value

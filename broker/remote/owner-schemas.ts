@@ -1,3 +1,9 @@
+import { xaiCollectionOwnerFeature,xaiCollectionOwnerOperations } from '../xai-collections.ts';
+import {artifactTranscript} from '../speech/artifact.ts';
+import { catalogOperations } from '../api-providers.ts';
+import { connectionTests } from '../connection-tools.ts';
+import { apiProviders, providerIds } from '../provider-catalog.ts';
+import { serviceCredentialIds } from '../credentials.ts';
 /**
  * Wire contracts of the operations an owner phone gains (PAL Everywhere, handoff §8–9). Each operation is
  * enumerated here with a strict schema, its kind and the protocol feature that introduces it; the gateway
@@ -8,9 +14,15 @@
  * Kinds: `read` changes nothing; `mutation` is a reduction or an organisational change that needs no proof
  * (stop, revoke a grant, detach); `signed` needs the exact-action proof every other phone mutation needs.
  */
+import { lookupOriginal,uploadOriginal } from '../artifacts/provider-files.ts';
+import { voiceSchema } from '../hosted-speech.ts';
+import { timedMediaInput, timedMediaLookup } from '../media/timed.ts';
+import { handoffInput } from '../research/handoff.ts';
+import { routeFields } from '../research/routes.ts';
 import { z } from 'zod';
+import { huggingFaceTasks } from '../provider-inference/contracts.ts';
 
-export const ownerFeatures = ['owner.policy.v1', 'workbench.remote.v1', 'artifacts.transfer.v1', 'settings.owner.v1', 'terminal.v1'] as const;
+export const ownerFeatures = ['owner.policy.v1', 'workbench.remote.v1', 'artifacts.transfer.v1', 'settings.owner.v1', 'terminal.v1', 'realtime.audio.v1', 'provider.inference.v1', 'provider.bridge.v1',xaiCollectionOwnerFeature] as const;
 export type OwnerFeature = (typeof ownerFeatures)[number];
 /**
  * `stream`: terminal input and resizes. They are bound to a control lease acquired by a signed action and are
@@ -34,6 +46,7 @@ const rootPolicy = z.strictObject({ write: z.boolean().optional(), organize: z.b
 const bounded = (bytes: number) => z.record(z.string(), z.unknown()).refine(value => JSON.stringify(value).length <= bytes, `At most ${bytes} bytes`);
 const families = z.strictObject({ files: z.boolean().optional(), images: z.boolean().optional(), analysis: z.boolean().optional(), host: z.boolean().optional() });
 
+const seconds = z.number().min(0).max(86_400);
 const labLanguage = z.enum(['python', 'sql']);
 const labInputs = z.array(z.strictObject({ artifactId: uuid, versionId: uuid.optional() })).max(8);
 const labCells = z.array(z.strictObject({ name: z.string().min(1).max(120), code: z.string().min(1).max(65536), language: labLanguage })).max(12);
@@ -41,18 +54,25 @@ const labProgram = {
   sessionId, sharedPython: z.boolean().optional(), inputs: labInputs.optional(), parameters: bounded(16384).optional(), code: z.string().max(65536),
   language: labLanguage.optional(), steps: labCells.optional(), parentId: uuid.optional(), analysisId: uuid.optional(),
 };
+/** Accounts (accounts/service.ts): what is asked of a service; its own rules check every field again. */
+const accountId = uuid, accountItem = z.string().min(1).max(1024), eventTime = z.union([z.strictObject({ date: z.string().max(10) }), z.strictObject({ dateTime: z.string().max(19), timeZone: z.string().max(64) })]);
+const accountEvent = z.strictObject({ title: z.string().min(1).max(300), start: eventTime, end: eventTime, location: z.string().max(500).optional(), notes: z.string().max(8000).optional(), attendees: z.array(z.string().max(254)).max(50).optional(), recurrence: z.strictObject({ every: z.enum(['day', 'week', 'month', 'year']), interval: z.number().int().min(1).max(99).optional(), days: z.array(z.string().length(2)).max(7).optional(), until: z.string().max(10).optional(), count: z.number().int().min(1).max(999).optional() }).nullable().optional() });
+const accountMail = z.strictObject({ to: z.array(z.string().max(254)).max(50), cc: z.array(z.string().max(254)).max(50).optional(), bcc: z.array(z.string().max(254)).max(50).optional(), subject: z.string().max(300), text: z.string().min(1).max(100_000), reply: z.strictObject({ threadId: accountItem, messageId: accountItem }).optional() });
+const accountGitHub = z.strictObject({ kind: z.enum(['issue.create', 'issue.update', 'comment', 'pull.create', 'release.draft']), repo: z.string().min(3).max(140), number: z.number().int().min(1).optional(), title: z.string().max(250).optional(), body: z.string().max(60_000).optional(), state: z.enum(['open', 'closed']).optional(), labels: z.array(z.string().max(50)).max(20).optional(), head: z.string().max(250).optional(), base: z.string().max(250).optional(), draft: z.boolean().optional(), tag: z.string().max(250).optional(), target: z.string().max(250).optional(), name: z.string().max(250).optional(), revision: z.string().max(100).optional() });
+const githubRead = { what: z.enum(['repository', 'file', 'issue', 'pull', 'releases', 'compare']), repo: z.string().min(3).max(140), path: z.string().max(1000).optional(), ref: z.string().max(250).optional(), number: z.number().int().min(1).optional(), base: z.string().max(250).optional(), head: z.string().max(250).optional() };
+const accountUse = z.enum(['read', 'write', 'off']);
 type Entry = { schema: z.ZodType; kind: OwnerKind; feature: OwnerFeature; sensitive?: string[] };
 const stream = (feature: OwnerFeature, schema: z.ZodType): Entry => ({ schema, kind: 'stream', feature });
 const read = (feature: OwnerFeature, schema: z.ZodType): Entry => ({ schema, kind: 'read', feature });
 const mutation = (feature: OwnerFeature, schema: z.ZodType): Entry => ({ schema, kind: 'mutation', feature });
 const signed = (feature: OwnerFeature, schema: z.ZodType, sensitive?: string[]): Entry => ({ schema, kind: 'signed', feature, ...(sensitive ? { sensitive } : {}) });
-const O = 'owner.policy.v1', W = 'workbench.remote.v1', T = 'artifacts.transfer.v1', S = 'settings.owner.v1', X = 'terminal.v1';
+const O = 'owner.policy.v1', W = 'workbench.remote.v1', T = 'artifacts.transfer.v1', S = 'settings.owner.v1', X = 'terminal.v1', P = 'provider.inference.v1', B = 'provider.bridge.v1';
 
 /** Settings an owner phone edits, by family: only these keys, each validated by the desktop's own settings code. */
 export const settingsFamilies = {
   companion: ['personality', 'assistantName', 'avatar', 'showMemoryCitations', 'sendKey', 'delegationUpdates'],
   appearance: ['desktopProfile', 'interfaceScale', 'topmost', 'scale', 'roaming', 'quiet', 'reducedMotion', 'motionIntensity', 'expressiveCues', 'idleEnergy', 'hidden'],
-  voice: ['ttsProvider', 'voice', 'speechEnabled', 'speechProviders', 'speechRate', 'speechPitch', 'speechVolume', 'speechBrief', 'voiceCommands', 'audio', 'transcription'],
+  voice: ['ttsProvider', 'hostedVoice', 'voice', 'speechEnabled', 'speechProviders', 'speechRate', 'speechPitch', 'speechVolume', 'speechBrief', 'speechCache', 'voiceCommands', 'audio', 'transcription'],
   models: ['ollama', 'conversationDefaults', 'compatible'],
   search: ['webSearch'],
   memory: ['memory', 'notesVault'],
@@ -62,6 +82,7 @@ export const settingsFamilies = {
   toolServers: ['extensions'],
   customTools: ['customTools'],
   telemetry: ['telemetry', 'responsiveness'],
+  time: ['time'],
 } as const;
 export type SettingsFamily = keyof typeof settingsFamilies;
 /** Special keys a terminal client sends by name; the broker's terminal encodes them for the program's current modes. */
@@ -75,6 +96,7 @@ const terminalEvent = z.union([
 ]);
 
 export const ownerOperations: Record<string, Entry> = {
+  ...Object.fromEntries(Object.entries(xaiCollectionOwnerOperations).map(([name,entry])=>[name,{...entry,feature:xaiCollectionOwnerFeature,...('sensitive' in entry?{sensitive:[...entry.sensitive]}:{})}])),
   // Negotiation (every role): what this client understands. An owner phone acts as an owner only after this.
   'client.features': { schema: z.strictObject({ features: z.array(z.string().max(64)).max(32) }), kind: 'read', feature: O },
   // A phone may always lower its own role (limited or observer); it can never raise it.
@@ -121,6 +143,7 @@ export const ownerOperations: Record<string, Entry> = {
   'workbench.changes.apply': signed(W, z.strictObject({ sessionId, changeSetId: ref, digest: z.string().max(200), operations: z.array(z.number().int().min(0).max(1000)).max(1000).optional() })),
   'workbench.changes.decline': mutation(W, z.strictObject({ sessionId, changeSetId: ref })),
   'workbench.changes.undo': signed(W, z.strictObject({ sessionId, changeSetId: ref })),
+  'workbench.changes.purge': signed(W, z.strictObject({ sessionId, trashId: uuid, confirmed: z.literal(true) })),
   'workbench.changes.trash': read(W, z.strictObject({ sessionId })),
   'workbench.artifacts.list': read(W, z.strictObject({ sessionId, kind: z.string().max(40).optional(), source: z.string().max(40).optional(), query: z.string().max(200).optional(), project: z.boolean().optional(), before: z.string().max(200).optional(), limit: z.number().int().min(1).max(100).optional() })),
   'workbench.artifacts.get': read(W, z.strictObject({ sessionId, artifactId: ref })),
@@ -148,7 +171,7 @@ export const ownerOperations: Record<string, Entry> = {
   'workbench.codelab.load': read(W, z.strictObject({ sessionId, id: ref })),
   'workbench.codelab.export': signed(W, z.strictObject({ sessionId, operationId: ref, outputs: z.array(ref).max(20).optional() })),
   'workbench.codelab.table': read(W, z.strictObject({ sessionId, artifactId: ref, versionId: ref, query: z.string().max(1000).optional(), sort: z.string().max(200).optional(), direction: z.enum(['asc', 'desc']).optional(), offset: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(200).optional() })),
-  'workbench.codelab.exportRows': signed(W, z.strictObject({ sessionId, artifactId: ref, versionId: ref, query: z.string().max(1000).optional(), sort: z.string().max(200).optional(), direction: z.enum(['asc', 'desc']).optional(), rows: z.array(z.number().int().positive()).max(500).optional() })),
+  'workbench.codelab.exportRows': signed(W, z.strictObject({ sessionId, artifactId: ref, versionId: ref, query: z.string().max(1000).optional(), sort: z.string().max(200).optional(), direction: z.enum(['asc', 'desc']).optional(), rows: z.array(z.number().int().positive()).max(500).optional(), spreadsheetSafe: z.boolean().optional() })),
   'workbench.codelab.schedule': signed(W, z.strictObject({ sessionId, id: ref, days: z.number().int().min(0).max(365) })),
   'workbench.codelab.remove': mutation(W, z.strictObject({ sessionId, id: ref })),
   'workbench.codelab.save': signed(W, z.strictObject({ sessionId, operationId: ref, name: z.string().min(1).max(120) })),
@@ -168,6 +191,33 @@ export const ownerOperations: Record<string, Entry> = {
   'workbench.images.sketch': signed(W, z.strictObject({ sessionId, width: z.number().int().min(16).max(4096), height: z.number().int().min(16).max(4096), background: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional() })),
   'workbench.images.contactSheet': signed(W, z.strictObject({ sessionId, items: z.array(z.strictObject({ artifactId: ref, versionId: ref })).min(1).max(16) })),
   'workbench.images.inspect': read(W, z.strictObject({ sessionId, artifactId: ref, versionId: ref.optional() })),
+  // §16.3: recordings, time-coded transcripts, corrections, subtitles and clips.
+  'workbench.recordings.list': read(W, z.strictObject({ sessionId, project: z.boolean().optional(), query: z.string().max(200).optional() })),
+  'workbench.recordings.open': read(W, z.strictObject({ sessionId, artifactId: uuid, versionId: uuid.optional(), transcriptId: uuid.optional() })),
+  'workbench.recordings.cues': read(W, z.strictObject({ sessionId, artifactId: uuid, versionId: uuid.optional(), from: z.number().int().min(0).max(10_000).optional(), limit: z.number().int().min(1).max(400).optional() })),
+  'workbench.recordings.transcribe': signed(W, z.strictObject({ sessionId, artifactId: uuid, versionId: uuid.optional() })),
+  'workbench.recordings.correct': signed(W, z.strictObject({ sessionId, artifactId: uuid, versionId: uuid, edits: z.array(z.strictObject({ index: z.number().int().min(0).max(10_000), text: z.string().max(2000), speaker: z.string().max(80).optional() })).min(1).max(40) })),
+  'workbench.recordings.subtitles': signed(W, z.strictObject({ sessionId, artifactId: uuid, versionId: uuid.optional(), format: z.enum(['srt', 'vtt']), start: seconds.optional(), end: seconds.optional(), fromZero: z.boolean().optional() })),
+  'workbench.recordings.clip': signed(W, z.strictObject({ sessionId, artifactId: uuid, versionId: uuid.optional(), start: seconds, end: seconds, transcript: z.strictObject({ artifactId: uuid, versionId: uuid }).optional() })),
+  // §15.2: documents for other people.
+  'workbench.documents.formats': read(W, z.strictObject({})),
+  'workbench.documents.fill': read(W, z.strictObject({ sessionId, template: z.string().min(1).max(40), title: z.string().max(200).optional() })),
+  'workbench.documents.save': signed(W, z.strictObject({ sessionId, title: z.string().max(200), markdown: z.string().min(1).max(120_000), artifactId: uuid.optional(), versionId: uuid.optional() })),
+  'workbench.documents.render': signed(W, z.strictObject({ sessionId, format: z.enum(['pdf', 'docx', 'html', 'md']), page: z.enum(['A4', 'Letter']).optional(), title: z.string().max(200).optional(), markdown: z.string().min(1).max(120_000).optional(),
+    artifactId: uuid.optional(), versionId: uuid.optional(), rootId: ref.optional(), path: relPath.optional(), conversation: z.literal(true).optional(), messageIds: z.array(z.string().min(1).max(200)).min(1).max(200).optional() })),
+  // §15.2: an analysis session keeps its variables between cells until it is stopped.
+  'workbench.codelab.session': read(W, z.strictObject({ sessionId })),
+  'workbench.codelab.sessionStart': signed(W, z.strictObject({ sessionId, inputs: labInputs.optional() })),
+  'workbench.codelab.sessionRun': signed(W, z.strictObject({ sessionId, code: z.string().min(1).max(65536), inputs: labInputs.optional(), purpose: z.string().max(300).optional(), timeoutSeconds: z.number().int().min(1).max(600).optional() })),
+  'workbench.codelab.sessionInterrupt': mutation(W, z.strictObject({ sessionId })),
+  'workbench.codelab.sessionClear': mutation(W, z.strictObject({ sessionId })),
+  'workbench.codelab.sessionRestart': signed(W, z.strictObject({ sessionId })),
+  'workbench.codelab.sessionStop': mutation(W, z.strictObject({ sessionId })),
+  'workbench.codelab.sessionNotebook': read(W, z.strictObject({ sessionId })),
+  // §11.3: sources kept beside every message of a conversation or project.
+  'workbench.references.pins': read(W, z.strictObject({ sessionId })),
+  'workbench.references.keep': signed(W, z.strictObject({ sessionId, ref: bounded(2000), scope: z.enum(['session', 'project']).optional() })),
+  'workbench.references.unkeep': mutation(W, z.strictObject({ sessionId, id: uuid })),
   'workbench.images.ocr': read(W, z.strictObject({ sessionId, artifactId: ref, versionId: ref.optional(), region: bounded(200).optional() })),
   'workbench.images.analyze': signed(W, z.strictObject({ sessionId, artifactId: ref, versionId: ref.optional(), question: z.string().max(2000).optional(), region: bounded(200).optional() })),
   'workbench.references.search': read(W, z.strictObject({ sessionId, query: z.string().max(200) })),
@@ -189,9 +239,14 @@ export const ownerOperations: Record<string, Entry> = {
   'owner.connections.list': read(S, z.strictObject({})),
   'owner.connections.save': signed(S, bounded(20_000)),
   'owner.connections.remove': signed(S, z.strictObject({ id: ref })),
-  'owner.connections.models': read(S, z.strictObject({ id: ref })),
+  'owner.connections.check': signed(S, z.strictObject({ connectionId: ref.optional(), provider: ref.optional(), model: z.string().max(512).optional(), tests: z.array(z.enum(connectionTests)).max(connectionTests.length).optional(), paid: z.boolean().optional() })),
+  'owner.connections.uses': read(S, z.strictObject({ id: ref })),
+  // Who serves one OpenRouter model, asked through an account of it.
+  'owner.connections.modelEndpoints': read(S, z.strictObject({ connectionId: ref.optional(), model: z.string().min(3).max(200) })),
+  'owner.connections.reassign': signed(S, z.strictObject({ id: ref, to: ref, reviewed: z.literal(true) })),
+  'owner.connections.models': read(S, z.strictObject({ id: ref, operation:z.enum(catalogOperations).optional() })),
   // The key crosses the pinned, authenticated channel once; only its status ever comes back.
-  'owner.credentials.set': signed(S, z.strictObject({ provider: z.enum(['openai', 'anthropic', 'google', 'compatible', 'elevenlabs']), connectionId: ref.optional(), key: z.string().max(4096).nullable() }), ['key']),
+  'owner.credentials.set': signed(S, z.strictObject({ provider: z.enum([...apiProviders,...serviceCredentialIds]), connectionId: ref.optional(), key: z.string().max(4096).nullable() }), ['key']),
   'owner.extensions.status': read(S, z.strictObject({})),
   'owner.extensions.restart': mutation(S, z.strictObject({ id: ref })),
   'owner.extensions.secret': signed(S, z.strictObject({ id: ref, name: z.string().min(1).max(100), value: z.string().max(8192).nullable() }), ['value']),
@@ -223,33 +278,67 @@ export const ownerOperations: Record<string, Entry> = {
   'owner.setups.delete': signed(S, z.strictObject({ id: ref })),
   'owner.setups.preview': read(S, z.strictObject({ setupId: ref, sessionId })),
   'owner.setups.apply': signed(S, z.strictObject({ token: uuid })),
-  'owner.setups.start': signed(S, z.strictObject({ setupId: ref, expectedSetupRevision: revision.optional(), cwd: absPath, provider: z.enum(['ollama', 'openai', 'anthropic', 'google', 'compatible', 'codex', 'claude', 'antigravity']).optional(), model: z.string().min(1).max(512).optional() })),
+  'owner.setups.start': signed(S, z.strictObject({ setupId: ref, expectedSetupRevision: revision.optional(), cwd: absPath, provider: z.enum(providerIds).optional(), model: z.string().min(1).max(512).optional() })),
   'owner.extensions.resolveWrite': signed(S, z.strictObject({ id: uuid, outcome: z.enum(['done', 'not-done']) })),
+  // What was worked on in approved folders, while the owner keeps it (workspace-history.ts).
+  'owner.workspace.history': read(S, z.strictObject({ project: absPath.optional(), before: z.number().int().optional(), limit: z.number().int().min(1).max(200).optional() })),
+  'owner.workspace.historyErase': signed(S, z.strictObject({ project: absPath.optional(), all: z.literal(true).optional() }).refine(p => !!p.project || p.all === true, 'Choose what to erase')),
+  // Accounts: connected from either screen; the sign-in and every key stay on the desktop.
+  'owner.accounts.list': read(S, z.strictObject({})),
+  'owner.accounts.save': signed(S, z.strictObject({ id: accountId.optional(), expectedRevision: revision.optional(), provider: z.enum(['github', 'google', 'microsoft']).optional(), label: z.string().min(1).max(60).optional(), clientId: z.string().max(300).optional(), clientSecret: z.string().max(1000).optional(), tenant: z.string().max(120).optional(), host: z.string().max(253).optional(), services: z.partialRecord(z.enum(['github', 'calendar', 'mail', 'drive']), accountUse).optional(), ai: z.enum(['off', 'read', 'write']).optional(), destinations: destinations.optional(), projects: z.array(absPath).max(50).nullable().optional() }), ['clientSecret']),
+  'owner.accounts.remove': signed(S, z.strictObject({ id: accountId })),
+  'owner.accounts.signIn': signed(S, z.strictObject({ id: accountId, method: z.enum(['device', 'token']), token: z.string().max(500).optional() }), ['token']),
+  'owner.accounts.flow': read(S, z.strictObject({ id: uuid })),
+  'owner.accounts.cancel': mutation(S, z.strictObject({ id: uuid })),
+  'owner.accounts.signOut': signed(S, z.strictObject({ id: accountId })),
+  'owner.accounts.test': read(S, z.strictObject({ id: accountId })),
+  'owner.accounts.calendars': read(W, z.strictObject({ accountId })),
+  'owner.accounts.agenda': read(W, z.strictObject({ accountId, calendarId: accountItem.optional(), from: z.number().int().optional(), to: z.number().int().optional() })),
+  'owner.accounts.mailSearch': read(W, z.strictObject({ accountId, query: z.string().max(500), limit: z.number().int().min(1).max(30).optional() })),
+  'owner.accounts.mailThread': read(W, z.strictObject({ accountId, threadId: accountItem })),
+  'owner.accounts.driveSearch': read(W, z.strictObject({ accountId, query: z.string().min(1).max(300), limit: z.number().int().min(1).max(30).optional() })),
+  'owner.accounts.driveList': read(W, z.strictObject({ accountId, folderId: accountItem.optional() })),
+  'owner.accounts.githubSearch': read(W, z.strictObject({ accountId, kind: z.enum(['repositories', 'code', 'issues', 'pulls']), query: z.string().min(1).max(300), limit: z.number().int().min(1).max(30).optional() })),
+  'owner.accounts.githubRead': read(W, z.strictObject({ accountId, ...githubRead })),
+  'owner.accounts.import': signed(W, z.strictObject({ sessionId, accountId, what: z.enum(['drive', 'mail', 'attachment', 'github']), fileId: accountItem.optional(), threadId: accountItem.optional(), messageId: accountItem.optional(), attachmentId: accountItem.optional(), name: z.string().max(200).optional(), github: z.strictObject(githubRead).optional() })),
+  'owner.accounts.outbox': read(W, z.strictObject({})),
+  'owner.accounts.draft': signed(W, z.strictObject({ id: uuid.optional(), digest: z.string().regex(/^[0-9a-f]{64}$/).optional(), sessionId: sessionId.optional(), accountId, kind: z.enum(['calendar.create', 'calendar.update', 'calendar.remove', 'mail.send', 'mail.draft', 'drive.create', 'drive.update', 'github']), event: accountEvent.optional(), calendarId: accountItem.optional(), eventId: accountItem.optional(), revision: accountItem.optional(), mail: accountMail.optional(), artifactId: uuid.optional(), versionId: uuid.optional(), fileId: accountItem.optional(), folderId: accountItem.optional(), name: z.string().max(200).optional(), write: accountGitHub.optional() })),
+  'owner.accounts.commit': signed(W, z.strictObject({ id: uuid, digest: z.string().regex(/^[0-9a-f]{64}$/) })),
+  'owner.accounts.check': signed(W, z.strictObject({ id: uuid })),
+  'owner.accounts.discard': mutation(W, z.strictObject({ id: uuid })),
   'owner.customTools.credential': signed(S, z.strictObject({ id: ref, value: z.string().max(8192).nullable() }), ['value']),
   'owner.schedules.list': read(S, z.strictObject({})),
   'owner.schedules.setEnabled': signed(S, z.strictObject({ id: ref, enabled: z.boolean() })),
   'owner.schedules.delete': signed(S, z.strictObject({ id: ref })),
-  'owner.schedules.create': signed(S, z.strictObject({ label: z.string().min(1).max(80), when: bounded(2000), previewToken: z.string().min(1).max(200), unattended: z.literal(true), missed: z.enum(['skip', 'once']).optional() })),
+  'owner.schedules.create': signed(S, z.strictObject({ label: z.string().min(1).max(80), when: bounded(2000), previewToken: z.string().min(1).max(200), unattended: z.literal(true), missed: z.enum(['skip', 'once']).optional(), delivery: z.strictObject({ accountId: uuid, target: z.union([z.strictObject({ kind: z.literal('mail'), to: z.array(z.string().max(254)).min(1).max(5) }), z.strictObject({ kind: z.literal('github'), repo: z.string().max(140), number: z.number().int().min(1) })]) }).optional() })),
   'owner.schedules.adopt': signed(S, z.strictObject({ id: ref })),
   'owner.recipes.list': read(S, z.strictObject({})),
   // Prepare returns the exact prompt and a short-lived token; creating its draft or schedule names that token.
   'owner.recipes.prepare': read(S, z.strictObject({ sessionId, recipeId: ref, version: z.number().int().min(1).optional(), inputs: bounded(20_000).optional() })),
   'owner.recipes.createDraft': signed(S, z.strictObject({ previewToken: z.string().min(1).max(200), reviewed: z.literal(true) })),
   'owner.results.list': read(S, z.strictObject({ sessionId: sessionId.optional(), limit: z.number().int().min(1).max(200).optional() })),
-  'owner.results.verify': signed(S, z.strictObject({ sessionId, scriptId: ref, expectedScript: bounded(20_000), reviewed: z.literal(true) })),
+  // resultId names the result that was reviewed; a newer one is refused rather than checked in its place.
+  'owner.results.verify': signed(S, z.strictObject({ sessionId, resultId: z.string().min(1).max(200), scriptId: ref, expectedScript: bounded(20_000), reviewed: z.literal(true) })),
   'owner.collections.list': read(S, z.strictObject({ sessionId: sessionId.optional() })),
   'owner.collections.create': signed(S, z.strictObject({ name: z.string().min(1).max(100), grounding: z.enum(['strict', 'balanced', 'exploratory']).optional(), allowCloud: z.boolean().optional() })),
   'owner.collections.addSource': signed(S, z.strictObject({ id: ref, expectedRevision: revision, path: absPath })),
   'owner.collections.removeSource': signed(S, z.strictObject({ id: ref, expectedRevision: revision, path: absPath })),
   'owner.collections.bind': signed(S, z.strictObject({ id: ref, target: z.enum(['global', 'project', 'session']), sessionId: sessionId.optional(), bound: z.boolean() })),
-  'owner.collections.index': signed(S, z.strictObject({ id: ref })),
+  'owner.collections.index': signed(S, z.strictObject({ id: ref, rebuild: z.boolean().optional() })),
+  // A05: the project task a conversation works on.
+  'owner.sessions.tasks': read(S, z.strictObject({ sessionId })),
+  'owner.sessions.workOn': signed(S, z.strictObject({ sessionId, taskId: uuid.nullable() })),
+  'owner.collections.update': signed(S, z.strictObject({ id: ref, expectedRevision: revision, name: z.string().min(1).max(80).optional(), grounding: z.enum(['strict', 'balanced', 'exploratory']).optional(), allowCloud: z.boolean().optional(), code: z.boolean().optional(), rerank: z.boolean().optional() })),
+  'owner.collections.search': read(S, z.strictObject({ id: ref, query: z.string().min(2).max(1000) })),
   'owner.collections.cancel': mutation(S, z.strictObject({})),
   'owner.collections.delete': signed(S, z.strictObject({ id: ref, expectedRevision: revision, confirmed: z.literal(true) })),
+  'owner.projects.list': read(S, z.strictObject({})),
   'owner.projects.save': signed(S, bounded(20_000)),
   'owner.models.local': read(S, z.strictObject({})),
   'owner.models.pull': signed(S, z.strictObject({ model: z.string().min(1).max(200) })),
   'owner.models.delete': signed(S, z.strictObject({ model: z.string().min(1).max(200), confirmed: z.literal(true) })),
   'owner.models.cancelPull': mutation(S, z.strictObject({})),
+  'owner.jobs.list': read(S, z.strictObject({})),
   'owner.jobs.cancel': mutation(S, z.strictObject({ id: ref })),
   'owner.usage.summary': read(S, z.strictObject({ days: z.number().int().min(1).max(366).optional(), sessionId: sessionId.optional() })),
   'owner.usage.setPolicy': signed(S, z.strictObject({ expectedRevision: revision, currency: z.string().regex(/^[A-Z]{3}$/).optional(), monthlyLimit: z.number().min(0).max(1e7).nullable().optional(), warnAt: z.number().min(0).max(1e7).nullable().optional(),
@@ -267,10 +356,46 @@ export const ownerOperations: Record<string, Entry> = {
   // Research is scoped twice: starts/plans/sources name an authorized conversation, and every run operation
   // resolves its run before owner.ts checks that run's conversation. Model-starting or redirecting actions are
   // signed. Pause/stop and library metadata changes are safe reductions/organisation changes.
+  'owner.research.tasks': read(S, z.strictObject({})),
+  'owner.media.timed.prepare': mutation(W,timedMediaInput),
+  'owner.media.timed.start': signed(W,timedMediaLookup),
+  'owner.media.timed.poll': mutation(W,timedMediaLookup),
+  'owner.media.timed.status': read(W,timedMediaLookup),
+  'owner.media.timed.cancel': mutation(W,timedMediaLookup),
+  'owner.providerInference.run': signed(P,z.strictObject({sessionId,expectedSessionRevision:revision,expectedProjectRevision:revision,connectionId:ref,connectionRevision:z.number().int().positive(),task:z.enum(huggingFaceTasks),model:z.string().min(1).max(512),
+    inputs:z.union([z.strictObject({kind:z.literal('text'),value:z.union([z.string().min(1).max(4*1024*1024),z.array(z.string().max(32768)).min(1).max(256),bounded(4*1024*1024)])}),z.strictObject({kind:z.literal('artifacts'),items:z.array(z.strictObject({artifactId:uuid,versionId:uuid.optional()})).min(1).max(8)})]),
+    parameters:bounded(65536).optional(),pooling:z.enum(['none','mean','cls']).optional(),normalize:z.boolean().optional(),outputName:z.string().min(1).max(200).optional()})),
+  'owner.providerInference.mistralOcr': signed(P,z.strictObject({sessionId,expectedSessionRevision:revision,expectedProjectRevision:revision,connectionId:ref,connectionRevision:z.number().int().positive(),source:z.strictObject({artifactId:uuid,versionId:uuid.optional()}),model:z.string().min(1).max(256).optional(),
+    pages:z.union([z.array(z.number().int().nonnegative()).max(1000),z.string().regex(/^[0-9,-]{1,4096}$/)]).optional(),tableFormat:z.enum(['markdown','html']).optional(),includeImages:z.boolean().optional(),includeBlocks:z.boolean().optional(),extractHeader:z.boolean().optional(),extractFooter:z.boolean().optional(),confidence:z.enum(['word','page','block']).optional(),outputName:z.string().min(1).max(200).optional()})),
+  'owner.providerBridge.status': read(B,z.strictObject({connectionId:ref})),
+  'owner.providerBridge.stop': mutation(B,z.strictObject({connectionId:ref})),
+  'owner.providerBridge.chat': signed(B,z.strictObject({sessionId,expectedSessionRevision:revision,expectedProjectRevision:revision,connectionId:ref,connectionRevision:z.number().int().positive(),model:z.string().min(1).max(512),
+    messages:z.array(z.strictObject({role:z.enum(['system','user','assistant','tool']),content:z.string().max(1024*1024),name:z.string().max(128).optional(),toolCallId:z.string().max(256).optional()})).min(1).max(512),
+    temperature:z.number().min(0).max(2).optional(),maxOutputTokens:z.number().int().min(1).max(1_000_000).optional(),responseFormat:z.enum(['text','json']).optional()})),
+  'owner.providerBridge.embeddings': signed(B,z.strictObject({sessionId,expectedSessionRevision:revision,expectedProjectRevision:revision,connectionId:ref,connectionRevision:z.number().int().positive(),model:z.string().min(1).max(512),
+    input:z.array(z.string().max(1024*1024)).min(1).max(256),dimensions:z.number().int().min(1).max(16384).optional()})),
+  'owner.originalFiles.upload': signed(W,uploadOriginal),
+  'owner.originalFiles.remove': signed(W,lookupOriginal),
+  'owner.originalFiles.list': read(W,z.strictObject({sessionId})),
+  'owner.voice.transcribeArtifact':signed(W,artifactTranscript),
+  'owner.voice.hostedVoices': read(S,z.strictObject({provider:z.enum(['google_cloud','azure_speech']),settings:voiceSchema.optional()})),
+  'owner.realtime.start': signed('realtime.audio.v1', z.strictObject({conversationId:sessionId,toolsEnabled:z.boolean().optional(), model:z.string().min(1).max(256),voice:z.string().min(1).max(128).optional(),turnDetection:z.enum(['manual','server_vad','semantic_vad']).optional(),inputTranscription:z.boolean().optional(),outputTranscription:z.boolean().optional()})),
+  'owner.realtime.offer': read('realtime.audio.v1', z.strictObject({sessionId:uuid})),
+  'owner.realtime.playbackComplete': stream('realtime.audio.v1', z.strictObject({sessionId:uuid})),
+  'owner.realtime.commit': stream('realtime.audio.v1', z.strictObject({sessionId:uuid})),
+  'owner.realtime.interrupt': stream('realtime.audio.v1', z.strictObject({sessionId:uuid,itemId:z.string().max(256).optional(),audioEndMs:z.number().int().nonnegative().max(3600000).optional()})),
+  'owner.realtime.stop': mutation('realtime.audio.v1', z.strictObject({sessionId:uuid})),
+  'owner.research.provider.start': signed(S,z.strictObject({sessionId,requestId:uuid.optional(),prompt:z.string().trim().min(1).max(8000),effort:z.enum(['fast','low','medium','high','xhigh','ultra']).optional()})),
+  'owner.research.provider.list': read(S,z.strictObject({sessionId})),
+  'owner.research.provider.poll': mutation(S,z.strictObject({sessionId,id:uuid})),
+  'owner.research.provider.cancel': signed(S,z.strictObject({sessionId,id:uuid})),
+  'owner.research.routes': read(S, z.strictObject({sessionId})),
+  'owner.research.cancel': mutation(S, z.strictObject({id: researchId})),
+  'owner.research.handoff': signed(S, handoffInput),
   'owner.research.sources': read(S, z.strictObject({ sessionId, query: z.string().max(100).optional() })),
-  'owner.research.plan': signed(S, z.strictObject({ sessionId, question: z.string().min(5).max(2000), mode: researchMode.optional() })),
+  'owner.research.plan': signed(S, z.strictObject({ ...routeFields, sessionId, question: z.string().min(5).max(2000), mode: researchMode.optional() })),
   'owner.research.start': signed(S, z.strictObject({
-    sessionId, question: z.string().min(5).max(2000), preset: z.enum(['quick', 'thorough']).optional(), mode: researchMode,
+    ...routeFields, sessionId, question: z.string().min(5).max(2000), preset: z.enum(['quick', 'thorough']).optional(), mode: researchMode,
     scope: researchScope, sourceIds: z.array(sourceId).max(12), plan: researchPlan.optional(),
     sites: z.array(z.string().min(1).max(253)).max(5).optional(), siteMode: z.enum(['only', 'prefer']).optional(),
     urls: z.array(z.url({ protocol: /^https?$/ }).max(2048)).max(12).optional(), recency: z.enum(['day', 'week', 'month', 'year']).optional(),
@@ -294,7 +419,7 @@ export const ownerOperations: Record<string, Entry> = {
   'owner.research.steer': signed(S, z.strictObject({ id: researchId, focus: z.string().min(1).max(2000) })),
   'owner.research.ask': signed(S, z.strictObject({ id: researchId, question: z.string().min(1).max(2000) })),
   'owner.research.update': mutation(S, z.strictObject({ id: researchId, title: z.string().min(1).max(120).optional(), pinned: z.boolean().optional(), archived: z.boolean().optional(), monitorDays: z.number().int().min(0).max(365).optional() })),
-  'owner.research.export': mutation(S, z.strictObject({ id: researchId, format: z.enum(['markdown', 'csv', 'bibtex', 'json']) })),
+  'owner.research.export': mutation(S, z.strictObject({ id: researchId, format: z.enum(['markdown', 'csv', 'bibtex', 'json', 'pdf', 'docx']) })),
   'owner.research.note': mutation(S, z.strictObject({ id: researchId, text: z.string().min(1).max(8000) })),
   'owner.research.exclude': mutation(S, z.strictObject({ id: researchId, evidenceId })),
   'owner.research.resynthesize': signed(S, z.strictObject({ id: researchId })),

@@ -73,6 +73,35 @@ export function registerAnalysisTools(workbench: Workbench) {
     }),
   });
   registry.register({
+    name: 'codelab_session', family: 'analysis', core: false, effects: { execute: true },
+    description: 'Run one Python cell in the analysis session the user started. Variables from earlier cells are there; the last expression is shown. Files go to the current folder. Use codelab_run instead when the result must not depend on earlier cells.',
+    input: z.strictObject({ code: z.string().min(1).max(65536), inputs: z.array(z.strictObject({ artifactId: id, versionId: id })).max(8).optional(), purpose: z.string().min(1).max(300) }),
+    available: session => analysis(session) || (workbench.kernels.status(session.id).session ? '' : 'No analysis session is running. The user can start one in Workbench › Runs.'),
+    run: guard(async ({ sessionId, signal, turnId }, args) => {
+      const status = workbench.kernels.status(sessionId).session;
+      if (!status) return failed('no_session', 'No analysis session is running. The user can start one in Workbench › Runs.', 'explicit');
+      // Everything the session was ever given counts: its variables can hold any of it.
+      const route = (await workbench.route(sessionId, signal)).route;
+      const policies = [workbench.kernels.policy(sessionId), ...(args.inputs?.length ? [workbench.artifacts.inherit(sessionId, args.inputs)] : [])].filter(policy => !!policy);
+      if (policies.some(policy => !routeAllowed(route, policy!))) return failed('destination', 'The session holds materials that may not be processed by this conversation’s model', 'never');
+      const grant = lab().grantFor(sessionId);
+      if (!grant) {
+        const versions = (args.inputs || []).map((ref: { artifactId: string; versionId: string }) => workbench.artifacts.version(sessionId, ref.artifactId, ref.versionId));
+        const answer = await workbench.core.approval(sessionId, { kind: 'execution', title: 'Run a cell in the analysis session: ' + args.purpose.slice(0, 80) + '?',
+          detail: ['Purpose: ' + args.purpose, `Session: ${status.cells.length} cells so far, ${status.variables.length} variables. This cell can read and change them.`, 'New inputs: ' + (versions.map((v: { name: string; versionId: string }) => v.name + ' @ ' + v.versionId).join(', ') || 'none'), 'No network; read-only inputs; outputs up to 20 files.', args.code.split('\n').map((line: string, i: number) => String(i + 1) + '  ' + line).join('\n')].join('\n\n'),
+          choices: ['allow', 'deny'], fields: { reviewComplete: true, purpose: args.purpose, digest: createHash('sha256').update(JSON.stringify([status.id, args.code, args.inputs || []])).digest('hex') } });
+        if (answer.choice !== 'allow') return declined(answer.cancelled ? 'Stopped before the code ran.' : 'The user declined running this code.');
+        // The person reviewed this cell for that session; a session started since then holds something else.
+        if (workbench.kernels.status(sessionId).session?.id !== status.id) return failed('no_session', 'The analysis session ended while this was waiting for approval', 'explicit');
+      } else grant.usedRuns++;
+      const operation = await workbench.kernels.run(sessionId, { ...args, origin: 'model', turnId, signal, approval: grant ? 'grant' : 'individual' });
+      const after = workbench.kernels.status(sessionId).session, result = runResult(operation);
+      result.data = { ...(result.data as object), sessionState: after ? { cell: after.cells.length, variables: after.variables.slice(0, 40) } : 'ended' };
+      const policy = workbench.kernels.policy(sessionId) || policies[0];
+      return policy ? workbench.restricted(result, policy) : result;
+    }),
+  });
+  registry.register({
     name: 'codelab_inspect', family: 'analysis', effects: { read: true },
     description: 'Inspect the original method, parameters, versioned input slots, logs and output references of a Code Lab run in this conversation before explaining or revising it.',
     input: z.strictObject({ operationId: id }), available: analysis,

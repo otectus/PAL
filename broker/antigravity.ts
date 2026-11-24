@@ -91,7 +91,8 @@ export class AntigravityAdapter implements Adapter {
       });
     });
     try {
-      child.write({event:'user',message:{content:(this.hooks.behavior?.()??personalityInstructions(this.hooks.personality?.(),this.hooks.assistantName?.()))+'\n\n'+text}});
+      const time=this.hooks.temporal?.('prepended to the message');
+      child.write({event:'user',message:{content:(this.hooks.behavior?.()??personalityInstructions(this.hooks.personality?.(),this.hooks.assistantName?.()))+(time?'\n\n'+(this.hooks.temporalGuidance?.()||'')+'\n'+time:'')+'\n\n'+text}});
       options.onDispatched?.();
     } catch {finish({type:'error',text:'AntiGravity disconnected before the prompt was sent'});}
     if(options.onAccepted)await acceptance;

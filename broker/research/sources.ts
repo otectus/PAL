@@ -1,3 +1,4 @@
+import { sessionRoute } from '../workspace/policy.ts';
 import type { Core } from '../core.ts';
 import type { Session } from '../types.ts';
 import { ownerControlled } from '../authority.ts';
@@ -73,19 +74,22 @@ function info(core: Core, session: Session, ref: SourceRef) {
 export function validateSources(core: Core, session: Session, ids: string[]) {
   return ids.map((id) => info(core, session, decode(id)).policy);
 }
-/** Re-authorize saved excerpts at every outbound use, including follow-up questions and scheduled refresh. */
-export async function authorizeEvidence(core: Core, session: Session, evidence: Evidence[], signal: AbortSignal) {
-  const selected = evidence.filter((e) => e.sourceId && e.status === 'read');
-  if (!selected.length) return publicPolicy;
-  const route = (await core.workbench.route(session.id, signal)).route;
-  const policies = selected.map((e) => {
-    const source = info(core, session, decode(e.sourceId!));
+export function savedEvidencePolicy(core: Core, owner: Session, evidence: Evidence[]) {
+  const policies = evidence.filter(e => e.sourceId && e.status === 'read').map(e => {
+    const source = info(core, owner, decode(e.sourceId!));
     if (e.collectionStamp && e.collectionStamp !== source.stamp)
       throw new Error('The selected collection changed. Refresh its evidence before using it again.');
     return strictest(e.policy || localOnly, source.policy);
   });
-  const policy = strictest(...policies);
-  if (!routeAllowed(route, policy)) throw new Error('A selected source does not allow this model’s processing destination');
+  return strictest(...policies);
+}
+
+/** Re-authorize saved excerpts at every outbound use, including follow-up questions and scheduled refresh. */
+export async function authorizeEvidence(core: Core, session: Session, evidence: Evidence[], signal: AbortSignal) {
+  if (!evidence.some(e => e.sourceId && e.status === 'read')) return publicPolicy;
+  const route = await sessionRoute(session, core.settings, signal, core.chatConnections.endpoint(session));
+  const policy = savedEvidencePolicy(core, session, evidence);
+  if (!routeAllowed(route.route, policy)) throw new Error('A selected source does not allow this model’s processing destination');
   return policy;
 }
 export async function projectEvidence(
@@ -98,7 +102,7 @@ export async function projectEvidence(
 ): Promise<{ entry: Evidence; units: { location: string; text: string }[] }> {
   const ref = decode(key),
     { title, policy, stamp } = info(core, session, ref);
-  const route = (await core.workbench.route(session.id, signal)).route;
+  const route = (await sessionRoute(session, core.settings, signal, core.chatConnections.endpoint(session))).route;
   if (!routeAllowed(route, policy)) throw new Error(title + ' does not allow this model’s processing destination');
   let units: { location: string; text: string }[],
     truncated = false;

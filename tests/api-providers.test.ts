@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, stat, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ApiAdapter, apiModels, consumeSse } from '../broker/api-providers.ts';
+import { ApiAdapter, apiModels, apiTextRequest, consumeSse } from '../broker/api-providers.ts';
 import { ProviderCredentials } from '../broker/credentials.ts';
 import { apiProviders, type ApiProvider } from '../broker/provider-catalog.ts';
+import { resolveProviderDialect } from '../broker/provider-registry.ts';
 import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
 import { eraseWorkingCopies } from '../broker/working-erasure.ts';
@@ -19,14 +20,15 @@ const session=(provider:ApiProvider):Session=>({id:'api-test',provider,nativeId:
 const tool:OllamaTool={type:'function',function:{name:'check',description:'Check a value',parameters:{type:'object',properties:{value:{type:'string'}}}}};
 function sse(events: any[]) { return new Response(events.map(e=>'data: '+JSON.stringify(e)+'\r\n\r\n').join(''),{headers:{'Content-Type':'text/event-stream'}}); }
 function events(provider:ApiProvider, tools=false):any[] {
-  if(provider==='compatible')return tools?[
+  const protocol=resolveProviderDialect(provider);
+  if(protocol==='chat_completions')return tools?[
     chat({role:'assistant',tool_calls:[{index:0,id:'call-1',type:'function',function:{name:'check',arguments:'{"value":'}}]}),
     chat({tool_calls:[{index:0,function:{arguments:'"yes"}'}}]}),chat({},'tool_calls'),
   ]:[chat({role:'assistant',content:'Hello '}),chat({content:'🌙'}),chat({},'stop')];
-  if(provider==='openai')return tools?[
+  if(protocol==='responses'||protocol==='perplexity_agent')return tools?[
     {type:'response.completed',response:{status:'completed',output:[{type:'reasoning',id:'reason',encrypted_content:'opaque-reasoning'},{type:'function_call',call_id:'call-1',name:'check',arguments:'{"value":"yes"}'}]}},
   ]:[{type:'response.output_text.delta',delta:'Hello 🌙'}, {type:'response.completed',response:{status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Hello 🌙'}]}]}}];
-  if(provider==='anthropic')return tools?[
+  if(protocol==='anthropic_messages')return tools?[
     {type:'content_block_start',index:0,content_block:{type:'tool_use',id:'call-1',name:'check',input:{}}},
     {type:'content_block_delta',index:0,delta:{type:'input_json_delta',partial_json:'{"value":'}},
     {type:'content_block_delta',index:0,delta:{type:'input_json_delta',partial_json:'"yes"}'}},
@@ -39,7 +41,7 @@ async function fixture(t:any,provider:ApiProvider,fetcher?:typeof fetch){
   const output:any[]=[],requests:{url:string;init:any;body:any}[]=[],calls:any[]=[];let history:OllamaMessage[]=[];
   const adapter=new ApiAdapter(session(provider),{token:'test',native(){},event:e=>output.push(e),approve:async()=>({choice:'deny'}),personality:()=> ''}, {
     load:()=>structuredClone(history),save:messages=>{history=structuredClone(messages);},tools:()=>[tool],call:async(name,args)=>{calls.push({name,args});return {ok:true};},
-  },{key:()=> 'test-secret',...(provider==='compatible'?{endpoint:()=>compatibleEndpoint}:{}),fetch:fetcher|| (async(url,init)=>{requests.push({url:String(url),init,body:JSON.parse(String(init?.body))});return sse(events(provider,requests.length===1));})});
+  },{key:()=> 'test-secret',route:()=>({baseUrl:'https://llm.example/v1'}),...(provider==='compatible'?{endpoint:()=>compatibleEndpoint}:{}),fetch:fetcher|| (async(url,init)=>{requests.push({url:String(url),init,body:JSON.parse(String(init?.body))});return sse(events(provider,requests.length===1));})});
   t.after(()=>adapter.close());return{adapter,output,requests,calls,directory,history:()=>history};
 }
 for(const provider of apiProviders)test(`${provider}: assistant name refreshes between turns without persisting system instructions`, async t => {
@@ -84,12 +86,12 @@ for(const provider of apiProviders)test(`${provider}: truncated stream never com
   await f.adapter.send('Hi');await f.adapter.task;
   assert.equal(f.output.at(-1).type,'error');assert.match(f.output.at(-1).text,/disconnected/);assert.equal(f.calls.length,0);assert.equal(requests,1);
 });
-const outputLimitEvents=(provider:ApiProvider):any[]=>provider==='compatible'?[
+const outputLimitEvents=(provider:ApiProvider):any[]=>resolveProviderDialect(provider)==='chat_completions'?[
   chat({content:'Partial answer'}),chat({tool_calls:[{index:0,id:'cut',type:'function',function:{name:'check',arguments:'{"val'}}]}),chat({},'length'),
-]:provider==='openai'?[
+]:['responses','perplexity_agent'].includes(resolveProviderDialect(provider))?[
   {type:'response.output_text.delta',delta:'Partial answer'},
   {type:'response.incomplete',response:{status:'incomplete',incomplete_details:{reason:'max_output_tokens'},output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Partial answer'}]},{type:'function_call',call_id:'cut',name:'check',arguments:'{"val'}]}},
-]:provider==='anthropic'?[
+]:resolveProviderDialect(provider)==='anthropic_messages'?[
   {type:'content_block_start',index:0,content_block:{type:'thinking',thinking:''}},
   {type:'content_block_delta',index:0,delta:{type:'thinking_delta',thinking:'Working it out'}},
   {type:'content_block_delta',index:0,delta:{type:'signature_delta',signature:'sig-kept'}},
@@ -108,11 +110,11 @@ for(const provider of apiProviders)test(`${provider}: a reply cut at the output 
   assert.doesNotMatch(JSON.stringify(reply.providerData),/"cut"/);
   if(provider==='anthropic'){assert.equal(bodies[0].max_tokens,4096);assert.match(JSON.stringify(reply.providerData),/sig-kept/);}
 });
-const noArgumentEvents=(provider:ApiProvider):any[]=>provider==='compatible'?[
+const noArgumentEvents=(provider:ApiProvider):any[]=>resolveProviderDialect(provider)==='chat_completions'?[
   chat({tool_calls:[{index:0,id:'call-1',type:'function',function:{name:'check',arguments:''}}]}),chat({},'tool_calls'),
-]:provider==='openai'?[
+]:['responses','perplexity_agent'].includes(resolveProviderDialect(provider))?[
   {type:'response.completed',response:{status:'completed',output:[{type:'function_call',call_id:'call-1',name:'check',arguments:''}]}},
-]:provider==='anthropic'?[
+]:resolveProviderDialect(provider)==='anthropic_messages'?[
   {type:'content_block_start',index:0,content_block:{type:'tool_use',id:'call-1',name:'check',input:{}}},
   {type:'content_block_delta',index:0,delta:{type:'input_json_delta',partial_json:''}},
   {type:'content_block_start',index:1,content_block:{type:'tool_use',id:'call-2',name:'check',input:{}}},
@@ -132,6 +134,25 @@ test('anthropic: malformed tool arguments still fail the turn without running a 
   ]));
   await f.adapter.send('Check this');await f.adapter.task;
   assert.equal(f.output.at(-1).type,'error');assert.match(f.output.at(-1).text,/invalid tool arguments/);assert.equal(f.calls.length,0);
+});
+test('DeepSeek Chat Completions preserves reasoning_content on a later tool-enabled request',async t=>{
+  const directory=await mkdtemp(join(tmpdir(),'pal-deepseek-chat-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+  const bodies:any[]=[];let history:OllamaMessage[]=[];
+  const adapter=new ApiAdapter(session('deepseek'),{token:'test',native(){},event(){},approve:async()=>({choice:'deny'}),personality:()=> ''},{
+    load:()=>structuredClone(history),save:value=>{history=structuredClone(value);},tools:()=>[tool],call:async()=>({}),
+  },{key:()=> 'private',route:()=>({baseUrl:'https://api.deepseek.com',variant:'chat'}),fetch:async(_url,init)=>{bodies.push(JSON.parse(String(init?.body)));return sse([chat({content:'Answer',reasoning_content:'kept reasoning'}),chat({},'stop')]);}});
+  t.after(()=>adapter.close());
+  await adapter.send('First');await adapter.task;await adapter.send('Second');await adapter.task;
+  assert.match(JSON.stringify(bodies[1].messages),/kept reasoning/);assert.ok(bodies[1].tools.length);
+  assert.equal((history.find(message=>message.role==='assistant')?.providerData?.[0] as any).reasoning_content,'kept reasoning');
+});
+test('citations delivered in the terminal Responses event remain attached to the completed transcript message',async t=>{
+  const f=await fixture(t,'perplexity',async()=>sse([
+    {type:'response.output_text.delta',delta:'Grounded answer'},
+    {type:'response.completed',response:{id:'resp-cited',status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Grounded answer',annotations:[{type:'url_citation',id:'web-1',url:'https://example.com/source',title:'Source'}]}]}]}},
+  ]));
+  await f.adapter.send('Research this');await f.adapter.task;
+  const message=f.output.find(event=>event.type==='message');assert.equal(message.data.sources[0].provider,'perplexity');assert.equal(message.data.sources[0].responseId,'resp-cited');assert.equal(message.data.sources[0].resultId,'web-1');
 });
 test('Claude API requests use the catalog output ceiling and context window',async t=>{
   const models=await apiModels('anthropic',{key:()=> 'private',fetch:async()=>Response.json({data:[{id:'claude-test',display_name:'Claude Test',max_input_tokens:1000000,max_tokens:128000}],has_more:false})});
@@ -162,6 +183,48 @@ for(const provider of apiProviders)test(`${provider}: transient failures retry o
 test('API catalogs use retries and still return the successful catalog',async()=>{
   let requests=0;const models=await apiModels('openai',{key:()=> 'secret',retry:{sleep:async()=>{},log:()=>{}},fetch:async()=>++requests===1?new Response('',{status:502}):Response.json({data:[{id:'gpt-fixture'}]})});
   assert.equal(requests,2);assert.equal(models[0].id,'gpt-fixture');
+});
+test('registry-routed helper uses provider dialect, typed options, images and per-attempt authorization',async()=>{
+  const requests:any[]=[];let checks=0,attempt=0;
+  const result=await apiTextRequest('openrouter',{key:()=> 'secret',retry:{sleep:async()=>{},log:()=>{}},fetch:async(url,init)=>{
+    requests.push({url:String(url),headers:init?.headers,body:JSON.parse(String(init?.body))});attempt++;
+    return attempt===1?new Response('',{status:503}):Response.json({id:'resp-1',output:[{type:'message',content:[{type:'output_text',text:'done'}]}]});
+  }},{model:'vendor/model',input:'inspect',instructions:'be exact',maxOutputTokens:321,images:[{mime:'image/png',data:'aW1hZ2U='}],options:{allowedProviders:['anthropic'],preferredProviders:['anthropic'],allowFallbacks:false,zeroDataRetention:true,reasoningEffort:'high'}},new AbortController().signal,{},async()=>{checks++;});
+  assert.equal(result.id,'resp-1');assert.equal(checks,2);assert.equal(requests.length,2);
+  assert.equal(requests[0].url,'https://openrouter.ai/api/v1/responses');
+  assert.equal(requests[0].body.max_output_tokens,321);assert.equal(requests[0].body.reasoning.effort,'high');
+  assert.match(JSON.stringify(requests[0].body.input),/data:image\/png;base64,aW1hZ2U=/);
+  assert.deepEqual(requests[0].body.provider,{only:['anthropic'],order:['anthropic'],allow_fallbacks:false,data_collection:'deny',zdr:true});
+});
+test('registry-routed helper keeps DeepSeek Responses and Eden V3 option schemas distinct',async()=>{
+  const requests:any[]=[];const fetcher:typeof fetch=async(url,init)=>{requests.push({url:String(url),body:JSON.parse(String(init?.body))});return Response.json({ok:true});};
+  await apiTextRequest('deepseek',{key:()=> 'secret',fetch:fetcher},{model:'deepseek-v4-pro',input:'hello',options:{reasoningEffort:'max'}},AbortSignal.timeout(1000));
+  await apiTextRequest('edenai',{key:()=> 'secret',fetch:fetcher},{model:'openai/gpt',input:'hello',options:{allowedProviders:['openai'],allowFallbacks:false,zeroDataRetention:true,qualityCost:7}},AbortSignal.timeout(1000));
+  assert.equal(requests[0].url,'https://api.deepseek.com/responses');assert.deepEqual(requests[0].body.reasoning,{effort:'max'});
+  assert.equal(requests[1].url,'https://api.edenai.run/v3/chat/completions');assert.deepEqual(requests[1].body.routing,{allowed_providers:['openai'],allow_fallbacks:false,zero_data_retention:true,quality_cost:7});
+});
+test('Perplexity effort presets omit the model and provider-hosted web is explicit opt-in',async()=>{
+  const bodies:any[]=[];
+  const access={key:()=> 'secret',fetch:async(_url:any,init:any)=>{bodies.push(JSON.parse(String(init?.body)));return Response.json({ok:true});}};
+  await apiTextRequest('perplexity',access,
+    {model:'must-not-be-sent',input:'research this',options:{reasoningEffort:'fast'}},AbortSignal.timeout(1000));
+  await apiTextRequest('perplexity',access,{model:'must-not-be-sent',input:'research this',options:{reasoningEffort:'fast',webSearch:true,searchDomains:['example.com'],searchRecency:'week'}},AbortSignal.timeout(1000));
+  assert.equal(bodies[0].model,undefined);assert.equal(bodies[0].effort,'fast');assert.equal(bodies[0].background,undefined);assert.equal(bodies[0].tools,undefined);
+  assert.deepEqual(bodies[1].tools,[{type:'web_search',filters:{search_domain_filter:['example.com'],search_recency_filter:'week'}}]);
+  const catalog=await apiModels('perplexity',access);
+  assert.equal(catalog.find(row=>row.id==='preset:fast')?.displayName,'Quick answer');
+  const research=catalog.find(row=>row.displayName==='Research')!;
+  await apiTextRequest('perplexity',access,{model:research.id,input:'public fixture'},AbortSignal.timeout(1000));
+  assert.equal(bodies[2].effort,'high');assert.equal(bodies[2].model,undefined);
+  await assert.rejects(apiTextRequest('perplexity',access,{model:'sonar-pro',input:'historical'},AbortSignal.timeout(1000)),/retired/);
+  assert.equal(bodies.length,3);
+});
+test('platform token auth never sends the synchronous availability sentinel',async()=>{
+  let request:any;
+  await apiTextRequest('azure_openai',{key:()=> 'platform-auth-ready',token:async()=> 'short-lived-token',route:()=>({baseUrl:'https://fixture.openai.azure.com',variant:'v1',deployment:'my-deployment'}),fetch:async(url,init)=>{request={url:String(url),headers:init?.headers,body:JSON.parse(String(init?.body))};return Response.json({ok:true});}},
+    {model:'ignored-public-name',input:'hello'},AbortSignal.timeout(1000));
+  assert.equal(request.url,'https://fixture.openai.azure.com/openai/v1/responses');assert.equal(request.headers.Authorization,'Bearer short-lived-token');assert.equal(request.headers['api-key'],undefined);assert.equal(request.body.model,'my-deployment');
+  assert.ok(!JSON.stringify(request).includes('platform-auth-ready'));
 });
 test('Stop during API backoff produces an interruption, without another request',async t=>{
   let requests=0,waiting!:()=>void;const ready=new Promise<void>(resolve=>waiting=resolve);
@@ -213,7 +276,8 @@ test('credentials honor standard environment variables and reject invalid keys',
   credentials.update('google','saved-key');assert.equal(credentials.key('google'),'saved-key');credentials.update('google','');assert.equal(credentials.key('google'),'environment-key');
   assert.throws(()=>credentials.update('google','bad\nkey'),/whitespace/);
 });
-test('Core dispatches all API providers and resumes saved history after disconnect without CLI state',async t=>{
+const defaultApiProviders:ApiProvider[]=['openai','anthropic','google','compatible'];
+test('Core preserves default API provider dispatch and saved history without CLI state',async t=>{
   const directory=await mkdtemp(join(tmpdir(),'pal-api-dispatch-')), core=new Core(new Store(directory));
   const original=globalThis.fetch,requests:any[]=[];
   globalThis.fetch=async(url,init)=>{
@@ -222,7 +286,7 @@ test('Core dispatches all API providers and resumes saved history after disconne
   };
   t.after(async()=>{await core.close();globalThis.fetch=original;await rm(directory,{recursive:true,force:true});});
   await core.updateSettings({compatible:compatibleEndpoint});
-  for(const provider of apiProviders){
+  for(const provider of defaultApiProviders){
     await core.rpc('provider.credentials',{provider,key:'fixture-key'});
     const s=await core.create({provider,model:'fixture-model'});
     await core.send({id:s.id,text:'Remember this turn'});await (core.adapters.get(s.id) as ApiAdapter).task;core.flush();
@@ -231,7 +295,7 @@ test('Core dispatches all API providers and resumes saved history after disconne
     await core.send({id:s.id,text:'Continue'});await (core.adapters.get(s.id) as ApiAdapter).task;
     assert.ok(JSON.stringify(requests.at(-1).body).includes('Remember this turn'));assert.equal(core.store.session(s.id).status,'idle');
   }
-  assert.equal(requests.length,2*apiProviders.length);
+  assert.equal(requests.length,2*defaultApiProviders.length);
 });
 test('switching API models continues the same conversation with portable history and no tool replay',async t=>{
   const directory=await mkdtemp(join(tmpdir(),'pal-api-switch-')),core=new Core(new Store(directory));
@@ -243,7 +307,7 @@ test('switching API models continues the same conversation with portable history
   core.toolsFor=()=>[tool];core.callTool=async()=>{calls++;return {evidence:'tool-result-evidence'};};
   t.after(async()=>{await core.close();globalThis.fetch=original;await rm(directory,{recursive:true,force:true});});
   await core.updateSettings({compatible:compatibleEndpoint});
-  for(const provider of apiProviders){
+  for(const provider of defaultApiProviders){
     attempt=0;calls=0;await core.rpc('provider.credentials',{provider,key:'fixture-key'});
     const s=await core.create({provider,model:'first-model',cwd:directory,tools:true,trusted:true});
     await core.send({id:s.id,text:'Remember this request'});await (core.adapters.get(s.id) as ApiAdapter).task;core.flush();
@@ -297,4 +361,25 @@ test('Claude API accepts another message while Claude Code runs and reports its 
   await t.waitFor(() => { assert.equal(requests.length, 4); assert.equal(core.store.session(parent.id).status, 'idle'); });
   assert.match(JSON.stringify(requests[3].messages.at(-1)), /Child review finished/);
   assert.equal(core.store.messages(parent.id).filter(m => m.kind === 'delegation').length, 1);
+});
+
+test('OpenAI native tools and structured final reply use separate Responses fields',async t=>{
+  const f=await fixture(t,'openai');
+  f.adapter.session.api={tools:true,options:{strictSchema:true,outputSchema:'{"type":"object","properties":{},"additionalProperties":false}',vectorStoreIds:['vs_ABC123'],providerCode:true}};
+  await f.adapter.stream('',[{role:'user',content:'Example'}],[tool],new AbortController().signal,0,[]);
+  const body=f.requests[0].body;assert.deepEqual(body.text.format.schema.properties,{});
+  assert.equal(body.tools.find((t:any)=>t.type==='function').strict,true);
+  assert.deepEqual(body.tools.find((t:any)=>t.type==='file_search').vector_store_ids,['vs_ABC123']);
+  assert.deepEqual(body.tools.find((t:any)=>t.type==='code_interpreter').container,{type:'auto'});
+});
+
+test('specialized catalogs use the provider endpoint and preserve operation boundaries',async()=>{
+  let path='';
+  const models=await apiModels('openrouter',{key:()=> 'fixture',fetch:async u=>{path=new URL(String(u)).pathname;return Response.json({data:[{id:'vendor/arbitrary-image-id',name:'My model'}]});}},'image.generate');
+  assert.equal(path,'/api/v1/images/models');assert.deepEqual(models.map(m=>m.id),['vendor/arbitrary-image-id']);
+  const audio=await apiModels('openai',{key:()=> 'fixture',fetch:async()=>Response.json({data:[{id:'gpt-4o-mini-transcribe'},{id:'gpt-5'}]})},'speech.transcribe');
+  assert.deepEqual(audio.map(m=>m.id),['gpt-4o-mini-transcribe']);
+  const mixed={key:()=> 'fixture',fetch:async()=>Response.json({data:[{id:'o3-deep-research'},{id:'gpt-5'}]})};
+  assert.deepEqual((await apiModels('openai',mixed,'research')).map(m=>m.id),['o3-deep-research']);
+  assert.deepEqual((await apiModels('openai',mixed,'chat')).map(m=>m.id),['gpt-5']);
 });

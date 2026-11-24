@@ -110,6 +110,10 @@
     <string name="conversation_finish_images">Upload or remove the images before sending.</string>
     <string name="conversation_checking_send">Checking the previous send with your desktop…</string>
     <string name="conversation_queue_no_attachments">Queued messages carry text only. Send this draft with its desktop attachments after this turn, or remove them.</string>
+    <plurals name="conversation_results_after_message">
+        <item quantity="one">%1$d delegated result is waiting · reported after your next message</item>
+        <item quantity="other">%1$d delegated results are waiting · reported after your next message</item>
+    </plurals>
     <plurals name="conversation_messages_queued">
         <item quantity="one">%1$d message queued · will send after this turn</item>
         <item quantity="other">%1$d messages queued · will send after this turn</item>

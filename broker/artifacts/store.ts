@@ -8,7 +8,9 @@
  * snapshot that never changes; an export is a recorded write of a version somewhere the user chose, not
  * kept in sync afterwards.
  */
+import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { readdirSync } from 'node:fs';
 import { open, readFile, rename, rm, stat, link, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
@@ -40,8 +42,21 @@ export function kindFor(mime: string, name = ''): ArtifactKind {
   if (/^(text\/csv|text\/tab-separated-values|application\/vnd\.openxmlformats-officedocument\.spreadsheetml)/.test(mime) || /\.(csv|tsv|xlsx)$/i.test(name)) return 'table';
   if (/^(application\/pdf|application\/vnd\.openxmlformats-officedocument\.wordprocessingml|text\/html|text\/markdown)/.test(mime) || /\.(pdf|docx|html?|md)$/i.test(name)) return 'document';
   if (mime === 'application/zip') return 'bundle';
+  if (mime === 'application/x-subrip') return 'text';
   if (mime.startsWith('text/') || mime === 'application/json' || mime === 'application/xml') return 'text';
   return 'other';
+}
+/** Audio and video are named by their container's own signature; a file name only settles what the container leaves open. */
+function recordingMime(name: string, head: Buffer, ascii: string): string | undefined {
+  const extension = name.toLowerCase().split('.').pop() || '';
+  if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WAVE') return 'audio/wav';
+  if (ascii.startsWith('fLaC')) return 'audio/flac';
+  if (ascii.startsWith('OggS')) return extension === 'ogv' ? 'video/ogg' : 'audio/ogg';
+  if (ascii.slice(4, 8) === 'ftyp') return /^M4[AB] /.test(ascii.slice(8, 12)) || ['m4a', 'm4b'].includes(extension) ? 'audio/mp4' : ascii.slice(8, 12) === 'qt  ' ? 'video/quicktime' : 'video/mp4';
+  if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) return extension === 'weba' ? 'audio/webm' : extension === 'mka' ? 'audio/x-matroska' : extension === 'webm' ? 'video/webm' : 'video/x-matroska';
+  if (ascii.startsWith('ID3')) return 'audio/mpeg';
+  // A frame sync alone is two bytes; the name has to agree before anything is called MP3 or AAC.
+  if (head[0] === 0xff && (head[1] & 0xe0) === 0xe0) return extension === 'mp3' ? 'audio/mpeg' : extension === 'aac' && (head[1] & 0xf6) === 0xf0 ? 'audio/aac' : undefined;
 }
 export function mimeFor(name: string, bytes: Buffer): string {
   const head = bytes.subarray(0, 12), ascii = head.toString('latin1');
@@ -50,9 +65,11 @@ export function mimeFor(name: string, bytes: Buffer): string {
   if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WEBP') return 'image/webp';
   if (ascii.startsWith('GIF8')) return 'image/gif';
   if (ascii.startsWith('%PDF')) return 'application/pdf';
+  const recording = recordingMime(name, head, ascii);
+  if (recording) return recording;
   const lower = name.toLowerCase();
   if (ascii.startsWith('PK\x03\x04')) return lower.endsWith('.docx') ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : lower.endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/zip';
-  const byExtension: Record<string, string> = { csv: 'text/csv', tsv: 'text/tab-separated-values', json: 'application/json', xml: 'application/xml', html: 'text/html', htm: 'text/html', md: 'text/markdown', markdown: 'text/markdown', py: 'text/x-python', txt: 'text/plain', svg: 'image/svg+xml' };
+  const byExtension: Record<string, string> = { csv: 'text/csv', tsv: 'text/tab-separated-values', json: 'application/json', xml: 'application/xml', html: 'text/html', htm: 'text/html', md: 'text/markdown', markdown: 'text/markdown', py: 'text/x-python', txt: 'text/plain', svg: 'image/svg+xml', vtt: 'text/vtt', srt: 'application/x-subrip' };
   const extension = lower.split('.').pop() || '';
   if (byExtension[extension]) return byExtension[extension];
   return bytes.subarray(0, 65536).includes(0) ? 'application/octet-stream' : 'text/plain';
@@ -162,12 +179,20 @@ export class ArtifactStore {
   /** Bounded PNG thumbnails, made on demand, cached by content and evictable. */
   async thumbnail(sessionId: string, artifactId: unknown, versionId?: unknown, size = artifactLimits.thumbnail) {
     const version = this.version(sessionId, artifactId, versionId);
-    if (version.kind !== 'image' && version.kind !== 'plot') return null;
+    const video=version.mime==='video/mp4';
+    if (!video && version.kind !== 'image' && version.kind !== 'plot') return null;
     const edge = Math.max(32, Math.min(1024, Math.round(size))), cache = join(privateDir(join(this.directory, 'thumbnails')), `${version.sha256}-${edge}.png`);
-    let png = await readFile(cache).catch(() => null);
+    let png:Buffer|null = await readFile(cache).catch(() => null);
     if (!png) {
       const { data } = await this.bytes(sessionId, version.artifactId, version.versionId);
-      png = await sharp(data, { limitInputPixels: artifactLimits.imagePixels }).rotate().resize(edge, edge, { fit: 'inside', withoutEnlargement: true }).png().toBuffer();
+      if(video){
+        if(data.length<12||data.toString('ascii',4,8)!=='ftyp')return null;
+        png=await new Promise<Buffer>((resolve,reject)=>{
+          execFile('ffmpeg',['-nostdin','-v','error','-protocol_whitelist','file','-f','mov','-enable_drefs','0','-threads','1','-max_pixels',String(artifactLimits.imagePixels),'-i',this.objectPath(version.sha256),
+            '-an','-frames:v','1','-vf','scale='+edge+':'+edge+':force_original_aspect_ratio=decrease','-threads','1','-c:v','png','-f','image2pipe','pipe:1'],
+            {encoding:'buffer',timeout:12000,maxBuffer:5*1024*1024},(err,out)=>err||!out.length?reject(new Error('Video preview is unavailable')):resolve(out));
+        });
+      }else png = await sharp(data, { limitInputPixels: artifactLimits.imagePixels }).rotate().resize(edge, edge, { fit: 'inside', withoutEnlargement: true }).png().toBuffer();
       const temporary = cache + '.' + randomUUID().slice(0, 8);
       await writeFile(temporary, png, { mode: 0o600 }); await rename(temporary, cache);
     }
@@ -183,7 +208,9 @@ export class ArtifactStore {
     const owners = p.scope === 'project' ? [session.cwd] : p.project ? [sessionId, session.cwd] : [sessionId];
     const access = 'EXISTS (SELECT 1 FROM artifact_refs r WHERE r.artifact_id=a.id AND (' + scope + '))';
     const where = [access], params: (string | number)[] = [...owners];
-    if (typeof p.kind === 'string' && p.kind) { where.push("json_extract(a.data,'$.kind')=?"); params.push(p.kind); }
+    // Recordings are named by what they contain; their kind is the general one.
+    if (p.kind === 'recording') where.push("(json_extract(v.data,'$.mime') LIKE 'audio/%' OR json_extract(v.data,'$.mime') LIKE 'video/%')");
+    else if (typeof p.kind === 'string' && p.kind) { where.push("json_extract(a.data,'$.kind')=?"); params.push(p.kind); }
     if (typeof p.source === 'string' && p.source) { where.push("json_extract(v.data,'$.source')=?"); params.push(p.source); }
     if (p.provenanceKind) { where.push("json_extract(v.data,'$.provenance.kind')=?"); params.push(p.provenanceKind); }
     if (typeof p.collection === 'string' && p.collection) {
@@ -316,6 +343,11 @@ export class ArtifactStore {
   exports(version: ArtifactVersion) { return this.store.db.prepare("SELECT data,created FROM artifact_derivations WHERE source_version_id=? AND kind='export' ORDER BY created DESC LIMIT 10").all(version.versionId).map(row => ({ ...JSON.parse(String(row.data)), at: Number(row.created) })); }
   /** Derived content inherits every source's processing restrictions. */
   inherit(sessionId: string, refs: ArtifactRef[] | { artifactId: string; versionId: string }[]) { return refs.length ? strictest(...refs.map(ref => this.version(sessionId, ref.artifactId, ref.versionId).policy)) : localOnly; }
-  /** Cleans staging files left by an interrupted install. */
-  async recover() { await rm(join(this.directory, 'staging'), { recursive: true, force: true }).catch(() => {}); }
+  /** Cleans staging files left by an interrupted install: those there now. One staged from here on belongs to a running install. */
+  async recover() {
+    const staging = join(this.directory, 'staging');
+    let left: string[] = [];
+    try { left = readdirSync(staging); } catch {}
+    await Promise.all(left.map(name => rm(join(staging, name), { recursive: true, force: true }).catch(() => {})));
+  }
 }

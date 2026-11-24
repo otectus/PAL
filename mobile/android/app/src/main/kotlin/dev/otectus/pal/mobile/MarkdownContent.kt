@@ -1,7 +1,5 @@
 package dev.otectus.pal.mobile
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
@@ -110,6 +108,7 @@ private fun MarkdownBlock(node: Node, depth: Int, linkColor: Color, codeBackgrou
 private fun CodeBlock(source: String, language: String) {
     val context = LocalContext.current
     var copied by remember(source) { mutableStateOf(false) }
+    var refused by remember(source) { mutableStateOf(false) }
     LaunchedEffect(copied) {
         if (copied) {
             delay(2_000)
@@ -126,12 +125,13 @@ private fun CodeBlock(source: String, language: String) {
                 Text(languageLabel, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TextButton({
-                    context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(languageLabel, source))
-                    copied = true
+                    copied = copyText(context, languageLabel, source)
+                    refused = !copied
                 }, modifier = Modifier.heightIn(min = PALLayout.target)) {
                     Text(stringResource(if (copied) R.string.markdown_code_copied else R.string.markdown_copy_code))
                 }
             }
+            if (refused) Text(stringResource(R.string.copy_refused), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             Text(source.trimEnd('\n'), Modifier.horizontalScroll(rememberScrollState()).padding(bottom = PALLayout.tight),
                 fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium, softWrap = false)
         }

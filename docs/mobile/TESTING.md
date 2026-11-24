@@ -4,6 +4,17 @@ This is a development implementation of the mobile plan, not a claim that every 
 
 The current paired harness records the SHA-256 of each installed application and instrumentation APK returned by Android's package manager, including split APKs. The base APK digests are also available as `apkSha256` and `testApkSha256` in `summary.json`.
 
+## PAL Mobile 2.0.2 (2000002, 2026-11-24)
+
+What changed is in the [release notes](RELEASE-NOTES.md) and the [changelog](../../CHANGELOG.md); the operations are in the [feature matrix](../FEATURE-MATRIX.md). No 2.0.2 APK has been published. Validation of the published source, with JDK 17.0.21:
+
+- `node tools/mobile-contract.ts --check`, `npx tsc -p tsconfig.mobile.json`, and the Node suite: passed ([VALIDATION.md](../../VALIDATION.md)).
+- `gradlew-quiet.sh mobile/android :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug :app:lintRelease :app:lintDev :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:assembleDev`: passed. 176 unit tests (29 protocol, 105 data, 42 app), 0 failures; lint 0 errors (45, 44 and 44 warnings). `:app:mobileSbom` lists 154 components.
+- The whole instrumentation suite on an API 35 emulator at the size CI uses (320 × 640, 160 dpi): 114 tests, 106 passed, 8 skipped (seven need a paired desktop, one takes screenshots on request), 0 failures. The R8 development build installed and started on it.
+- `node tools/mobile-paired-check.ts` against an isolated broker with fixture providers: passed, 6 of 6 checkpoints, with manual pairing on API 30 and network return on API 35, both at 320 × 640. The sixth checkpoint is new: with full access, `OwnerScreensTest` opens every conversation's settings and menus, New chat for every provider, Work, Desktop, the Inbox and all of Settings, and fails when a screen does not open, the app ends, or the desktop cannot read what a screen asked.
+
+The crash fixes of this release are covered by `ConversationSettingsTest`, `CrashPathsTest`, `UiGuardsTest` and `OwnerScreensTest`. Not covered: a physical phone and everything under [External release gates](#external-release-gates-still-required), live microphone and interruption in live voice, a real push server, and accounts of real services.
+
 ## Responsive mobile development release (0.1.5 / 1005, 2026-11-20)
 
 Current source redesigns the Android navigation, chat, session, pairing, Inbox, Desktop and Settings surfaces for phone portrait, short landscape windows, the keyboard and large font scales. It also adds revision- and fingerprint-aware draft reconciliation so delayed phone writes and accepted-send clears do not masquerade as desktop edits, while genuinely divergent text still requires a choice. The adaptive launcher uses the reviewed cyan PAL “C” and cream diamond and has been visually checked on Android 11 and Android 15.

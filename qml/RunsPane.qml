@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "CommandLine.js" as CommandLine
 // Workbench › Runs: image jobs, analysis runs and commands of this conversation, with their recorded state.
 // Cancelling says whether the backend confirmed it; an unknown outcome is shown as unknown, never as a failure.
 Item {
@@ -170,6 +171,46 @@ Item {
         id: content
         anchors.fill: parent; spacing: Theme.space2
         CodeLab { id: labEditor; Layout.fillWidth: true; sessionId: runs.sessionId; rpcEndpoint: runs.rpcEndpoint; onStarted: runs.refresh(); onSettingsRequested:(category,target)=>runs.settingsRequested(category,target); onPaneRequested:pane=>runs.openPane(pane); onWorkflowsRequested:runs.workflowsRequested() }
+        AnalysisSession { sessionId: runs.sessionId; rpcEndpoint: runs.rpcEndpoint; onRan: runs.refresh(); onSettingsRequested: (category, target) => runs.settingsRequested(category, target)
+            onNotebookReady: spec => { labEditor.open = true; labEditor.apply(spec) } }
+        CSection {
+            id: commandSection
+            objectName: "commandSection"
+            title: "Run a command"
+            expanded: false
+            Layout.fillWidth: true
+            description: "Runs one program in a folder that allows commands. Only that folder is visible to it and can change. Output and changed files are recorded below."
+            property var folders: []
+            property bool loaded: false
+            property string problem: ""
+            readonly property var parsed: CommandLine.split(commandText.text)
+            function loadFolders() { if (!runs.sessionId) return; rpc.call("workspace.roots", { sessionId: runs.sessionId }, value => { commandSection.loaded = true; commandSection.folders = value.error ? [] : (value.roots || []).filter(root => root.policy.execute && root.status === "available"); if (value.error) commandSection.problem = String(value.error.message || value.error) }) }
+            function run() {
+                problem = ""
+                rpc.call("commands.run", { sessionId: runs.sessionId, rootId: folders[commandFolder.currentIndex].id, argv: parsed.argv, cwd: commandPath.text.trim() || undefined, network: commandNetwork.checked, timeoutSeconds: commandMinutes.value * 60 }, value => {
+                    if (value.error && !value.operationId) { commandSection.problem = String(value.error.message || value.error); return }
+                    runs.refresh()
+                })
+            }
+            onExpandedChanged: if (expanded) loadFolders()
+            CText { objectName: "commandNoFolder"; visible: commandSection.loaded && !commandSection.folders.length; text: "No folder of this conversation allows commands. Allow them under Files › Folder permissions."; color: Theme.amber; font.pixelSize: Theme.secondary }
+            CButton { visible: commandSection.loaded && !commandSection.folders.length; text: "Open Files"; onClicked: WorkbenchState.show("files") }
+            CComboBox { id: commandFolder; objectName: "commandFolder"; visible: commandSection.folders.length > 0; Layout.fillWidth: true; model: commandSection.folders; textRole: "name"; Accessible.name: "Folder to run in" }
+            CField { id: commandText; objectName: "commandText"; visible: commandSection.folders.length > 0; Layout.fillWidth: true; font.family: Theme.mono; maximumLength: 8192; placeholderText: "npm test"; Accessible.name: "Program and its arguments"; onAccepted: if (commandRun.enabled) commandSection.run() }
+            CText { objectName: "commandProblem"; visible: !!text; text: commandSection.problem || commandSection.parsed.problem; color: commandSection.problem ? Theme.danger : Theme.amber; font.pixelSize: Theme.secondary; Accessible.role: Accessible.AlertMessage }
+            GridLayout {
+                visible: commandSection.folders.length > 0; Layout.fillWidth: true
+                columns: width < Theme.toolbarBreakpoint ? 1 : 2; columnSpacing: Theme.space2; rowSpacing: Theme.space2
+                CField { id: commandPath; Layout.fillWidth: true; maximumLength: 1024; placeholderText: "Subfolder (optional)"; Accessible.name: "Subfolder to run in" }
+                RowLayout {
+                    Layout.fillWidth: true; spacing: Theme.space2
+                    CText { Layout.fillWidth: false; text: "Time limit, minutes"; color: Theme.muted; font.pixelSize: Theme.secondary; wrapMode: Text.NoWrap }
+                    CSpinBox { id: commandMinutes; from: 1; to: 30; value: 5; Accessible.name: "Time limit in minutes" }
+                }
+            }
+            CCheckBox { id: commandNetwork; objectName: "commandNetwork"; visible: commandSection.folders.length > 0; text: "Allow network access"; checked: false }
+            CButton { id: commandRun; objectName: "commandRun"; visible: commandSection.folders.length > 0; primary: true; text: rpc.busy ? "Starting…" : "Run"; enabled: runs.online && !rpc.busy && commandFolder.currentIndex >= 0 && commandSection.parsed.argv.length > 0 && !commandSection.parsed.problem; onClicked: commandSection.run() }
+        }
         CSection { title: "Run history"; expanded: false; Layout.fillWidth: true
             RowLayout { Layout.fillWidth: true
                 CCheckBox { id: historyToggle; text: "Search durable history"; checked: runs.history; onToggled: { runs.history = checked; runs.refresh() } }
@@ -226,7 +267,7 @@ Item {
                     Flow {
                         Layout.fillWidth: true; spacing: Theme.space1
                         CButton { objectName: "runCancel"; visible: ["prepared", "awaiting_approval", "queued", "dispatching", "running"].indexOf(row.modelData.state) >= 0; text: "Cancel"; danger: true; implicitHeight: Theme.compactHeight; onClicked: rpc.call("operations.cancel", { id: row.modelData.operationId }, value => { runs.error = value.error || ""; runs.refresh() }) }
-                        CButton { objectName: "runCheck"; visible: row.modelData.state === "unknown" && row.modelData.remote && row.modelData.backend?.kind === "comfyui"; text: "Check status"; implicitHeight: Theme.compactHeight; onClicked: rpc.call("operations.check", { id: row.modelData.operationId }, value => { runs.error = value.error || ""; runs.refresh() }) }
+                        CButton { objectName: "runCheck"; visible: row.modelData.state === "unknown" && row.modelData.remote && (row.modelData.backend?.kind === "comfyui" || ["video.generate", "music.generate"].indexOf(row.modelData.kind) >= 0); text: "Check status"; implicitHeight: Theme.compactHeight; onClicked: rpc.call("operations.check", { id: row.modelData.operationId }, value => { runs.error = value.error || ""; runs.refresh() }) }
                         CButton { objectName: "runRetry"; visible: ["failed", "unknown", "interrupted", "cancelled", "expired"].indexOf(row.modelData.state) >= 0 && row.modelData.kind.startsWith("image."); text: "Try again"; implicitHeight: Theme.compactHeight
                             onClicked: rpc.call("operations.retry", { id: row.modelData.operationId, confirmed: row.modelData.state === "unknown" ? retryConfirm.confirmed : undefined }, value => { if (value.code === "CONFIRM_RETRY") { retryConfirm.operationId = row.modelData.operationId; retryConfirm.open() } else { runs.error = value.error || ""; runs.refresh() } }) }
                         CButton { objectName:"runDetails"; text:"Details"; quiet:true; implicitHeight:Theme.compactHeight; onClicked:runs.openDetail(row.modelData) }
@@ -259,6 +300,8 @@ Item {
         CText { visible:!!selected?.details?.runtime; Layout.fillWidth:true; wrapMode:Text.Wrap; text:selected?.details?.runtime ? "Python " + selected?.details?.runtime.python + " · " + Object.entries(selected?.details?.runtime.packages || {}).map(x=>x.join(" ")).join(", ") : ""; font.pixelSize:Theme.caption }
         CText { visible:selected?.details?.durationMs !== undefined || selected?.details?.exitCode !== undefined; Layout.fillWidth:true; wrapMode:Text.Wrap; text:[selected?.details?.exitCode !== undefined ? "Exit status " + selected?.details?.exitCode : "", selected?.details?.durationMs !== undefined ? "Runtime " + (selected?.details?.durationMs / 1000).toFixed(2) + " s" : "", selected?.details?.timeLimitSeconds !== undefined ? "Limit " + selected?.details?.timeLimitSeconds + " s" : selected?.details?.timeoutSeconds !== undefined ? "Limit " + selected?.details?.timeoutSeconds + " s" : ""].filter(v=>v).join(" · "); font.pixelSize:Theme.caption }
         CText { visible:!!runs.detailLimits(selected); Layout.fillWidth:true; wrapMode:Text.Wrap; text:"Recorded limits · " + runs.detailLimits(selected); color:Theme.muted; font.pixelSize:Theme.caption }
+        CText { objectName:"runSessionNote"; visible:!!selected?.details?.sessionKernel; Layout.fillWidth:true; wrapMode:Text.Wrap; color:Theme.amber; font.pixelSize:Theme.caption
+            text:selected?.details?.sessionKernel ? "Cell " + selected.details.sessionKernel.sequence + " of an analysis session" + (selected.details.sessionKernel.earlier ? ". It ran after " + (selected.details.sessionKernel.earlier === 1 ? "1 earlier cell" : selected.details.sessionKernel.earlier + " earlier cells") + ", so running it again on its own may give a different result." : ".") : "" }
         CButton { visible:!!selected?.parentId; text:"Open previous run"; quiet:true; onClicked:runs.openDetail({id:selected.parentId}) }
         CText { visible:selected?.kind === "command.run" || selected?.kind === "command.host"; text:"Command workspace" + (selected?.details?.root ? " · " + selected?.details?.root : ""); font.pixelSize:Theme.secondary }
         CText { visible:(selected?.details?.changedFiles || []).length > 0; Layout.fillWidth:true; wrapMode:Text.Wrap; text:(selected?.details?.changedFiles || []).length + " changed file(s) recorded" + (selected?.details?.changeNote ? " · " + selected?.details?.changeNote : ""); color:Theme.muted; font.pixelSize:Theme.caption }
@@ -315,6 +358,7 @@ Item {
         property var reference: ({})
         property var version: null
         property var table: ({})
+        readonly property int formulas: table.formulaCells || 0
         property var selectedRows: []
         property string thumbnail: ""
         property string tableError: ""
@@ -346,7 +390,7 @@ Item {
         function toggleRow(row, checked) { selectedRows = checked ? selectedRows.concat([row]) : selectedRows.filter(value => value !== row) }
         function exportRows(rows) {
             const token = ++request, pageSession = runs.sessionId, sourceSession = sessionId, sourceArtifact = artifactId, sourceVersion = versionId
-            rpc.call("codelab.exportRows", { sessionId: sourceSession, artifactId: sourceArtifact, versionId: sourceVersion, query: tableQuery.text || undefined, sort: sortField.text || undefined, direction: direction.currentValue, rows: rows && rows.length ? rows : undefined }, value => {
+            rpc.call("codelab.exportRows", { sessionId: sourceSession, artifactId: sourceArtifact, versionId: sourceVersion, query: tableQuery.text || undefined, sort: sortField.text || undefined, direction: direction.currentValue, rows: rows && rows.length ? rows : undefined, spreadsheetSafe: tableDialog.formulas > 0 && tableSafe.checked }, value => {
                 if (token !== request || pageSession !== runs.sessionId || sourceSession !== tableDialog.sessionId || sourceArtifact !== tableDialog.artifactId || sourceVersion !== tableDialog.versionId) return
                 if (value.error) tableError = value.error
                 else close()
@@ -382,8 +426,10 @@ Item {
             CButton { text: "Previous"; enabled: tableDialog.offset > 0; onClicked: { tableDialog.offset = Math.max(0, tableDialog.offset - 50); tableDialog.reload() } }
             CButton { text: "Next"; enabled: !!tableDialog.table.rows && tableDialog.table.rows.length === 50; onClicked: { tableDialog.offset += 50; tableDialog.reload() } }
         }
+        CCheckBox { id: tableSafe; objectName: "tableSafe"; visible: tableDialog.mode === "table" && tableDialog.formulas > 0; checked: true; text: "Keep formulas as text for spreadsheets" }
+        CText { visible: tableSafe.visible; text: tableDialog.formulas + (tableDialog.formulas === 1 ? " cell starts" : " cells start") + " like a formula. In the export each gets a leading apostrophe, so a spreadsheet shows it instead of running it."; Layout.fillWidth: true; color: Theme.muted; font.pixelSize: Theme.caption }
         RowLayout { Layout.fillWidth: true
-            CButton { visible: tableDialog.mode === "table"; text: tableDialog.selectedRows.length ? "Export selected rows" : "Export matching rows"; primary: true; onClicked: tableDialog.exportRows(tableDialog.selectedRows) }
+            CButton { objectName: "tableExport"; visible: tableDialog.mode === "table"; text: tableDialog.selectedRows.length ? "Export selected rows" : "Export matching rows"; primary: true; onClicked: tableDialog.exportRows(tableDialog.selectedRows) }
             CButton { visible: tableDialog.mode === "image"; text: "Open chart"; primary: true; onClicked: WorkbenchState.selectImage(tableDialog.sessionId, tableDialog.artifactId, tableDialog.versionId) }
             Item { Layout.fillWidth: true }
             CButton { text: "Close"; onClicked: tableDialog.close() }

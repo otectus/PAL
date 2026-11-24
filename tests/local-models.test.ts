@@ -98,3 +98,20 @@ test('M09 an embedding switch is measured with the candidate model first; spaces
   assert.equal(core.settings.memory.model, 'nomic-embed-text', 'measuring changes nothing');
   await assert.rejects(core.rpc('memory.embeddingImpact', { model: '../bad' }), /embedding model name/);
 });
+
+test('RC-11 free space is read where a local server keeps its models, unknown elsewhere, and never blocks a download', async t => {
+  const fixture = await ollama(t), dir = await mkdtemp(join(tmpdir(), 'pal-local-models-'));
+  const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
+  t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
+  await core.updateSettings({ ollama: { host: fixture.host } });
+  const models = core.localModels, place = async (env: any, places: string[]) => models.space(env, places);
+  const known = await place({}, [dir]); assert.ok(['ok', 'low'].includes(known.state)); assert.ok(known.free! > 0);
+  assert.equal((await place({ OLLAMA_MODELS: dir }, ['/nowhere'])).state, known.state, 'the configured folder is first');
+  assert.deepEqual(await place({}, ['/nowhere', '/also/nowhere']), { state: 'unknown' });
+  assert.deepEqual(await place({ OLLAMA_MODELS: '/nowhere' }, []), { state: 'unknown' });
+  await core.updateSettings({ ollama: { host: 'http://192.168.4.9:11434' } }); assert.deepEqual(await place({}, [dir]), { state: 'unknown' }, 'another computer’s disk is not this one');
+  await core.updateSettings({ ollama: { host: fixture.host } });
+  // What is listed carries it, and a low disk changes nothing about a pull.
+  models.space = async () => ({ state: 'low', free: 1024 }); assert.deepEqual((await core.rpc('models.local', {})).space, { state: 'low', free: 1024 });
+  await core.rpc('models.pull', { model: 'qwen3:8b' }); await settled(core); assert.equal(core.snapshot().modelPull!.status, 'success');
+});

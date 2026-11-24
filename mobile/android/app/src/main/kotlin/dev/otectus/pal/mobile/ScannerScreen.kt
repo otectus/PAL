@@ -90,7 +90,7 @@ fun ScannerScreen(onResult: (String) -> Unit, onBack: () -> Unit, onEnterOffer: 
                     Text(cameraError ?: stringResource(R.string.scanner_camera_access_is_used_only_to_scan_the), color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                     if (cameraError == null) Button({ request.launch(Manifest.permission.CAMERA) }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.scanner_allow_camera)) }
                     else Button({ cameraError = null }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.scanner_try_camera_again)) }
-                    OutlinedButton({ context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))) }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.scanner_open_app_settings)) }
+                    OutlinedButton({ context.open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))) }, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.scanner_open_app_settings)) }
                     TextButton(onEnterOffer, modifier = Modifier.fillMaxWidth().heightIn(min = PALLayout.target)) { Text(stringResource(R.string.paste_instead)) }
                 }
             }
@@ -131,8 +131,8 @@ private fun CameraPreview(onResult: (String) -> Unit, onError: (String) -> Unit)
                         val text = reader.decodeWithState(BinaryBitmap(HybridBinarizer(source))).text
                         if (text.startsWith("cere-pair://v1/") && delivered.compareAndSet(false, true))
                             view.post { if (!disposed) resultCallback(text) }
-                    } catch (_: ReaderException) {
-                        // A frame without a readable offer is expected.
+                    } catch (_: Exception) {
+                        // A frame without a readable offer is expected, and so is a code the reader cannot make sense of.
                     } finally {
                         reader.reset()
                         image.close()

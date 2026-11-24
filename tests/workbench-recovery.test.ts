@@ -81,6 +81,19 @@ test('a backup can leave artifact bytes out; the review says how many would come
   assert.deepEqual(review.artifacts, { artifacts: 2, versions: 3, missingBytes: 3, bytesIncluded: false });
 });
 
+test('cleaning up what an interrupted install left does not touch a file that is being kept', { skip: skipWithoutHelper }, async t => {
+  const f = await workbenchFixture(t), { session } = await f.session(), artifacts = f.core.workbench.artifacts;
+  const keep = (name: string) => artifacts.install({ sessionId: session.id, bytes: Buffer.from(name), name: name + '.txt', source: 'user-import', provenance: { kind: 'fixture' } });
+  await keep('first');
+  const staging = join(artifacts.directory, 'staging');
+  await writeFile(join(staging, 'left-behind'), 'interrupted');
+  // As at startup, when a resumed run keeps its report while the cleanup is still running.
+  const cleanup = artifacts.recover(), kept = await Promise.all(Array.from({ length: 40 }, (_, index) => keep('kept ' + index)));
+  await cleanup;
+  for (const version of kept) assert.equal((await artifacts.bytes(session.id, version.artifactId)).data.toString(), version.name.replace('.txt', ''));
+  assert.deepEqual(await readdir(staging), []);
+});
+
 test('removing a file can take what was made from it; the default keeps derived files', { skip: skipWithoutHelper }, async t => {
   const { f, session, note, picture } = await populated(t);
   const extracted = await f.core.rpc('artifacts.extract', { sessionId: session.id, artifactId: note.artifactId });

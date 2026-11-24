@@ -135,6 +135,7 @@ Measured on 2026-10-15 and pinned as floors by the tests named below. Both runne
 ```sh
 node benchmarks/memory/nl-baseline.ts
 node benchmarks/memory/document-baseline.ts
+node benchmarks/memory/document-baseline.ts --sweep
 node --test tests/memory-nl-baseline.test.ts tests/document-baseline.test.ts
 ```
 
@@ -148,6 +149,19 @@ node --test tests/memory-nl-baseline.test.ts tests/document-baseline.test.ts
 No other scope's memory and no forgotten memory was returned. Automatic packets stayed at p90 342 estimated tokens and at most 4 items. Correction-first ranking was unstable at first (0.333 or 0.667 between runs), because exactly tied scores fell back to random record IDs; ties now go to the more recently learned record, and the test pins 0.667.
 
 `document-baseline.ts` indexes six project documents into a document collection's own scope with the collection chunker (`tests/fixtures/memory/document-cases.json`) and asks 13 paraphrased questions with the retrieval settings a turn uses (local route, relevance floor, six items), calling the canonical engine directly rather than through the memory worker. Hit@1 is 0.923, hit@3 is 1.0, MRR is 0.962 and abstention on 3 unrelated questions is 0.667. Every returned chunk resolved to its file and content hash, no chunk exceeded its size, a forgotten document returned nothing, and project memory and the collection never answered for each other.
+
+**Strict answers (RC-09, 2026-11-23).** `--sweep` scales the lexical floor inside a store that also holds conversation passages, because below 50 passages the floor is zero. Hit@1 / abstention at each scale:
+
+| Passages | 1 | 1.5 | 1.75 | 2 | 2.25 |
+| --- | --- | --- | --- | --- | --- |
+| 60 | 0.923 / 0.667 | 0.923 / 1.0 | 0.846 / 1.0 | 0.846 / 1.0 | 0.769 / 1.0 |
+| 100 | 0.923 / 0.667 | 0.923 / 1.0 | 0.923 / 1.0 | 0.846 / 1.0 | 0.769 / 1.0 |
+| 200 | 0.923 / 0.667 | 0.923 / 1.0 | 0.923 / 1.0 | 0.846 / 1.0 | 0.769 / 1.0 |
+| 400 | 0.923 / 0.667 | 0.923 / 0.667 | 0.923 / 1.0 | 0.923 / 1.0 | 0.846 / 1.0 |
+| 1000 | 0.923 / 0.667 | 0.923 / 0.667 | 0.923 / 0.667 | 0.923 / 1.0 | 0.923 / 1.0 |
+| 2500 | 0.923 / 0.667 | 0.923 / 0.667 | 0.923 / 0.667 | 0.923 / 0.667 | 0.923 / 1.0 |
+
+Strict collections use 1.5: the largest scale that lost no answer at any of these sizes. It also changed nothing on the collection corpus (`tests/collection-retrieval.test.ts`), where 2, and leaving weak matches out, lost answers with an embedding model. The corpus is small (13 questions and 3 that should find nothing). `--semantic MODEL [--host URL]` sweeps the similarity floor with a local embedding model; it has not been run, so the semantic floor is unchanged.
 
 ## Real cloud extraction
 

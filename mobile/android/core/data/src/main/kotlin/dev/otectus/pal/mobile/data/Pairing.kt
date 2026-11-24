@@ -95,6 +95,8 @@ data class PairedDesktop(
     val pairedAt: Long,
     val actionAuthentication: ActionAuthentication = ActionAuthentication.BIOMETRIC,
     val identityKey: String = "",
+    /** Addresses accepted after a search on this phone's network (Endpoints). */
+    val foundEndpoints: List<String> = emptyList(),
 )
 
 data class PendingPairing(

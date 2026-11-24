@@ -4,8 +4,8 @@ import dev.otectus.pal.mobile.protocol.Welcome
 import java.time.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * MOB-008: the desktop build this phone last signed in to, from its authenticated welcome. Kept
@@ -66,8 +66,8 @@ object ConnectionDiagnostics {
         appendLine("Protocol: ${protocolText(state.desktopBuild)}${online?.let { " · ${it.features.size} features · ${it.operations.size} operations" } ?: ""}")
         val providers = state.providers.entries.sortedBy { it.key }.joinToString(", ") { (id, value) ->
             val entry = value as? JsonObject
-            val available = entry?.get("available")?.jsonPrimitive?.booleanOrNull == true
-            val remote = entry?.get("remoteExecution")?.jsonPrimitive?.booleanOrNull == true
+            val available = (entry?.get("available") as? JsonPrimitive)?.booleanOrNull == true
+            val remote = (entry?.get("remoteExecution") as? JsonPrimitive)?.booleanOrNull == true
             "$id ${if (!available) "unavailable" else if (remote) "usable here" else "desktop only"}"
         }
         appendLine("Providers: ${providers.ifBlank { "none reported" }}")

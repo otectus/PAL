@@ -13,6 +13,9 @@ import { RemoteStore } from './store.ts';
 import type { Device } from './store.ts';
 import { Identity, addresses, addressCandidates } from './identity.ts';
 import { Pairing } from './pairing.ts';
+import { Discovery, announceable } from './discovery.ts';
+import { Wake } from './wake.ts';
+import { BrowserCompanion, browserMethods, browserOfferRequest, browserLimits } from './browser.ts';
 import { Router, safeError } from './router.ts';
 import { digest, verified, parsePairing } from './crypto.ts';
 import { endpointOrigin } from '../compatible-endpoint.ts';
@@ -22,7 +25,7 @@ import { buildIdentity, brokerBuildLabel } from '../build-info.ts';
 import { isApiProvider } from '../provider-catalog.ts';
 import { mobileMessage } from './transcript.ts';
 
-type Peer = {socket:WebSocket;device?:Device;hello?:any;challenge?:any;authSessionId?:string;expiresAt:number;subscribed:boolean;selected?:string;
+type Peer = {/** Which listener it came through: a device of one surface is unknown on the other. */surface:'mobile'|'browser';realtime?:{id:string;key:Buffer};socket:WebSocket;device?:Device;hello?:any;challenge?:any;authSessionId?:string;expiresAt:number;subscribed:boolean;selected?:string;
   challenges:Map<string,any>;inFlight:number;timer:NodeJS.Timeout;alive:boolean;pingAt:number;
   /** A phone waiting on its network-return pairing answer: told when the desktop confirms or the offer ends. */
   pairingId?:string;
@@ -30,7 +33,7 @@ type Peer = {socket:WebSocket;device?:Device;hello?:any;challenge?:any;authSessi
   clientFeatures?:Set<string>;connectionRole?:'owner'};
 
 export class MobileGateway {
-  core:Core;registry:RemoteStore;identity:Identity;pairing:Pairing;router:Router;
+  core:Core;registry:RemoteStore;identity:Identity;pairing:Pairing;router:Router;discovery=new Discovery();wake:Wake;browser=new BrowserCompanion(this);
   servers:Server[]=[];wsServers:WebSocketServer[]=[];peers=new Set<Peer>();closed=false;
   /** Work this gateway started that can touch Core or the store: frame handlers, media, maintenance, revocation. */
   work=new Set<Promise<unknown>>();
@@ -48,6 +51,7 @@ export class MobileGateway {
   constructor(core:Core) {
     this.core=core;this.registry=new RemoteStore(core.store);this.identity=new Identity(this.registry);this.pairing=new Pairing(this.registry,this.identity);
     this.router=new Router(core,this.registry,id=>this.track(this.revoke(id)).then(()=>{}));
+    this.wake=new Wake(this.registry);this.wake.changed=()=>this.presence();this.wake.connected=id=>[...this.peers].some(peer=>peer.device?.id===id&&peer.subscribed);this.router.wake=this.wake;
     this.router.scopeReduced=id=>{void this.track(this.reduced(id)).catch(()=>{});};
     this.router.roleChange=params=>this.pairing.setRole(params);
     this.router.roleReduced=(id,wasOwner)=>{void this.track(this.reduced(id,wasOwner)).catch(()=>{});};
@@ -71,6 +75,7 @@ export class MobileGateway {
       return this.router.projectFor(device,session.cwd)?.id===execution.projectId&&this.router.inScope(device,session)&&(!isApiProvider(session.provider)||this.router.apiAccess(device,session.provider,session).remoteExecution);
     };
     core.remoteProfile=deviceId=>{const device=this.registry.live(deviceId);return device&&deviceRole(device.role)==='owner'?workingProfile(device.profile):undefined;};
+    core.on('realtime',this.onRealtime);
     core.on('changed',this.onChanged);core.on('state',this.onState);core.on('message',this.onMessage);core.on('notice',this.onNotice);
     this.heartbeat=setInterval(()=>{void this.track(this.maintain()).catch(()=>{});},20000);this.heartbeat.unref();this.presence();
   }
@@ -81,6 +86,39 @@ export class MobileGateway {
     return work;
   }
   // Scope and pause enforcement follow every change at once, ahead of the paced state snapshot.
+  onRealtime=(value:{sessionId:string;event:import('../realtime/contracts.ts').RealtimeEvent})=> {
+    for(const peer of this.peers) {
+      const active=peer.realtime;
+      if(!active||active.id!==value.sessionId||!peer.device)continue;
+      if(value.event.type==='audio') {
+        if(peer.socket.bufferedAmount>1024*1024){this.core.realtime.transport.stop(active.id);continue;}
+        peer.socket.send(this.core.realtime.transport.mobileOutputFrame(active.id,peer.device.id,active.key,value.event.audio),{binary:true});
+      } else {
+        this.event(peer,'realtime.event',value);
+        if(value.event.type==='state'&&value.event.state==='closed'){active.key.fill(0);peer.realtime=undefined;}
+      }
+    }
+  };
+  private async realtimeOperation(peer:Peer,device:Device,method:string,p:any) {
+    if(method==='owner.realtime.start'){
+      if(peer.realtime)throw new Error('Stop the current realtime session first');
+      const authorize=()=>{
+        const current=this.registry.live(device.id);
+        if(!current||!this.registry.config().enabled||peer.expiresAt<Date.now()||peer.socket.readyState!==WebSocket.OPEN||
+          current.scopeVersion!==device.scopeVersion||deviceRole(current.role)!=='owner'||peer.connectionRole!=='owner'||
+          !peer.clientFeatures?.has('realtime.audio.v1')) throw remoteError('AUTH_REVOKED','Realtime access ended.');
+        this.router.session({...current,connectionRole:'owner'},p.conversationId);
+      };
+      const conversation=this.router.session(device,p.conversationId);
+      const result=await this.core.realtime.start(p,authorize,this.router.execution(device,this.router.projectFor(device,conversation.cwd)));
+      peer.realtime={id:result.sessionId,key:randomBytes(32)};
+      return result;
+    }
+    if(!peer.realtime||peer.realtime.id!==p.sessionId)throw remoteError('SCOPE_DENIED','This connection does not own that realtime session.');
+    this.core.realtime.check(p.sessionId);
+    if(method==='owner.realtime.offer')return {...this.core.realtime.transport.mobileOffer(p.sessionId),frameKey:peer.realtime.key.toString('base64url')};
+    return this.core.realtime.rpc(method.slice(6),p);
+  }
   onChanged=()=> {
     this.router.recheckActions();
     if(this.core.settings.paused)for(const session of this.core.store.sessions())if(session.remote){this.core.abortActions(session.id,remoteError('POLICY_PAUSED','Desktop actions are paused.'));if(session.provider!=='ollama'&&busy(session)&&!this.core.stopping.has(session.id))void this.core.stop(session.id).catch(()=>{});}
@@ -97,6 +135,7 @@ export class MobileGateway {
   // Completion, failure and stop notices for in-scope sessions, plus timers this phone's projects set,
   // so the phone can raise its own alerts. Text stays generic: provider error detail remains in Activity.
   onNotice=(notice:any)=> {
+    this.wakePhones(notice);
     for(const peer of this.peers)if(peer.subscribed&&peer.device) {
       const device=peer.device;
       try {
@@ -111,6 +150,25 @@ export class MobileGateway {
       } catch {}
     }
   };
+  /**
+   * A phone that asked to be woken, has no connection and may see what happened gets one contentless hint (wake.ts).
+   * The same rules decide it as decide what a connected phone is shown.
+   */
+  private wakePhones(notice:any) {
+    if(this.closed||this.core.closed||!this.registry.config().enabled)return;
+    for(const device of this.registry.devices()) {
+      if(!device.wake?.approved||device.replacementPending||!this.registry.live(device.id)||this.wake.connected(device.id))continue;
+      try {
+        if(['approval','complete','error','interrupted'].includes(notice?.kind)&&typeof notice.sessionId==='string') {
+          if(notice.kind==='approval'&&!device.caps.includes('approvals.answer'))continue;
+          this.router.session(device,notice.sessionId);
+        } else if(notice?.kind==='timer'&&typeof notice.remoteProjectId==='string') {
+          if(!this.router.projects(device).some(p=>p.id===notice.remoteProjectId)||!device.caps.includes('desktop.control')||!device.categories.includes('timers'))continue;
+        } else continue;
+      } catch {continue;}
+      void this.track(this.wake.hint(device.id)).catch(()=>{});
+    }
+  }
   event(peer:Peer,name:string,data:any) {
     if(!peer.device||this.closed)return;
     try{this.router.current(peer.device);}catch(error){peer.socket.close(4003,(error as any)?.code||'AUTH_REVOKED');return;}
@@ -130,7 +188,10 @@ export class MobileGateway {
     this.core.remoteStatus={enabled:this.registry.config().enabled,listening:this.servers.length>0,listeningAddresses:[...this.bindings.keys()],waitingForNetwork:this.registry.config().enabled&&!this.servers.length,networkError:this.networkError,connected:[...new Map([...this.peers].filter(p=>p.device).map(p=>[p.device!.id,{id:p.device!.id,name:p.device!.name}])).values()],
       activeTurns:this.core.store.sessions().filter(s=>s.remote&&busy(s)).map(s=>({sessionId:s.id,deviceId:s.remote!.deviceId,project:s.cwd})),
       // The live network-return offer: whether a phone has answered and the six words to compare.
-      pairing:this.pairing.status()};
+      pairing:this.pairing.status(),
+      // The opt-in announcement on the local network: where it is made now, and why it is not.
+      discovery:{active:this.discovery.active,...(this.discovery.problem?{problem:this.discovery.problem}:{})},
+      browser:this.browser.status()};
     if(!this.closed)this.core.changed();
   }
   async start() {this.lifecycle=this.lifecycle.catch(()=>{}).then(()=>this.refresh());return this.lifecycle;}
@@ -139,7 +200,7 @@ export class MobileGateway {
    * pairing offer the owner just prepared is live (five minutes at most), when it accepts only that
    * offer's signed answer before confirmation.
    */
-  shouldListen() {return this.registry.config().enabled&&this.registry.devices().some(d=>this.registry.live(d.id))||!!this.pairing.networkWindow();}
+  shouldListen() {return this.registry.config().enabled&&this.registry.devices().some(d=>d.surface!=='browser'&&this.registry.live(d.id))||!!this.pairing.networkWindow();}
   /** Tells phones waiting on these offers that they ended, and why. */
   pairEnded(ids:string[],reason:'expired'|'cancelled'|'replaced'|'contested') {
     for(const peer of this.peers)if(peer.pairingId&&ids.includes(peer.pairingId)&&!peer.device){this.send(peer,{v:1,type:'pair.closed',reason});peer.socket.close(1000,'PAIR_CLOSED');}
@@ -151,13 +212,13 @@ export class MobileGateway {
   async refresh() {
     if(this.closed)return;
     if (!this.stagingInitialized) { await this.router.transfers.resetStaging(); this.stagingInitialized=true; }
-    await this.completeReplacements();
+    await this.completeReplacements();await this.browser.refresh();
     const config=this.registry.config();
     if(!this.shouldListen()) {await this.stopListeners();this.presence();return;}
     const available=this.availableAddresses(),wanted=config.addresses.filter(address=>available.includes(address));
     for(const address of [...this.bindings.keys()])if(!wanted.includes(address))await this.stopBinding(address);
     this.networkError=undefined;
-    if(!wanted.length){this.presence();return;}
+    if(!wanted.length){await this.announce();this.presence();return;}
     try {await this.identity.ensure(config);} catch(error) {this.networkError=(error as Error).message;this.presence();return;}
     const material=this.identity.material();
     for(const address of wanted) {
@@ -175,19 +236,33 @@ export class MobileGateway {
         if(this.closed||!this.shouldListen())await this.stopBinding(address);
       } catch(error){await this.stopBinding(address);this.networkError=(error as Error).message;}
     }
-    this.presence();
+    await this.announce();this.presence();
   }
-  connection(socket:WebSocket) {
-    const peer:Peer={socket,expiresAt:0,subscribed:false,challenges:new Map(),inFlight:0,alive:true,pingAt:Date.now(),timer:setTimeout(()=>socket.close(4001,'UNAUTHENTICATED'),10000)};
+  /** Announces the gateway's local addresses while the owner chose that and a paired phone may connect; nothing otherwise. */
+  private async announce() {
+    const config=this.registry.config(),addresses=[...this.bindings.keys()].filter(announceable);
+    const wanted=!this.closed&&config.enabled&&config.discovery===true&&this.registry.devices().some(d=>d.surface!=='browser'&&this.registry.live(d.id))&&addresses.length>0;
+    await this.discovery.set(wanted?{id:this.identity.id,major:1,port:config.port,addresses}:undefined).catch(error=>{this.discovery.problem=String(error?.message||error).slice(0,200);});
+  }
+  connection(socket:WebSocket,surface:'mobile'|'browser'='mobile') {
+    const peer:Peer={surface,socket,expiresAt:0,subscribed:false,challenges:new Map(),inFlight:0,alive:true,pingAt:Date.now(),timer:setTimeout(()=>socket.close(4001,'UNAUTHENTICATED'),10000)};
     peer.timer.unref();this.peers.add(peer);
     socket.on('error',()=>{});socket.on('pong',()=>{peer.alive=true;});
-    socket.on('close',()=>{clearTimeout(peer.timer);peer.challenges.clear();this.peers.delete(peer);if(peer.device)this.router.terminals.disconnected(peer.device.id,[...this.peers].some(other=>other.device?.id===peer.device!.id));if(!this.closed)this.presence();});
+    socket.on('close',()=>{if(peer.realtime){peer.realtime.key.fill(0);this.core.realtime.transport.stop(peer.realtime.id);}clearTimeout(peer.timer);peer.challenges.clear();this.peers.delete(peer);if(peer.device)this.router.terminals.disconnected(peer.device.id,[...this.peers].some(other=>other.device?.id===peer.device!.id));if(!this.closed)this.presence();});
     socket.on('message',(data,isBinary)=> {
       if(peer.device&&peer.expiresAt<Date.now()){socket.close(4001,'AUTH_EXPIRED');return;}
       const bytes=Array.isArray(data)?Buffer.concat(data):Buffer.from(data as any);
       if(bytes.length>(peer.device?1024*1024:8192)||peer.inFlight>=8){socket.close(4009,'LIMIT_EXCEEDED');return;}
       if(isBinary) {
-        if(!peer.device){socket.close(4001,'UNAUTHENTICATED');return;}
+        if(!peer.device||peer.surface==='browser'){socket.close(4001,'UNAUTHENTICATED');return;}
+        if(bytes.subarray(0,4).toString('ascii')==='PLRT'){
+          try{
+            if(!peer.realtime)throw new Error('No active realtime session');
+            this.core.realtime.check(peer.realtime.id);
+            this.core.realtime.transport.ingestMobileFrame(peer.device.id,bytes,peer.realtime.key,peer.realtime.id);
+          }catch{socket.close(4009,'REALTIME_FRAME_INVALID');}
+          return;
+        }
         peer.inFlight++;
         // An owner phone's artifact upload (transfers.ts) or, otherwise, an attachment chunk (media.ts).
         const transfer=peer.connectionRole==='owner'&&peer.clientFeatures?.has('artifacts.transfer.v1')&&this.router.transfers.claims(peer.device,bytes);
@@ -209,7 +284,8 @@ export class MobileGateway {
   }
   private async frameInner(peer:Peer,frame:any) {
     if(!peer.device) {
-      if(frame.type==='pair.response'&&!peer.hello&&!peer.pairingId) {
+      if(peer.surface==='browser'&&!peer.hello&&!peer.pairingId&&(frame.type==='browser.offer'||frame.type==='browser.pair')) {this.browserPairing(peer,frame);return;}
+      if(peer.surface==='mobile'&&frame.type==='pair.response'&&!peer.hello&&!peer.pairingId) {
         const {response}=pairResponseSchema.parse(frame);
         // A phone checking an answer the desktop already confirmed learns so at once.
         if(this.pairing.confirmedDevice(response)){this.send(peer,{v:1,type:'pair.confirmed'});peer.socket.close(1000,'PAIR_CONFIRMED');return;}
@@ -232,7 +308,7 @@ export class MobileGateway {
         // An incompatible hello says which side needs updating; it reveals nothing about the device.
         if(hello.protocolMin>0){peer.socket.close(4010,'INCOMPATIBLE_CLIENT_NEWER');return;}
         if(hello.protocolMax<0){peer.socket.close(4010,'INCOMPATIBLE_CLIENT_OLDER');return;}
-        if(!device||device.replacementPending||hello.desktopId!==this.identity.id||[...this.peers].filter(p=>p.device?.id===device.id).length>=2)throw remoteError('UNAUTHENTICATED','Authentication failed.');
+        if(!device||(device.surface||'mobile')!==peer.surface||device.replacementPending||hello.desktopId!==this.identity.id||[...this.peers].filter(p=>p.device?.id===device.id).length>=2)throw remoteError('UNAUTHENTICATED','Authentication failed.');
         peer.hello=hello;peer.challenge={challengeId:randomUUID(),serverNonce:randomBytes(32).toString('base64url'),epoch:this.registry.epoch,audience:this.identity.id,expiresAt:Date.now()+30000};
         this.send(peer,{v:1,type:'auth.challenge',...peer.challenge});return;
       }
@@ -240,17 +316,18 @@ export class MobileGateway {
       const hello=peer.hello,challenge=peer.challenge;peer.challenge=undefined;
       const device=hello?this.registry.live(hello.deviceId):undefined;
       const transcript={domain:'cere.mobile.auth.v1',helloDigest:hello?digest(hello):'',challenge,desktopId:this.identity.id,deviceId:device?.id,keyVersion:1,epoch:this.registry.epoch};
-      if(!device||device.replacementPending||!challenge||challenge.expiresAt<Date.now()||reply.challengeId!==challenge.challengeId||!verified(device.connectionKey,transcript,reply.signature)||!this.registry.config().enabled||[...this.peers].filter(p=>p.device?.id===device.id).length>=2)throw remoteError('UNAUTHENTICATED','Authentication failed.');
+      if(!device||(device.surface||'mobile')!==peer.surface||device.replacementPending||!challenge||challenge.expiresAt<Date.now()||reply.challengeId!==challenge.challengeId||!verified(device.connectionKey,transcript,reply.signature)||!this.registry.config().enabled||[...this.peers].filter(p=>p.device?.id===device.id).length>=2)throw remoteError('UNAUTHENTICATED','Authentication failed.');
       peer.device=device;peer.authSessionId=randomUUID();peer.expiresAt=Date.now()+15*60000;clearTimeout(peer.timer);
       device.lastSeen=Date.now();this.registry.saveDevice(device);
       const build=buildIdentity();
-      this.send(peer,{v:1,type:'welcome',desktopId:this.identity.id,brokerBuild:brokerBuildLabel(build),build:{version:build.version,commit:build.commit,dirty:build.dirty},authSessionId:peer.authSessionId,expiresAt:peer.expiresAt,epoch:this.registry.epoch,scopeVersion:device.scopeVersion,protocol:{major:1,minor:1},features:[...protocolFeatures],operations:availableOperations(device.caps,Registry.effectiveRole(device)),role:deviceRole(device.role),sendAuthentication:'connection-key',actionAuthentication:device.actionAuthentication||'biometric',limits:{maxFrameBytes:1024*1024,maxMessageLength:100000,maxAttachments:4}});
+      this.send(peer,{v:1,type:'welcome',desktopId:this.identity.id,brokerBuild:brokerBuildLabel(build),build:{version:build.version,commit:build.commit,dirty:build.dirty},authSessionId:peer.authSessionId,expiresAt:peer.expiresAt,epoch:this.registry.epoch,scopeVersion:device.scopeVersion,protocol:{major:1,minor:1},features:[...protocolFeatures],operations:this.offered(peer,availableOperations(device.caps,Registry.effectiveRole(device))),role:deviceRole(device.role),sendAuthentication:'connection-key',actionAuthentication:device.actionAuthentication||'biometric',limits:{maxFrameBytes:1024*1024,maxMessageLength:100000,maxAttachments:4}});
       this.registry.audit({deviceId:device.id,operation:'auth',decision:'connected'});this.presence();return;
     }
     const request=requestSchema.parse(frame),device=this.router.current(peer.device);
     // The stored record never carries the connection's negotiated role; each request's copy does.
     device.connectionRole=peer.connectionRole;
     if(peer.expiresAt<Date.now()){peer.socket.close(4001,'AUTH_EXPIRED');return;}
+    if(peer.surface==='browser'&&!browserMethods.has(request.method))throw remoteError('SCOPE_DENIED','A browser cannot do this. Use the desktop or a paired phone.');
     const schema=methods[request.method];if(!schema)throw remoteError('INVALID_ARGUMENT','Unknown mobile operation.');
     const params:any=schema.parse(request.params),method=request.method,now=Date.now();
     // One descriptor table decides both welcome's operation list and this check (schemas.ts).
@@ -267,11 +344,11 @@ export class MobileGateway {
       device.connectionRole=peer.connectionRole;
       const negotiated=Registry.effectiveRole(device);
       this.registry.audit({deviceId:device.id,authSessionId:peer.authSessionId,operation:'client.features',decision:negotiated,scopeVersion:device.scopeVersion});
-      this.send(peer,{v:1,type:'response',id:request.id,result:{role:negotiated,storedRole:deviceRole(device.role),operations:availableOperations(device.caps,negotiated,peer.clientFeatures),features:[...protocolFeatures],access:this.router.permissions(device).access}});
+      this.send(peer,{v:1,type:'response',id:request.id,result:{role:negotiated,storedRole:deviceRole(device.role),operations:this.offered(peer,availableOperations(device.caps,negotiated,peer.clientFeatures)),features:[...protocolFeatures],access:this.router.permissions(device).access}});
       return;
     }
     if(method==='commands.challenge') {
-      if(!mutations.has(params.method))throw remoteError('INVALID_ARGUMENT','Only a supported mutation can be authenticated.');
+      if(!mutations.has(params.method)||peer.surface==='browser'&&!browserMethods.has(params.method))throw remoteError('INVALID_ARGUMENT','Only a supported mutation can be authenticated.');
       for(const[id,c]of peer.challenges)if(c.expiresAt<now)peer.challenges.delete(id);
       if(peer.challenges.size>=4)throw remoteError('LIMIT_EXCEEDED','Too many pending action challenges.');
       const challenge={challengeId:randomUUID(),nonce:randomBytes(32).toString('base64url'),expiresAt:now+30000};peer.challenges.set(challenge.challengeId,{...challenge,...params});
@@ -293,7 +370,7 @@ export class MobileGateway {
       this.registry.audit({deviceId:device.id,authSessionId:peer.authSessionId,commandId:request.commandId,operation:method,argsDigest:digest(request.params),decision:'authorized',scopeVersion:device.scopeVersion,policyRevision:this.core.store.get('settingsRevision','0'),sessionId:params.sessionId,projectId:params.projectId});
     }
     try {
-      const result=await this.router.dispatch(device,method,params,request.commandId);
+      const result=method.startsWith('owner.realtime.')?await this.realtimeOperation(peer,device,method,params):await this.router.dispatch(device,method,params,request.commandId);
       if(!mutations.has(method))this.router.current(device);
       if(method==='sync.open'){peer.subscribed=true;peer.selected=params.selectedSessionId;}
       if(mutations.has(method)&&method!=='sessions.send')this.registry.finish(device.id,request.commandId!,{status:'completed',result});
@@ -307,6 +384,19 @@ export class MobileGateway {
       throw error;
     }
   }
+  /** What a connection is told it may call: for a browser, only what a browser may. */
+  private offered(peer:Peer,operations:string[]) {return peer.surface==='browser'?operations.filter(method=>browserMethods.has(method)):operations;}
+  /** Before a browser is paired: it may read the open offer, and answer it once. */
+  private browserPairing(peer:Peer,frame:any) {
+    const closed=(reason:string,message='')=>{this.send(peer,{v:1,type:'pair.closed',reason,...(message?{message}:{})});peer.socket.close(1000,'PAIR_CLOSED');};
+    if(frame.type==='browser.offer') {browserOfferRequest.parse(frame);const offer=this.browser.offer();if(offer)this.send(peer,{v:1,type:'browser.offer',offer});else closed('none');return;}
+    let received;
+    try {received=this.browser.receive(frame);}
+    catch(error:any) {closed(error?.code==='AUTH_EXPIRED'?'expired':'refused',safeError(error).message);return;}
+    peer.pairingId=received.pairingId;clearTimeout(peer.timer);
+    peer.timer=setTimeout(()=>closed('expired'),Math.max(1000,received.expiresAt-Date.now()+1000));peer.timer.unref();
+    this.send(peer,{v:1,type:'pair.received',pairingId:received.pairingId,expiresAt:received.expiresAt});
+  }
   async maintain() {
     if(this.closed||this.core.recovery.pending)return;
     for(const peer of this.peers) {
@@ -319,7 +409,7 @@ export class MobileGateway {
     await this.router.media.purge();
     await this.router.transfers.prune();
     const config=this.registry.config();
-    if(config.enabled||ended.length||this.pairing.networkWindow()) {
+    if(config.enabled||ended.length||this.pairing.networkWindow()||this.browser.window) {
       await this.start();
       if(config.enabled)for(const device of this.registry.devices())if(!device.revokedAt&&lapsed(device))await this.revoke(device.id);
       if(!this.shouldListen())await this.stopListeners();
@@ -338,7 +428,8 @@ export class MobileGateway {
     binding.ws.close();
   }
   async stopListeners() {
-    for(const peer of this.peers)peer.socket.terminate();
+    await this.discovery.stop();
+    for(const peer of this.peers)if(peer.surface==='mobile')peer.socket.terminate();
     await Promise.all([...this.bindings.keys()].map(address=>this.stopBinding(address)));
   }
   async disable() {
@@ -347,6 +438,7 @@ export class MobileGateway {
     this.router.abortActions();
     for(const peer of this.peers)this.send(peer,{v:1,type:'event',eventId:randomUUID(),cursor:'',resourceRevision:'1',name:'remote.disabled',data:{}});
     this.core.remoteView.end();
+    this.browser.endWindow('cancelled');await this.browser.stop();
     await this.stopListeners();await this.stopOwned();this.registry.audit({operation:'remote.disable',decision:'disabled'});this.presence();
   }
   async reduced(id:string, lostOwner=false){
@@ -359,14 +451,15 @@ export class MobileGateway {
   }
   async revoke(id:string) {
     const device=this.registry.device(id);if(!device)throw new Error('Device not found');
+    this.wake.forget(id);delete device.wake;
     device.revokedAt=Date.now();device.scopeVersion=String(BigInt(device.scopeVersion)+1n);this.registry.saveDevice(device);
     this.router.abortActions(id);
     for(const peer of this.peers)if(peer.device?.id===id){this.send(peer,{v:1,type:'event',eventId:randomUUID(),cursor:'',resourceRevision:'1',name:'device.revoked',data:{}});peer.socket.close(4003,'AUTH_REVOKED');}
     await this.stopOwned(id);this.releaseOwnerSessions(id);this.core.remoteView.end(id);await this.router.media.purge(id);await this.router.transfers.purge(id);await this.router.terminals.revoked(id);
     // Routines this phone authorized stop running unattended until another owner resumes them (PAL Everywhere §17.1).
-    const pausedSchedules=this.core.schedules.deviceRevoked(id);this.core.oauth.deviceRevoked(id);
+    const pausedSchedules=this.core.schedules.deviceRevoked(id);this.core.oauth.deviceRevoked(id);this.core.accounts.deviceRevoked(id);
     this.registry.audit({deviceId:id,operation:'device.revoke',decision:'revoked',...(pausedSchedules.length?{reason:`paused ${pausedSchedules.length} routine(s)`}:{})});
-    if(!this.shouldListen())await this.stopListeners();this.presence();
+    if(!this.shouldListen())await this.stopListeners();await this.browser.refresh();this.presence();
     return {revoked:true,pausedSchedules};
   }
   /**
@@ -387,7 +480,7 @@ export class MobileGateway {
       this.router.abortActions(device.replacesDeviceId);
       for(const peer of this.peers)if(peer.device?.id===device.replacesDeviceId)peer.socket.close(4003,'PAIRING_REPLACED');
       await this.stopOwned(device.replacesDeviceId);
-      this.core.remoteView.end(device.replacesDeviceId);
+      this.core.remoteView.end(device.replacesDeviceId);this.wake.forget(device.replacesDeviceId);
       await this.router.terminals.revoked(device.replacesDeviceId);
       await this.router.transfers.purge(device.replacesDeviceId);
       for(const session of this.core.store.sessions())if(session.remote?.deviceId===device.replacesDeviceId) {
@@ -400,10 +493,11 @@ export class MobileGateway {
   }
   async local(method:string,params:any={}) {
     switch(method) {
-      case 'remote.status':return {...this.core.remoteStatus as object,config:this.registry.config(),desktopId:this.identity.id,devices:this.registry.devices().map(({connectionKey,actionKey,...d})=>({...d,fingerprint:digest({connectionKey,actionKey})})),
+      case 'remote.status':return {...this.core.remoteStatus as object,config:this.registry.config(),desktopId:this.identity.id,devices:this.registry.devices().map(({connectionKey,actionKey,wake,...d})=>({...d,wake:this.wake.describe(wake),fingerprint:digest({connectionKey,actionKey})})),
         // For choosing at pairing instead of typing: this computer's addresses, the projects PAL knows
         // and the compatible connections a phone can be granted (origins only, never keys).
         addressCandidates:addressCandidates(),knownProjects:this.core.projects.list().sort((a:any,b:any)=>Number(!!b.favorite)-Number(!!a.favorite)||(b.updated||0)-(a.updated||0)).slice(0,24).map((project:any)=>({path:project.cwd,name:project.name})),
+        apiConnections:this.core.chatConnections.list().filter(c=>c.kind!=='ollama'||c.ollama?.host==='https://ollama.com').map(({id,name,kind})=>({id,name,kind})),
         compatibleConnections:this.core.chatConnections.list().filter(connection=>connection.kind==='compatible'&&connection.compatible?.baseUrl).map(connection=>({id:connection.id,name:connection.name,origin:endpointOrigin(connection.compatible!.baseUrl),settingsDefault:!!connection.migrated})),
         pairing:this.pairing.status()};
       case 'remote.preparePair': {
@@ -440,8 +534,24 @@ export class MobileGateway {
         this.registry.audit({operation:'identity.endpoints',decision:'updated',argsDigest:digest(config.addresses)});
         return true;
       }
+      case 'remote.browserConfigure':return this.browser.configure(params);
+      case 'remote.browserPrepare':return this.browser.prepare(params);
+      case 'remote.browserCancel':this.browser.endWindow('cancelled');await this.browser.refresh();this.presence();return true;
+      case 'remote.browserConfirm': {const device=this.browser.confirm(params);await this.start();this.presence();return {id:device.id,name:device.name};}
       case 'remote.enable':this.registry.configure({...this.registry.config(),enabled:true});await this.start();return true;
       case 'remote.off':await this.disable();return true;
+      // Whether this desktop says on the local network that PAL is here (discovery.ts). Off unless chosen.
+      case 'remote.setDiscovery': {
+        const {enabled}=z.strictObject({enabled:z.boolean()}).parse(params);
+        this.registry.configure({...this.registry.config(),discovery:enabled});
+        this.registry.audit({operation:'remote.discovery',decision:enabled?'enabled':'disabled'});
+        await this.announce();this.presence();return {enabled,active:this.discovery.active,...(this.discovery.problem?{problem:this.discovery.problem}:{})};
+      }
+      // The owner's answer to a phone that asked to be woken through a push server; it names the server shown.
+      case 'remote.decideWake': {
+        const p=z.strictObject({id:z.uuid(),approved:z.boolean(),host:z.string().max(300).optional()}).parse(params);
+        return this.wake.decide(p.id,p.approved,p.host);
+      }
       case 'remote.resetIdentity': {
         if(params.confirmed!==true)throw new Error('Confirm locally: reset revokes every phone and requires new offline pairing.');
         await this.disable();for(const device of this.registry.devices())if(this.registry.live(device.id))await this.revoke(device.id);
@@ -469,7 +579,7 @@ export class MobileGateway {
       case 'remote.renewDevice': {
         const device=this.registry.live(z.uuid().parse(params.id));if(!device||params.confirmed!==true)throw new Error('Re-pair an expired device or confirm renewal locally.');
         if(device.lifetime==='until-revoked')return true;
-        device.expiresAt=Date.now()+90*86400000;this.registry.saveDevice(device);this.registry.audit({deviceId:device.id,operation:'device.renew',decision:'renewed'});return true;
+        device.expiresAt=Date.now()+(device.surface==='browser'?browserLimits.days:90)*86400000;this.registry.saveDevice(device);this.registry.audit({deviceId:device.id,operation:'device.renew',decision:'renewed'});return true;
       }
       case 'remote.purgeMedia': {const id=z.uuid().parse(params.id);if(params.confirmed!==true)throw new Error('Confirm clearing this device’s retained images.');await this.stopOwned(id);await this.router.media.purge(id);return true;}
       default:throw new Error('Unknown remote management method');
@@ -483,9 +593,10 @@ export class MobileGateway {
    */
   close():Promise<void> {return this.closing??=this.closeOnce();}
   private async closeOnce() {
-    this.closed=true;this.router.abortActions();clearInterval(this.heartbeat);if(this.stateTimer)clearTimeout(this.stateTimer);
+    this.closed=true;this.wake.close();this.router.abortActions();clearInterval(this.heartbeat);if(this.stateTimer)clearTimeout(this.stateTimer);
+    this.core.off('realtime',this.onRealtime);
     this.core.off('changed',this.onChanged);this.core.off('state',this.onState);this.core.off('message',this.onMessage);this.core.off('notice',this.onNotice);
-    await this.stopListeners();
+    await this.stopListeners();await this.browser.stop();
     let timer:NodeJS.Timeout|undefined;
     const settled=await Promise.race([Promise.allSettled([...this.work,this.lifecycle]).then(()=>true),new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),MobileGateway.closeDrainMs);timer.unref();})]);
     clearTimeout(timer);

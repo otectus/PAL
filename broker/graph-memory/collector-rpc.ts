@@ -7,39 +7,41 @@ import { privateDir } from "../paths.ts";
 import { LiveObservationFactory, LiveWorkspaceState } from "./adapters/live.ts";
 import { inspectGitCheckout } from "./adapters/workspace.ts";
 import { parse } from "./contracts.ts";
+const fishParams = z
+  .object({
+    source: z.literal("fish"),
+    source_epoch: z.string().uuid(),
+    source_sequence: z.number().int().positive(),
+    event: z.enum(["start", "exit", "cwd", "postexec", "posterror", "focus_in", "focus_out"]),
+    shell_session_id: z.string().uuid(),
+    cwd: z.string().max(4096),
+    status: z.number().int().optional(),
+    pipeline_status: z.array(z.number().int()).max(64).optional(),
+    duration_ms: z.number().int().nonnegative().optional(),
+    terminal_binding: z.object({ kind: z.literal("kitty_window_id"), id: z.string().max(64), pid: z.number().int().positive().optional() }).strict().optional(),
+  })
+  .strict();
+/** An editor says which document is open, saved or closed. Its text is never sent and has no field to be sent in. */
+const editorParams = z
+  .object({
+    source: z.literal("editor"),
+    source_epoch: z.string().uuid(),
+    source_sequence: z.number().int().positive(),
+    event: z.enum(["document_opened", "document_focused", "document_saved", "document_closed", "editor_closed"]),
+    editor: z.string().regex(/^[A-Za-z0-9 ._-]{1,40}$/),
+    pid: z.number().int().positive().optional(),
+    path: z.string().min(1).max(4096).optional(),
+    content_revision: z.string().max(64).regex(/^[A-Za-z0-9._:-]+$/).optional(),
+    terminal_binding: z.object({ kind: z.literal("kitty_window_id"), id: z.string().max(64), pid: z.number().int().positive().optional() }).strict().optional(),
+  })
+  .strict()
+  .refine((p) => p.event === "editor_closed" || !!p.path, "A document event names its path");
 const frame = z
   .object({
     protocol_version: z.literal(1),
     request_id: z.string().uuid(),
     method: z.literal("collector.emit"),
-    params: z
-      .object({
-        source: z.literal("fish"),
-        source_epoch: z.string().uuid(),
-        source_sequence: z.number().int().positive(),
-        event: z.enum([
-          "start",
-          "exit",
-          "cwd",
-          "postexec",
-          "posterror",
-          "focus_in",
-          "focus_out",
-        ]),
-        shell_session_id: z.string().uuid(),
-        cwd: z.string().max(4096),
-        status: z.number().int().optional(),
-        pipeline_status: z.array(z.number().int()).max(64).optional(),
-        duration_ms: z.number().int().nonnegative().optional(),
-        terminal_binding: z
-          .object({
-            kind: z.literal("kitty_window_id"),
-            id: z.string().max(64),
-          })
-          .strict()
-          .optional(),
-      })
-      .strict(),
+    params: z.union([fishParams, editorParams]),
   })
   .strict();
 /** The service's fenced view of live state: writes after a collector restart are discarded. */
@@ -118,9 +120,9 @@ export class CollectorRpc {
     await chmod(this.socket, 0o600);
   }
   async ingest(text: string) {
-    const request = parse(frame, JSON.parse(text)),
-      p = request.params,
-      { policy } = await this.policy();
+    const request = parse(frame, JSON.parse(text)), params = request.params;
+    if (params.source === "editor") return this.editor(params);
+    const p = params, { policy } = await this.policy();
     if (!policy.enabled || !policy.fish_enabled)
       throw new Error("Fish observation is disabled");
     if (p.source_epoch !== p.shell_session_id)
@@ -143,18 +145,7 @@ export class CollectorRpc {
     }
     if (p.source_sequence <= state.sequence) return { duplicate: true };
     state.sequence = p.source_sequence;
-    let cwd: string | undefined;
-    try {
-      const path = await realpath(p.cwd);
-      for (const root of policy.approved_roots) {
-        const approved = await realpath(root),
-          delta = relative(approved, path);
-        if (delta === "" || (!delta.startsWith("..") && !isAbsolute(delta))) {
-          cwd = path;
-          break;
-        }
-      }
-    } catch {}
+    const cwd = await this.approved(p.cwd, policy.approved_roots);
     const observation = state.factory.observation(
       state.entity,
       p.source_epoch,
@@ -167,7 +158,7 @@ export class CollectorRpc {
           ? { status: p.status, pipelineStatus: p.pipeline_status || [] }
           : {}),
         ...(p.duration_ms !== undefined ? { durationMs: p.duration_ms } : {}),
-        ...(p.terminal_binding ? { kittyPaneId: p.terminal_binding.id } : {}),
+        ...(p.terminal_binding ? { kittyPaneId: p.terminal_binding.id, ...(p.terminal_binding.pid ? { kittyPid: p.terminal_binding.pid } : {}) } : {}),
       },
     );
     this.live.apply(observation);
@@ -188,6 +179,39 @@ export class CollectorRpc {
     if (p.event === "exit") this.sessions.delete(p.shell_session_id);
     return { generation: this.live.snapshot().generation, durable: false };
   }
+  /** A path as it really is, when it lies inside an approved folder; a link that leaves one does not. */
+  private async approved(path: string, roots: string[]): Promise<string | undefined> {
+    try {
+      const real = await realpath(path);
+      for (const root of roots) {
+        const delta = relative(await realpath(root), real);
+        if (delta === "" || (!delta.startsWith("..") && !isAbsolute(delta))) return real;
+      }
+    } catch { /* it does not exist, or may not be read */ }
+    return undefined;
+  }
+  /** One editor process is one epoch. A document outside the approved folders leaves no trace at all. */
+  private async editor(p: z.infer<typeof editorParams>) {
+    const { policy } = await this.policy();
+    if (!policy.enabled || !policy.editor_enabled) throw new Error("Editor observation is disabled");
+    let state = this.sessions.get("editor:" + p.source_epoch);
+    if (!state) {
+      if (this.sessions.size >= 256) this.sessions.delete(this.sessions.keys().next().value!);
+      state = { factory: new LiveObservationFactory("editor", 300_000, undefined, p.source_epoch), sequence: 0, entity: p.source_epoch };
+      this.sessions.set("editor:" + p.source_epoch, state);
+    }
+    if (p.source_sequence <= state.sequence) return { duplicate: true };
+    state.sequence = p.source_sequence;
+    const path = p.path ? await this.approved(p.path, policy.approved_roots) : undefined;
+    if (p.event !== "editor_closed" && !path) return { ignored: "outside_approved_folders", durable: false };
+    const identity = { editor: p.editor, ...(p.pid ? { pid: p.pid } : {}), ...(p.terminal_binding ? { kittyPaneId: p.terminal_binding.id, ...(p.terminal_binding.pid ? { kittyPid: p.terminal_binding.pid } : {}) } : {}) };
+    // Each editor has one entity: what it shows now. A closed document or editor is said, not forgotten silently.
+    this.live.apply(state.factory.observation("editor:" + p.source_epoch, p.source_epoch, p.event.toUpperCase(), {
+      ...identity, event: p.event, ...(path ? { path } : {}), ...(p.content_revision ? { contentRevision: p.content_revision } : {}),
+    }));
+    if (p.event === "editor_closed") this.sessions.delete("editor:" + p.source_epoch);
+    return { generation: this.live.snapshot().generation, durable: false };
+  }
   async close() {
     if (this.server) {
       await new Promise<void>((resolve) => this.server!.close(() => resolve()));
@@ -196,5 +220,6 @@ export class CollectorRpc {
     }
     this.sessions.clear();
     this.live.markSourceUnknown("fish", "collector_stopped");
+    this.live.markSourceUnknown("editor", "collector_stopped");
   }
 }

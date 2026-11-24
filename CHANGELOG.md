@@ -4,6 +4,79 @@ Notable changes to PAL, the desktop application and its broker, and to PAL Mobil
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-11-24
+
+### Added
+
+- **Providers.** Dedicated Grok (xAI), Perplexity, Azure OpenAI, DeepSeek, Mistral, OpenRouter, Hugging Face, LiteLLM, Forge and Eden AI connections on desktop and Android. Conversations can bind to independent accounts and provider options. The [provider guide](docs/PROVIDERS.md) describes setup and operation-level verification.
+- **Provider services.** Perplexity background research, hosted search, native PDF handles, Grok Imagine, timed media jobs, structured inference and OCR, independent hosted speech routes, and realtime voice.
+- **Embeddings and imports.** More embedding and vector-store choices, Voyage reranking and Jev evaluation, a previewable Py-GPT account import, and a private database backup before migration.
+- **Provider accounts.** Check an account in stages, see everything that uses it, and move that to another account before removing it, on the desktop and the phone. Setups and specialists can name the account they run on.
+- **Model lists.** Search and narrow a long list, with context, price and what a model reads in words. For an OpenRouter model, see who serves it and prefer some of them. On the phone a long list no longer draws every model at once.
+- **Claude, Gemini and OpenAI.** Claude can read web pages and run code at Anthropic, with the steps listed; Gemini can read pages you name and run code; OpenAI accounts can name an organization and project. Files that a provider’s code makes are kept with the conversation. Prompt caching for Claude is optional.
+- **LiteLLM bridge.** PAL can install LiteLLM in a folder of its own, with exact versions and checked files, and remove it again. Replies stream, and tools and reasoning survive several rounds.
+- **Time awareness.** The assistant knows the current date, time and time zone, and how long ago earlier messages were. The reading is taken again for every request PAL sends, and a message keeps its own date while it waits in a queue. Choose a fixed zone or a zone for one conversation, open the clock from the command palette or the phone, and see in **Context** what the last request was told. [Details and limits](docs/time-awareness.md).
+- **Recordings.** Keep an audio or video file with a conversation and play it beside its time-coded transcript in **Workbench › Media** or on the phone. Search the transcript, correct lines as a new version, ask about the part you picked, make a clip, export SubRip or WebVTT subtitles, and translate them with their times. A time cited in a reply opens the recording there. Playing on the desktop needs `qt6-multimedia`; clips need `ffmpeg`.
+- **Documents.** Write one from a template, or export a reply, a file, a conversation or a research report as PDF, Word, a web page or Markdown; on the phone, a reply or a file. The assistant can make one when asked.
+- **Analysis sessions.** Python that keeps its variables between cells, inside Code Lab's isolation, with the variables listed and Clear, Restart and Stop. A result says that it can depend on earlier cells, and a notebook made from the session starts clean.
+- **Document collections.** Excerpts name their lines, page, sheet or time; the same passage is given once; passages that disagree are marked and both given; a file that changed since it was indexed says so. Try a question to see what a conversation would get, include source code, rerank with Voyage, or rebuild the index.
+- **Pinned sources and Context.** Pin files, folders, collections or conversations to a conversation or project: they are read again for every message and left out, with the reason, when the model may not have them. **Context** now names where messages go, the tools, skills and helper calls, and the excerpts and pins a request was given.
+- **Phone.** References in messages with a preview of what they add; projects, folders, saved setups, tool-server details, standing grants and running jobs; tables, OCR, masks, contact sheets, ZIP bundles and commands in the Work tab; result verification; and the evidence behind a memory.
+- **Tasks and identity in memory.** Choose the project task a conversation works on: what is said there comes first in its memory. Say whether two remembered things are the same or different, with the words that decided it, and undo the decision later, from either screen.
+- **Phone, outside the app.** A Quick Settings tile for monitoring, a home-screen widget with the connection and the number of requests waiting, launcher shortcuts, and a conversation added to the home screen. None of them shows a title or answers a request, except a shortcut you name yourself.
+- **Finding the desktop again.** Optional and off by default: the desktop announces its protocol version and ID on the local network, and a paired phone can search for it. An address counts only after it presents the key the phone paired with.
+- **Wake-ups.** Optional and off by default: a push app you choose on the phone (UnifiedPush) tells it to connect when something waits. You allow the push server on the desktop. A hint is empty, encrypted to that phone, and cannot carry a request or an answer.
+- **Accounts.** Connect GitHub, Google and Microsoft with apps you register there: the agenda, mail, files and repositories in **Workbench › Accounts** and on the phone. Keep a message, file or issue as a file of the conversation. Everything written is a draft first, shown in full and sent by its own button, once, even if an answer is lost. Let assistants read an account, or prepare changes for you to send, per project and per kind of model; off until you do. Sign in with a short code, also from the phone. A routine can deliver its result to an address or issue you name. Not tested against real accounts.
+- **What PAL may observe.** Two more sources, off by default like the others: documents open in Vim, Neovim or another editor that calls the emitter, and whether the computer is locked. Kitty terminals are told apart by window and process, so a conversation sees the folder of the terminal you are in. While the screen is locked nothing is observed, and after sleep everything is unknown until it is seen again.
+- **Workspace history.** Optional and off by default: which files and folders you worked on inside approved folders, and for how long, for a number of days you choose. No title, command or text is kept. Read and erase it under **Memory › Inspector** or on the phone; a folder you remove takes its history with it.
+- **Code in a project.** Optional for each project: an index on this computer of what its TypeScript, JavaScript, C++ and QML declares and calls. Find code in **Context** by what it does, see what uses it and how sure that is, and tie the project’s decisions to it. Models on this computer can use it, hosted ones only if you allow it, and switching it off deletes it.
+- **Browser companion.** Optional and off by default: conversations of the projects you choose in a web browser, on this computer or another. A browser is paired with a code and six words, reads and can Stop and Deny unless you let it send, never gets full access, and its pairing ends after 14 days unless you renew it on the desktop.
+- **Services PAL can run.** Optional: start and stop Ollama or the memory databases from **Health**, with their log. PAL stops only what it started itself; a service someone else started is used and left alone.
+- **Speech.** Keep spoken audio of saved conversations so reading it again starts at once and is not paid for twice; it goes with its message. Voice input can use a speech server on this computer that keeps its model loaded.
+- **Tables for spreadsheets.** An exported result table can keep cells that look like formulas as text.
+- **Notes folder.** Limit the folder to some of its subfolders, and leave notes out with a `.palignore` file.
+- **Local models.** Free space where a local Ollama keeps its models, with a warning when it is low.
+- **Desktop.** Run a command, restore or delete trashed files, bundle files as ZIP, check a table, translate a file or add it to a collection from its menu; review pinned replies, service manifests and the Jev model list.
+
+### Changed
+
+- References to a subtitle or transcript file give the model its lines with their times.
+- A collection match that shares only one ordinary word with the question is marked as weak instead of standing beside real matches.
+- Collections with strict answers ask more of a match by words alone.
+- When a long conversation no longer fits a small model, what it was opened with keeps a place among the excerpts.
+- Delegated tasks ask for the objective, files, constraints, checks and report the other assistant needs.
+- Claude models are asked only for what their generation takes. A temperature or thinking budget a model would refuse is named before anything is sent, and reasoning that a changed conversation may no longer carry is left out.
+- Token counts include what Claude’s cache held and what Gemini thought, so use and budgets are no longer too low.
+- OpenRouter models offer their own reasoning efforts, and a model that takes no tools or does not reason is not asked to.
+- Delegated results that wait for a conversation are counted in the session list and under the conversation, on both screens.
+- **Voice on the phone.** The voice controls left the chat for **⋮ › Voice settings**, which gives the conversation its space back. While a note is recorded, live voice runs or a reply is read aloud, one line above the composer says so. Live voice is offered only in conversations the desktop can start it for.
+- A conversation that has a named account is offered the accounts it can move to. Returning to no account was listed before and always refused.
+
+### Fixed
+
+- **Conversation settings on the phone.** Opening them crashed the app on a phone with full access.
+- Other ways the phone app could close itself: two rows with the same key, an answer shaped differently than expected, saved screen state or a copy larger than Android accepts, a link no app opens, and very large pictures. Each is now said or left out.
+- A phone sheet swiped away while it was working could leave the app unusable.
+- A phone edit of a desktop file was lost when the phone was turned. It now survives with the version it started from.
+- While the desktop was busy, the phone dropped answers whenever a routine update arrived in between. It asks again instead.
+- On the phone, a new chat with a provider that runs only through a named account starts with that account, and a handoff lists only providers that can take it. Choosing a conversation’s current account again keeps its options.
+- In a narrow conversation, as beside the Workbench, search sources, a reply style for one message or live voice could push **Send** out of view. They now move to a line of their own above it.
+- The desktop could freeze when a dialog’s text needed one more line beside its scroll bar.
+- A conversation’s model dialog listed no models and showed no provider options with Qt 6.12.
+- Desktop forms sent what was left empty as a value: a specialist without instructions could not be added, Code Lab could not be asked about a new analysis, and accounts could not be imported without their keys.
+- A phone could not connect once the desktop’s model lists together passed a megabyte.
+- OpenRouter offered batch-only models for conversations, and its embedding and speech lists were empty.
+- The LiteLLM bridge lost tool calls after the first round and could stop the broker with an oversized answer.
+- Editing a setup on the desktop dropped its account, and a helper’s account could not be cleared.
+- **Graph extraction account** in Settings was refused by the broker. It now applies, and an account in use cannot be removed.
+- Realtime voice sessions receive the same instructions and personality as other conversations.
+- Checking or cancelling a video or music job from the Runs pane works, and running a command reports why it was refused.
+- A file kept in the first moment after PAL started, such as a resumed research report, could fail to be saved.
+- A saved script's time limit set on the phone was sixty times too short.
+- Lists of providers for branches, tool servers and memory review include every provider.
+- A window opened after PAL started was never resolved in the workspace view.
+- A model could propose an edit to a private note by writing the note’s full path.
+
 ## [2.0.1] - 2026-11-23
 
 ### Added

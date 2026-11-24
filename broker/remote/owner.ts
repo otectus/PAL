@@ -1,3 +1,4 @@
+import {transcribeArtifact} from '../speech/artifact.ts';
 /**
  * The desktop side of the operations an owner phone gains (owner-schemas.ts). Every operation maps to one
  * named desktop service method: the gateway never forwards an arbitrary Core method, and each operation's
@@ -9,6 +10,8 @@
  * attribution (the gateway audit log names the device and command) and transport (bytes move as verified
  * transfers, never as desktop paths the phone cannot open).
  */
+import { planningHandoff } from '../research/handoff.ts';
+import { randomUUID } from 'node:crypto';
 import { readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -72,7 +75,7 @@ export class OwnerOps {
   /** Keep a run safely below the authenticated phone frame; passage bodies are fetched one at a time. */
   private researchDto(run: any) {
     if (!run || typeof run !== 'object') return run;
-    const { reportText: _reportText, pending: _pending, pendingQueries: _pendingQueries, processed: _processed, ...rest } = run;
+    const { reportText: _reportText, synthesis: _synthesis, pending: _pending, pendingQueries: _pendingQueries, processed: _processed, ...rest } = run;
     const dto: any = {
       ...rest,
       evidence: Array.isArray(run.evidence) ? run.evidence.map((source: any) => {
@@ -102,9 +105,18 @@ export class OwnerOps {
   }
   private deviceDto(device: Device, self: string) {
     const { connectionKey: _c, actionKey: _a, connectionRole: _r, ...rest } = device;
-    return { id: rest.id, name: rest.name, role: deviceRole(rest.role), self: rest.id === self, lifetime: rest.lifetime || 'expires', expiresAt: rest.lifetime === 'until-revoked' ? null : rest.expiresAt ?? null,
+    return { id: rest.id, name: rest.name, ...(rest.surface ? { surface: rest.surface } : {}), role: deviceRole(rest.role), self: rest.id === self, lifetime: rest.lifetime || 'expires', expiresAt: rest.lifetime === 'until-revoked' ? null : rest.expiresAt ?? null,
       revoked: !!rest.revokedAt, lastSeen: rest.lastSeen || null, createdAt: rest.createdAt, actionAuthentication: rest.actionAuthentication || 'biometric', scopeVersion: rest.scopeVersion,
       workingProfile: deviceRole(rest.role) === 'owner' ? workingProfile(rest.profile) : null, projects: deviceRole(rest.role) === 'owner' ? null : rest.projects.map(project => ({ id: project.id, name: project.name, path: project.path })) };
+  }
+  /** The desktop's accounts, as any of its screens uses them. An answer is kept within one frame. */
+  private async accounts(device: Device, method: string, p: any): Promise<unknown> {
+    if (p.sessionId) this.session(device, p.sessionId);
+    const value: any = await this.core.accounts.rpc(method, p, { id: device.id, name: device.name.slice(0, 48) });
+    if (method === 'mailThread') return { messages: value.messages.slice(-20).map((message: any) => message.text.length > 12_000 ? { ...message, text: message.text.slice(0, 12_000), truncated: true } : message), ...(value.messages.length > 20 ? { earlier: value.messages.length - 20 } : {}) };
+    if (method === 'agenda') return { ...value, events: value.events.slice(0, 200).map((event: any) => event.notes?.length > 1500 ? { ...event, notes: event.notes.slice(0, 1500) } : event) };
+    if (method === 'outbox') return { writes: value.writes.slice(0, 60).map((write: any) => write.description.length > 8000 && write.state === 'sent' ? { ...write, description: write.description.slice(0, 8000) } : write) };
+    return value;
   }
   /** Settings without anything secret (keys live in the credential store, never in settings). */
   private settingsView() {
@@ -124,6 +136,11 @@ export class OwnerOps {
   }
 
   private async run(device: Device, method: string, p: any): Promise<any> {
+    const checkSession=()=>{this.router.current(device);if(!this.router.owner(device))throw remoteError('SCOPE_DENIED','Full desktop access is required');this.session(device,p.sessionId);};
+    if(method==='owner.workspace.history')return this.core.workspaceHistory.list(p);
+    if(method==='owner.workspace.historyErase')return this.core.workspaceHistory.erase(p);
+    if(method.startsWith('owner.accounts.'))return this.accounts(device,method.slice('owner.accounts.'.length),p);
+    if(method.startsWith('owner.xaiCollections.'))return this.core.xaiCollections.rpc(method.slice('owner.xaiCollections.'.length),p,checkSession);
     switch (method) {
       // ── Access, devices, profile ─────────────────────────────────────────────────────────────
       case 'owner.access': return { ...this.router.permissions(device), device: this.deviceDto(device, device.id) };
@@ -205,6 +222,7 @@ export class OwnerOps {
       case 'workbench.changes.apply': this.session(device, p.sessionId); this.owned(p.sessionId, p.changeSetId); return this.rpc('changes.apply', { id: p.changeSetId, digest: p.digest, ...(p.operations ? { operations: p.operations } : {}) });
       case 'workbench.changes.decline': this.session(device, p.sessionId); this.owned(p.sessionId, p.changeSetId); return this.rpc('changes.decline', { id: p.changeSetId });
       case 'workbench.changes.undo': this.session(device, p.sessionId); this.owned(p.sessionId, p.changeSetId); return this.rpc('changes.undo', { id: p.changeSetId });
+      case 'workbench.changes.purge': this.session(device, p.sessionId); return this.rpc('changes.purge', { sessionId: p.sessionId, trashId: p.trashId, confirmed: true });
       case 'workbench.changes.trash': this.session(device, p.sessionId); return this.rpc('changes.trash', { sessionId: p.sessionId });
 
       // ── Workbench: artifacts ─────────────────────────────────────────────────────────────────
@@ -217,6 +235,24 @@ export class OwnerOps {
       case 'workbench.artifacts.useInDraft': this.session(device, p.sessionId); return this.rpc('artifacts.useInDraft', { sessionId: p.sessionId, artifactId: p.artifactId, ...(p.versionId ? { versionId: p.versionId } : {}) });
       case 'workbench.artifacts.export': this.session(device, p.sessionId); return this.rpc('artifacts.export', { sessionId: p.sessionId, artifactId: p.artifactId, versionId: p.versionId, rootId: p.rootId, path: p.path });
       case 'workbench.artifacts.bundle': this.session(device, p.sessionId); return this.rpc('artifacts.bundle', { sessionId: p.sessionId, items: p.items, ...(p.name ? { name: p.name } : {}) });
+      case 'owner.providerInference.run':
+      case 'owner.providerInference.mistralOcr': {
+        this.session(device,p.sessionId);
+        const controller=new AbortController(),check=()=>{this.router.current(device);this.session(device,p.sessionId);controller.signal.throwIfAborted();};
+        const executionId=randomUUID();this.router.actions.set(executionId,{deviceId:device.id,controller,check});
+        try { check(); return await this.core.providerInference.rpc(method.slice('owner.'.length),p,controller.signal,check); }
+        finally { this.router.actions.delete(executionId); }
+      }
+      case 'owner.providerBridge.status': return this.core.providerBridge.rpc('providerBridge.status',p);
+      case 'owner.providerBridge.stop': return this.core.providerBridge.rpc('providerBridge.stop',p);
+      case 'owner.providerBridge.chat':
+      case 'owner.providerBridge.embeddings': {
+        this.session(device,p.sessionId);
+        const controller=new AbortController(),check=()=>{this.router.current(device);this.session(device,p.sessionId);controller.signal.throwIfAborted();};
+        const executionId=randomUUID();this.router.actions.set(executionId,{deviceId:device.id,controller,check});
+        try { check(); return await this.core.providerBridge.rpc(method.slice('owner.'.length),p,controller.signal,check); }
+        finally { this.router.actions.delete(executionId); }
+      }
 
       // ── Workbench: runs, Code Lab, commands ──────────────────────────────────────────────────
       case 'workbench.operations.list': { this.session(device, p.sessionId); const { sessionId, ...rest } = p; return this.rpc('operations.list', { sessionId, ...rest }); }
@@ -249,7 +285,7 @@ export class OwnerOps {
       }
       case 'workbench.codelab.export': this.session(device, p.sessionId); this.operation(p.sessionId, p.operationId); return this.rpc('codelab.export', { sessionId: p.sessionId, operationId: p.operationId, ...(p.outputs ? { outputs: p.outputs } : {}) });
       case 'workbench.codelab.table': this.session(device, p.sessionId); await this.rpc('artifacts.get', { sessionId: p.sessionId, artifactId: p.artifactId }); return this.rpc('codelab.table', { sessionId: p.sessionId, artifactId: p.artifactId, versionId: p.versionId, ...(p.query ? { query: p.query } : {}), ...(p.sort ? { sort: p.sort } : {}), ...(p.direction ? { direction: p.direction } : {}), ...(p.offset !== undefined ? { offset: p.offset } : {}), ...(p.limit ? { limit: p.limit } : {}) });
-      case 'workbench.codelab.exportRows': this.session(device, p.sessionId); await this.rpc('artifacts.get', { sessionId: p.sessionId, artifactId: p.artifactId }); return this.rpc('codelab.exportRows', { sessionId: p.sessionId, artifactId: p.artifactId, versionId: p.versionId, ...(p.query ? { query: p.query } : {}), ...(p.sort ? { sort: p.sort } : {}), ...(p.direction ? { direction: p.direction } : {}), ...(p.rows ? { rows: p.rows } : {}) });
+      case 'workbench.codelab.exportRows': this.session(device, p.sessionId); await this.rpc('artifacts.get', { sessionId: p.sessionId, artifactId: p.artifactId }); return this.rpc('codelab.exportRows', { sessionId: p.sessionId, artifactId: p.artifactId, versionId: p.versionId, ...(p.query ? { query: p.query } : {}), ...(p.sort ? { sort: p.sort } : {}), ...(p.direction ? { direction: p.direction } : {}), ...(p.rows ? { rows: p.rows } : {}), ...(p.spreadsheetSafe ? { spreadsheetSafe: true } : {}) });
       case 'workbench.codelab.schedule': {
         this.authorizeAnalysis(device, p.sessionId, p.id);
         return this.rpc('codelab.schedule', { sessionId: p.sessionId, id: p.id, days: p.days, authorizerDeviceId: device.id });
@@ -304,6 +340,13 @@ export class OwnerOps {
       case 'workbench.images.sketch': this.session(device, p.sessionId); return this.rpc('images.sketch', { sessionId: p.sessionId, width: p.width, height: p.height, ...(p.background ? { background: p.background } : {}) });
       case 'workbench.images.contactSheet': this.session(device, p.sessionId); return this.rpc('images.contactSheet', { sessionId: p.sessionId, items: p.items });
       case 'workbench.images.inspect': this.session(device, p.sessionId); return this.rpc('images.inspect', { sessionId: p.sessionId, artifactId: p.artifactId, ...(p.versionId ? { versionId: p.versionId } : {}) });
+      case 'workbench.recordings.list': case 'workbench.recordings.open': case 'workbench.recordings.cues': case 'workbench.recordings.transcribe': case 'workbench.recordings.correct': case 'workbench.recordings.subtitles': case 'workbench.recordings.clip':
+      case 'workbench.documents.fill': case 'workbench.documents.save': case 'workbench.documents.render':
+      case 'workbench.codelab.session': case 'workbench.codelab.sessionStart': case 'workbench.codelab.sessionInterrupt': case 'workbench.codelab.sessionClear': case 'workbench.codelab.sessionRestart': case 'workbench.codelab.sessionStop': case 'workbench.codelab.sessionNotebook':
+      case 'workbench.references.pins': case 'workbench.references.keep': case 'workbench.references.unkeep':
+        this.session(device, p.sessionId); return this.rpc(method.slice('workbench.'.length), p);
+      case 'workbench.codelab.sessionRun': this.session(device, p.sessionId); return this.rpc('codelab.sessionRun', { ...p, purpose: p.purpose || 'Run from PAL Mobile' });
+      case 'workbench.documents.formats': return this.rpc('documents.formats', {});
       case 'workbench.images.ocr': this.session(device, p.sessionId); return this.rpc('images.ocr', { sessionId: p.sessionId, artifactId: p.artifactId, ...(p.versionId ? { versionId: p.versionId } : {}), ...(p.region ? { region: p.region } : {}) });
       case 'workbench.images.analyze': this.session(device, p.sessionId); return this.rpc('images.analyze', { sessionId: p.sessionId, artifactId: p.artifactId, ...(p.versionId ? { versionId: p.versionId } : {}), ...(p.question ? { question: p.question } : {}), ...(p.region ? { region: p.region } : {}) });
       case 'workbench.references.search': this.session(device, p.sessionId); return this.rpc('references.search', { sessionId: p.sessionId, query: p.query });
@@ -322,6 +365,8 @@ export class OwnerOps {
       case 'owner.settings.get': {
         const credentials = this.core.credentials.status();
         return { revision: this.core.store.get('settingsRevision', '0'), settings: this.settingsView(), families: settingsFamilies,
+          // Which custom tools use a credential and whether one is saved; never the credential.
+          customToolCredentials: this.core.customTools.snapshot().filter(tool => tool.credential !== 'none'),
           credentials: Object.fromEntries(Object.entries(credentials).map(([provider, value]: [string, any]) => [provider, { configured: !!value.configured, source: value.source, ...(value.boundTo ? { boundTo: value.boundTo } : {}) }])) };
       }
       case 'owner.settings.patch': {
@@ -335,7 +380,11 @@ export class OwnerOps {
       case 'owner.connections.list': return this.rpc('connections.list');
       case 'owner.connections.save': return this.rpc('connections.save', p);
       case 'owner.connections.remove': return this.rpc('connections.remove', { id: p.id });
-      case 'owner.connections.models': return this.rpc('connections.models', { id: p.id });
+      case 'owner.connections.check': return this.rpc('connections.check', p);
+      case 'owner.connections.uses': return this.rpc('connections.uses', { id: p.id });
+      case 'owner.connections.modelEndpoints': return this.rpc('provider.modelEndpoints', { provider: 'openrouter', ...(p.connectionId ? { connectionId: p.connectionId } : {}), model: p.model });
+      case 'owner.connections.reassign': return this.rpc('connections.reassign', p);
+      case 'owner.connections.models': return this.rpc('connections.models', p);
       case 'owner.credentials.set': {
         const key = p.key ?? '';
         const status: any = p.provider === 'elevenlabs' ? await this.rpc('elevenlabs.credentials', { key }) : await this.rpc('provider.credentials', { provider: p.provider, key, ...(p.connectionId ? { connectionId: p.connectionId } : {}) });
@@ -358,7 +407,7 @@ export class OwnerOps {
       case 'owner.collections.addArtifact': this.session(device, p.sessionId); return this.core.collections.addArtifact({ id: p.id, sessionId: p.sessionId, artifactId: p.artifactId, ...(p.versionId ? { versionId: p.versionId } : {}) });
       case 'owner.collections.setWatch': return this.core.collections.setWatch({ id: p.id, watch: p.watch });
       case 'owner.tables.preview': this.session(device, p.sessionId); return this.rpc('tables.preview', p);
-      case 'owner.voice.status': { const status: any = this.core.transcription.status(); return { available: status.state !== 'unavailable', state: status.state, engine: 'whisper.cpp' }; }
+      case 'owner.voice.status': { const status: any = this.core.transcription.status(); return { available: status.state !== 'unavailable', state: status.state, engine: this.core.settings.transcription.provider||'whisper.cpp' }; }
       case 'owner.voice.transcribe': this.session(device, p.sessionId); return this.core.voiceNote({ sessionId: p.sessionId, mime: p.mime, audio: p.audio });
       case 'owner.specialists.list': return this.core.specialists.list();
       case 'owner.specialists.save': return this.core.specialists.save({ specialist: p.specialist, ...(p.expectedRevision ? { expectedRevision: p.expectedRevision } : {}) });
@@ -377,25 +426,31 @@ export class OwnerOps {
       case 'owner.schedules.setEnabled': return this.core.schedules.setEnabled({ id: p.id, enabled: p.enabled }, { kind: 'device', deviceId: device.id, name: device.name.slice(0, 48) });
       case 'owner.schedules.adopt': return this.core.schedules.adopt({ id: p.id });
       case 'owner.schedules.delete': return this.rpc('schedules.delete', { id: p.id });
-      case 'owner.schedules.create': return this.core.schedules.create({ label: p.label, when: p.when, previewToken: p.previewToken, unattended: true, ...(p.missed ? { missed: p.missed } : {}) }, { kind: 'device', deviceId: device.id, name: device.name.slice(0, 48) });
+      case 'owner.schedules.create': return this.core.schedules.create({ label: p.label, when: p.when, previewToken: p.previewToken, unattended: true, ...(p.missed ? { missed: p.missed } : {}), ...(p.delivery ? { delivery: p.delivery } : {}) }, { kind: 'device', deviceId: device.id, name: device.name.slice(0, 48) });
       case 'owner.recipes.list': return this.rpc('recipes.list');
       case 'owner.recipes.prepare': this.session(device, p.sessionId); return this.rpc('recipes.prepare', { sessionId: p.sessionId, recipeId: p.recipeId, ...(p.version ? { version: p.version } : {}), ...(p.inputs ? { inputs: p.inputs } : {}) });
-      case 'owner.recipes.createDraft': { const created: any = await this.rpc('recipes.createDraft', { previewToken: p.previewToken, reviewed: true }); return created?.id ? this.router.sessionDto(device, this.core.store.session(created.id), true) : created; }
+      case 'owner.recipes.createDraft': { const created: any = await this.rpc('recipes.createDraft', { previewToken: p.previewToken, reviewed: true }); const id = created?.session?.id; if (!id) throw remoteError('INVALID_ARGUMENT', 'The draft could not be created.'); return { session: this.router.sessionDto(device, this.core.store.session(id), true) }; }
       case 'owner.results.list': { if (p.sessionId) this.session(device, p.sessionId); return this.rpc('results.list', { ...(p.sessionId ? { sessionId: p.sessionId } : {}), ...(p.limit ? { limit: p.limit } : {}) }); }
-      case 'owner.results.verify': this.session(device, p.sessionId); return this.rpc('results.runVerification', { sessionId: p.sessionId, scriptId: p.scriptId, expectedScript: p.expectedScript, reviewed: true });
+      case 'owner.results.verify': this.session(device, p.sessionId); return this.rpc('results.runVerification', { sessionId: p.sessionId, resultId: p.resultId, scriptId: p.scriptId, expectedScript: p.expectedScript, reviewed: true });
       case 'owner.collections.list': return this.rpc('collections.list', p.sessionId ? { sessionId: this.session(device, p.sessionId).id } : {});
       case 'owner.collections.create': return this.rpc('collections.create', { name: p.name, ...(p.grounding ? { grounding: p.grounding } : {}), ...(p.allowCloud !== undefined ? { allowCloud: p.allowCloud } : {}) });
       case 'owner.collections.addSource': return this.rpc('collections.addSource', { id: p.id, expectedRevision: p.expectedRevision, path: p.path });
       case 'owner.collections.removeSource': return this.rpc('collections.removeSource', { id: p.id, expectedRevision: p.expectedRevision, path: p.path });
       case 'owner.collections.bind': { if (p.sessionId) this.session(device, p.sessionId); return this.rpc('collections.bind', { id: p.id, target: p.target, ...(p.sessionId ? { sessionId: p.sessionId } : {}), bound: p.bound }); }
-      case 'owner.collections.index': return this.rpc('collections.index', { id: p.id });
+      case 'owner.collections.index': return this.rpc('collections.index', { id: p.id, ...(p.rebuild ? { rebuild: true } : {}) });
+      case 'owner.sessions.tasks': this.session(device, p.sessionId); return this.rpc('capsules.openTasks', { sessionId: p.sessionId });
+      case 'owner.sessions.workOn': { this.session(device, p.sessionId); await this.rpc('capsules.workOn', p); return this.router.sessionDto(device, this.core.store.session(p.sessionId), true); }
+      case 'owner.collections.update': return this.rpc('collections.update', p);
+      case 'owner.collections.search': return this.rpc('collections.search', p);
       case 'owner.collections.cancel': return this.rpc('collections.cancel');
       case 'owner.collections.delete': return this.rpc('collections.delete', { id: p.id, expectedRevision: p.expectedRevision, confirmed: true });
+      case 'owner.projects.list': return this.rpc('projects.list');
       case 'owner.projects.save': return this.rpc('projects.save', p);
-      case 'owner.models.local': return this.rpc('models.local');
+      case 'owner.models.local': return { ...await this.rpc('models.local') as object, pull: this.core.localModels.snapshot() };
       case 'owner.models.pull': return this.rpc('models.pull', { model: p.model });
       case 'owner.models.delete': return this.rpc('models.delete', { model: p.model, confirmed: true });
       case 'owner.models.cancelPull': return this.rpc('models.cancelPull');
+      case 'owner.jobs.list': return { jobs: this.core.jobs.snapshot() };
       case 'owner.jobs.cancel': return this.rpc('jobs.cancel', { id: p.id });
       case 'owner.usage.summary': { if (p.sessionId) this.session(device, p.sessionId); return this.core.usage.summary({ days: p.days, ...(p.sessionId ? { sessionId: p.sessionId } : {}) }); }
       case 'owner.usage.setPolicy': return this.core.usage.setPolicy(p);
@@ -415,6 +470,27 @@ export class OwnerOps {
       case 'owner.skills.enable': return this.rpc('skills.enable', { versionId: p.versionId, expectedRevision: p.expectedRevision, ...(p.invocation ? { invocation: p.invocation } : {}), ...(p.scope ? { scope: p.scope } : {}), ...(p.project ? { project: p.project } : {}) });
       case 'owner.skills.disable': return this.rpc('skills.disable', { versionId: p.versionId });
       case 'owner.skills.remove': return this.rpc('skills.remove', { skillId: p.skillId });
+      case 'owner.originalFiles.upload': case 'owner.originalFiles.list': case 'owner.originalFiles.remove':
+        return this.core.providerFiles.rpc(method.slice('owner.originalFiles.'.length),p,checkSession);
+      case 'owner.voice.transcribeArtifact':return transcribeArtifact(this.core,p,()=>{this.router.current(device);this.session(device,p.sessionId);});
+      case 'owner.voice.hostedVoices':return this.rpc('voice.hostedVoices',p);
+      case 'owner.media.timed.prepare': case 'owner.media.timed.start': case 'owner.media.timed.poll': case 'owner.media.timed.status': case 'owner.media.timed.cancel':
+        return this.core.workbench.timedMedia.rpc(method.slice('owner.media.timed.'.length),p,checkSession);
+      case 'owner.research.provider.start': case 'owner.research.provider.list': case 'owner.research.provider.poll': case 'owner.research.provider.cancel':
+        this.session(device,p.sessionId); return this.rpc(method.slice(6),p);
+      case 'owner.research.routes': this.session(device, p.sessionId); return this.rpc('research.routes', p);
+      case 'owner.research.tasks': return this.researchRows(device, await this.rpc('research.tasks'));
+      case 'owner.research.cancel': await this.researchRun(device, p.id); return this.researchDto(await this.rpc('research.cancel', p));
+      case 'owner.research.handoff': {
+        const run = await this.researchRun(device, p.id);
+        const authorize = () => {
+          if (!this.router.owner(device)) throw remoteError('AUTH_REVOKED', 'Owner access changed.');
+          this.session(device, run.sessionId);
+          if (p.targetSessionId) this.session(device, p.targetSessionId);
+        };
+        authorize();
+        return planningHandoff(this.core, p, (params, draft, onSave) => this.router.ownerCreate(device, {...params, handoffDraft: draft}, onSave), authorize);
+      }
       case 'owner.research.sources': this.session(device, p.sessionId); return this.rpc('research.sources', p);
       case 'owner.research.plan': this.session(device, p.sessionId); return this.rpc('research.plan', p);
       case 'owner.research.start': this.session(device, p.sessionId); return this.rpc('research.start', p);

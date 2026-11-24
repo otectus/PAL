@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-// Settings › Application: the compositor shortcut, backups and health, and quitting.
+// Settings › Application: the compositor shortcut, sending, time awareness, backups and health, and quitting.
 ColumnLayout {
     id:application
     Layout.fillWidth:true;spacing:Theme.space4
@@ -23,6 +23,7 @@ ColumnLayout {
             onActivated:index=>{if(choices[index].value!==(App.state.settings?.sendKey||"enter"))App.rpc("settings.update",{sendKey:choices[index].value})}
         }
     }
+    TimeSettings {}
     CSection {
         title:"Maintenance"
         description:"Back up or restore PAL’s state, or check the application’s health."

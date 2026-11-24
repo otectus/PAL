@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
 import { Transcription } from '../broker/transcription.ts';
+import { checkSpeechServer, recognizerFor, speechServerAddress } from '../broker/speech/recognizers.ts';
+import { Core } from '../broker/core.ts';
+import { Store } from '../broker/store.ts';
 import { Speech, defaultVoice } from '../broker/tts.ts';
 
 async function fixture(t: test.TestContext, maximumMilliseconds = 60_000) {
@@ -82,10 +86,10 @@ test('cancelled transcription results stay stale and cannot replace a later reco
   const f = await fixture(t); f.env.TRANSCRIPTION_HOLD = '1';
   const first = await f.transcription.start({ sessionId: 'old-session' });
   await until(async () => (await f.calls()).some(call => call.tool === 'recorder'));
-  const stale = f.transcription.finish();
+  const stale = assert.rejects(f.transcription.finish(), /cancelled/);
   await until(async () => (await f.calls()).some(call => call.tool === 'whisper'));
   await f.transcription.cancel();
-  await assert.rejects(stale, /cancelled/);
+  await stale;
   delete f.env.TRANSCRIPTION_HOLD; f.env.TRANSCRIPTION_TEXT = 'Fresh transcript';
   const second = await f.transcription.start({ sessionId: 'new-session' });
   await until(async () => (await f.calls()).filter(call => call.tool === 'recorder').length === 2);
@@ -149,8 +153,8 @@ test('M20 imports share the one voice job, cancel cleanly, and without ffmpeg ac
   for (let index = 0; index < 200 && !(await f.calls()).some(call => call.tool === 'whisper'); index++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(f.transcription.status().state, 'transcribing'); assert.equal(f.transcription.status().file, 'note.wav');
   await assert.rejects(f.transcription.start({ sessionId: 'session-b' }), /already recording|busy/);
-  await f.transcription.cancel();
-  await assert.rejects(pending, /cancelled/);
+  // The import may end before cancel() returns, so what it ends with is awaited from now on.
+  const refused = assert.rejects(pending, /cancelled/); await f.transcription.cancel(); await refused;
   assert.deepEqual(await f.temporary(), []);
   delete f.env.TRANSCRIPTION_HOLD;
   const plain = new Transcription({ changed() {}, settings: () => f.settings, runtimeDirectory: f.runtime, env: f.env, ffmpeg: null });
@@ -158,4 +162,70 @@ test('M20 imports share the one voice job, cancel cleanly, and without ffmpeg ac
   assert.equal((await plain.importFile({ sessionId: 'session-a', path: wav })).source!.durationSeconds, null);
   await assert.rejects(plain.importFile({ sessionId: 'session-a', path: loud }), /only 16 kHz WAV/);
   await assert.rejects(plain.importFile({ sessionId: 'session-a', path: join(f.directory, 'standup.ogg') }), /no such file|ENOENT/);
+});
+
+async function speechServer(t: test.TestContext, answer: (request: { url: string; body: string; headers: any }) => { status?: number; body?: unknown; headers?: Record<string, string>; hold?: boolean }) {
+  const requests: { url: string; body: string; headers: any }[] = [];
+  const server = createServer((req, res) => {
+    const parts: Buffer[] = []; req.on('data', part => parts.push(part)); req.on('end', () => {
+      const request = { url: req.url!, body: Buffer.concat(parts).toString('latin1'), headers: req.headers }; requests.push(request);
+      const value = answer(request); if (value.hold) return;
+      res.writeHead(value.status || 200, { 'content-type': 'application/json', ...value.headers }); res.end(typeof value.body === 'string' ? value.body : JSON.stringify(value.body ?? {}));
+    });
+  });
+  await new Promise<void>(done => server.listen(0, '127.0.0.1', done)); t.after(() => { server.closeAllConnections(); server.close(); });
+  return { address: `http://127.0.0.1:${(server.address() as any).port}`, requests };
+}
+
+test('M10 a speech server on this computer transcribes without starting a program, with times for a file, and nothing else is sent', async t => {
+  const f = await fixture(t), server = await speechServer(t, () => ({ body: { text: ' Hello from the server. ', segments: [{ text: ' Hello', start: 0, end: .5 }, { text: 'from --> the server.', start: .5, end: 1.25 }, { text: '', start: 2, end: 3 }, { text: 'bad', start: 3, end: 1 }] } }));
+  Object.assign(f.settings, { executable: '', model: '', provider: 'local-server', serverUrl: server.address, language: 'de-DE', prompt: 'names: Ada' });
+  assert.equal(f.transcription.status().state, 'idle', 'an address is all it needs');
+  await f.transcription.start({ sessionId: 's' }); await until(async () => (await f.calls()).length > 0);
+  assert.equal((await f.transcription.finish()).text, 'Hello from the server.');
+  const wav = join(f.directory, 'talk.wav'), header = Buffer.alloc(44); header.write('RIFF', 0); header.write('WAVE', 8); header.writeUInt32LE(16000, 24); await writeFile(wav, Buffer.concat([header, Buffer.alloc(400)]));
+  const imported = new Transcription({ changed() {}, settings: () => f.settings, runtimeDirectory: f.runtime, env: f.env, ffmpeg: null }); t.after(() => imported.close());
+  const result = await imported.importFile({ sessionId: 's', path: wav });
+  assert.equal(result.vtt, 'WEBVTT\n\n00:00:00.000 --> 00:00:00.500\nHello\n\n00:00:00.500 --> 00:00:01.250\nfrom → the server.\n');
+  for (const request of server.requests) {
+    assert.equal(request.url, '/inference'); assert.deepEqual([...request.body.matchAll(/; name="([^"]+)"/g)].map(match => match[1]), ['file', 'response_format', 'temperature', 'language', 'prompt']);
+    assert.ok(!request.headers.authorization && !request.headers.cookie); assert.match(request.body, /name="language"\r\n\r\nde\r\n/);
+  }
+  assert.ok((await f.calls()).every(call => call.tool === 'recorder'), 'whisper.cpp never ran'); assert.deepEqual(await f.temporary(), []);
+  // The OpenAI-compatible form, with a model.
+  Object.assign(f.settings, { serverUrl: server.address + '/v1/', serverModel: 'large-v3', language: '', prompt: '' });
+  await imported.importFile({ sessionId: 's', path: wav }); const last = server.requests.at(-1)!;
+  assert.equal(last.url, '/v1/audio/transcriptions'); assert.match(last.body, /name="model"\r\n\r\nlarge-v3/);
+});
+
+test('M10 a local server has to be on this computer, and every way it can fail is said plainly and leaves no audio', async t => {
+  for (const bad of ['', 'x', undefined, 'http://example.org', 'http://192.168.1.4:8080', 'http://127.0.0.1.example.org', 'http://user:pw@127.0.0.1:80', 'http://127.0.0.1:80/?a=1', 'ftp://127.0.0.1', 'file:///tmp/x', 'http://127.0.0.1:80/#x', 'http://127.0.0.1/' + 'a'.repeat(300)]) assert.throws(() => speechServerAddress(bad), /speech server/i, String(bad));
+  for (const good of ['http://127.0.0.1:8080', 'http://localhost:9/v1', 'http://[::1]:8080', 'https://127.0.0.1:8443/base/']) assert.ok(speechServerAddress(good));
+  const f = await fixture(t), wav = join(f.directory, 'talk.wav'), header = Buffer.alloc(44); header.write('RIFF', 0); header.write('WAVE', 8); header.writeUInt32LE(16000, 24); await writeFile(wav, Buffer.concat([header, Buffer.alloc(400)]));
+  const settings: any = { executable: f.whisper, model: f.model, provider: 'local-server' }, import_ = async () => { const one = new Transcription({ changed() {}, settings: () => settings, runtimeDirectory: f.runtime, env: f.env, ffmpeg: null }); try { return await one.importFile({ sessionId: 's', path: wav }); } finally { await one.close(); } };
+  let reply: any = { body: { text: '' } }; const server = await speechServer(t, () => reply); settings.serverUrl = server.address;
+  await assert.rejects(import_(), /local speech server returned an empty transcript/);
+  reply = { status: 500, body: 'secret detail' }; await assert.rejects(import_(), /could not transcribe this/);
+  reply = { status: 307, headers: { location: 'http://example.org/' } }; await assert.rejects(import_(), /could not transcribe this/); assert.equal(server.requests.length, 3, 'a redirect is not followed');
+  reply = { body: { text: 'x'.repeat(100_001) } }; await assert.rejects(import_(), /exceeded 100,000/);
+  reply = { body: 'not json' }; await assert.rejects(import_(), /could not transcribe this/);
+  // Cancelled while the server works.
+  reply = { hold: true }; const slow = new Transcription({ changed() {}, settings: () => settings, runtimeDirectory: f.runtime, env: f.env, ffmpeg: null }); t.after(() => slow.close());
+  const pending = slow.importFile({ sessionId: 's', path: wav }), refused = assert.rejects(pending, /cancelled/); await until(() => server.requests.length >= 6); await slow.cancel(); await refused;
+  settings.serverUrl = 'http://127.0.0.1:9'; await assert.rejects(import_(), /does not answer. Start it/);
+  settings.serverUrl = 'http://192.168.1.4:8080'; await assert.rejects(import_(), /has to be on this computer/);
+  assert.deepEqual(await f.temporary(), []); assert.ok(!(await f.calls()).some(call => call.tool === 'whisper'), 'nothing falls back to another engine');
+  // Each setting has its one recognizer.
+  assert.deepEqual([recognizerFor({ executable: '', model: '' }).name, recognizerFor({ executable: '', model: '', provider: 'local' }).name, recognizerFor(settings).name, recognizerFor({ executable: '', model: '', provider: 'openai' }).name], ['whisper.cpp', 'whisper.cpp', 'The local speech server', 'The hosted speech service']);
+  assert.deepEqual((await checkSpeechServer(server.address)).answers === undefined, false); assert.equal((await checkSpeechServer('http://127.0.0.1:9')).answers, false); await assert.rejects(checkSpeechServer('http://example.org'), /on this computer/);
+});
+
+test('M10 the choice is kept with the voice settings, and a wrong one changes nothing', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'pal-asr-')), core = new Core(new Store(directory), () => ({ async send() {}, async interrupt() {}, async close() {} }) as any);
+  t.after(async () => { await core.close(); await rm(directory, { recursive: true, force: true }); });
+  await core.updateSettings({ transcription: { provider: 'local-server', serverUrl: 'http://127.0.0.1:8080', serverModel: 'small' } });
+  assert.deepEqual([core.settings.transcription.provider, core.settings.transcription.serverUrl, (await core.rpc('transcription.status')).state], ['local-server', 'http://127.0.0.1:8080', 'idle']);
+  for (const transcription of [{ serverUrl: 'http://example.org' }, { provider: 'somewhere' }, { serverModel: 'a\nb' }, { serverModel: 4 }]) await assert.rejects(core.updateSettings({ transcription: transcription as any }));
+  assert.equal(core.settings.transcription.serverUrl, 'http://127.0.0.1:8080');
+  await core.updateSettings({ transcription: { provider: 'local' } }); assert.equal((await core.rpc('transcription.status')).state, 'unavailable', 'whisper.cpp still needs its own paths');
 });

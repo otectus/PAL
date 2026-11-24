@@ -116,10 +116,10 @@ export class RoutedExtractionAdapter implements ExtractionAdapter {
 }
 
 /** Fixed Gemini endpoint; callers must enforce source eligibility before supplying text. */
-export async function googleEmbeddings(access: ApiAccess, model: string, texts: string[], kind: 'query' | 'document', signal: AbortSignal): Promise<number[][]> {
+export async function googleEmbeddings(access: ApiAccess, model: string, texts: string[], kind: 'query' | 'document', signal: AbortSignal, dimensions?:number): Promise<number[][]> {
   const id = model.replace(/^models\//, '');
   const response = await apiJson('google', access, `models/${encodeURIComponent(id)}:batchEmbedContents`, {
-    requests: texts.map(text => ({ model: `models/${id}`, content: { parts: [{ text }] }, taskType: kind === 'query' ? 'RETRIEVAL_QUERY' : 'RETRIEVAL_DOCUMENT' })),
+    requests: texts.map(text => ({ model: `models/${id}`, content: { parts: [{ text }] }, taskType: kind === 'query' ? 'RETRIEVAL_QUERY' : 'RETRIEVAL_DOCUMENT', ...(dimensions?{outputDimensionality:dimensions}:{}) })),
   }, AbortSignal.any([signal, AbortSignal.timeout(30000)]));
   return response.embeddings?.map((e: any) => e.values);
 }

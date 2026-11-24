@@ -8,7 +8,7 @@ import type { CapabilityValue, ProcessingRoute } from '../tools/contracts.ts';
 
 export type ImageOperation = 'generate' | 'edit' | 'masked-edit' | 'extend' | 'reference';
 export type ImageCapabilities = {
-  backend: 'openai' | 'google' | 'comfyui';
+  backend: 'openai' | 'google' | 'xai' | 'azure_openai' | 'openrouter' | 'comfyui';
   model: string;
   route: ProcessingRoute;
   generate: CapabilityValue; edit: CapabilityValue; mask: CapabilityValue;

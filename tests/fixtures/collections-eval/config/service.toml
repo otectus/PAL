@@ -1,0 +1,7 @@
+[server]
+listen = "0.0.0.0:8443"
+idle_timeout_seconds = 75
+
+[cache]
+backend = "valkey"
+max_entries = 250000

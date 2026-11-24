@@ -1,3 +1,6 @@
+import { taskOutput } from '../provider-completion.ts';
+import { apiTextRequest } from '../api-providers.ts';
+import { apiProviders, providerIds, type ApiProvider } from '../provider-catalog.ts';
 /**
  * Seeing images. The conversation's own model looks at an image when it accepts images and may receive
  * it; otherwise an explicitly configured vision helper does, and its answer is attributed to the helper
@@ -17,7 +20,7 @@ import { modelRoute, ollamaHost, ollamaJson } from '../ollama.ts';
 import { routeAllowed, routeLabels, type ProcessingRoute } from '../tools/contracts.ts';
 import { sessionRoute } from '../workspace/policy.ts';
 
-export type VisionSettings = { provider: '' | 'ollama' | 'openai' | 'anthropic' | 'google' | 'compatible'; model: string };
+export type VisionSettings = { provider: '' | 'ollama' | ApiProvider; model: string; connectionId?:string };
 export const visionLimits = { edge: 1536, answerChars: 6000, timeoutMs: 120_000, ocrMs: 60_000 };
 export type Region = { left: number; top: number; width: number; height: number };
 
@@ -47,19 +50,20 @@ export class Vision {
     const session = this.core.store.session(sessionId);
     if (session.provider === 'ollama') { const info = await ollamaJson(session.ollama!.host, 'show', { model: session.model }, signal).catch(() => null); return !!info?.capabilities?.includes('vision'); }
     if (session.provider === 'compatible') return this.core.chatConnections.endpoint(session).images === true;
-    return isApiProvider(session.provider);
+    return isApiProvider(session.provider)&&this.core.apiModelGate(session.provider,session.model||'',session.connectionId,'images');
   }
   /** Where the configured helper processes images. */
   async helperRoute(signal?: AbortSignal): Promise<ProcessingRoute> {
     const helper = this.settings();
     if (!helper.provider) return 'unknown';
     if (helper.provider === 'ollama') {
-      const host = ollamaHost(this.core.settings.ollama.host), verified = await modelRoute(host, helper.model, signal);
+      const host = ollamaHost(helper.connectionId?this.core.chatConnections.get(helper.connectionId,'ollama').ollama!.host:this.core.settings.ollama.host), verified = await modelRoute(host, helper.model, signal);
       if (!verified.verified) return 'unknown';
       if (verified.route === 'cloud') return 'cloud';
       const name = new URL(host).hostname.replace(/^\[|\]$/g, '');
       return name === 'localhost' || name === '::1' || /^127\./.test(name) ? 'local' : 'remote';
     }
+    if(helper.connectionId){this.core.chatConnections.get(helper.connectionId,helper.provider);return this.core.chatConnections.taskConnection(helper.connectionId).processing;}
     if (helper.provider === 'compatible') return this.core.settings.compatible.processing || 'unknown';
     return 'cloud';
   }
@@ -87,22 +91,13 @@ export class Vision {
     beforeDispatch();
     let answer = '';
     if (helper.provider === 'ollama') {
-      const value = await ollamaJson(this.core.settings.ollama.host, 'chat', { model: helper.model, stream: false, messages: [{ role: 'user', content: prompt, images: [base64] }] }, timeout);
+      const value = await ollamaJson(helper.connectionId?this.core.chatConnections.get(helper.connectionId,'ollama').ollama!.host:this.core.settings.ollama.host, 'chat', { model: helper.model, stream: false, messages: [{ role: 'user', content: prompt, images: [base64] }] }, timeout);
       answer = String(value?.message?.content || '');
     } else {
-      const provider = helper.provider as 'openai' | 'anthropic' | 'google' | 'compatible', key = provider === 'compatible' ? this.core.apiAccess('compatible').key() : this.core.credentials.key(provider);
-      if (!key && provider !== 'compatible') throw new Error(`Add an API key for the vision helper (${provider})`);
-      const request: { url: string; headers: Record<string, string>; body: unknown } = provider === 'openai' ? { url: 'https://api.openai.com/v1/responses', headers: { Authorization: `Bearer ${key}` }, body: { model: helper.model, store: false, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: `data:image/png;base64,${base64}` }] }] } }
-        : provider === 'anthropic' ? { url: 'https://api.anthropic.com/v1/messages', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' }, body: { model: helper.model, max_tokens: 1500, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64 } }, { type: 'text', text: prompt }] }] } }
-        : provider === 'google' ? { url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(helper.model)}:generateContent`, headers: { 'x-goog-api-key': key }, body: { contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/png', data: base64 } }] }] } }
-        : { url: this.core.settings.compatible.baseUrl.replace(/\/+$/, '') + '/chat/completions', headers: key ? { Authorization: `Bearer ${key}` } : {}, body: { model: helper.model, stream: false, messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } }] }] } };
-      const response = await this.fetch(request.url, { method: 'POST', redirect: 'error', signal: timeout, headers: { 'Content-Type': 'application/json', ...request.headers }, body: JSON.stringify(request.body) });
-      if (!response.ok) { await response.body?.cancel().catch(() => {}); throw new Error(`The vision helper rejected the request (HTTP ${response.status})`); }
-      const value: any = JSON.parse((await response.text()).slice(0, 2 * 1024 * 1024));
-      answer = provider === 'openai' ? (value.output || []).flatMap((item: any) => item?.content || []).filter((part: any) => part?.type === 'output_text').map((part: any) => part.text).join('\n')
-        : provider === 'anthropic' ? (value.content || []).filter((part: any) => part?.type === 'text').map((part: any) => part.text).join('\n')
-        : provider === 'google' ? (value.candidates?.[0]?.content?.parts || []).filter((part: any) => typeof part?.text === 'string' && !part.thought).map((part: any) => part.text).join('\n')
-        : String(value.choices?.[0]?.message?.content || '');
+      const provider=helper.provider as ApiProvider;
+      if(!this.core.apiModelGate(provider,helper.model,helper.connectionId,'images'))throw new Error('Choose a model with advertised image input');
+      const value=await apiTextRequest(provider,{...this.core.accountAccess(provider,helper.connectionId),fetch:this.fetch},{model:helper.model,input:prompt,images:[{mime:'image/png',data:image.toString('base64')}]},timeout);
+      answer=taskOutput(value).text;
     }
     answer = answer.trim();
     if (!answer) throw new Error('The vision helper returned no answer');

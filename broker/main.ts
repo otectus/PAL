@@ -59,6 +59,8 @@ type Client = FanoutClient<net.Socket> & { role?: string };
 const core = new Core(), fanout = new Fanout<net.Socket>(), clients = fanout.clients as Set<Client>;
 const mobile = new MobileGateway(core);
 await mobile.start().catch(error=>{console.error('PAL remote listener unavailable: '+error.message);});
+// What the person chose to run with PAL; nothing unless they did.
+void core.services.autostart().catch(()=>{});
 const send = (client: Client, data: unknown) => fanout.send(client, data);
 const server = net.createServer(socket => {
   if (!sameUserPeer(socket)) { socket.destroy(); return; }
@@ -81,7 +83,7 @@ const server = net.createServer(socket => {
     }); } catch { socket.destroy(); }
   });
 });
-for (const event of ['state','message','notice','ui','terminal']) core.on(event, params => fanout.broadcast(event, params));
+for (const event of ['state','message','notice','ui','terminal','realtime.desktop']) core.on(event, params => fanout.broadcast(event, params));
 server.on('error', error => { console.error(error.message); process.exitCode=1; void core.close(); });
 server.listen(path, async () => { await chmod(path,0o600); await writeFile(join(paths().runtime,'broker.pid'),String(process.pid),{mode:0o600}); void core.detect(); });
 let closing = false;

@@ -73,8 +73,9 @@ export async function providerError(response: Response, label: string) {
 
 export class OpenAiImages implements ImageBackend {
   model: string; base: string;
-  constructor(model: string, base = 'https://api.openai.com/v1/') { this.model = model; this.base = base; }
-  describe() { return openaiCapabilities(this.model); }
+  azureHeaders? : ()=>Promise<Record<string,string>>;
+  constructor(model: string, base = 'https://api.openai.com/v1/',azureHeaders?:()=>Promise<Record<string,string>>) { this.model = model; this.base = base;this.azureHeaders=azureHeaders; }
+  describe():ImageCapabilities { const c=openaiCapabilities(this.model);return this.azureHeaders?{...c,backend:'azure_openai',notes:['Availability and billing follow the selected Azure deployment.']}:c; }
   validate(request: ImageRequest) { return validateOpenai(this.describe(), request); }
   async *run(request: ValidatedImageRequest, inputs: ResolvedInputs, context: BackendContext): AsyncIterable<ImageEvent> {
     const editing = request.operation !== 'generate';
@@ -96,12 +97,13 @@ export class OpenAiImages implements ImageBackend {
     if (stream) { body.stream = true; body.partial_images = 2; }
     const key = context.key();
     if (!key) throw new BackendRefusal('missing_key', 'Add an OpenAI API key in Settings → Connections');
+    const auth=this.azureHeaders?await this.azureHeaders():{Authorization:'Bearer '+key};
     context.beforeDispatch();
     context.dispatched();
     let response: Response;
     try {
       response = await context.fetch(this.base + (editing ? 'images/edits' : 'images/generations'), { method: 'POST', redirect: 'error', signal: context.signal,
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     } catch (error) { context.signal.throwIfAborted(); throw Object.assign(new Error('OpenAI could not be reached. The request may or may not have arrived; it was not sent again.'), { code: 'unreachable', cause: error }); }
     if (!response.ok) throw await providerError(response, 'OpenAI');
     yield { type: 'accepted' };

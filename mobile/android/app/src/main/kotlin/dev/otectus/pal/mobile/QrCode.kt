@@ -25,11 +25,12 @@ import kotlinx.coroutines.withContext
 fun PairingQrCode(text: String, modifier: Modifier = Modifier) {
     // Encoded off the main thread; the space is held while the code is drawn.
     val image by produceState<ImageBitmap?>(null, text) {
-        value = withContext(Dispatchers.Default) {
+        // An answer too long for one code is still there as text to copy or share.
+        value = withContext(Dispatchers.Default) { runCatching {
             val matrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, 640, 640, mapOf(EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M, EncodeHintType.MARGIN to 2))
             val pixels = IntArray(matrix.width * matrix.height) { index -> if (matrix[index % matrix.width, index / matrix.width]) android.graphics.Color.BLACK else android.graphics.Color.WHITE }
             Bitmap.createBitmap(pixels, matrix.width, matrix.height, Bitmap.Config.RGB_565).asImageBitmap()
-        }
+        }.getOrNull() }
     }
     val frame = modifier.background(PALMedia.onBackdrop).padding(PALLayout.small).size(PALLayout.scanFrame)
     image?.let { Image(it, stringResource(R.string.mobile_signed_pairing_response_qr_code), frame) } ?: Box(frame)

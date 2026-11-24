@@ -75,17 +75,25 @@ class UiCheck : public QObject {
         std::function<QQuickItem*(QQuickItem*)> find=[&](QQuickItem*root)->QQuickItem*{if(!root->isVisible())return nullptr;if(root->objectName()==name)return root;for(auto child:root->childItems())if(auto match=find(child))return match;return nullptr;};
         return find(window->contentItem());
     }
+    // Layouts place a control that has just appeared when they are next polished, a frame later. Until
+    // then it sits where another control is, and a click would go there.
+    void settle(QQuickItem *control){
+        QList<QQuickItem*> chain;for(auto parent=control;parent;parent=parent->parentItem())chain.prepend(parent);
+        for(int pass=0;pass<2;++pass)for(auto parent:chain)parent->ensurePolished();
+    }
     // Scrolls every scrolling ancestor until the control is in view.
     bool scrollTo(const QString &name){
         QElapsedTimer deadline;deadline.start();
-        QPointF center;
+        QPointF center;QString hiddenBy;
         do{
+            hiddenBy.clear();
             auto control=item(name);
             if(!control){QTest::qWait(30);continue;}
+            settle(control);
             const QPointF local(control->width()/2,control->height()/2);
             bool scrolled=false,clipped=false;
             for(auto parent=control->parentItem();parent;parent=parent->parentItem()){
-                if(parent->clip()&&!parent->boundingRect().contains(control->mapToItem(parent,local)))clipped=true;
+                if(parent->clip()&&!parent->boundingRect().contains(control->mapToItem(parent,local))){clipped=true;hiddenBy=QString(", hidden by %1 %2 of %3 × %4").arg(QString::fromLatin1(parent->metaObject()->className()),parent->objectName()).arg(parent->width()).arg(parent->height());}
                 if(!parent->property("contentY").isValid())continue;
                 const qreal height=parent->height(),extent=parent->property("contentHeight").toDouble();
                 const qreal y=control->mapToItem(parent,local).y();
@@ -99,7 +107,7 @@ class UiCheck : public QObject {
             QTest::qWait(30);
         }while(deadline.elapsed()<3000);
         if(!item(name)){QTest::qFail(qPrintable("Missing control: "+name),__FILE__,__LINE__);return false;}
-        QTest::qFail(qPrintable(QString("%1 did not scroll into the window (center %2, %3)").arg(name).arg(center.x()).arg(center.y())),__FILE__,__LINE__);
+        QTest::qFail(qPrintable(QString("%1 did not scroll into the window (center %2, %3 in %4 × %5%6)").arg(name).arg(center.x()).arg(center.y()).arg(window->width()).arg(window->height()).arg(hiddenBy)),__FILE__,__LINE__);
         return false;
     }
     // Clicks once the control has stopped moving: a page that is still laying out late content can
@@ -150,7 +158,7 @@ class UiCheck : public QObject {
         QVERIFY(QMetaObject::invokeMethod(page,"open",Q_ARG(QVariant,id),Q_ARG(QVariant,QString())));
         QTRY_COMPARE(page->property("category").toString(),id);QTest::qWait(50);
     }
-    void capture(const QString &name){QVERIFY2(window,"no window to capture");QVERIFY(QDir().mkpath("/tmp/pal-ui-evidence"));QVERIFY(window->grabWindow().save("/tmp/pal-ui-evidence/"+name+".png"));}
+    void capture(const QString &name){QVERIFY2(window,"no window to capture");const auto configured=qEnvironmentVariable("PAL_UI_EVIDENCE_DIR");const auto directory=configured.isEmpty()?QStringLiteral("/tmp/pal-ui-evidence"):configured;QVERIFY(QDir().mkpath(directory));QVERIFY(window->grabWindow().save(directory+"/"+name+".png"));}
     QJsonDocument hypr(const QStringList &args){QProcess p;p.start("hyprctl",args);if(!p.waitForFinished(2000))return {};return QJsonDocument::fromJson(p.readAllStandardOutput());}
     // Offscreen runs own a virtual pointer and never reach the live compositor.
     bool offscreen(){return qGuiApp->platformName()=="offscreen";}
@@ -190,6 +198,8 @@ private slots:
         QVERIFY2(offscreen() || qEnvironmentVariable("PAL_VIRTUAL_DESKTOP")=="1",
                  "Run desktop checks through tools/test-virtual-desktop.sh; never on the working desktop.");
         qputenv("PAL_TTS_DISABLED","1"); // UI fixtures must never speak on the user's speakers.
+        // The fixture broker's accounts talk to local stand-ins only.
+        qputenv("NODE_OPTIONS",QByteArray("--import ")+PAL_SOURCE_DIR+"/tests/fixtures/ui-accounts.ts");
         // The fixture broker has a temporary profile and private test endpoints.
         qunsetenv("PAL_MEMORY_CREDENTIALS_FILE");
         qunsetenv("PAL_NEO4J_PASSWORD");
@@ -800,6 +810,304 @@ kill -KILL $$
         QTRY_COMPARE_WITH_TIMEOUT(call("remote.status").value("devices").toList().size(),1,8000);
         QVERIFY(!call("remote.off").contains("error"));
     }
+    // WP7: an account is added and signed in, and its agenda, mail, files and repositories are read and written from one pane.
+    void accountsSettingsAndPane(){
+        window=reviewWorkspace();QVERIFY(window);
+        const auto text=[&](const QString &name){auto control=item(name);return control?control->property("text").toString():QString();};
+        const auto opened=[&](const QString &name){auto view=dialog(name);return view&&view->property("opened").toBool();};
+        openCategory("connections");QVERIFY(openSetting("addAccount"));click("addAccount");QTRY_VERIFY(opened("accountEditor"));
+        QVERIFY(text("accountSteps").contains("Device Flow"));
+        item("accountName")->setProperty("text","Work GitHub");
+        QTest::qWait(150);capture("accounts-editor-github");
+        click("saveAccount");QTRY_VERIFY(!opened("accountEditor"));QTRY_COMPARE(text("accountState_0"),QString("Not signed in"));
+        // Without a client ID there is nothing to sign in with; a token works at once and is never shown again.
+        QVERIFY(!item("accountSignIn_0")->isEnabled());
+        click("accountToken_0");QTRY_VERIFY(item("accountTokenField"));item("accountTokenField")->setProperty("text","ghp_wrong_token");click("saveAccountToken");
+        QTRY_VERIFY(call("accounts.list").value("accounts").toList().first().toMap().value("state")=="signed-out");QTest::qWait(300);
+        item("accountTokenField")->setProperty("text","ghp_1234567890");QTRY_VERIFY(item("saveAccountToken")->isEnabled());click("saveAccountToken");
+        QTRY_VERIFY_WITH_TIMEOUT(text("accountState_0").startsWith("Signed in as"),8000);
+        QVERIFY(!QJsonDocument::fromVariant(app->state()).toJson().contains("ghp_1234567890"));
+        const auto google=call("accounts.save",{{"provider","google"},{"label","Private"},{"clientId","client-1"},{"clientSecret","client-secret-value"},{"services",QVariantMap{{"calendar","write"},{"mail","write"},{"drive","write"}}},{"ai","read"}});
+        QVERIFY2(!google.contains("error"),qPrintable(google.value("error").toString()));
+        const auto flow=call("accounts.signIn",{{"id",google.value("id")},{"method","browser"}});QVERIFY2(!flow.contains("error"),qPrintable(flow.value("error").toString()));
+        QCOMPARE(QProcess::execute("curl",{"-sSL","-m","10","-o","/dev/null",flow.value("url").toString()}),0);
+        QTRY_VERIFY_WITH_TIMEOUT(text("accountState_1").startsWith("Signed in as"),8000);
+        QVERIFY(openSetting("accountState_1"));QTest::qWait(150);capture("accounts-settings");
+        // Everyday use is in the Workbench.
+        const QString project=data.path()+"/accounts-project";QVERIFY(QDir().mkpath(project));
+        const auto created=call("session.create",{{"provider","ollama"},{"model","fixture-chat:latest"},{"cwd",project},{"title","Accounts"}});const auto id=created.value("id").toString();QVERIFY(!id.isEmpty());
+        click("tab_Chat");app->select(id);QTest::qWait(300);
+        if(!item("workbench"))click("chatWorkbench");QTRY_VERIFY_WITH_TIMEOUT(item("workbench"),5000);
+        if(!item("workbenchTab_accounts"))click("workbenchPaneList");click("workbenchTab_accounts");
+        QTRY_VERIFY_WITH_TIMEOUT(item("agendaEvent_planning"),8000);QVERIFY(item("agendaEvent_trip"));
+        QVERIFY(item("agendaEvent_planning")->property("detail").toString().contains("Every week on MO"));
+        click("agendaEvent_planning");QTest::qWait(200);capture("accounts-agenda");
+        // An event is reviewed in full before it is added, and the service is told once.
+        click("newEvent");QTRY_VERIFY(opened("eventEditor"));item("eventTitle")->setProperty("text","Dentist");QTRY_VERIFY(item("eventReview")->isEnabled());capture("accounts-event-editor");click("eventReview");
+        QTRY_VERIFY_WITH_TIMEOUT(opened("accountReview"),8000);QVERIFY(text("accountReviewText").contains("Dentist"));capture("accounts-review");
+        click("accountSend");QTRY_VERIFY_WITH_TIMEOUT(!opened("accountReview"),8000);QTRY_VERIFY(text("accountsPaneNotice").contains("done"));
+        QTRY_COMPARE(call("accounts.agenda",{{"accountId",google.value("id")}}).value("events").toList().size(),4);
+        // Mail: read as text, replied to as a draft that stays here until it is sent.
+        click("accountsTab_mail");QTRY_VERIFY_WITH_TIMEOUT(item("mailThread_t1"),8000);capture("accounts-mail");click("mailThread_t1");
+        QTRY_VERIFY_WITH_TIMEOUT(item("mailText_m1"),8000);QVERIFY(text("mailText_m1").contains("Can we talk on Monday?"));capture("accounts-mail-thread");
+        click("replyMail");QTRY_VERIFY(opened("mailEditor"));QCOMPARE(text("mailTo"),QString("anna@example.test"));QCOMPARE(text("mailSubject"),QString("Re: Launch plan"));
+        item("mailBody")->setProperty("text","Monday works.");click("mailReview");QTRY_VERIFY_WITH_TIMEOUT(opened("accountReview"),8000);
+        QVERIFY(text("accountReviewText").contains("A reply in an existing conversation"));
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!opened("accountReview"));
+        QCOMPARE(app->state().value("accounts").toMap().value("waiting").toInt(),1);
+        // A message, and a file, become files of the conversation.
+        click("keepMail");QTRY_VERIFY_WITH_TIMEOUT(text("accountsPaneNotice").contains("is now a file of this conversation"),8000);
+        click("accountsTab_drive");QTRY_VERIFY_WITH_TIMEOUT(item("driveItem_notes"),8000);click("driveItem_notes");QTest::qWait(150);capture("accounts-files");
+        click("accountsTab_github");QTRY_VERIFY(item("githubQuery"));item("githubQuery")->setProperty("text","repo:o/r is:open");QMetaObject::invokeMethod(item("githubQuery"),"accepted");QTest::qWait(600);capture("accounts-github");
+        click("accountsTab_outbox");QTest::qWait(500);capture("accounts-drafts");
+        const auto writes=call("accounts.outbox").value("writes").toList();QCOMPARE(writes.size(),2);
+        // Narrow panes keep every control reachable.
+        const auto size=window->size();window->resize(720,size.height());QTest::qWait(400);capture("accounts-narrow");window->resize(size);QTest::qWait(200);
+        for(const auto &account:call("accounts.list").value("accounts").toList())QVERIFY(!call("accounts.remove",{{"id",account.toMap().value("id")}}).contains("error"));
+        QTRY_VERIFY(item("accountsTab_calendar"));click("accountsTab_calendar");QTRY_VERIFY_WITH_TIMEOUT(item("accountsConnect"),8000);capture("accounts-empty");
+        QVERIFY(!call("session.delete",{{"id",id},{"confirmed",true}}).contains("error"));
+    }
+    // WP6: the desktop says it is on the local network only when asked to, and a phone's wish to be woken is
+    // answered here for the push server it names.
+    void mobileReachability(){
+        openCategory("mobile");QTRY_VERIFY(item("remoteDiscovery"));
+        auto section=item("remoteSettings");QVERIFY(section);QTRY_COMPARE(section->property("requestId").toInt(),-1);
+        QVERIFY(!item("remoteDiscovery")->property("checked").toBool());
+        QVERIFY(item("remoteDiscoveryState")->property("text").toString().startsWith("Off."));
+        click("remoteDiscovery");
+        QTRY_VERIFY(call("remote.status").value("config").toMap().value("discovery").toBool());
+        QTRY_VERIFY(item("remoteDiscovery")->property("checked").toBool());
+        QTRY_VERIFY(item("remoteDiscoveryState")->property("text").toString().startsWith("On, but not announcing"));
+        QTRY_COMPARE(section->property("requestId").toInt(),-1);
+        const QString id="11111111-1111-4111-8111-111111111111";
+        auto show=[&](const QVariantMap &wake){
+            auto status=section->property("status").toMap();
+            status["devices"]=QVariantList{QVariantMap{{"id",id},{"name","My phone"},{"role","owner"},{"lifetime","until-revoked"},{"caps",QStringList{}},{"actionAuthentication","biometric"},{"fingerprint","00"},{"wake",wake}}};
+            section->setProperty("status",status);QTest::qWait(100);
+        };
+        show({{"state","off"}});QTRY_VERIFY(item("deviceSummary_"+id));QVERIFY(!item("deviceWake_"+id));
+        show({{"state","waiting"},{"host","push.example"}});QTRY_VERIFY(item("deviceWake_"+id));
+        QVERIFY(item("deviceWake_"+id)->property("text").toString().contains("asks to be woken through push.example"));
+        QVERIFY(item("allowWake_"+id));QCOMPARE(item("stopWake_"+id)->property("text").toString(),QString("Don’t allow"));
+        capture("mobile-reachability");
+        show({{"state","on"},{"host","push.example"}});QTRY_VERIFY(!item("allowWake_"+id));
+        QCOMPARE(item("stopWake_"+id)->property("text").toString(),QString("Stop wake-ups"));
+        show({{"state","failing"},{"host","push.example"},{"problem","The push server answered HTTP 503"}});
+        QTRY_VERIFY(item("deviceWake_"+id)->property("text").toString().contains("HTTP 503"));
+        QVERIFY(!call("remote.setDiscovery",{{"enabled",false}}).contains("error"));
+        click("tab_Chat");
+    }
+    // A08: a browser is switched on, given a code, confirmed by its six words, and is shown as what it is.
+    void browserCompanionPairing(){
+        const auto restore=qScopeGuard([&]{call("remote.browserConfigure",{{"enabled",false}});call("remote.off");click("tab_Chat");});
+        const auto state=[&]{return app->state().value("remote").toMap().value("browser").toMap();};
+        QVERIFY(openSetting("browserEnabled"));QVERIFY(!item("browserEnabled")->property("checked").toBool());QVERIFY(!item("browserPair"));
+        stableClick("browserEnabled");QTRY_VERIFY(item("browserPair"));QVERIFY(!item("browserPair")->isEnabled());
+        QVERIFY(item("browserWhere")->property("text").toString().startsWith("On this computer only"));
+        item("browserPort")->setProperty("value",18444);stableClick("browserPortSave");QTRY_COMPARE(state().value("port").toInt(),18444);
+        QVERIFY(QMetaObject::invokeMethod(item("browserCompanion"),"toggleProject",Q_ARG(QVariant,QVariant(data.path())),Q_ARG(QVariant,QVariant(true))));
+        QTRY_VERIFY(item("browserPair")->isEnabled());
+        stableClick("browserRoleLimited");QTRY_VERIFY(item("browserAnswers"));QVERIFY(scrollTo("browserAnswers"));QTest::qWait(150);capture("browser-companion-setup");
+        stableClick("browserRoleObserver");QTRY_VERIFY(!item("browserAnswers"));
+        stableClick("browserPair");QTRY_VERIFY(item("browserCode"));
+        const auto code=item("browserCode")->property("text").toString();QCOMPARE(code.size(),11);QVERIFY(!item("browserFingerprint"));
+        QVERIFY(scrollTo("browserCode"));QTest::qWait(150);capture("browser-companion-code");
+        QProcess browser;browser.setProcessChannelMode(QProcess::MergedChannels);
+        browser.start("node",{QString(PAL_SOURCE_DIR)+"/tests/fixtures/browser-answer.ts","http://127.0.0.1:18444",code});
+        QVERIFY(browser.waitForStarted());QTRY_VERIFY_WITH_TIMEOUT(browser.canReadLine(),10000);
+        const QString words=QString::fromUtf8(browser.readLine()).trimmed();QVERIFY2(words.split(' ').size()==6,qPrintable(words));
+        QTRY_VERIFY_WITH_TIMEOUT(item("browserWords"),8000);QCOMPARE(item("browserWords")->property("text").toString(),words);
+        QVERIFY(!item("browserCode"));QVERIFY(!item("browserConfirm")->isEnabled());
+        stableClick("browserWordsMatch");QTRY_VERIFY(item("browserConfirm")->isEnabled());QVERIFY(scrollTo("browserConfirm"));QTest::qWait(100);capture("browser-companion-words");
+        stableClick("browserConfirm");QTRY_VERIFY_WITH_TIMEOUT(browser.state()==QProcess::NotRunning,10000);
+        const auto told=QString::fromUtf8(browser.readAll());QVERIFY2(browser.exitCode()==0&&told.contains("pair.confirmed"),qPrintable(told));
+        QTRY_COMPARE(state().value("paired").toInt(),1);QString id;
+        for(const auto &device:call("remote.status").value("devices").toList())if(device.toMap().value("surface")=="browser"&&!device.toMap().contains("revokedAt"))id=device.toMap().value("id").toString();
+        QVERIFY(!id.isEmpty());QTRY_VERIFY(item("deviceSummary_"+id)&&item("deviceSummary_"+id)->property("text").toString().startsWith("Work laptop · Browser · Observer"));
+        QVERIFY(!item("promoteDevice_"+id));QVERIFY(scrollTo("deviceSummary_"+id));QTest::qWait(100);capture("browser-companion-device");
+        QVERIFY(!call("remote.revoke",{{"id",id}}).contains("error"));QTRY_COMPARE(state().value("paired").toInt(),0);
+    }
+    // A03: a project's code is indexed only when chosen, found by what it does, and shown with how sure each relationship is.
+    void codeContextFindAndConsent(){
+        const QString project=data.path()+"/code-project";QVERIFY(QDir().mkpath(project+"/src"));QVERIFY(QDir().mkpath(project+"/tests"));
+        writeFile(project+"/src/retry.ts","/** Tries again after a pause. */\nexport function retryLater(times: number) { return times; }\nexport class Queue { drain() { return retryLater(1); } }\n");
+        writeFile(project+"/src/use.ts","import { retryLater } from './retry.ts';\nexport function beginWork(x: any) { retryLater(2); x.drain(); }\n");
+        writeFile(project+"/src/stack.ts","export class Stack { drain() { return 2; } }\n");
+        writeFile(project+"/tests/retry.test.ts","import test from 'node:test';\nimport { retryLater } from '../src/retry.ts';\ntest('tries again', () => { retryLater(1); });\n");
+        click("tab_Chat");
+        const auto session=call("session.create",{{"provider","ollama"},{"model","fixture-chat:latest"},{"cwd",project},{"title","Code"}}).value("id").toString();QVERIFY(!session.isEmpty());
+        app->select(session);QTRY_COMPARE(app->selectedId(),session);
+        QVERIFY(!call("capsules.save",{{"sessionId",session},{"expectedRevision","0"},{"goal","Reliable imports"},{"decisions",QVariantList{"Retries stop after three tries"}},{"constraints",QVariantList{}},{"questions",QVariantList{}},{"nextSteps",QVariantList{}},{"relevantSessionIds",QVariantList{}},{"sources",QVariantList{}}}).contains("error"));
+        const auto text=[&](const QString &name){auto control=item(name);return control?control->property("text").toString():QString();};
+        tool("menuContext");QTRY_VERIFY(item("codeEnabled"));QTRY_VERIFY(text("codeStatus").startsWith("Off."));QVERIFY(!item("codeQuery"));
+        QVERIFY(scrollTo("codeEnabled"));QTest::qWait(100);capture("code-off");
+        stableClick("codeEnabled");QTRY_VERIFY(item("codeQuery"));QTRY_VERIFY_WITH_TIMEOUT(text("codeStatus").contains("symbols in 4 files"),8000);
+        QVERIFY(!item("codeAllowCloud")->property("checked").toBool());
+        item("codeQuery")->setProperty("text","try again after a pause");stableClick("codeFind");QTRY_VERIFY(item("codeResult_0"));
+        QCOMPARE(text("codeResult_0"),QString("retryLater"));QVERIFY(scrollTo("codeResult_0"));QTest::qWait(100);capture("code-results");
+        stableClick("codeResult_0");QTRY_COMPARE(text("codeSymbol"),QString("function retryLater"));QVERIFY(text("codeSource").contains("return times"));
+        QCOMPARE(text("codePlace"),QString("src/retry.ts, line 2"));QTRY_VERIFY(item("codeRelated_tests_0"));QCOMPARE(text("codeRelated_tests_0"),QString("tries again"));
+        QTRY_VERIFY(item("codeLink"));stableClick("codeLink");QTRY_COMPARE(text("codeDecision_0"),QString("Retries stop after three tries"));QTRY_VERIFY(!item("codeLink"));
+        QVERIFY(scrollTo("codeSource"));QTest::qWait(100);capture("code-symbol");QVERIFY(scrollTo("codeDecision_0"));QTest::qWait(100);capture("code-decision");
+        // What a name alone does not say is called what it is.
+        item("codeQuery")->setProperty("text","beginWork");stableClick("codeFind");QTRY_COMPARE(text("codeResult_0"),QString("beginWork"));stableClick("codeResult_0");QTRY_COMPARE(text("codeSymbol"),QString("function beginWork"));
+        QTRY_COMPARE(text("codeSure_uses_1"),QString("one of 2"));
+        stableClick("codeEnabled");QTRY_VERIFY(text("codeStatus").startsWith("Off."));QVERIFY(!item("codeQuery"));QVERIFY(!item("codeSymbol"));
+        click("closeContextDrawer");QVERIFY(!call("session.delete",{{"id",session},{"confirmed",true}}).contains("error"));
+    }
+    // M11, M10, A07 and RC-10: what each of them keeps or runs is off until chosen, and says where it applies.
+    void speechServicesAndVaultSettings(){
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"speechCache",QVariantMap{{"enabled",false}}},{"transcription",QVariantMap{{"provider","local"}}},{"notesVault",QVariantMap{{"enabled",false},{"folders",QVariantList{}}}}});restoreWorkspace();click("tab_Chat");});
+        const auto text=[&](const QString &name){auto control=item(name);return control?control->property("text").toString():QString();};
+        const auto setting=[&](const QString &key){return app->state().value("settings").toMap().value(key).toMap();};
+        QVERIFY(openSetting("speechCache"));QVERIFY(!item("speechCache")->property("checked").toBool());QVERIFY(!item("speechCacheDays"));
+        stableClick("speechCache");QTRY_VERIFY(setting("speechCache").value("enabled").toBool());QTRY_VERIFY(item("speechCacheDays"));QTRY_COMPARE(text("speechCacheStatus"),QString("Nothing is kept yet."));
+        QVERIFY(scrollTo("speechCacheStatus"));QTest::qWait(150);capture("speech-cache");stableClick("speechCache");QTRY_VERIFY(!setting("speechCache").value("enabled").toBool());
+        auto engine=item("transcriptionProvider");QVERIFY(engine);engine->setProperty("currentIndex",1);QVERIFY(QMetaObject::invokeMethod(engine,"activated",Q_ARG(int,1)));
+        QTRY_VERIFY(item("speechServerAddress"));item("speechServerAddress")->setProperty("text","http://example.org:8080");stableClick("speechServerSave");QTRY_VERIFY(text("speechServerFeedback").contains("on this computer"));
+        item("speechServerAddress")->setProperty("text","http://127.0.0.1:18099");stableClick("speechServerCheck");QTRY_COMPARE_WITH_TIMEOUT(text("speechServerFeedback"),QString("Nothing answers at this address."),8000);
+        stableClick("speechServerSave");QTRY_COMPARE(text("speechServerFeedback"),QString("Saved."));QTRY_COMPARE(setting("transcription").value("serverUrl").toString(),QString("http://127.0.0.1:18099"));
+        QVERIFY(scrollTo("speechServerFeedback"));QTest::qWait(100);capture("speech-server");
+        // No user manager exists here, so nothing can be run; the rows still say what answers.
+        QVERIFY(openSetting("openHealth"));click("openHealth");QTRY_VERIFY_WITH_TIMEOUT(item("serviceState_ollama"),8000);
+        QTRY_VERIFY(item("servicesUnsupported"));QVERIFY(!item("serviceManaged_ollama")->isEnabled());QVERIFY(!item("serviceStart_ollama"));
+        auto services=item("localServices");QVERIFY(services);services->setProperty("supported",true);
+        const auto row=[](const QString &id,const QString &label,const QString &state,const QString &owner,bool managed){return QVariantMap{{"id",id},{"label",label},{"addresses",QVariantList{"127.0.0.1:11434"}},{"unavailable",""},{"managed",managed},{"autostart",false},{"state",state},{"owner",owner},{"problem",""},{"blocking",""}};};
+        services->setProperty("services",QVariantList{row("ollama","Ollama","ready","pal",true),row("memory","Memory databases (Neo4j and Qdrant)","ready","external",true)});
+        QTRY_VERIFY(item("serviceStop_ollama"));QVERIFY(item("serviceRestart_ollama"));QVERIFY2(!item("serviceStop_memory"),"What someone else started cannot be stopped here");QVERIFY(!item("serviceStart_memory"));
+        QVERIFY(text("serviceState_memory").startsWith("Answering · not started by PAL"));QVERIFY(scrollTo("serviceState_memory"));QTest::qWait(150);capture("local-services");
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+        const QString vault=data.path()+"/scoped-notes";QVERIFY(QDir().mkpath(vault+"/work"));QVERIFY(QDir().mkpath(vault+"/journal"));
+        writeFile(vault+"/work/plan.md","# Plan\n\ntext\n");writeFile(vault+"/journal/day.md","# Day\n\ntext\n");writeFile(vault+"/.palignore","journal/\n");
+        QVERIFY(!call("settings.update",{{"notesVault",QVariantMap{{"path",vault},{"enabled",true},{"folders",QVariantList{}}}}}).contains("error"));
+        QVERIFY(openSetting("notesVaultEnabled"));QTRY_VERIFY(item("notesVaultWhole"));QVERIFY(!call("settings.update",{{"notesVault",QVariantMap{{"folders",QVariantList{"work","gone"}}}}}).contains("error"));
+        QTRY_VERIFY(item("notesVaultFolder_1"));QCOMPARE(text("notesVaultFolder_0"),QString("gone"));stableClick("notesVaultRemoveFolder_0");QTRY_VERIFY(!item("notesVaultFolder_1"));QTRY_COMPARE(text("notesVaultFolder_0"),QString("work"));
+        stableClick("notesVaultRemoveFolder_0");QTRY_VERIFY(item("notesVaultWhole"));QTRY_VERIFY(text("notesVaultStatus").contains("1 left out by .palignore"));QVERIFY(scrollTo("notesVaultAddFolder"));QTest::qWait(150);capture("notes-vault-scope");
+    }
+    // Every option a provider offers is on screen, unset until chosen, and an account is checked and left only in steps that say what they do.
+    void providerOptionsAndAccountCare(){
+        const auto restore=qScopeGuard([&]{restoreWorkspace();click("tab_Chat");});
+        const auto text=[&](const QString &name){auto control=item(name);return control?control->property("text").toString():QString();};
+        QVERIFY(!call("provider.credentials",{{"provider","xai"},{"key","fixture-key"}}).contains("error"));
+        const auto grok=call("session.create",{{"provider","xai"},{"model","grok-fixture"},{"cwd",data.path()},{"trusted",true},{"title","Options"}});QVERIFY2(!grok.contains("error"),qPrintable(grok.value("error").toString()));
+        click("tab_Chat");app->select(grok.value("id").toString());QTRY_COMPARE(app->selectedId(),grok.value("id").toString());
+        tool("menuModelOptions");QTRY_VERIFY(item("providerOption_xSearch"));QVERIFY(!item("providerOption_xSearch")->property("checked").toBool());QVERIFY(item("providerValue_allowedDomains"));
+        auto effort=item("providerChoice_reasoningEffort");QVERIFY(effort);QCOMPARE(effort->property("currentText").toString(),QString("Provider default"));
+        QVERIFY(scrollTo("providerOption_xSearch"));QTest::qWait(100);capture("provider-options");
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!item("providerOption_xSearch"));
+        QVERIFY(!call("session.delete",{{"id",grok.value("id")},{"confirmed",true}}).contains("error"));call("provider.credentials",{{"provider","xai"},{"key",""}});
+        const auto host=app->state().value("settings").toMap().value("ollama").toMap().value("host").toString();QVERIFY(!host.isEmpty());
+        const auto save=[&](const QString &name){return call("connections.save",{{"kind","ollama"},{"name",name},{"host",host},{"processing","local"}});};
+        const auto first=save("Check one"),second=save("Check two");QVERIFY2(!first.contains("error")&&!second.contains("error"),qPrintable(first.value("error").toString()+second.value("error").toString()));
+        const auto bound=call("session.create",{{"provider","ollama"},{"connectionId",first.value("id")},{"model","fixture-chat:latest"},{"cwd",data.path()},{"trusted",true},{"title","Bound to an account"}});QVERIFY2(!bound.contains("error"),qPrintable(bound.value("error").toString()));
+        // A conversation with a named account is offered the accounts it can move to; having none is not one of them.
+        const auto moving=call("session.create",{{"provider","ollama"},{"connectionId",first.value("id")},{"model","fixture-chat:latest"},{"cwd",data.path()},{"trusted",true},{"title","Moves"}});QVERIFY2(!moving.contains("error"),qPrintable(moving.value("error").toString()));
+        const auto plain=call("session.create",{{"provider","ollama"},{"model","fixture-chat:latest"},{"cwd",data.path()},{"trusted",true},{"title","Without one"}});QVERIFY2(!plain.contains("error"),qPrintable(plain.value("error").toString()));
+        const auto held=[&](const QVariantMap &session){for(const auto &value:app->state().value("sessions").toList())if(value.toMap().value("id")==session.value("id"))return value.toMap().value("connectionId").toString();return QString("gone");};
+        const auto open=[&](const QVariantMap &session){click("tab_Chat");app->select(session.value("id").toString());QTRY_COMPARE(app->session().value("id").toString(),session.value("id").toString());tool("menuModelOptions");QTRY_VERIFY(item("conversationAccount"));};
+        open(moving);QTRY_COMPARE(item("conversationAccount")->property("count").toInt(),2);QTRY_VERIFY(item("conversationAccount")->property("currentText").toString().startsWith("Check one"));capture("conversation-accounts");
+        item("conversationAccount")->setProperty("currentIndex",1);QVERIFY(QMetaObject::invokeMethod(item("conversationAccount"),"activated",Q_ARG(int,1)));
+        QTRY_VERIFY_WITH_TIMEOUT(item("ollamaSessionSave")->isEnabled(),8000);click("ollamaSessionSave");QTRY_VERIFY(!item("ollamaSessionSave"));QTRY_COMPARE(held(moving),second.value("id").toString());
+        open(plain);QTRY_COMPARE(item("conversationAccount")->property("count").toInt(),3);QCOMPARE(item("conversationAccount")->property("currentIndex").toInt(),0);
+        item("conversationAccount")->setProperty("currentIndex",1);QVERIFY(QMetaObject::invokeMethod(item("conversationAccount"),"activated",Q_ARG(int,1)));
+        QTRY_VERIFY_WITH_TIMEOUT(item("ollamaSessionSave")->isEnabled(),8000);click("ollamaSessionSave");QTRY_VERIFY(!item("ollamaSessionSave"));QTRY_COMPARE(held(plain),first.value("id").toString());
+        for(const auto &session:{moving,plain})QVERIFY(!call("session.delete",{{"id",session.value("id")},{"confirmed",true}}).contains("error"));
+        QVERIFY(openSetting("addNamedConnection"));
+        const auto row=[&](const QString &name){
+            auto named=item("namedConnections");if(!named)return -1;
+            const auto raw=named->property("items");const auto items=raw.metaType()==QMetaType::fromType<QJSValue>()?raw.value<QJSValue>().toVariant().toList():raw.toList();
+            int index=0;for(const auto &value:items){const auto map=value.toMap();if(map.value("migrated").toBool())continue;if(map.value("name").toString()==name)return index;index++;}
+            return -1;
+        };
+        auto named=item("namedConnections");QVERIFY(named);QVERIFY(QMetaObject::invokeMethod(named,"refresh"));QTRY_VERIFY(row("Check one")>=0&&row("Check two")>=0);
+        stableClick("namedConnectionCheck_"+QString::number(row("Check one")));
+        QTRY_COMPARE_WITH_TIMEOUT(text("checkStage_account"),QString("The server answered."),8000);QVERIFY(text("checkStage_models").endsWith(" models"));QVERIFY(!item("checkStage_reply"));QVERIFY(!item("checkTry")->isEnabled());
+        capture("connection-check");
+        item("checkModel")->setProperty("text","fixture-chat:latest");QTRY_VERIFY(item("checkTry")->isEnabled());stableClick("checkTry");
+        QTRY_VERIFY_WITH_TIMEOUT(text("checkStage_reply").startsWith(QString::fromUtf8("It said “Hello from Ollama.")),10000);QTest::qWait(100);capture("connection-check-reply");
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!item("checkTry"));
+        stableClick("namedConnectionRemove_"+QString::number(row("Check one")));
+        QTRY_COMPARE(text("usesItem_0"),QString::fromUtf8("Conversation · Bound to an account"));QVERIFY(!item("usesRemove")->isEnabled());QVERIFY(!item("usesMove")->isEnabled());
+        auto target=item("usesTarget");QVERIFY(target);
+        const auto targets=target->property("count").toInt();int chosen=-1;for(int i=0;i<targets;i++){target->setProperty("currentIndex",i);if(target->property("currentText").toString()=="Check two"){chosen=i;break;}}QVERIFY(chosen>=0);
+        capture("connection-uses");
+        stableClick("usesReviewed");QTRY_VERIFY(item("usesMove")->isEnabled());stableClick("usesMove");QTRY_VERIFY_WITH_TIMEOUT(item("usesRemove")->isEnabled(),8000);
+        QCOMPARE(text("usesSummary"),QString("Nothing uses this account. Its saved credential is removed with it."));
+        const auto account=[&]{for(const auto &value:app->state().value("sessions").toList())if(value.toMap().value("id").toString()==bound.value("id").toString())return value.toMap().value("connectionId").toString();return QString();};
+        QTRY_COMPARE(account(),second.value("id").toString());
+        stableClick("usesRemove");QTRY_VERIFY(!item("usesRemove"));QTRY_COMPARE(row("Check one"),-1);QVERIFY(row("Check two")>=0);
+        QVERIFY(!call("session.delete",{{"id",bound.value("id")},{"confirmed",true}}).contains("error"));QVERIFY(!call("connections.remove",{{"id",second.value("id")}}).contains("error"));
+    }
+    void modelBrowserBridgeAndSetups(){
+        const auto restore=qScopeGuard([&]{restoreWorkspace();click("tab_Chat");});
+        const auto text=[&](const QString &name){auto control=item(name);return control?control->property("text").toString():QString();};
+        QVERIFY(!call("provider.credentials",{{"provider","openrouter"},{"key","fixture-ui-key"}}).contains("error"));call("provider.models",{{"provider","openrouter"}});
+        const auto listed=[&]{return app->state().value("capabilities").toMap().value("openrouter").toMap().value("models").toList().size();};
+        QTRY_COMPARE_WITH_TIMEOUT(listed(),39,8000); // The batch-only model is not offered.
+        // A new conversation: the long list is searched, narrowed and read before one is chosen.
+        click("tab_Sessions");click("newSession");auto provider=item("sessionProvider");QVERIFY(provider);
+        const auto order=app->state().value("providerOrder").toStringList();const int openrouter=order.indexOf("openrouter");QVERIFY(openrouter>=0);
+        provider->setProperty("currentIndex",openrouter);QVERIFY(QMetaObject::invokeMethod(provider,"activated",Q_ARG(int,openrouter)));
+        QTRY_VERIFY(item("sessionModelsBrowse"));stableClick("sessionModelsBrowse");QTRY_VERIFY(item("modelSearch"));
+        QVERIFY(item("modelChip_tools"));QVERIFY(item("modelChip_images"));QVERIFY(item("modelChip_reasoning"));QVERIFY(item("modelChip_free"));QVERIFY(!item("modelCount"));
+        item("modelSearch")->setProperty("text","anthropic");QTRY_COMPARE(text("modelCount"),QString("8 of 39"));
+        stableClick("modelChip_reasoning");QTRY_COMPARE(text("modelCount"),QString("3 of 39"));stableClick("modelRow_0");
+        QTRY_COMPARE(text("modelChosen"),QString("anthropic/model-0"));QCOMPARE(item("sessionModel")->property("currentValue").toString(),QString("anthropic/model-0"));QCOMPARE(text("modelParameters"),QString("Takes max_tokens, temperature, reasoning"));
+        QTRY_VERIFY(scrollTo("modelSearch"));QTest::qWait(150);capture("model-browser-new");
+        stableClick("modelServedBy");QTRY_COMPARE_WITH_TIMEOUT(text("modelUpstream_1"),QString::fromUtf8("Amazon Bedrock · amazon-bedrock"),8000);
+        stableClick("modelPrefer_0");QTRY_COMPARE(text("modelPrefer_0"),QString("Preferred"));QVERIFY(scrollTo("modelPrefer_1"));QTest::qWait(150);capture("model-browser-served");
+        stableClick("sessionModelsBrowse");QTRY_VERIFY(!item("modelSearch"));QVERIFY(text("sessionModelFacts").startsWith("1M context"));
+        QVERIFY(scrollTo("providerValue_preferredProviders"));QCOMPARE(text("providerValue_preferredProviders"),QString("anthropic"));QVERIFY(!item("providerChoice_reasoningEffort"));
+        item("sessionTitle")->setProperty("text","Chosen from the list");stableClick("sessionOpen");QTRY_COMPARE(app->session().value("model").toString(),QString("anthropic/model-0"));
+        const auto routed=app->selectedId();const auto preferred=[&]{return app->session().value("api").toMap().value("options").toMap().value("preferredProviders").toStringList();};QCOMPARE(preferred(),QStringList{"anthropic"});
+        // The same list in an open conversation; a model that does not reason is not asked how hard to think.
+        click("tab_Chat");tool("menuModelOptions");QTRY_VERIFY_WITH_TIMEOUT(item("conversationModelsBrowse"),8000);stableClick("conversationModelsBrowse");QTRY_VERIFY(item("modelSearch"));
+        item("modelSearch")->setProperty("text","google model-1");stableClick("modelRow_0");QTRY_COMPARE(text("modelChosen"),QString("google/model-1"));QTest::qWait(100);capture("model-browser-conversation");
+        stableClick("conversationModelsBrowse");QTRY_VERIFY(!item("modelSearch"));QVERIFY(!item("conversationEffort")||item("conversationEffort")->property("count").toInt()==1);QVERIFY(!item("providerChoice_reasoningEffort"));
+        click("ollamaSessionSave");QTRY_COMPARE_WITH_TIMEOUT(app->session().value("model").toString(),QString("google/model-1"),8000);QCOMPARE(preferred(),QStringList{"anthropic"});
+        // The bridge: asking downloads nothing, and what PAL keeps is removed again by PAL.
+        const QString root=qEnvironmentVariable("XDG_DATA_HOME",QDir::homePath()+"/.local/share")+"/pal/litellm";if(QFileInfo::exists(root))QSKIP("This account already keeps a LiteLLM; the check does not touch it");
+        const auto litellm=call("connections.save",{{"kind","litellm"},{"variant","bridge"},{"name","Local bridge"},{"processing","local"}});QVERIFY2(!litellm.contains("error"),qPrintable(litellm.value("error").toString()));
+        const auto router=call("connections.save",{{"kind","openrouter"},{"name","Work router"},{"processing","cloud"}});QVERIFY2(!router.contains("error"),qPrintable(router.value("error").toString()));
+        QVERIFY(openSetting("addNamedConnection"));
+        const auto row=[&](const QString &name){
+            auto named=item("namedConnections");if(!named)return -1;
+            const auto raw=named->property("items");const auto items=raw.metaType()==QMetaType::fromType<QJSValue>()?raw.value<QJSValue>().toVariant().toList():raw.toList();
+            int index=0;for(const auto &value:items){const auto map=value.toMap();if(map.value("migrated").toBool())continue;if(map.value("name").toString()==name)return index;index++;}
+            return -1;
+        };
+        QVERIFY(QMetaObject::invokeMethod(item("namedConnections"),"refresh"));QTRY_VERIFY(row("Local bridge")>=0);
+        stableClick("namedConnectionBridge_"+QString::number(row("Local bridge")));QTRY_VERIFY(text("bridgeSummary").startsWith("PAL does not keep LiteLLM"));
+        stableClick("bridgeInstall");QTRY_VERIFY(text("bridgeAsk").startsWith("Downloads LiteLLM "));QTest::qWait(150);capture("litellm-bridge-install");stableClick("bridgeBack");
+        stableClick("bridgeTest");QTRY_VERIFY_WITH_TIMEOUT(!text("bridgeTested").isEmpty(),20000);QVERIFY(!QFileInfo::exists(root));
+        const auto clean=qScopeGuard([&]{if(QFileInfo::exists(root+"/fixture"))QDir(root).removeRecursively();});
+        QVERIFY(QDir().mkpath(root+"/venv/bin"));{QFile mark(root+"/fixture");QVERIFY(mark.open(QIODevice::WriteOnly));}
+        {QFile python(root+"/venv/bin/python");QVERIFY(python.open(QIODevice::WriteOnly));}
+        {QFile manifest(root+"/manifest.json");QVERIFY(manifest.open(QIODevice::WriteOnly));manifest.write(QJsonDocument(QJsonObject{{"version",1},{"litellm","1.0.0"},{"python",root+"/venv/bin/python"}}).toJson());}
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!item("bridgeSummary"));stableClick("namedConnectionBridge_"+QString::number(row("Local bridge")));
+        QTRY_VERIFY(text("bridgeSummary").startsWith("PAL keeps LiteLLM 1.0.0"));QCOMPARE(text("bridgeInstall"),QString::fromUtf8("Update…"));QTest::qWait(150);capture("litellm-bridge-kept");
+        stableClick("bridgeRemove");QTRY_COMPARE(text("bridgeConfirm"),QString("Delete"));stableClick("bridgeConfirm");
+        QTRY_VERIFY_WITH_TIMEOUT(text("bridgeSummary").startsWith("PAL does not keep LiteLLM"),10000);QVERIFY(!QFileInfo::exists(root+"/venv"));QVERIFY(QFileInfo::exists(root+"/fixture")); // What PAL did not make stays.
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!item("bridgeSummary"));
+        // A setup keeps its account, and changing its provider lets go of it.
+        QVERIFY(openSetting("newSetup"));stableClick("newSetup");QTRY_VERIFY(item("setupName"));item("setupName")->setProperty("text","Routed");
+        const auto choose=[&](const QString &name,const QString &label){auto box=item(name);if(!box)return false;const int count=box->property("count").toInt();for(int i=0;i<count;i++){QString value;QMetaObject::invokeMethod(box,"textAt",Q_RETURN_ARG(QString,value),Q_ARG(int,i));if(value==label){box->setProperty("currentIndex",i);return QMetaObject::invokeMethod(box,"activated",Q_ARG(int,i));}}return false;};
+        QVERIFY(choose("setupProvider","OpenRouter"));QTRY_VERIFY(item("setupAccount"));QVERIFY(choose("setupAccount","Work router"));item("setupModel")->setProperty("text","anthropic/model-0");QTest::qWait(100);capture("setup-account");
+        stableClick("setupSave");QTRY_VERIFY(!item("setupName"));
+        const auto setup=[&]{for(const auto &value:call("setups.list",{}).value("setups").toList())if(value.toMap().value("name").toString()=="Routed")return value.toMap();return QVariantMap();};
+        QTRY_COMPARE(setup().value("connection").toString(),QString("Work router"));QCOMPARE(setup().value("provider").toString(),QString("openrouter"));
+        QVERIFY(!call("setups.delete",{{"id",setup().value("id")}}).contains("error"));
+        // A specialist runs on a model of one account; without a provider it is the helper's.
+        QVERIFY(openSetting("specialistsSettings"));QVERIFY(item("specialistProvider"));QVERIFY(!item("specialistAccount"));QVERIFY(!item("specialistModel")->isEnabled());
+        item("specialistName")->setProperty("text","Second reader");QVERIFY(choose("specialistProvider","OpenRouter"));QTRY_VERIFY(item("specialistAccount"));QVERIFY(choose("specialistAccount","Work router"));
+        QTRY_VERIFY(item("specialistModel")->isEnabled());QVERIFY(!item("specialistAdd")->isEnabled());item("specialistModel")->setProperty("text","anthropic/model-0");QTRY_VERIFY(item("specialistAdd")->isEnabled());
+        QVERIFY(scrollTo("specialistModel"));QTest::qWait(150);capture("specialist-account");stableClick("specialistAdd");QTRY_VERIFY2(text("specialistName").isEmpty(),qPrintable(item("setupsSettings")->property("error").toString()));
+        const auto reader=[&]{for(const auto &value:call("specialists.list",{}).value("specialists").toList())if(value.toMap().value("name").toString()=="Second reader")return value.toMap();return QVariantMap();};
+        QTRY_COMPARE(reader().value("connectionId").toString(),router.value("id").toString());QCOMPARE(reader().value("provider").toString(),QString("openrouter"));QVERIFY(!call("specialists.delete",{{"id",reader().value("id")}}).contains("error"));
+        QVERIFY(!call("session.delete",{{"id",routed},{"confirmed",true}}).contains("error"));
+        for(const auto &account:{litellm,router})QVERIFY(!call("connections.remove",{{"id",account.value("id")}}).contains("error"));
+        call("provider.credentials",{{"provider","openrouter"},{"key",""}});
+    }
     void workspaceTelemetryControls(){
         const QString root=data.path()+"/telemetry-project";QVERIFY(QDir().mkpath(root));
         const auto configured=call("settings.update",{{"telemetry",QVariantMap{{"roots",QStringList{root}}}}});QVERIFY(!configured.contains("error"));
@@ -823,6 +1131,12 @@ kill -KILL $$
     }
     void apiProviderSetup(){
         openCategory("connections");
+        QVERIFY(openSetting("providerCatalogSearch"));capture("provider-catalog-settings");
+        item("providerCatalogSearch")->setProperty("text","Grok");QTest::qWait(200);
+        QVERIFY(item("apiKey_xai"));capture("grok-account-setup-desktop");
+        item("providerCatalogSearch")->setProperty("text","Perplexity");QTest::qWait(200);
+        QVERIFY(item("apiKey_perplexity"));capture("perplexity-account-setup-desktop");
+        item("providerCatalogSearch")->setProperty("text","");QTest::qWait(100);
         for(const auto &provider:{"openai","anthropic","google"}){
             auto key=item(QString("apiKey_")+provider);QVERIFY(key);
             QCOMPARE(key->property("echoMode").toInt(),2); // Password; never populated from state.
@@ -831,15 +1145,19 @@ kill -KILL $$
             QVERIFY2(!saved.contains("error"),qPrintable(saved.value("error").toString()));
         }
         click("tab_Sessions");click("newSession");
-        auto provider=item("sessionProvider");QVERIFY(provider);QCOMPARE(provider->property("count").toInt(),8);
+        auto provider=item("sessionProvider");QVERIFY(provider);
+        const auto providerOrder=app->state().value("providerOrder").toStringList();
+        QCOMPARE(provider->property("count").toInt(),providerOrder.size());
         // M13: the compatible endpoint takes a typed model ID, and tools only when they are declared.
-        provider->setProperty("currentIndex",7);QTest::qWait(50);
+        provider->setProperty("currentIndex",providerOrder.indexOf("compatible"));QTest::qWait(50);
         QVERIFY(item("sessionCustomModel"));QVERIFY(!item("sessionEffort"));QVERIFY(item("sessionTools"));QVERIFY(!item("sessionTools")->isEnabled());
-        for(int index=4;index<7;index++){
+        for(const auto &id:{QString("openai"),QString("anthropic"),QString("google")}){
+            const int index=providerOrder.indexOf(id);QVERIFY(index>=0);
             provider->setProperty("currentIndex",index);QTest::qWait(50);
-            QVERIFY(item("sessionCustomModel"));QVERIFY(!item("sessionEffort"));
+            QVERIFY(item("sessionCustomModel"));QVERIFY(item("sessionEffort"));
             auto tools=item("sessionTools");QVERIFY(tools);QVERIFY(tools->isEnabled());
         }
+        capture("provider-new-session");
         item("sessionTitle")->setProperty("text","API setup check");
         item("sessionCustomModel")->setProperty("text","fixture-model");
         auto open=item("sessionOpen");QVERIFY(open);QVERIFY(open->isEnabled());click("sessionOpen");
@@ -850,13 +1168,47 @@ kill -KILL $$
         const auto originalId=app->selectedId();
         item("composer")->setProperty("text","Keep this API draft");
         tool("menuModelOptions");QTRY_VERIFY(item("conversationCustomModel"));
-        QVERIFY(!item("conversationEffort"));
+        QVERIFY(item("conversationEffort"));
         item("conversationCustomModel")->setProperty("text","another-api-model");
         QTRY_VERIFY(item("ollamaSessionSave")->isEnabled());click("ollamaSessionSave");
         QTRY_COMPARE(app->session().value("model").toString(),QString("another-api-model"));
         QCOMPARE(app->selectedId(),originalId);
         QCOMPARE(item("composer")->property("text").toString(),QString("Keep this API draft"));
         QTRY_VERIFY(!item("ollamaSessionSave"));
+
+        // Provider-specific release evidence uses local fixture conversations. No hosted request is sent.
+        QVERIFY(!call("provider.credentials",{{"provider","xai"},{"key","fixture-ui-key"}}).contains("error"));
+        click("tab_Sessions");click("newSession");provider=item("sessionProvider");QVERIFY(provider);
+        const int xai=providerOrder.indexOf("xai");QVERIFY(xai>=0);provider->setProperty("currentIndex",xai);QVERIFY(QMetaObject::invokeMethod(provider,"activated",Q_ARG(int,xai)));QTest::qWait(100);
+        item("sessionTitle")->setProperty("text","Grok provider fixture");item("sessionCustomModel")->setProperty("text","grok-4");click("sessionOpen");
+        QTRY_COMPARE(app->session().value("provider").toString(),QString("xai"));click("tab_Chat");
+        for(auto error:window->findChildren<QQuickItem*>("sessionError")){error->setVisible(false);error->setOpacity(0);}
+        auto proxy=qobject_cast<QSortFilterProxyModel*>(app->transcript());QVERIFY(proxy);
+        auto transcript=qobject_cast<TranscriptModel*>(proxy->sourceModel());QVERIFY(transcript);
+        transcript->reset({QVariantMap{{"id","fixture-grok-user"},{"sessionId",app->selectedId()},{"role","user"},{"text","Fixture · no live provider request\n\nReview the 2.0.2 provider handoff."}},QVariantMap{{"id","fixture-grok-reply"},{"sessionId",app->selectedId()},{"role","assistant"},{"text","Grok fixture response — the selected named account and model options remain scoped to this conversation."}}});
+        QTest::qWait(8500); // Let the fixture credential's catalog notice expire before evidence capture.
+        for(auto error:window->findChildren<QQuickItem*>("sessionError")){error->setVisible(false);error->setOpacity(0);}
+        capture("grok-conversation-desktop");
+        call("provider.credentials",{{"provider","xai"},{"key",""}});
+
+        QVERIFY(!call("provider.credentials",{{"provider","perplexity"},{"key","fixture-ui-key"}}).contains("error"));
+        click("tab_Sessions");click("newSession");provider=item("sessionProvider");QVERIFY(provider);
+        const int perplexity=providerOrder.indexOf("perplexity");QVERIFY(perplexity>=0);provider->setProperty("currentIndex",perplexity);QVERIFY(QMetaObject::invokeMethod(provider,"activated",Q_ARG(int,perplexity)));QTest::qWait(100);
+        item("sessionTitle")->setProperty("text","Perplexity provider fixture");
+        auto presetBox=item("sessionModel");QVERIFY(presetBox);
+        int researchPreset=-1;
+        QTRY_VERIFY(QMetaObject::invokeMethod(presetBox,"indexOfValue",Q_RETURN_ARG(int,researchPreset),Q_ARG(QVariant,QVariant("preset:high"))) && researchPreset>=0);
+        presetBox->setProperty("currentIndex",researchPreset);
+        QVERIFY(QMetaObject::invokeMethod(presetBox,"activated",Q_ARG(int,researchPreset)));
+        click("sessionOpen");
+        QTRY_COMPARE(app->session().value("provider").toString(),QString("perplexity"));click("tab_Chat");
+        for(auto error:window->findChildren<QQuickItem*>("sessionError")){error->setVisible(false);error->setOpacity(0);}
+        proxy=qobject_cast<QSortFilterProxyModel*>(app->transcript());QVERIFY(proxy);transcript=qobject_cast<TranscriptModel*>(proxy->sourceModel());QVERIFY(transcript);
+        transcript->reset({QVariantMap{{"id","fixture-perplexity-user"},{"sessionId",app->selectedId()},{"role","user"},{"text","Fixture · no live provider request\n\nSummarize the provider handoff and cite the relevant sources."}},QVariantMap{{"id","fixture-perplexity-reply"},{"sessionId",app->selectedId()},{"role","assistant"},{"text","Perplexity fixture response — account routing and citations are preserved. [1]\n\n[1] Provider handoff evidence fixture"}}});
+        QTest::qWait(8500); // Let the fixture credential's catalog notice expire before evidence capture.
+        for(auto error:window->findChildren<QQuickItem*>("sessionError")){error->setVisible(false);error->setOpacity(0);}
+        capture("perplexity-conversation-desktop");
+        call("provider.credentials",{{"provider","perplexity"},{"key",""}});
     }
     void conversationModelSwitching(){
         const auto created=call("session.create",{{"provider","codex"},{"model","fixture-model"},{"effort","high"},{"cwd",data.path()},{"trusted",true}});
@@ -965,7 +1317,8 @@ kill -KILL $$
         QCOMPARE(app->state().value("settings").toMap().value("voice"),original.value("voice"));
         // A continuous pointer drag writes one setting update on release.
         click("speechPitch");
-        const auto revision=app->state().value("settingsRevision");
+        // The click may save a value of its own; its revision arrives with a later state.
+        QVariant revision;do{revision=app->state().value("settingsRevision");QTest::qWait(400);}while(revision!=app->state().value("settingsRevision"));
         const auto start=pitch->mapToScene(QPointF(pitch->width()/2,pitch->height()/2)).toPoint();
         const auto end=pitch->mapToScene(QPointF(pitch->width()*.7,pitch->height()/2)).toPoint();
         QTest::mousePress(window,Qt::LeftButton,Qt::NoModifier,start);
@@ -1121,6 +1474,80 @@ kill -KILL $$
         capture("context-recall-outcome");click("closeContextDrawer");
         item("composer")->setProperty("text","");
     }
+    // Time awareness: the Settings section and its live sample, the clock view with a conversation's own
+    // zone, the palette route, and what the Context drawer says the next message is told.
+    void timeAwareness(){
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"time",QVariantMap{{"enabled",true},{"zoneMode","automatic"},{"conversationTiming",true},{"clockFormat","system"}}}});restoreWorkspace();click("tab_Chat");});
+        restoreWorkspace();click("tab_Chat");
+        const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Time check"}});
+        QTRY_VERIFY(app->selectedId()!=previous);const auto session=app->selectedId();
+        const auto time=[&]{return app->state().value("settings").toMap().value("time").toMap();};
+        const auto text=[&](const QString &name){auto control=item(name);return control?control->property("text").toString():QString();};
+        const auto opened=[&](const QString &name){auto view=dialog(name);return view&&view->property("opened").toBool();};
+        const auto pick=[&](const QString &query){
+            QTRY_VERIFY(opened("zonePicker"));QTRY_VERIFY(item("zoneList"));
+            QVERIFY(item("zoneList")->property("count").toInt()>400);
+            item("zoneSearch")->setProperty("text",query);
+            QTRY_VERIFY(item("zoneList")&&item("zoneList")->property("count").toInt()==1);
+            QTest::keyClick(window,Qt::Key_Return);
+            QTRY_VERIFY(!opened("zonePicker"));
+        };
+        QVERIFY(openSetting("timeEnabled"));
+        QVERIFY(item("timeEnabled")->property("checked").toBool());
+        QTRY_VERIFY(!text("timeSample").isEmpty());
+        QVERIFY(!call("settings.update",{{"time",QVariantMap{{"clockFormat","24h"}}}}).contains("error"));
+        QTRY_VERIFY(text("timeSample").contains(QRegularExpression("\\d{2}:\\d{2} · ")));
+        QVERIFY(text("timeSource").startsWith("Clock: this desktop"));
+        // Choosing a fixed zone without a saved one asks for it first; cancelling changes nothing.
+        auto mode=item("timeZoneMode");QVERIFY(mode);
+        QMetaObject::invokeMethod(mode,"activated",Q_ARG(int,1));
+        QTRY_VERIFY(opened("zonePicker"));QTRY_VERIFY(item("zoneList"));
+        capture("time-zone-picker");
+        click("zoneCancel");QTRY_VERIFY(!opened("zonePicker"));
+        QCOMPARE(time().value("zoneMode").toString(),QString("automatic"));
+        QCOMPARE(mode->property("currentIndex").toInt(),0);
+        QMetaObject::invokeMethod(mode,"activated",Q_ARG(int,1));
+        pick("kathmandu");
+        QTRY_COMPARE(time().value("fixedZone").toString(),QString("Asia/Kathmandu"));
+        QCOMPARE(time().value("zoneMode").toString(),QString("fixed"));
+        QTRY_VERIFY(text("timeSample").contains("Asia/Kathmandu (UTC+05:45)"));
+        QVERIFY(text("timeSource").contains("your fixed time zone"));
+        QTRY_VERIFY(item("timeFixedZone"));
+        QTest::qWait(200);capture("time-settings");
+        // The clock view is the same reading, and the conversation's own zone wins.
+        click("tab_Chat");QTRY_VERIFY(item("composer"));
+        tool("menuClock");QTRY_VERIFY(opened("clockView"));
+        QTRY_VERIFY(text("clockZone").contains("Asia/Kathmandu (UTC+05:45)"));
+        QTRY_COMPARE(text("clock_previousMessage"),QString("Not recorded"));
+        QTRY_VERIFY(text("clock_created").endsWith("ago"));
+        QVERIFY(text("conversationZone").startsWith("Default"));
+        click("chooseConversationZone");pick("asia tokyo");
+        QTRY_COMPARE(text("conversationZone"),QString("Asia/Tokyo"));
+        QTRY_VERIFY(text("clockZone").contains("Asia/Tokyo (UTC+09:00) · set for this conversation"));
+        QTest::qWait(200);capture("clock-view");
+        click("clearConversationZone");
+        QTRY_VERIFY(text("conversationZone").startsWith("Default"));
+        QTRY_VERIFY(text("clockZone").contains("Asia/Kathmandu"));
+        click("clockClose");QTRY_VERIFY(!opened("clockView"));
+        QCOMPARE(app->selectedId(),session);
+        // Plain words in the palette reach it too.
+        QTest::keyClick(window,Qt::Key_K,Qt::ControlModifier);QTRY_VERIFY(item("commandPaletteSearch"));
+        item("commandPaletteSearch")->setProperty("text","current date");QTest::qWait(150);
+        QTRY_VERIFY(item("command_clock_open"));QTest::keyClick(window,Qt::Key_Return);
+        QTRY_VERIFY(opened("clockView"));
+        click("clockSettings");QTRY_VERIFY(item("timeEnabled"));
+        // Context states what the next message is told, and that it is told nothing once this is off.
+        click("tab_Chat");tool("menuContext");
+        QTRY_VERIFY(text("contextTime").contains("told the time in Asia/Kathmandu (your fixed time zone)"));
+        capture("context-time");click("closeContextDrawer");
+        QVERIFY(openSetting("timeEnabled"));click("timeEnabled");
+        QTRY_VERIFY(!time().value("enabled").toBool());
+        QVERIFY(!item("timeConversation")->isEnabled());
+        click("tab_Chat");tool("menuContext");
+        QTRY_VERIFY(text("contextTime").contains("off in Settings"));
+        click("closeContextDrawer");
+    }
     // M08: tasks move only by explicit choices; done needs a reason or a passing check.
     void projectTaskLifecycle(){
         const auto restore=qScopeGuard([&]{restoreWorkspace();click("tab_Chat");});
@@ -1203,6 +1630,14 @@ kill -KILL $$
         QVERIFY(item("searchSourcesApply"));
         item("searchOnlySites")->setProperty("text","https://docs.ollama.com/api");item("searchRecency")->setProperty("currentIndex",2);click("searchSourcesApply");
         QTRY_COMPARE(item("searchSources")->property("text").toString(),QString("docs.ollama.com · past week"));
+        // Send keeps its place whatever the message carries: what does not fit beside the buttons goes above them.
+        const auto fits=[&]{auto card=item("composerCard");if(!card)return false;const auto room=card->mapRectToScene(card->boundingRect());
+            for(const auto *name:{"sendMessage","conversationMore","pasteClipboard","searchThisTurn","searchSources"}){auto control=item(name);if(!control||!room.contains(control->mapRectToScene(control->boundingRect())))return false;}return true;};
+        const auto above=[&]{auto send=item("sendMessage"),sources=item("searchSources");return sources->mapRectToScene(sources->boundingRect()).bottom()<=send->mapRectToScene(send->boundingRect()).top();};
+        const bool beside=item("workbenchSide");const auto toggle=[&]{const bool open=item("workbenchSide");click("chatWorkbench");QTRY_VERIFY(!item("workbenchSide")==open);};
+        if(beside)toggle();
+        QTRY_VERIFY(fits()&&!above());toggle();QTRY_VERIFY(fits()&&above());QTest::qWait(150);capture("search-sources-narrow");
+        if(!beside)toggle();
         const auto other=call("session.create",{{"provider","ollama"},{"model","fixture-plain:latest"},{"cwd",data.path()},{"title","Other search draft"}}).value("id").toString();
         QVERIFY(!other.isEmpty());QTRY_COMPARE(app->selectedId(),other);QVERIFY(!item("searchSources"));
         app->select(session);QTRY_COMPARE(app->selectedId(),session);
@@ -1379,7 +1814,9 @@ kill -KILL $$
         restoreWorkspace();click("tab_Chat");
         const auto previous=app->selectedId();
         app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Schedule check"}});
-        QTRY_VERIFY(app->selectedId()!=previous);const auto sessions=app->state().value("sessionCount").toInt();
+        QTRY_VERIFY(app->selectedId()!=previous);
+        QTRY_VERIFY([&]{for(const auto &value:app->state().value("sessions").toList())if(value.toMap().value("id").toString()==app->selectedId())return true;return false;}());
+        const auto sessions=app->state().value("sessionCount").toInt();
         openWorkflows();click("workflowTab1");QTRY_VERIFY(item("recipePicker"));
         auto picker=item("recipePicker");
         for(int index=0;index<picker->property("count").toInt();++index){picker->setProperty("currentIndex",index);if(picker->property("currentText").toString()=="Review a proposed plan")break;}
@@ -1508,11 +1945,12 @@ kill -KILL $$
         for(const auto &next:avatarIds(false)){
             const auto previous=app->avatar().value("id").toString();
             if(next==previous)continue;
-            click("avatar_"+next);
+            // Saving loads another portrait and moves the gallery, so a tile is clicked once it stands still.
+            stableClick("avatar_"+next);
             QCOMPARE(app->avatar().value("id").toString(),previous);
-            click("avatarDiscard");
+            stableClick("avatarDiscard");
             QVERIFY(item("avatar_"+previous)->property("checked").toBool());
-            click("avatar_"+next);click("avatarSave");
+            stableClick("avatar_"+next);stableClick("avatarSave");
             QTRY_COMPARE(app->avatar().value("id").toString(),next);
             QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith(next+"-surface.png"));
             QCOMPARE(app->assistantName(),QString("PAL"));
@@ -2060,11 +2498,21 @@ Unicode: café ✦ 日本語
         QTRY_VERIFY(item("sendMessage") && item("sendMessage")->isEnabled());click("sendMessage");
         auto answered=[&]{for(const auto &m:app->messages())if(m.toMap().value("text").toString().contains("Hello from Ollama."))return true;return false;};
         QTRY_VERIFY(answered());
+        // A result that arrives while the conversation still answers is said to wait, in the list and under the conversation.
+        QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        QVERIFY(!item("pendingUpdates"));
+        QVERIFY(!call("session.send",{{"id",parent},{"text","queue-validation-hold"}}).contains("error"));
+        QTRY_COMPARE(app->session().value("status").toString(),QString("working"));
         QFile marker(data.path()+"/finish-delegation-ui-check");QVERIFY(marker.open(QIODevice::WriteOnly));marker.close();
+        QTRY_VERIFY_WITH_TIMEOUT(item("pendingUpdates"),2400);
+        QCOMPARE(item("pendingUpdates")->property("text").toString(),QString::fromUtf8("1 delegated result is waiting · reported when this turn ends"));
+        QTRY_VERIFY(item("sessionStatus_"+parent));QVERIFY2(item("sessionStatus_"+parent)->property("text").toString().endsWith(QString::fromUtf8(" · 1 result waiting")),qPrintable(item("sessionStatus_"+parent)->property("text").toString()));
+        capture("delegation-waiting");
         auto delegationRow=[&]{for(const auto &m:app->messages())if(m.toMap().value("kind").toString()=="delegation")return m.toMap();return QVariantMap{};};
         auto replied=[&]{for(const auto &m:app->messages())if(m.toMap().value("text").toString().startsWith("The delegated check finished"))return true;return false;};
         QTRY_VERIFY_WITH_TIMEOUT(!delegationRow().isEmpty()&&replied(),15000);
         QTRY_COMPARE_WITH_TIMEOUT(app->session().value("status").toString(),QString("idle"),8000);
+        QTRY_VERIFY(!item("pendingUpdates"));
         const auto row=delegationRow();
         QCOMPARE(row.value("role").toString(),QString("user"));
         QVERIFY(row.value("text").toString().startsWith(QString::fromUtf8("Codex finished “Delegated · completion-delegation” after")));
@@ -2090,7 +2538,7 @@ Unicode: café ✦ 日本語
         QTest::qWait(100);capture("ollama-settings");
         click("tab_Sessions");click("newSession");
         auto provider=item("sessionProvider");QVERIFY(provider);
-        QCOMPARE(provider->property("count").toInt(),8); // M13 added the compatible endpoint.
+        QCOMPARE(provider->property("count").toInt(),app->state().value("providerOrder").toList().size());
         provider->setProperty("currentIndex",2);QVERIFY(QMetaObject::invokeMethod(provider,"activated",Q_ARG(int,2)));
         QTRY_COMPARE(item("sessionModel")->property("count").toInt(),3);
         QCOMPARE(item("sessionModel")->property("currentValue").toString(),QString());
@@ -2121,7 +2569,7 @@ Unicode: café ✦ 日本語
         click("ollamaSessionSave");QTRY_COMPARE(app->session().value("model").toString(),QString("fixture-plain:latest"));
         QCOMPARE(app->state().value("settings").toMap().value("ollama").toMap().value("model").toString(),QString("fixture-chat:latest"));
         QTRY_VERIFY(!item("ollamaSessionSave"));
-        tool("menuHandoff");QTRY_VERIFY(item("handoffProvider"));QCOMPARE(item("handoffProvider")->property("count").toInt(),7); // Every provider but this one, including M13's compatible endpoint.
+        tool("menuHandoff");QTRY_VERIFY(item("handoffProvider"));QCOMPARE(item("handoffProvider")->property("count").toInt(),app->state().value("providerOrder").toList().size()-1); // Every provider but this one.
         QVERIFY(item("handoffTrust"));QVERIFY(!item("handoffCreate")->isEnabled());
         item("handoffTrust")->setProperty("checked",true);click("handoffCreate");
         QTRY_COMPARE(app->session().value("provider").toString(),QString("codex"));
@@ -2177,7 +2625,8 @@ Unicode: café ✦ 日本語
         QTest::keyClick(window,Qt::Key_End);QTest::keyClick(window,Qt::Key_Return);
         QTRY_COMPARE(app->state().value("settings").toMap().value("memory").toMap().value("extractionProvider").toString(),QString("anthropic"));
         QVERIFY(openSetting("memoryEmbeddingProvider"));click("memoryEmbeddingProvider");
-        QTest::keyClick(window,Qt::Key_End);QTest::keyClick(window,Qt::Key_Return);
+        // The list names every service that embeds; Gemini is the third.
+        QTest::keyClick(window,Qt::Key_Home);QTest::keyClick(window,Qt::Key_Down);QTest::keyClick(window,Qt::Key_Down);QTest::keyClick(window,Qt::Key_Return);
         QTRY_COMPARE(app->state().value("settings").toMap().value("memory").toMap().value("embeddingProvider").toString(),QString("google"));
         QTRY_COMPARE(app->state().value("settings").toMap().value("memory").toMap().value("model").toString(),QString("gemini-embedding-001"));
         QVERIFY(openSetting("cloudEmbeddingEnabled"));
@@ -2192,7 +2641,7 @@ Unicode: café ✦ 日本語
         auto reveal=[&](const QString &name){QVERIFY2(openSetting(name),qPrintable(name));};
         reveal("webSearchEnabled");click("webSearchEnabled");
         QTRY_VERIFY(app->state().value("settings").toMap().value("webSearch").toMap().value("enabled").toBool());
-        auto provider=item("webSearchProvider");QVERIFY(provider);QCOMPARE(provider->property("count").toInt(),5);
+        auto provider=item("webSearchProvider");QVERIFY(provider);QCOMPARE(provider->property("count").toInt(),7);
         provider->setProperty("currentIndex",4);QVERIFY(QMetaObject::invokeMethod(provider,"activated",Q_ARG(int,4)));
         QVERIFY(item("searxngUrl"));item("searxngUrl")->setProperty("text",qEnvironmentVariable("PAL_OLLAMA_HOST"));
         reveal("webSearchSave");click("webSearchSave");
@@ -2602,8 +3051,18 @@ Unicode: café ✦ 日本語
             click("workbenchTab_shelf");
             if(!item("workbenchTab_shelf"))click("workbenchPaneList");
             QTRY_VERIFY(fits("workbenchTab_shelf"));
-            QTRY_VERIFY(std::abs(bounds("workbenchTab_shelf").center().x()-size.width()/2.)<0.51);
-            QTRY_VERIFY(std::abs(bounds("workbenchTab_canvas").center().x()-bounds("workbenchTab_shelf").center().x())<0.51);
+            // The last row is centered, however many panes it holds.
+            const auto raw=bench->property("tabs");const auto tabs=raw.metaType()==QMetaType::fromType<QJSValue>()?raw.value<QJSValue>().toVariant().toList():raw.toList();
+            const auto lastRowCenter=[&]{
+                double row=-1,sum=0;int count=0;
+                for(const auto &tab:tabs){
+                    const auto rect=bounds("workbenchTab_"+tab.toMap().value("id").toString());if(rect.isEmpty())continue;
+                    if(rect.center().y()>row+1){row=rect.center().y();sum=0;count=0;}
+                    if(std::abs(rect.center().y()-row)<1){sum+=rect.center().x();count++;}
+                }
+                return count?sum/count:-1;
+            };
+            QTRY_VERIFY2(std::abs(lastRowCenter()-size.width()/2.)<0.51,qPrintable(QString("last row centered at %1 of %2").arg(lastRowCenter()).arg(size.width())));
             const auto inset=item("workbenchTab_shelf")->property("leftPadding").toReal();
             QVERIFY(inset>0);
             for(auto *tab:item("workbenchNavigation")->childItems()){
@@ -2615,7 +3074,10 @@ Unicode: café ✦ 日本語
             }
             item("workbenchTab_shelf")->forceActiveFocus();
             QTest::keyClick(&view,Qt::Key_Up);
-            QTRY_COMPARE(view.activeFocusItem(),item("workbenchTab_canvas"));
+            // Up from the shelf lands on the nearest pane of the row above.
+            QTRY_VERIFY(view.activeFocusItem()&&view.activeFocusItem()->objectName().startsWith("workbenchTab_")&&view.activeFocusItem()!=item("workbenchTab_shelf"));
+            click("workbenchTab_canvas");
+            if(!item("workbenchTab_shelf"))click("workbenchPaneList");
             QTRY_VERIFY(fits("canvasPath"));
             QVERIFY(fits("canvasOpen"));
             QVERIFY(scrollTo("canvasOpen"));
@@ -3950,6 +4412,12 @@ Unicode: café ✦ 日本語
         click("collectionBindSession_0");
         QTRY_VERIFY(call("collections.list",{{"sessionId",session}}).value("collections").toList().value(0).toMap().value("bound").toMap().value("session").toBool());
         capture("document-collections");
+        // §11.2: a question shows the excerpts a conversation would get, with their places, and asks no model.
+        QVERIFY(scrollTo("collectionTry_0"));click("collectionTry_0");QTRY_VERIFY(item("trialQuestion"));
+        item("trialQuestion")->setProperty("text","What do I run before the first build?");click("trialAsk");
+        QTRY_VERIFY_WITH_TIMEOUT(item("trialSource_0"),10000);QVERIFY(item("trialSource_0")->property("text").toString().contains("install.md"));QVERIFY(item("trialSource_0")->property("text").toString().contains("line"));
+        QTest::qWait(150);capture("collection-question");
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(200);
         QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
         extraTool("menuExport");QTRY_VERIFY(item("exportSave"));
         QVERIFY(item("exportSave")->isEnabled());QVERIFY(!item("exportKeepTemporary"));
@@ -4046,8 +4514,9 @@ Unicode: café ✦ 日本語
         QVERIFY(!call("settings.update",{{"notesVault",QVariantMap{{"path",vault},{"enabled",true}}}}).contains("error"));
         auto knowledge=item("notesVaultStatus");Q_UNUSED(knowledge);
         QTRY_VERIFY(item("notesVaultChoose")&&item("notesVaultChoose")->property("text").toString()==QString("Change folder…"));
+        QTRY_VERIFY(item("notesVaultEnabled")->property("checked").toBool());
         click("notesVaultEnabled");click("notesVaultEnabled");
-        QTRY_VERIFY(item("notesVaultStatus")&&item("notesVaultStatus")->property("text").toString().startsWith("2 readable notes · 1 private notes skipped"));
+        QTRY_VERIFY(item("notesVaultStatus")&&item("notesVaultStatus")->property("text").toString().startsWith("2 readable notes · 1 private note skipped"));
         click("tab_Desktop");click("desktopOfflineTools");QTRY_VERIFY(item("vaultQuery"));
         item("vaultQuery")->setProperty("text","orchid");click("vaultSearch");
         QTRY_VERIFY(item("vaultResult_0"));QVERIFY(!item("vaultResult_2"));
@@ -4056,6 +4525,58 @@ Unicode: café ✦ 日本語
         QTRY_VERIFY(item("vaultBacklink_0"));
         capture("notes-folder-backlinks");
         QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+    }
+    // WP8: what may be observed is chosen source by source inside approved folders; what is kept of it can be read and erased.
+    void collectorPolicyAndWorkspaceHistory(){
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"memory",QVariantMap{{"enabled",false}}}});restoreWorkspace();});
+        const QString project=data.path()+"/observed-project";QVERIFY(QDir().mkpath(project+"/src"));writeFile(project+"/src/main.ts","export {}\n");
+        click("tab_Chat");
+        const auto session=call("session.create",{{"provider","ollama"},{"model","fixture-plain:latest"},{"cwd",project},{"title","Observed project"}}).value("id").toString();QVERIFY(!session.isEmpty());
+        app->select(session);QTRY_COMPARE(app->selectedId(),session);
+        QVERIFY(!call("settings.update",{{"memory",QVariantMap{{"enabled",true},{"model","nomic-embed-text"}}}}).contains("error"));
+        call("memory.check");
+        QTRY_COMPARE_WITH_TIMEOUT(app->state().value("memory").toMap().value("state").toString(),QString("ready"),8000);
+        auto graph=[&](const QString &method,const QVariantMap &params){return call("memory.graph",{{"sessionId",session},{"method",method},{"params",params}});};
+        auto stored=[&](const QString &key){return graph("policy_get",{}).value("policy").toMap().value(key);};
+        const auto off=QVariantMap{{"hyprland_enabled",false},{"capture_titles",false},{"title_applications",QVariantList{}},{"fish_enabled",false},{"editor_enabled",false},{"session_enabled",false},{"kitty_enabled",false},{"filesystem_enabled",false},{"history_enabled",false},{"approved_roots",QVariantList{}}};
+        QVERIFY(!graph("policy_update",{{"policy",off}}).contains("error"));
+        QVERIFY(openSetting("manageMemories"));click("manageMemories");QTRY_VERIFY(item("openGraphInspector"));click("openGraphInspector");
+        QTRY_VERIFY(item("policyEditor")&&item("policyEditor")->isEnabled());
+        for(const QString name:{QString("policyHyprland"),QString("policyTitles"),QString("policyFish"),QString("policyEditor"),QString("policyFiles"),QString("policyKitty"),QString("policySession"),QString("policyHistory")}){
+            QVERIFY2(item(name),qPrintable(name));QVERIFY2(!item(name)->property("checked").toBool(),qPrintable(name));
+        }
+        // What belongs to a source is offered only once that source is on.
+        QVERIFY(!item("policyTitleApplications")->isEnabled());QVERIFY(!item("policyCopyNeovim"));QVERIFY(!item("policyKittyEndpoint"));QVERIFY(!item("policyHistoryDays"));QVERIFY(!item("policyFolder_0"));
+        QVERIFY(scrollTo("policyAddFolder"));QTest::qWait(100);capture("collector-policy-off");
+        QVERIFY(!graph("policy_update",{{"policy",QVariantMap{{"approved_roots",QVariantList{project}}}}}).contains("error"));
+        auto inspector=dialog("graphMemoryInspector");QVERIFY(inspector);QVERIFY(QMetaObject::invokeMethod(inspector,"loadPolicy"));
+        QTRY_VERIFY(item("policyFolder_0"));QCOMPARE(item("policyFolder_0")->property("text").toString(),project);
+        stableClick("policyEditor");QTRY_VERIFY(stored("editor_enabled").toBool());QTRY_VERIFY(item("policyCopyNeovim"));
+        stableClick("policyCopyNeovim");QCOMPARE(QGuiApplication::clipboard()->text(),QString("dofile(\"%1/broker/graph-memory/adapters/editor/pal-memory.lua\")").arg(PAL_SOURCE_DIR));
+        stableClick("policyKitty");QTRY_VERIFY(stored("kitty_enabled").toBool());QTRY_VERIFY(item("policyKittyEndpoint"));
+        item("policyKittyEndpoint")->setProperty("text","unix:/run/user/1000/kitty-{pid}");QVERIFY(scrollTo("policyKittyEndpoint"));QTest::qWait(100);capture("collector-policy-sources");
+        stableClick("policyKitty");QTRY_VERIFY(!stored("kitty_enabled").toBool());
+        stableClick("policyHistory");QTRY_VERIFY(stored("history_enabled").toBool());QTRY_VERIFY(item("policyHistoryDays"));QCOMPARE(item("policyHistoryDays")->property("value").toInt(),7);
+        QVERIFY(scrollTo("openWorkspaceHistory"));QTest::qWait(100);capture("collector-policy-history");
+        // An editor reports two saves and a document outside the approved folder; only the first is work PAL may keep.
+        writeFile(data.path()+"/private.txt","x");
+        auto emitSave=[&](const QString &path,int sequence){return QProcess::execute("python3",{QString(PAL_SOURCE_DIR)+"/broker/graph-memory/adapters/editor/pal-memory-editor.py","--socket",data.path()+"/runtime/memory/memory.sock","--event","document_saved","--session-id","5f0a5bb5-8b4b-4d3d-9c5e-0b6f1f6f4a01","--sequence",QString::number(sequence),"--editor","vim","--path",path,"--timeout-ms","2000"});};
+        QCOMPARE(emitSave(project+"/src/main.ts",1),0);QCOMPARE(emitSave(data.path()+"/private.txt",2),0);QCOMPARE(emitSave(project+"/src/main.ts",3),0);
+        QTRY_COMPARE_WITH_TIMEOUT(call("workspace.history").value("items").toList().value(0).toMap().value("count").toInt(),2,8000);
+        QCOMPARE(call("workspace.history").value("items").toList().size(),1);
+        stableClick("openWorkspaceHistory");QTRY_VERIFY(item("historyStatus")&&item("historyStatus")->property("text").toString()=="Kept for 7 days. 1 record.");
+        QTest::qWait(150);capture("workspace-history");
+        click("eraseWorkspaceHistory");QTRY_VERIFY(item("confirmEraseWorkspaceHistory"));click("confirmEraseWorkspaceHistory");
+        QTRY_VERIFY(item("historyStatus")->property("text").toString().endsWith("Nothing is kept."));QVERIFY(!item("eraseWorkspaceHistory")->isEnabled());capture("workspace-history-empty");
+        QCOMPARE(call("workspace.history").value("items").toList().size(),0);
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!item("historyStatus"));
+        // A folder that leaves the list takes its history with it.
+        QCOMPARE(emitSave(project+"/src/main.ts",4),0);QTRY_COMPARE_WITH_TIMEOUT(call("workspace.history").value("items").toList().size(),1,8000);
+        stableClick("policyRemoveFolder_0");QTRY_VERIFY(stored("approved_roots").toList().isEmpty());QTRY_VERIFY(!item("policyFolder_0"));
+        QTRY_COMPARE(call("workspace.history").value("items").toList().size(),0);
+        QVERIFY(!graph("policy_update",{{"policy",off}}).contains("error"));
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);click("closeMemory");
+        QVERIFY(!call("session.delete",{{"id",session},{"confirmed",true}}).contains("error"));
     }
     void graphInspectorPolicyForgetAndCorrection(){
         // Memory recall changes later fixture prompts, so it is switched back off (the default).
@@ -4874,8 +5395,8 @@ Unicode: café ✦ 日本語
         QCOMPARE(item("composer")->property("text").toString(),QString("my unsaved edit"));QCOMPARE(saved(),QString("external newer"));
         click("draftKeepMine");QTRY_COMPARE(saved(),QString("my unsaved edit"));QTRY_VERIFY(!item("draftConflict"));
         // Hiding saves an edit made inside the 600 ms debounce at once, not when the timer fires.
-        item("composer")->setProperty("text","flushed on hide");app->closePanel();QTest::qWait(300);
-        QCOMPARE(saved(),QString("flushed on hide"));restoreWorkspace();
+        item("composer")->setProperty("text","flushed on hide");app->closePanel();
+        QTRY_COMPARE_WITH_TIMEOUT(saved(),QString("flushed on hide"),550);restoreWorkspace();
         // Destroying the host view saves a pending edit as well.
         item("composer")->setProperty("text","saved on destruction");
         app->closePanel();app->togglePanel();QTRY_VERIFY(titled("PAL Panel"));
@@ -6235,6 +6756,361 @@ private slots:
         QVERIFY(browser->property("maskMatchesTarget").toBool());
         window=nullptr;
     }
+    // Actions on one file beyond opening it, a ZIP of several, PAL's trash, and a command run from the Workbench.
+    // A05: a conversation works on a task only because the person said so, and two remembered things are the same only
+    // by a decision that can be undone.
+    void taskBindingAndIdentity(){
+        window=reviewWorkspace();QVERIFY(window);click("tab_Chat");
+        const QString project=data.path()+"/task-project";QVERIFY(QDir().mkpath(project));
+        const auto created=call("session.create",{{"provider","ollama"},{"model","fixture-chat:latest"},{"cwd",project},{"title","Task conversation"}});
+        const auto id=created.value("id").toString();QVERIFY(!id.isEmpty());
+        app->select(id);QTest::qWait(300);
+        const auto text=[&](const QString &name){auto control=item(name);return control?control->property("text").toString():QString();};
+        const auto capsule=call("capsules.get",{{"sessionId",id}});
+        const auto added=call("capsules.task",{{"sessionId",id},{"expectedRevision",capsule.value("revision")},{"op","add"},{"text","Fix the importer"}});
+        QVERIFY2(!added.contains("error"),qPrintable(added.value("error").toString()));
+        QVERIFY(!item("sessionTask"));
+        QVERIFY(!call("capsules.workOn",{{"sessionId",id},{"taskId",added.value("task")}}).contains("error"));
+        QTRY_COMPARE(text("sessionTaskText"),QString("Working on: Fix the importer"));
+        QTest::qWait(150);capture("session-task");
+        click("sessionTaskStop");QTRY_VERIFY(!item("sessionTask"));
+        // Two remembered projects, decided to be the same and then not.
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"memory",QVariantMap{{"enabled",false}}}});restoreWorkspace();});
+        QVERIFY(!call("settings.update",{{"memory",QVariantMap{{"enabled",true},{"model","nomic-embed-text"}}}}).contains("error"));
+        const auto listed=call("memory.graph",{{"sessionId",id},{"method","identity_list"},{"params",QVariantMap{}}});
+        QVERIFY2(!listed.contains("error"),qPrintable(listed.value("error").toString()));
+        QCOMPARE(listed.value("decisions").toList().size(),0);
+        const auto missing=call("memory.identityDecide",{{"sessionId",id},{"leftId","x"},{"rightId","y"},{"decision","same"},{"statement",""}});
+        QVERIFY(missing.value("error").toString().contains("Say whether they are the same"));
+        QVERIFY(openSetting("manageMemories"));click("manageMemories");
+        QTRY_VERIFY(item("openGraphInspector"));QMetaObject::invokeMethod(item("openGraphInspector"),"clicked");
+        QTRY_VERIFY_WITH_TIMEOUT(item("graphMemoryIdentity"),5000);QTRY_VERIFY(item("graphMemoryIdentity")->isEnabled());
+        click("graphMemoryIdentity");QTRY_VERIFY_WITH_TIMEOUT(item("identitySearch"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(item("identityNone"),5000);QVERIFY(!item("identitySave"));
+        QTest::qWait(150);capture("identity-decisions");
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);click("closeMemory");
+    }
+    // §15.2: an analysis session keeps variables between cells and says what a result depends on.
+    void analysisSessionCells(){
+        window=reviewWorkspace();QVERIFY(window);click("tab_Chat");
+        const QString project=data.path()+"/session-lab";QVERIFY(QDir().mkpath(project));
+        const auto created=call("session.create",{{"provider","ollama"},{"model","fixture-chat:latest"},{"cwd",project},{"title","Session lab"},{"capabilities",QVariantMap{{"analysis",true}}}});
+        QVERIFY2(!created.contains("error"),qPrintable(created.value("error").toString()));
+        const auto id=created.value("id").toString();
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"workbench",QVariantMap{{"codeLab",QVariantMap{{"enabled",false}}}}}});});
+        app->select(id);QTest::qWait(300);
+        const auto text=[&](const QString &name){auto control=item(name);return control?control->property("text").toString():QString();};
+        const auto opened=[&](const QString &name){auto view=dialog(name);return view&&view->property("opened").toBool();};
+        if(!item("workbench"))click("chatWorkbench");
+        QTRY_VERIFY_WITH_TIMEOUT(item("workbench"),5000);
+        if(!item("workbenchTab_runs"))click("workbenchPaneList");
+        click("workbenchTab_runs");QTRY_VERIFY_WITH_TIMEOUT(item("analysisSession"),5000);
+        item("analysisSession")->setProperty("expanded",true);
+        QTRY_VERIFY_WITH_TIMEOUT(item("sessionOff"),5000);QVERIFY(!item("sessionStart"));
+        call("settings.update",{{"workbench",QVariantMap{{"codeLab",QVariantMap{{"enabled",true}}}}}});
+        QMetaObject::invokeMethod(item("analysisSession"),"refresh");
+        QTRY_VERIFY_WITH_TIMEOUT(item("sessionStart"),5000);
+        const auto available=call("codelab.status",{{"sessionId",id}}).value("available").toBool();
+        if(!available)QSKIP("Needs Bubblewrap and Python");
+        QVERIFY(scrollTo("sessionStart"));click("sessionStart");
+        QTRY_VERIFY_WITH_TIMEOUT(item("sessionCode"),20000);
+        item("sessionCode")->setProperty("text","total = 40\nnames = ['a', 'b']\ntotal + 2");
+        QVERIFY(scrollTo("sessionRun"));click("sessionRun");
+        QTRY_COMPARE_WITH_TIMEOUT(text("sessionOutput"),QString("42"),20000);
+        QTRY_VERIFY_WITH_TIMEOUT(item("sessionVariables")&&item("sessionVariables")->property("count").toInt()==2,8000);
+        QTRY_VERIFY(item("sessionDepends"));QTest::qWait(200);capture("analysis-session");
+        QVERIFY(scrollTo("sessionNotebook"));click("sessionNotebook");QTRY_VERIFY(text("sessionNotice").contains("notebook is ready"));
+        QVERIFY(scrollTo("sessionClear"));click("sessionClear");QTRY_VERIFY(opened("sessionConfirm"));click("sessionConfirmYes");
+        QTRY_VERIFY_WITH_TIMEOUT(!item("sessionVariables"),8000);
+        QVERIFY(scrollTo("sessionStop"));click("sessionStop");QTRY_VERIFY(opened("sessionConfirm"));click("sessionConfirmYes");
+        QTRY_VERIFY_WITH_TIMEOUT(text("sessionEnded").contains("not kept"),10000);
+    }
+    // §11.3: Context says where messages go and what the model can reach, and keeps sources beside every message.
+    void contextPinsAndDestination(){
+        window=reviewWorkspace();QVERIFY(window);click("tab_Chat");
+        const QString project=data.path()+"/context-pins";QVERIFY(QDir().mkpath(project));writeFile(project+"/rules.md","The captain is Ada.\n");
+        const auto created=call("session.create",{{"provider","ollama"},{"model","fixture-chat:latest"},{"cwd",project},{"title","Pins"},{"capabilities",QVariantMap{{"files",true}}}});
+        const auto id=created.value("id").toString();QVERIFY(!id.isEmpty());
+        QVERIFY(!call("workspace.addRoot",{{"sessionId",id},{"path",project},{"policy",QVariantMap{{"write",false}}}}).contains("error"));
+        app->select(id);QTest::qWait(300);
+        const auto text=[&](const QString &name){auto control=item(name);return control?control->property("text").toString():QString();};
+        tool("menuContext");
+        QTRY_VERIFY_WITH_TIMEOUT(item("contextRoute"),8000);QVERIFY(text("contextRoute").contains("Messages go to"));
+        QTRY_VERIFY(item("contextPinsEmpty"));
+        item("contextPinQuery")->setProperty("text","rules");
+        QTRY_VERIFY_WITH_TIMEOUT(item("contextPinChoice")&&item("contextPinChoice")->property("count").toInt()>0,5000);
+        QVERIFY(scrollTo("contextPinHere"));QTRY_VERIFY(item("contextPinHere")->isEnabled());click("contextPinHere");
+        QTRY_VERIFY_WITH_TIMEOUT(item("contextPin_0"),5000);QCOMPARE(text("contextPin_0"),QString("rules.md"));
+        QTest::qWait(150);capture("context-pins");
+        QVERIFY(scrollTo("contextUnpin_0"));click("contextUnpin_0");QTRY_VERIFY_WITH_TIMEOUT(item("contextPinsEmpty"),5000);
+        QTest::keyClick(window,Qt::Key_Escape);
+    }
+    // §15.2: a document starts from a template, is previewed, kept, and exported; a file says what it becomes.
+    void documentWritingAndExport(){
+        window=reviewWorkspace();QVERIFY(window);click("tab_Chat");
+        const QString project=data.path()+"/documents";
+        QVERIFY(QDir().mkpath(project));writeFile(project+"/notes.md","# Notes\n\nText\n");
+        const auto created=call("session.create",{{"provider","ollama"},{"model","fixture-chat:latest"},{"cwd",project},{"title","Documents"}});
+        QVERIFY2(!created.contains("error"),qPrintable(created.value("error").toString()));
+        const auto id=created.value("id").toString();
+        QVERIFY(!call("workspace.addRoot",{{"sessionId",id},{"path",project},{"policy",QVariantMap{{"write",true}}}}).contains("error"));
+        app->select(id);QTest::qWait(300);
+        const auto text=[&](const QString &name){auto control=item(name);return control?control->property("text").toString():QString();};
+        const auto writer=[&]()->QObject*{for(auto *child:window->findChildren<QObject*>("documentExportDialogFor"))if(child->property("opened").toBool())return child;for(auto *child:window->findChildren<QObject*>("documentWriter"))if(child->property("opened").toBool())return child;return nullptr;};
+        tool("menuDocument");
+        QTRY_VERIFY_WITH_TIMEOUT(writer(),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(writer()->property("formats").toList().size()==4,5000);
+        QVERIFY(!item("documentMake")->isEnabled());
+        item("documentTitle")->setProperty("text","Launch plan");
+        auto box=item("documentTemplate");QVERIFY(box);
+        box->setProperty("currentIndex",2);QMetaObject::invokeMethod(box,"activated",Q_ARG(int,2));
+        QTRY_VERIFY_WITH_TIMEOUT(text("documentEditor").startsWith("# Launch plan"),5000);
+        QVERIFY(text("documentEditor").contains("## Options considered"));
+        QTRY_VERIFY(item("documentMake")->isEnabled());
+        QTest::qWait(150);capture("document-writing");
+        click("documentPreview");QTRY_VERIFY(item("documentRendered"));QTest::qWait(150);capture("document-preview");
+        QMetaObject::invokeMethod(item("documentPreview"),"clicked");QTRY_VERIFY(item("documentEditor"));
+        click("documentKeep");QTRY_VERIFY_WITH_TIMEOUT(text("documentNotice").contains("Launch plan.md"),5000);
+        // Word is always available; the PDF helper is named when it is missing.
+        auto format=item("documentFormat");QVERIFY(format);
+        format->setProperty("currentIndex",1);QMetaObject::invokeMethod(format,"activated",Q_ARG(int,1));
+        QTRY_VERIFY(item("documentPage"));
+        const auto rendered=call("documents.render",{{"sessionId",id},{"markdown","# One"},{"format","docx"}});
+        QVERIFY2(!rendered.contains("error"),qPrintable(rendered.value("error").toString()));
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!writer());
+        // A file offers the same from its own menu.
+        if(!item("workbench"))click("chatWorkbench");
+        QTRY_VERIFY_WITH_TIMEOUT(item("workbench"),5000);
+        if(!item("workbenchTab_files"))click("workbenchPaneList");
+        click("workbenchTab_files");QTRY_VERIFY_WITH_TIMEOUT(item("workspaceEntry_notes.md"),8000);click("workspaceEntry_notes.md");
+        QTRY_VERIFY_WITH_TIMEOUT(item("previewMore"),5000);click("previewMore");QTRY_VERIFY(item("documentAs"));click("documentAs");
+        QTRY_VERIFY_WITH_TIMEOUT(writer(),5000);QVERIFY(!writer()->property("writing").toBool());QTRY_VERIFY(item("documentMake")->isEnabled());
+        QTest::qWait(150);capture("document-export-file");
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!writer());
+    }
+    // §16.3: a kept recording plays beside its transcript; a picked time is the time that plays; corrections, clips,
+    // subtitles and questions come from the lines that were picked; and a cited time in a reply opens it there.
+    void recordingPlaybackAndTranscript(){
+        window=reviewWorkspace();QVERIFY(window);click("tab_Chat");
+        const QString project=data.path()+"/recordings";
+        QVERIFY(QDir().mkpath(project));
+        {
+            const int rate=16000,seconds=8;QByteArray pcm;pcm.resize(rate*2*seconds);
+            for(int i=0;i<rate*seconds;++i){const qint16 v=qint16(std::sin(i/20.)*6000);pcm[i*2]=char(v&255);pcm[i*2+1]=char((v>>8)&255);}
+            QByteArray head("RIFF");const auto u32=[&](quint32 v){for(int i=0;i<4;++i)head.append(char((v>>(8*i))&255));};const auto u16=[&](quint16 v){head.append(char(v&255));head.append(char(v>>8));};
+            u32(36+pcm.size());head+="WAVEfmt ";u32(16);u16(1);u16(1);u32(rate);u32(rate*2);u16(2);u16(16);head+="data";u32(pcm.size());
+            QFile file(project+"/Interview.wav");QVERIFY(file.open(QIODevice::WriteOnly));file.write(head+pcm);
+        }
+        const QString vtt="WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n<v Anna>We launch on Monday.\n\n00:00:02.000 --> 00:00:04.500\nThe budget is approved.\n\n00:00:04.500 --> 00:00:06.000\nAny questions about the venue?\n\n00:00:06.000 --> 00:00:08.000\nThen we are done.\n";
+        const QString whisper=data.path()+"/whisper-fixture";
+        writeFile(data.path()+"/whisper.vtt",vtt.toUtf8());
+        writeFile(whisper,QString(QString("#!/usr/bin/env python3\nimport sys,shutil\np=sys.argv[sys.argv.index('--output-file')+1]\nopen(p+'.txt','w').write('We launch on Monday.')\nshutil.copy('")+data.path()+"/whisper.vtt',p+'.vtt')\n").toUtf8());
+        QFile::setPermissions(whisper,QFileDevice::ReadOwner|QFileDevice::WriteOwner|QFileDevice::ExeOwner);
+        writeFile(data.path()+"/whisper-model.bin","fixture");
+        const auto previous=app->state().value("settings").toMap().value("transcription");
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"transcription",previous}});});
+        QVERIFY(!call("settings.update",{{"transcription",QVariantMap{{"executable",whisper},{"model",data.path()+"/whisper-model.bin"}}}}).contains("error"));
+        const auto created=call("session.create",{{"provider","ollama"},{"model","fixture-chat:latest"},{"cwd",project},{"title","Recordings"}});
+        QVERIFY2(!created.contains("error"),qPrintable(created.value("error").toString()));
+        const auto id=created.value("id").toString();
+        app->select(id);QTest::qWait(300);
+        const auto text=[&](const QString &name){auto control=item(name);return control?control->property("text").toString():QString();};
+        const auto opened=[&](const QString &name){auto view=dialog(name);return view&&view->property("opened").toBool();};
+        if(!item("workbench"))click("chatWorkbench");
+        QTRY_VERIFY_WITH_TIMEOUT(item("workbench"),5000);
+        if(!item("workbenchTab_recordings"))click("workbenchPaneList");
+        click("workbenchTab_recordings");QTRY_VERIFY_WITH_TIMEOUT(item("recordingEmpty"),5000);
+        capture("recordings-empty");
+        const auto kept=call("artifacts.import",{{"sessionId",id},{"path",project+"/Interview.wav"}});
+        QVERIFY2(!kept.contains("error"),qPrintable(kept.value("error").toString()));
+        QTRY_VERIFY_WITH_TIMEOUT(item("recordingRow_0"),5000);
+        QTest::qWait(150);capture("recordings-list");
+        click("recordingRow_0");
+        QTRY_COMPARE_WITH_TIMEOUT(text("recordingTitle"),QString("Interview.wav"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(item("recordingTranscribe")&&item("recordingTranscribe")->isEnabled(),5000);click("recordingTranscribe");
+        if(!QTest::qWaitFor([&]{return item("recordingLine_3")!=nullptr;},15000)){capture("recording-missing-lines");qWarning()<<text("recordingError")<<text("recordingPending")<<item("recordingPane")->property("cues").toList().size();}
+        QVERIFY(item("recordingLine_3"));
+        auto pane=item("recordingPane");QVERIFY(pane);
+        // Where Qt Multimedia is installed the recording plays; elsewhere the pane says what to install.
+        const auto player=[&]{return qvariant_cast<QObject*>(pane->property("player"));};
+        const bool playable=QTest::qWaitFor([&]{return pane->property("playable").toBool()&&player()->property("loaded").toBool()&&player()->property("duration").toDouble()>7;},8000);
+        if(!playable)qWarning()<<"Qt Multimedia playback unavailable here:"<<text("recordingNoPlayer")<<text("recordingProblem");
+        QTest::qWait(200);capture("recording-transcript");
+        if(playable){
+            // The time that is clicked is the time that plays.
+            click("recordingTime_2");QTRY_VERIFY(player()->property("position").toDouble()>=4.4);QVERIFY(player()->property("position").toDouble()<6.5);
+            QMetaObject::invokeMethod(player(),"pause");QTRY_VERIFY(!player()->property("playing").toBool());
+            QMetaObject::invokeMethod(player(),"seek",Q_ARG(QVariant,2.5));QTRY_COMPARE(pane->property("current").toInt(),1);
+        }
+        // Searching moves between matching lines.
+        item("recordingSearch")->setProperty("text","venue");QTRY_COMPARE(text("recordingMatches"),QString("1 of 1"));
+        item("recordingSearch")->setProperty("text","");
+        // Lines are picked by mouse or keyboard; the range names exactly them.
+        QMetaObject::invokeMethod(pane,"selectLine",Q_ARG(QVariant,1),Q_ARG(QVariant,false));
+        QTRY_VERIFY(item("recordingSelection"));
+        QMetaObject::invokeMethod(pane,"selectLine",Q_ARG(QVariant,2),Q_ARG(QVariant,true));
+        QTRY_VERIFY(text("recordingRange").startsWith(QStringLiteral("0:02–0:06 · 2 lines")));
+        QTest::qWait(150);capture("recording-selection");
+        click("recordingAsk");QTRY_VERIFY(text("recordingNotice").contains("Added to your message"));
+        // Corrections are a new version with the same times.
+        click("recordingCorrect");QTRY_VERIFY(opened("recordingCorrection"));QTRY_VERIFY(item("correctionText_0"));
+        QVERIFY(!item("correctionSave")->isEnabled());
+        item("correctionText_0")->setProperty("text","The budget is approved for 2027.");QTRY_VERIFY(item("correctionSave")->isEnabled());
+        QTest::qWait(150);capture("recording-correction");
+        click("correctionSave");QTRY_VERIFY_WITH_TIMEOUT(!opened("recordingCorrection"),8000);
+        QTRY_VERIFY(text("recordingNotice").contains("new version"));
+        QTRY_COMPARE(pane->property("cues").toList().at(1).toMap().value("text").toString(),QString("The budget is approved for 2027."));
+        // A clip is another recording, with its own part of the transcript.
+        QMetaObject::invokeMethod(pane,"selectLine",Q_ARG(QVariant,1),Q_ARG(QVariant,false));
+        QTRY_VERIFY(item("recordingClip"));
+        if(item("recordingClip")->isEnabled()&&QFile::exists("/usr/bin/ffmpeg")){
+            click("recordingClip");QTRY_VERIFY(opened("recordingClipDialog"));QCOMPARE(text("clipStart"),QString("0:02"));QCOMPARE(text("clipEnd"),QString("0:05"));
+            item("clipEnd")->setProperty("text","0:01");QTRY_VERIFY(!item("clipMake")->isEnabled());item("clipEnd")->setProperty("text","0:04");QTRY_VERIFY(item("clipMake")->isEnabled());
+            capture("recording-clip");
+            click("clipMake");QTRY_VERIFY_WITH_TIMEOUT(text("recordingNotice").contains("clip is ready"),30000);
+            click("recordingBack");QTRY_VERIFY_WITH_TIMEOUT(item("recordingRow_1"),8000);
+        }else click("recordingBack");
+        QTRY_VERIFY(item("recordingList"));
+        // A time cited in a reply opens the recording there.
+        const auto transcript=call("recordings.list",{{"sessionId",id}}).value("items").toList();
+        QVariantMap original;for(const auto &entry:transcript)if(entry.toMap().value("name").toString()=="Interview.wav")original=entry.toMap();
+        const auto open=call("recordings.open",{{"sessionId",id},{"artifactId",original.value("artifactId")}}).value("transcript").toMap();
+        QMetaObject::invokeMethod(pane,"open",Q_ARG(QVariant,open.value("artifactId")),Q_ARG(QVariant,open.value("versionId")),Q_ARG(QVariant,QVariant()),Q_ARG(QVariant,4.6));
+        QTRY_COMPARE_WITH_TIMEOUT(text("recordingTitle"),QString("Interview.wav"),5000);
+        QTRY_COMPARE(item("recordingLines")->property("currentIndex").toInt(),2);
+        if(playable)QTRY_VERIFY_WITH_TIMEOUT(player()&&std::abs(player()->property("position").toDouble()-4.6)<0.3,5000);
+        capture("recording-cited-time");
+    }
+    void workbenchDocumentTools(){
+        window=reviewWorkspace();QVERIFY(window);click("tab_Chat");
+        const QString project=data.path()+"/document-tools";
+        QVERIFY(QDir().mkpath(project));
+        writeFile(project+"/orders.csv","id,customer,total\n1,Ada,10.5\n2,Grace,\n3,Ada,7\n");
+        writeFile(project+"/notes.md","# Notes\n\nA line to translate.\n");
+        writeFile(project+"/page.html","<h1>Hello</h1>");
+        writeFile(project+"/old.txt","remove me\n");
+        const auto created=call("session.create",{{"provider","ollama"},{"model","fixture-chat:latest"},{"cwd",project},{"title","Document tools"},{"capabilities",QVariantMap{{"files",true},{"images",true},{"analysis",true}}}});
+        QVERIFY2(!created.contains("error"),qPrintable(created.value("error").toString()));
+        const auto id=created.value("id").toString();
+        const auto root=call("workspace.addRoot",{{"sessionId",id},{"path",project},{"policy",QVariantMap{{"write",true},{"organize",true},{"execute",true}}}});
+        QVERIFY2(!root.contains("error"),qPrintable(root.value("error").toString()));
+        for(const QString name:{"orders.csv","notes.md"})QVERIFY(!call("artifacts.import",{{"sessionId",id},{"path",project+"/"+name}}).contains("error"));
+        app->select(id);QTest::qWait(400);
+        const auto text=[&](const QString &name){auto control=item(name);return control?control->property("text").toString():QString();};
+        const auto opened=[&](const QString &name){auto view=dialog(name);return view&&view->property("opened").toBool();};
+        if(!item("workbench"))click("chatWorkbench");
+        QTRY_VERIFY_WITH_TIMEOUT(item("workbench"),5000);
+        // A table's shape and types before any analysis.
+        click("workbenchTab_files");QTRY_VERIFY_WITH_TIMEOUT(item("workspaceEntry_orders.csv"),8000);
+        click("workspaceEntry_orders.csv");QTRY_COMPARE_WITH_TIMEOUT(text("previewPath"),QString("orders.csv"),5000);
+        QTRY_VERIFY(item("previewMore"));click("previewMore");QTRY_VERIFY(item("documentTable"));
+        QVERIFY(!item("documentExport"));QVERIFY(!item("documentCanvas"));
+        click("documentTable");QTRY_VERIFY(opened("documentTableDialog"));
+        QTRY_COMPARE(text("tableShape"),QString("3 rows · 3 columns · separated by commas"));
+        QTest::qWait(150);capture("document-table");
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!opened("documentTableDialog"));
+        // A translation without a helper says what is missing and changes nothing.
+        click("workbenchTab_files");QTRY_VERIFY(item("workspaceEntry_notes.md"));click("workspaceEntry_notes.md");
+        QTRY_COMPARE_WITH_TIMEOUT(text("previewPath"),QString("notes.md"),5000);
+        click("previewMore");QTRY_VERIFY(item("documentTranslate"));click("documentTranslate");
+        QTRY_VERIFY(opened("documentTranslateDialog"));
+        QVERIFY(!item("translateRun")->isEnabled());
+        item("translateLanguage")->setProperty("text","German");QTRY_VERIFY(item("translateRun")->isEnabled());
+        click("translateRun");QTRY_VERIFY(text("translateProblem").contains("helper"));
+        capture("document-translate");
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!opened("documentTranslateDialog"));
+        // A page says it is source, and its preview opens in the Canvas.
+        click("workbenchTab_files");QTRY_VERIFY(item("workspaceEntry_page.html"));click("workspaceEntry_page.html");
+        QTRY_VERIFY(item("previewHtmlNote"));
+        click("previewMore");QTRY_VERIFY(item("documentCanvas"));click("documentCanvas");
+        QTRY_VERIFY(item("canvasPane"));QTRY_COMPARE(text("canvasPath"),QString("page.html"));
+        // Several kept files become one ZIP with a manifest.
+        click("workbenchTab_images");QTRY_VERIFY(item("artifactBrowser"));
+        item("artifactBrowser")->setProperty("filter","");QMetaObject::invokeMethod(item("artifactBrowser"),"refresh",Q_ARG(QVariant,true));
+        QTRY_VERIFY_WITH_TIMEOUT(item("artifactTile_1"),5000);
+        for(const auto &entry:item("artifactBrowser")->property("items").toList())QMetaObject::invokeMethod(item("artifactBrowser"),"setChecked",Q_ARG(QVariant,entry),Q_ARG(QVariant,true));
+        QTRY_VERIFY(item("artifactBundle"));click("artifactBundle");QTRY_VERIFY(opened("bundleDialog"));
+        item("bundleName")->setProperty("text","two files");click("bundleMake");
+        QTRY_VERIFY_WITH_TIMEOUT(!opened("bundleDialog"),8000);
+        QTRY_VERIFY([&]{for(const auto &entry:call("artifacts.list",{{"sessionId",id}}).value("artifacts").toList())if(entry.toMap().value("name").toString()=="two files.zip")return true;return false;}());
+        // Any kept file goes into a folder only as a reviewed change.
+        QTRY_VERIFY(item("artifactTile_0"));QTest::qWait(300);
+        QMetaObject::invokeMethod(item("artifactBrowser"),"select",Q_ARG(QVariant,item("artifactBrowser")->property("items").toList().first()));
+        QTRY_VERIFY(item("artifactMore"));click("artifactMore");QTRY_VERIFY(item("documentExport"));click("documentExport");
+        QTRY_VERIFY(opened("documentExportDialog"));QTRY_VERIFY(item("exportPath"));
+        item("exportPath")->setProperty("text","kept/two files.zip");QTRY_VERIFY(item("exportReview")->isEnabled());
+        capture("document-export");
+        click("exportReview");QTRY_VERIFY_WITH_TIMEOUT(item("changeAcceptAll"),5000);
+        QVERIFY(!QFile::exists(project+"/kept/two files.zip"));
+        // Removed files wait in the trash: restored by a reviewed change, or deleted after confirming.
+        for(int round=0;round<2;++round){
+            if(round)writeFile(project+"/old.txt","again\n");
+            const auto proposed=call("changes.propose",{{"sessionId",id},{"reason","Remove"},{"operations",QVariantList{QVariantMap{{"kind","trash"},{"rootId",root.value("id")},{"path","old.txt"}}}}});
+            QVERIFY2(!proposed.contains("error"),qPrintable(proposed.value("error").toString()));
+            const auto applied=call("changes.apply",{{"id",proposed.value("id")},{"digest",proposed.value("digest")}});
+            QVERIFY2(!applied.contains("error"),qPrintable(applied.value("error").toString()));
+            QVERIFY(!QFile::exists(project+"/old.txt"));
+            QMetaObject::invokeMethod(item("changeReview"),"refresh");
+            QTRY_VERIFY(item("changeTrash"));
+            // The section has only just appeared and is laid out a frame later, and the export's review
+            // stays in view until the restore's own arrives.
+            if(!item("trashRestore_0"))stableClick("sectionToggle_Trash");
+            QTRY_VERIFY(item("trashRestore_0"));
+            if(!round){capture("change-trash");stableClick("trashRestore_0");QTRY_VERIFY_WITH_TIMEOUT(text("changeStatus").contains("proposed by Undo")&&item("changeAcceptAll")&&item("changeAcceptAll")->isEnabled(),5000);stableClick("changeAcceptAll");QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(project+"/old.txt"),5000);}
+            else{stableClick("trashPurge_0");QTRY_VERIFY(opened("purgeDialog"));click("purgeConfirm");QTRY_VERIFY_WITH_TIMEOUT(!opened("purgeDialog"),5000);QTRY_VERIFY(!item("changeTrash"));}
+        }
+        // A command: a shell operator is refused before it starts, and the run or its refusal is recorded.
+        click("workbenchTab_runs");QTRY_VERIFY(item("commandSection"));
+        if(!item("commandText"))click("sectionToggle_Run a command");
+        QTRY_VERIFY_WITH_TIMEOUT(item("commandText"),5000);
+        item("commandText")->setProperty("text","ls | wc");QTRY_VERIFY(text("commandProblem").contains("shell operator"));QVERIFY(!item("commandRun")->isEnabled());
+        item("commandText")->setProperty("text","ls -1");QTRY_VERIFY(item("commandRun")->isEnabled());
+        capture("run-command");
+        click("commandRun");
+        QTRY_VERIFY_WITH_TIMEOUT(!text("commandProblem").isEmpty()||!call("operations.list",{{"sessionId",id}}).isEmpty()||item("runDetails"),15000);
+        QTest::qWait(600);capture("run-command-result");
+    }
+    // Bookmarks across conversations, a service manifest reviewed before it is added, and Jev's model choice.
+    void bookmarksManifestsAndEvaluation(){
+        const auto restore=qScopeGuard([&]{restoreWorkspace();click("tab_Chat");});
+        restoreWorkspace();click("tab_Chat");
+        const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Bookmark source"}});
+        QTRY_VERIFY(app->selectedId()!=previous);const auto session=app->selectedId();
+        QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());item("composer")->forceActiveFocus();
+        for(const auto ch:QByteArray("completion-bookmark"))QTest::keyClick(window,ch);
+        QTest::keyClick(window,Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        const auto text=[&](const QString &name){auto control=item(name);return control?control->property("text").toString():QString();};
+        const auto opened=[&](const QString &name){auto view=dialog(name);return view&&view->property("opened").toBool();};
+        tool("menuBookmarks");QTRY_VERIFY(opened("pinnedReplies"));
+        QTRY_VERIFY(text("pinnedStatus").startsWith("No bookmarks yet"));click("pinnedClose");QTRY_VERIFY(!opened("pinnedReplies"));
+        QString reply;for(const auto &m:app->messages())if(m.toMap().value("role")=="assistant")reply=m.toMap().value("id").toString();
+        QVERIFY(!call("message.bookmark",{{"sessionId",session},{"messageId",reply},{"bookmarked",true}}).contains("error"));
+        const auto other=createSession("codex","Elsewhere");QVERIFY(!other.isEmpty());app->select(other);QTRY_COMPARE(app->selectedId(),other);
+        tool("menuBookmarks");QTRY_VERIFY(item("pinnedOpen_0"));
+        item("pinnedSearch")->setProperty("text","nothing like this");QTRY_VERIFY(text("pinnedStatus").startsWith("No bookmarked message matches"));
+        item("pinnedSearch")->setProperty("text","");QTRY_VERIFY(item("pinnedOpen_0"));
+        QTest::qWait(150);capture("bookmarks");
+        click("pinnedOpen_0");QTRY_COMPARE(app->selectedId(),session);
+        // A manifest is previewed with what it names; a wrong file says so.
+        QVERIFY(openSetting("manifestAdd"));
+        auto view=item("manifestAdd");QVERIFY(view);
+        QObject *manifests=nullptr;for(auto parent=view->parentItem();parent&&!manifests;parent=parent->parentItem())if(parent->property("records").isValid())manifests=parent;
+        QVERIFY(manifests);
+        QObject *review=nullptr;for(auto candidate:window->findChildren<QObject*>("manifestReview"))review=candidate;QVERIFY(review);
+        QMetaObject::invokeMethod(review,"openWith",Q_ARG(QVariant,QString("not json")));
+        QTRY_VERIFY(opened("manifestReview"));QCOMPARE(review->property("problem").toString(),QString("This file is not JSON."));
+        QMetaObject::invokeMethod(review,"close");QTRY_VERIFY(!opened("manifestReview"));
+        QMetaObject::invokeMethod(review,"openWith",Q_ARG(QVariant,QString(R"({"version":1,"id":"local-search","label":"Local document search","fields":[{"id":"language","label":"Language","type":"text"}],"operations":[{"operation":"search","serverId":"90ea7c23-e4df-4fea-ab1b-32ad95344975","tool":"search_documents"}]})")));
+        QTRY_VERIFY(item("manifestSave")&&item("manifestSave")->isEnabled());QTest::qWait(150);capture("service-manifest");
+        click("manifestSave");QTRY_VERIFY(!opened("manifestReview"));QTRY_VERIFY(item("manifestRemove_0"));
+        click("manifestRemove_0");QTRY_VERIFY(!item("manifestRemove_0"));
+        // Jev stays off without a model, and says what is missing when its models cannot be listed.
+        QVERIFY(openSetting("jevModel"));click("jevModels");
+        QTRY_VERIFY(([&]{auto section=item("jevSection");return section&&!section->property("problem").toString().isEmpty();})());
+        capture("jev-models");
+    }
     void workbenchAcceptance(){
         window=reviewWorkspace();QVERIFY(window);click("tab_Chat");
         const QString project=data.path()+"/workbench-project";
@@ -6327,6 +7203,82 @@ private slots:
         click("workbenchBack");QTRY_VERIFY(!item("workbench"));QTRY_VERIFY(item("composer"));
         capture("workbench-compact-back");
         window=reviewWorkspace();QVERIFY(window);QTRY_VERIFY(item("workbenchSide"));
+    }
+    void researchMainPage() {
+        reviewWorkspace();
+        window->resize(1440, 960);
+        const auto owner = createSession("ollama", "Indexing project", "fixture-chat:latest");
+        const auto other = createSession("ollama", "Second conversation", "fixture-chat:latest");
+        QVERIFY(!owner.isEmpty() && !other.isEmpty());
+        app->select(owner);
+        const auto note = call("notebook.create", {{"project", data.path()}, {"title", "Indexing manual"}});
+        QVERIFY(!note.contains("error"));
+        QVERIFY(!call("notebook.saveNote", {{"id", note.value("id")}, {"text", "Offline indexing requires version 4.2."}, {"expectedRevision", "0"}}).contains("error"));
+        openWorkflows();
+        click("workflowTab1");
+        click("sidebarResearchTasks");
+        QTRY_VERIFY(item("researchPage"));
+        QVERIFY(item("sidebarResearchTasks")->property("primary").toBool());
+        QVERIFY(!item("workflowsPage"));
+        QVERIFY(!item("researchViewNew"));
+        click("researchBack");
+        QTRY_VERIFY(item("workflowTab1")->property("primary").toBool());
+        click("sidebarResearchTasks");
+
+        click("researchTab_settings");
+        QTRY_VERIFY(item("webSearchEnabled"));
+        const bool webEnabled = item("webSearchEnabled")->property("checked").toBool();
+        click("webSearchEnabled");
+        QTRY_COMPARE(app->state().value("settings").toMap().value("webSearch").toMap().value("enabled").toBool(), !webEnabled);
+        click("webSearchEnabled");
+        QTRY_COMPARE(app->state().value("settings").toMap().value("webSearch").toMap().value("enabled").toBool(), webEnabled);
+
+        click("researchTab_new");
+        auto pane = item("researchPane");
+        QVERIFY(pane && pane->property("pageMode").toBool());
+        item("researchQuestion")->setProperty("text", "What version does offline indexing require?");
+        item("researchScope")->setProperty("currentIndex", 2);
+        stableClick("sectionToggle_Project sources");
+        QTRY_VERIFY(item("researchSource_0"));
+        click("researchSource_0");
+        QTRY_VERIFY(item("researchQuick")->isEnabled());
+        const QString evidence = QString(PAL_SOURCE_DIR) + "/build/research-validation";
+        QVERIFY(QDir().mkpath(evidence));
+        QVERIFY(window->grabWindow().save(evidence + "/research-page.png"));
+        click("researchQuick");
+        QTRY_COMPARE(pane->property("currentView").toString(), "report");
+        const QString run = pane->property("selectedId").toString();
+        QVERIFY(!run.isEmpty());
+
+        click("researchTab_new");
+        app->select(other);
+        QTRY_COMPARE(pane->property("sessionId").toString(), other);
+        QTRY_VERIFY(item("researchQuestion")->property("text").toString().isEmpty());
+        click("researchTab_tasks");
+        const QString openTask = "researchTaskOpen_" + run;
+        QTRY_VERIFY_WITH_TIMEOUT(item(openTask), 5000);
+        click(openTask);
+        QTRY_COMPARE(app->selectedId(), owner);
+        QTRY_VERIFY(item("researchPage"));
+        QTRY_COMPARE(pane->property("selectedId").toString(), run);
+        QTRY_VERIFY_WITH_TIMEOUT(pane->property("reportText").toString().contains("4.2"), 25000);
+        click("researchTab_library");
+        QTRY_VERIFY(item("researchLibrarySearch"));
+
+        const auto minimum = window->minimumSize();
+        const auto size = window->size();
+        const auto restoreSize = qScopeGuard([&] { window->setMinimumSize(minimum); window->resize(size); });
+        window->setMinimumSize({360, 560});
+        window->resize(440, 760);
+        QTRY_VERIFY(item("shellResearchTasks"));
+        click("tab_Chat");
+        click("shellResearchTasks");
+        QTRY_VERIFY(item("researchPage"));
+        click("researchTab_tasks");
+        QTRY_VERIFY(item(openTask));
+        QVERIFY(window->grabWindow().save(evidence + "/research-page-compact.png"));
+        QTest::keyClick(window, Qt::Key_Escape);
+        QTRY_VERIFY(item("tab_Chat")->property("primary").toBool());
     }
     void researchWorkbenchEndToEnd(){
         const QString evidence=QString(PAL_SOURCE_DIR)+"/build/research-validation";

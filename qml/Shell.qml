@@ -6,7 +6,7 @@ Rectangle {
     objectName: "workspaceShell"
     property bool expanded: false
     property int page: 0
-    property int workflowsReturnPage: 4
+    property var returnPages: []
     property int workflowsTab: 0
     readonly property var tabs: [
         {key:"Chat", label:qsTr("Chat"), icon:"chat", page:0},
@@ -43,6 +43,7 @@ Rectangle {
     }
     function navigate(target) {
         if(target===5){showWorkflows(0);return}
+        if(target===6){showResearch();return}
         if(target===0)shell.revealConversation()
         page=target
         App.rpc("navigation.record",{id:["page:chat","page:sessions","page:desktop","page:settings","page:projects","page:workflows"][target]})
@@ -52,19 +53,46 @@ Rectangle {
         else if(target===3)Qt.callLater(()=>settingsPage.ensure().focusSearch())
         else if(target===4)Qt.callLater(()=>projectsPage.ensure().focusSearch())
     }
+    function enterSecondaryPage(target) {
+        if (page === target) return
+        const previous = page < 5 ? [] : returnPages.slice()
+        const index = previous.indexOf(target)
+        returnPages = index < 0 ? previous.concat(page) : previous.slice(0, index)
+        page = target
+    }
     function showWorkflows(tab) {
-        if(page!==5)workflowsReturnPage=page
         const next=tab===undefined?0:tab
         workflowsTab=next
-        page=5
+        enterSecondaryPage(5)
         App.rpc("navigation.record",{id:"page:workflows"})
         Qt.callLater(()=>workflowsPage.ensure().openTab(next))
     }
-    function closeWorkflows() {
-        const target=workflowsReturnPage>=0&&workflowsReturnPage<5?workflowsReturnPage:4
-        navigate(target)
+    function showResearch() {
+        enterSecondaryPage(6)
+        App.rpc("navigation.record", {id:"page:research"})
+        researchTasks.refresh()
+        researchPage.ensure().focusInitial()
+    }
+    function leaveSecondaryPage() {
+        const target = returnPages.length ? returnPages[returnPages.length - 1] : 0
+        returnPages = returnPages.slice(0, -1)
+        if (target < 5) navigate(target)
+        else {
+            page = target
+            if (target === 5) workflowsPage.ensure().focusInitial()
+            else researchPage.ensure().focusInitial()
+        }
     }
     function openFolder(id) { page=1;Qt.callLater(()=>sessionsPage.ensure().selectFolder(id)) }
+    function openResearchDraft(sessionId) {
+        if (!sessionId) return
+        // Chat hydrates the saved draft and reconciles any edits made on another client.
+        if (App.selectedId === sessionId) App.rpc("session.hydrate", {id:sessionId})
+        else App.select(sessionId)
+        page=0
+        shell.revealConversation()
+        Qt.callLater(()=>conversation.focusComposer())
+    }
     NumberAnimation { id:pageSlide;target:shell;property:"pageOffset";to:0;duration:Theme.navigationDuration;easing.type:Theme.easing }
     property var settings: App.state.settings || ({})
     property var sessions: App.state.sessions || []
@@ -90,7 +118,7 @@ Rectangle {
     border.width: expanded ? 0 : Theme.hairline
     implicitWidth: expanded ? Theme.defaultWindowWidth : Theme.panelWidth; implicitHeight: expanded ? Theme.defaultWindowHeight : Theme.panelHeight
     focus: true
-    Keys.onEscapePressed: { if(workbenchFocused)restoreSplit();else if(workbenchVisible&&page===0)closeWorkbench();else if(page===5)closeWorkflows();else if(page!==0)navigate(0);else App.closePanel() }
+    Keys.onEscapePressed: { if(workbenchFocused)restoreSplit();else if(workbenchVisible&&page===0)closeWorkbench();else if(page>=5)leaveSecondaryPage();else if(page!==0)navigate(0);else App.closePanel() }
     Shortcut { sequence: "Ctrl+K"; onActivated: commandPalette.openPalette() }
     Shortcut { sequence: "Ctrl+N"; onActivated: shell.page===4?projectsPage.ensure().newProjectSession():newSession.open() }
     Shortcut { sequence: "Ctrl+,"; onActivated: shell.navigate(3) }
@@ -235,6 +263,11 @@ Rectangle {
                         iconOnly: shell.rail; primary: shell.page === 5
                         onClicked: shell.showWorkflows(0)
                     }
+                    SidebarTab {
+                        objectName:"sidebarResearchTasks";label:researchTasks.activeCount?qsTr("Research · %1").arg(researchTasks.activeCount):qsTr("Research")
+                        iconOnly:shell.rail;iconName:"research";primary:shell.page===6
+                        onClicked:shell.showResearch()
+                    }
                 }
                 SessionList {
                     visible: !shell.rail && shell.page !== 1
@@ -301,6 +334,13 @@ Rectangle {
                     contentItem:CIcon { name:"shield";color:settings.paused||shell.bypassActive?Theme.amber:Theme.text }
                     onClicked:permissionCenter.open()
                 }
+                CButton {
+                    objectName:"shellResearchTasks";implicitWidth:Theme.controlHeight;implicitHeight:Theme.controlHeight;leftPadding:Theme.space2;rightPadding:Theme.space2
+                    quiet:true;primary:shell.page===6;help:researchTasks.activeCount?qsTr("Research · %1 active").arg(researchTasks.activeCount):qsTr("Research")
+                    Accessible.name:help;Accessible.role:Accessible.PageTab;Accessible.selected:primary
+                    contentItem:CIcon { name:"research";color:researchTasks.activeCount?Theme.amber:parent.primary?Theme.accentText:Theme.text }
+                    onClicked:shell.showResearch()
+                }
                 CButton { objectName:"expandWindow";text:"";iconName:expanded?"hide":"expand";quiet:true;help:expanded?"Hide window":"Expand workspace";onClicked:expanded?App.closePanel():App.expand() }
             }
             RowLayout {
@@ -366,7 +406,7 @@ Rectangle {
                     transform:Translate { x:shell.pageOffset }
                     Chat { id:conversation;showBackButton:!shell.wide
                         onBackRequested:shell.showSessions();onCreateRequested:newSession.open()
-                        onNavigateRequested:target=>{if(target==="connections"){shell.navigate(3);settingsPage.ensure().open("connections","")}else if(target==="settings")shell.navigate(3);else if(target==="sessions")shell.showSessions();else if(target==="desktop")shell.navigate(2);else if(target==="new")newSession.open();else shell.navigate(0)} }
+                        onNavigateRequested:target=>{if(target==="clock")clockView.openFor(App.selectedId);else if(target==="connections"){shell.navigate(3);settingsPage.ensure().open("connections","")}else if(target==="settings")shell.navigate(3);else if(target==="sessions")shell.showSessions();else if(target==="desktop")shell.navigate(2);else if(target==="new")newSession.open();else shell.navigate(0)} }
                     LazyPage {
                         id: sessionsPage; selected: shell.page === 1; pageSource: "SessionList.qml"
                         onLoaded: {
@@ -392,8 +432,19 @@ Rectangle {
                         id: workflowsPage; selected: shell.page === 5; pageSource: "Workflows.qml"
                         initialProperties: ({requestedTab: shell.workflowsTab})
                         onLoaded: {
-                            item.backRequested.connect(shell.closeWorkflows)
+                            item.backRequested.connect(shell.leaveSecondaryPage)
                             item.sessionRequested.connect(id => { App.selectedId = id; shell.openConversation() })
+                        }
+                    }
+                    LazyPage {
+                        id: researchPage; selected: shell.page === 6; pageSource: "Research.qml"
+                        initialProperties: ({monitor: researchTasks})
+                        onLoaded: {
+                            item.backRequested.connect(shell.leaveSecondaryPage)
+                            item.conversationRequested.connect(id => { App.select(id); shell.openConversation() })
+                            item.connectionSettingsRequested.connect(() => { shell.navigate(3); settingsPage.ensure().open("connections", "") })
+                            item.createRequested.connect(() => { newSession.forResearch = true; newSession.open() })
+                            item.draftRequested.connect(shell.openResearchDraft)
                         }
                     }
                 }
@@ -509,6 +560,7 @@ Rectangle {
         onCloseRequested: shell.closeWorkbench()
         onSettingsRequested:(category,target)=>{shell.navigate(3);Qt.callLater(()=>settingsPage.ensure().open(category,target))}
         onWorkflowsRequested:shell.showWorkflows(0)
+        onResearchDraftRequested:sessionId=>shell.openResearchDraft(sessionId)
     }
     Connections {
         target: WorkbenchState
@@ -538,8 +590,17 @@ Rectangle {
         function onVisibleChanged(){if(shell.Window.window&&shell.Window.window.visible&&!shell.expanded&&shell.page===0)Qt.callLater(()=>conversation.focusComposer())}
     }
     Connections { target:App;function onNewConversationRequested(folder){if(shell.expanded)newSession.openFolder(folder)} }
-    NewSession { id:newSession;objectName:"createSessionDialog";onSessionOpened:shell.openConversation();onClosed:imported=({}) }
+    NewSession {
+        id: newSession; objectName: "createSessionDialog"
+        property bool forResearch: false
+        onSessionOpened: {
+            if (forResearch && shell.page === 6) researchPage.ensure().showTab("new")
+            else shell.openConversation()
+        }
+        onClosed: { imported = ({}); Qt.callLater(() => forResearch = false) }
+    }
     PermissionCenter { id:permissionCenter }
+    ResearchTasks { id: researchTasks; watching: shell.page === 6 && researchPage.item?.tab === "tasks" }
     CommandPalette {
         id:commandPalette
         onSessionRequested:id=>{App.selectedId=id;App.rpc("session.read",{id:id});shell.openConversation()}
@@ -548,7 +609,12 @@ Rectangle {
         onPageRequested:target=>shell.navigate(target)
         onDesktopRequested:query=>{shell.page=2;Qt.callLater(()=>desktop.ensure().showSearch(query))}
         onWorkflowsRequested:shell.showWorkflows(1)
+        onClockRequested:Qt.callLater(()=>clockView.openFor(App.selectedId))
+        onAccountsRequested:service=>App.selectedId?Qt.callLater(()=>WorkbenchState.openAccounts(service)):App.notify("Open a conversation first. What you use from an account is kept with it.")
+        onDocumentRequested:App.selectedId?Qt.callLater(()=>documentWriter.openBlank(App.selectedId,"")):App.notify("Open a conversation first. A document is kept with it.")
     }
+    DocumentExport { id:documentWriter;objectName:"documentWriter" }
+    ClockView { id:clockView;onSettingsRequested:(category,target)=>{shell.page=3;Qt.callLater(()=>settingsPage.ensure().open(category,target))} }
     Shortcut { sequence:"Ctrl+Shift+W";onActivated:shell.toggleWorkbench() }
     CDialog {
         id: welcome; objectName: "welcomeDialog"

@@ -70,7 +70,7 @@ internal fun DesktopScreen(repository: PALRepository, state: MobileState, activi
     var filePath by rememberSaveable { mutableStateOf("") }
     var workspaceCard by remember(projectId, state.cacheEpoch) { mutableStateOf<JsonObject?>(null) }
     val project = state.projects.firstOrNull { it.id == projectId }
-    val actions = status?.get("actions")?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }
+    val actions = status?.list("actions").orEmpty()
     val actionNames = actions.mapNotNull { it.text("name") }.toSet()
     val categories = actions.mapNotNull { it.text("category") }.toSet()
 
@@ -83,11 +83,11 @@ internal fun DesktopScreen(repository: PALRepository, state: MobileState, activi
             try { apply(repository.read(method, buildJsonObject { put("projectId", projectId) })) }
             catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { errors[section] = failure.message ?: strings.getString(R.string.desktop_could_not_load) }
         }
-        if (state.supports("desktop.status")) load("status", "desktop.status") { status = it.jsonObject; volume = null }
-        if (state.supports("desktop.workspace")) load("workspace", "desktop.workspace") { workspaceCard = it.jsonObject }
-        val loaded = status?.get("actions")?.jsonArray.orEmpty().mapNotNull { (it as? JsonObject)?.text("category") }.toSet()
-        if ("apps" in loaded && state.supports("desktop.apps")) load("apps", "desktop.apps") { apps = it.jsonArray.mapNotNull { row -> row as? JsonObject } } else apps = emptyList()
-        if ("windows" in loaded && state.supports("desktop.windows")) load("windows", "desktop.windows") { windows = it.jsonArray.mapNotNull { row -> row as? JsonObject } } else windows = emptyList()
+        if (state.supports("desktop.status")) load("status", "desktop.status") { status = it as JsonObject; volume = null }
+        if (state.supports("desktop.workspace")) load("workspace", "desktop.workspace") { workspaceCard = it as JsonObject }
+        val loaded = status?.list("actions").orEmpty().mapNotNull { it.text("category") }.toSet()
+        if ("apps" in loaded && state.supports("desktop.apps")) load("apps", "desktop.apps") { apps = it.objects() } else apps = emptyList()
+        if ("windows" in loaded && state.supports("desktop.windows")) load("windows", "desktop.windows") { windows = it.objects() } else windows = emptyList()
         sectionErrors = errors
         loading = false
     }
@@ -121,8 +121,8 @@ internal fun DesktopScreen(repository: PALRepository, state: MobileState, activi
     val filter = query.trim()
     fun matches(vararg values: String?) = filter.isBlank() || values.any { it.orEmpty().contains(filter, true) }
     val audio = status?.get("audio") as? JsonObject; val media = status?.get("media") as? JsonObject
-    val timers = status?.get("timers")?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }
-    val scripts = status?.get("scripts")?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }.filter { matches(it.text("name"), it.text("executable")) }
+    val timers = status?.list("timers").orEmpty()
+    val scripts = status?.list("scripts").orEmpty().filter { matches(it.text("name"), it.text("executable")) }
     val shownWindows = windows.filter { matches(it.text("title"), it.text("app")) }
     val shownApps = apps.filter { matches(it.text("name")) }
     val formatter = remember { DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withZone(ZoneId.systemDefault()) }
@@ -139,7 +139,7 @@ internal fun DesktopScreen(repository: PALRepository, state: MobileState, activi
         project?.let { selected -> item { Panel(stringResource(R.string.desktop_action_scope)) { Text(state.desktop?.desktopName ?: stringResource(R.string.desktop_paired_desktop), color = MaterialTheme.colorScheme.primary); SelectionContainer { Text(selected.path ?: stringResource(R.string.desktop_path_unavailable), style = MaterialTheme.typography.bodySmall) } } } }
         // F80: whether the desktop is working in this project now, from fresh observations only.
         workspaceCard?.let { card -> item { Panel(stringResource(R.string.desktop_desktop_workspace)) {
-            val unknown = card["unknown"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull?.replace('_', ' ') }
+            val unknown = card.strings("unknown").map { it.replace('_', ' ') }
             Text(when (card.text("state")) {
                 "in-project" -> stringResource(R.string.desktop_working_in_this_project_now, card.text("relativePath") ?: ".") + if (card.flag("verifiedCheckout")) stringResource(R.string.desktop_verified_checkout) else ""
                 "elsewhere" -> stringResource(R.string.desktop_working_outside_this_project_right_now)
@@ -148,7 +148,7 @@ internal fun DesktopScreen(repository: PALRepository, state: MobileState, activi
             })
         } } }
         // W10: features that need a program the desktop does not have; chat is not affected.
-        status?.get("missing")?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }.takeIf { it.isNotEmpty() }?.let { missing -> item { Panel(stringResource(R.string.desktop_unavailable_on_the_desktop)) {
+        status?.list("missing").orEmpty().takeIf { it.isNotEmpty() }?.let { missing -> item { Panel(stringResource(R.string.desktop_unavailable_on_the_desktop)) {
             missing.forEach { Text(stringResource(R.string.desktop_needs_installed_on_the_desktop, it.text("feature") ?: "", it.text("name") ?: strings.getString(R.string.desktop_a_program)), style = MaterialTheme.typography.bodySmall) }
         } } }
         item { OutlinedTextField(query, { query = it }, leadingIcon = { Icon(Icons.Default.Search, null) }, placeholder = { Text(stringResource(R.string.desktop_search_apps_windows_or_scripts)) }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
@@ -261,7 +261,7 @@ internal fun DesktopScreen(repository: PALRepository, state: MobileState, activi
     reviewingScript?.let { script ->
         AlertDialog(onDismissRequest = { reviewingScript = null }, title = { Text(stringResource(R.string.desktop_run_saved_script)) }, text = { Column(verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             Text(script.text("name") ?: stringResource(R.string.desktop_script), fontWeight = FontWeight.SemiBold)
-            SelectionContainer { Text(listOf(script.text("executable").orEmpty(), *script["args"]?.jsonArray.orEmpty().map { (it as? JsonPrimitive)?.contentOrNull.orEmpty() }.toTypedArray()).joinToString(" "), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
+            SelectionContainer { Text(listOf(script.text("executable").orEmpty(), *script.strings("args").toTypedArray()).joinToString(" "), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
             Text(stringResource(R.string.desktop_folder, script.text("cwd").orEmpty()), style = MaterialTheme.typography.bodySmall)
             Text(stringResource(R.string.desktop_time_limit_s, (script.text("timeout")?.toLongOrNull() ?: 0) / 1000), style = MaterialTheme.typography.bodySmall)
             Text(stringResource(R.string.desktop_runs_exactly_this_saved_definition_on_if_it, state.desktop?.desktopName ?: strings.getString(R.string.desktop_the_desktop)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -322,7 +322,7 @@ private fun CapturePanel(repository: PALRepository, state: MobileState, activity
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { targets.forEach { session -> FilterChip(target == session.id, { target = session.id }, { Text(session.title, maxLines = 1) }) } }
                 Button({ val chosen = target ?: return@Button; val reviewed = preview ?: return@Button; busy = true; error = null
                     signedReview(activity, repository, "captures.attach", buildJsonObject { put("captureId", captureId!!); put("sessionId", chosen); put("imageDigest", reviewed.imageDigest) }, strings.getString(R.string.desktop_attach_this_capture),
-                        { result -> scope.launch { runCatching { repository.adoptCapture(chosen, result.jsonObject, reviewed) }.onFailure { error = it.message }; captureId?.let { runCatching { repository.captureStatus(it) } }; busy = false } }, { error = it; busy = false }, boundProjectId = project.id)
+                        { result -> scope.launch { runCatching { repository.adoptCapture(chosen, result as JsonObject, reviewed) }.onFailure { error = it.message }; captureId?.let { runCatching { repository.captureStatus(it) } }; busy = false } }, { error = it; busy = false }, boundProjectId = project.id)
                 }, enabled = enabled && !busy && target != null) { Text(stringResource(R.string.desktop_review_attach)) }
             }
             if (captureId != null && captureState in setOf("capturing", "editing", "ready")) TextButton({ scope.launch { busy = true; runCatching { repository.discardCapture(captureId) }.onFailure { error = it.message }; busy = false } }, enabled = enabled && !busy) { Text(if (captureState == "ready") stringResource(R.string.desktop_discard) else stringResource(R.string.action_cancel)) }

@@ -65,9 +65,14 @@ export class RemoteView {
     return { viewId: id, revision: view.revision, output: view.output, width, height: Math.round(width * (meta.height || 1) / (meta.width || 1)), data: 'data:image/jpeg;base64,' + jpeg.toString('base64') };
   }
   /** Input at a point of the last frame (0–1), or text; refused with the reason when this computer allows none. */
-  async send(id: string, deviceId: string, p: { kind: 'click' | 'move' | 'type' | 'key'; x?: number; y?: number; text?: string; key?: string; frameRevision?: number }) {
+  async send(id: string, deviceId: string, p: { kind: 'click' | 'move' | 'type' | 'key'; x?: number; y?: number; text?: string; key?: string; frameRevision?: number },authorize?:()=>void) {
     const view = this.owned(id, deviceId), monitor = view.monitor, available = this.input();
     if (p.frameRevision !== undefined && p.frameRevision !== view.revision) throw remoteError('REVISION_CONFLICT', 'The screen changed since that frame. Look at the new one and tap again.');
+    if(authorize){
+      const now=(await this.monitors()).find(m=>m.name===view.output);
+      if(!monitor||!now||['x','y','width','height','scale','transform'].some(k=>now[k as keyof Monitor]!==monitor[k as keyof Monitor]))throw remoteError('REVISION_CONFLICT','Display geometry changed. Request a new screenshot.');
+      authorize();
+    }
     if (p.kind === 'type') {
       const text = String(p.text || '').slice(0, 2000);
       if (tool('wtype')) await run('wtype', ['--', text], { timeout: 10_000 });
@@ -86,6 +91,7 @@ export class RemoteView {
     if (!available.pointer || !monitor) throw remoteError('DEPENDENCY_MISSING', available.reason || 'Pointer control is not available.');
     const x = Math.round(monitor.x + Math.max(0, Math.min(1, p.x ?? 0.5)) * monitor.width / (monitor.scale || 1)), y = Math.round(monitor.y + Math.max(0, Math.min(1, p.y ?? 0.5)) * monitor.height / (monitor.scale || 1));
     await run('ydotool', ['mousemove', '--absolute', '-x', String(x), '-y', String(y)], { timeout: 5000 });
+    authorize?.();
     if (p.kind === 'click') await run('ydotool', ['click', '0xC0'], { timeout: 5000 });
     return { sent: true, x, y };
   }

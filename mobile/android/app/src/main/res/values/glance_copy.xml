@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Quick Settings tile -->
+    <string name="tile_monitoring">PAL monitoring</string>
+    <string name="tile_not_paired">Not paired</string>
+    <string name="tile_off">Off</string>
+    <plurals name="glance_waiting">
+        <item quantity="one">%d request waiting</item>
+        <item quantity="other">%d requests waiting</item>
+    </plurals>
+    <!-- Home-screen widget -->
+    <string name="widget_name">PAL status</string>
+    <string name="widget_summary">Connection and how many requests wait for you. Nothing else is shown.</string>
+    <string name="widget_not_paired">Not paired</string>
+    <string name="widget_not_ready">Starting</string>
+    <string name="widget_open">Open PAL</string>
+    <string name="widget_nothing_waiting">Nothing waiting</string>
+    <string name="widget_description">PAL. %1$s. %2$s.</string>
+    <!-- Shortcuts -->
+    <string name="shortcut_inbox">Inbox</string>
+    <string name="shortcut_inbox_long">Open the Inbox</string>
+    <string name="shortcut_new">New conversation</string>
+    <string name="shortcut_new_long">Start a conversation</string>
+    <string name="shortcut_add">Add to home screen</string>
+    <string name="shortcut_gone">This conversation was on a desktop this phone no longer uses.</string>
+    <!-- Finding the desktop on the local network -->
+    <string name="find_title">Find this desktop on this network</string>
+    <string name="find_detail">For when its address changed. The desktop must announce itself: PAL Settings › PAL Mobile › Let paired phones find this PC. Any address found must present the key this phone paired with before anything is sent to it.</string>
+    <string name="find_start">Search this network</string>
+    <string name="find_searching">Searching…</string>
+    <string name="find_stop">Stop</string>
+    <string name="find_none">Nothing on this network announced this desktop.</string>
+    <string name="find_permission">PAL needs Android’s local network permission to search.</string>
+    <string name="find_unavailable">This phone cannot search the network now.</string>
+    <string name="find_known">%1$s · already used</string>
+    <string name="find_use">Use %1$s</string>
+    <string name="find_checking">Checking its key…</string>
+    <string name="find_mismatch">%1$s did not present this desktop’s key, so it was not added. If you renewed the gateway with a new key, pair again.</string>
+    <string name="find_added">%1$s was added. PAL tries it with the paired addresses.</string>
+    <string name="find_full">This phone already keeps five addresses for this desktop. Remove one first.</string>
+    <string name="find_added_heading">Added addresses</string>
+    <string name="find_remove">Remove</string>
+    <string name="find_remove_description">Remove %1$s</string>
+    <!-- Wake-ups through a push app -->
+    <string name="wake_title">Wake-ups</string>
+    <string name="wake_detail">Optional, for when background monitoring is off. A push app you choose (UnifiedPush) tells this phone to connect when something waits. The message is empty and encrypted to this phone; requests are still reviewed here and signed as always.</string>
+    <string name="wake_no_app">No push app is installed. Install one that supports UnifiedPush, such as ntfy, then come back.</string>
+    <string name="wake_use">Use %1$s</string>
+    <string name="wake_offline">Connect to the desktop to turn this on.</string>
+    <string name="wake_unsupported">Update PAL on the desktop to use wake-ups.</string>
+    <string name="wake_stop">Turn off</string>
+    <string name="wake_retry">Try again</string>
+    <string name="wake_registering">Asking %1$s for an address…</string>
+    <string name="wake_waiting">Waiting for you to allow %1$s on the desktop: PAL Settings › PAL Mobile.</string>
+    <string name="wake_on">On, through %1$s.</string>
+    <string name="wake_failing">On, but the last wake-up was not delivered: %1$s</string>
+    <string name="wake_refused">Off on the desktop. %1$s</string>
+    <string name="wake_refused_detail">It was declined or the push server no longer knows this phone. Try again to ask once more.</string>
+    <string name="wake_registration">PAL wake-ups</string>
+    <string name="wake_failed">The push app could not register. Open it, check that it works, then try again.</string>
+    <string name="wake_failed_network">The push app has no network. Try again when it is connected.</string>
+    <string name="wake_failed_action">The push app needs you to open it first.</string>
+    <string name="wake_failed_key">This push app needs a server key the desktop does not offer. Connect to the desktop and try again, or choose another app.</string>
+    <string name="wake_ended">The push app ended this registration.</string>
+    <string name="wake_unavailable">The push app’s server is unavailable for now.</string>
+</resources>

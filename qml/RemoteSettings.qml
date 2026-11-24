@@ -16,6 +16,8 @@ CSection {
     property var selectedCategories:[]
     // Hosted API providers this phone may run with the providers.api grant.
     property var selectedApiProviders:[]
+    property var selectedApiConnections:[]
+    readonly property var apiProviderChoices:(App.state.providerOrder||[]).filter(id=>(App.state.providerTraits||{})[id]?.kind==="api").map(id=>({id:id,label:(App.state.providerTraits||{})[id]?.label||id}))
     // The compatible connection whose origin the compatible grant names; empty: the Settings endpoint.
     property string compatibleConnection:""
     property string editingDevice:""
@@ -25,6 +27,7 @@ CSection {
     // What a new phone may control: "owner" (full PAL access), "limited" (chosen grants) or "observer" (read, Stop, Deny).
     property string accessRole:"limited"
     readonly property bool ownerPairing:accessRole==="owner"
+    readonly property string discoveryProblem:App.state.remote?.discovery?.problem||""
     function live(d){return !d.revokedAt&&(d.lifetime==="until-revoked"||d.expiresAt>Date.now())}
     function roleLabel(role){return ({owner:"Full access",limited:"Limited access",observer:"Observer"})[role||"limited"]}
     function profileLabel(profile){return ({desktop:"Use my desktop choices",review:"Review changes",automatic:"Work automatically"})[profile||"desktop"]}
@@ -43,7 +46,7 @@ CSection {
     function toggleProject(path,on){const list=projectList().filter(p=>p!==path);if(on)list.push(path);projects.text=list.join("; ")}
     function kindLabel(kind){return ({tailscale:"Tailscale",wireguard:"WireGuard",lan:"Local network",virtual:"Virtual network",other:"Other"})[kind]||kind}
     function grants(){
-        const value={projectPaths:projectList(),caps:remote.selectedCaps,categories:remote.selectedCategories,scriptIds:scripts.text.split(",").map(s=>s.trim()).filter(s=>s.length),apiProviders:remote.selectedCaps.indexOf("providers.api")>=0?remote.selectedApiProviders:[]}
+        const value={projectPaths:projectList(),caps:remote.selectedCaps,categories:remote.selectedCategories,scriptIds:scripts.text.split(",").map(s=>s.trim()).filter(s=>s.length),apiProviders:remote.selectedCaps.indexOf("providers.api")>=0?remote.selectedApiProviders:[],apiConnections:remote.selectedCaps.indexOf("providers.api")>=0?remote.selectedApiConnections:[]}
         if(remote.compatibleConnection&&value.apiProviders.indexOf("compatible")>=0)value.compatibleConnectionId=remote.compatibleConnection
         return value
     }
@@ -61,6 +64,16 @@ CSection {
         CButton { text:"Enable paired devices";enabled:remote.requestId<0&&(remote.status.devices||[]).some(d=>remote.live(d));onClicked:remote.call("remote.enable",{}) }
     }
     CText { text:"Disabling or revoking stops remote controlled work. Disconnecting a phone normally leaves accepted work running.";color:Theme.muted;font.pixelSize:Theme.caption }
+
+    // Optional: lets a paired phone find this PC's address. Off unless chosen; the phone still checks the desktop's key.
+    CCheckBox { objectName:"remoteDiscovery";Layout.fillWidth:true;text:"Let paired phones find this PC on the local network";checked:remote.status.config?.discovery===true;enabled:remote.requestId<0&&App.connected
+        Accessible.description:"Announces the PAL protocol version and the desktop ID on the local network while the gateway is listening"
+        onClicked:{remote.call("remote.setDiscovery",{enabled:checked});checked=Qt.binding(()=>remote.status.config?.discovery===true)} }
+    CText { objectName:"remoteDiscoveryState";Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:Theme.caption;color:remote.status.config?.discovery===true&&remote.discoveryProblem?Theme.amber:Theme.muted
+        text:remote.status.config?.discovery!==true?"Off. When on, PAL says on your local network that it is here: its protocol version and desktop ID, never a name, project or key. A phone that finds it still checks this PC’s pinned key before it sends anything."
+            :remote.discoveryProblem?remote.discoveryProblem
+            :(App.state.remote?.discovery?.active||[]).length?"Announcing on "+App.state.remote.discovery.active.join(", ")+". Only the protocol version and desktop ID are announced."
+            :"On, but not announcing now: a paired phone and a local network address the gateway listens on are needed." }
 
     CText { text:"Access for the new phone";font.pixelSize:Theme.message;Layout.topMargin:Theme.space2 }
     Flow {
@@ -158,8 +171,17 @@ CSection {
             visible:remote.selectedCaps.indexOf("providers.api")>=0
             Layout.fillWidth:true;columns:width>=Theme.formBreakpoint?4:2
             Repeater {
-                model:[{id:"openai",label:"OpenAI API"},{id:"anthropic",label:"Claude API"},{id:"google",label:"Google AI API"},{id:"compatible",label:App.state.settings?.compatible?.label||"Compatible endpoint"}]
+                model:remote.apiProviderChoices
                 CCheckBox { required property var modelData;objectName:"apiGrant_"+modelData.id;text:modelData.label;checked:remote.selectedApiProviders.indexOf(modelData.id)>=0;onClicked:remote.selectedApiProviders=checked?remote.selectedApiProviders.concat([modelData.id]):remote.selectedApiProviders.filter(p=>p!==modelData.id) }
+            }
+        }
+        CText { visible:remote.selectedCaps.indexOf("providers.api")>=0&&(remote.status.apiConnections||[]).length>0;text:"Named accounts this phone may use";color:Theme.muted;font.pixelSize:Theme.caption }
+        GridLayout {
+            visible:remote.selectedCaps.indexOf("providers.api")>=0&&(remote.status.apiConnections||[]).length>0
+            Layout.fillWidth:true;columns:width>=Theme.formBreakpoint?3:2
+            Repeater {
+                model:remote.status.apiConnections||[]
+                CCheckBox { required property var modelData;text:modelData.name+" · "+((App.state.providerTraits||{})[modelData.kind]?.label||modelData.kind);checked:remote.selectedApiConnections.indexOf(modelData.id)>=0;onClicked:remote.selectedApiConnections=checked?remote.selectedApiConnections.concat([modelData.id]):remote.selectedApiConnections.filter(id=>id!==modelData.id) }
             }
         }
         CComboBox {
@@ -190,25 +212,39 @@ CSection {
         ColumnLayout {
             required property var modelData;Layout.fillWidth:true
             CText { Layout.fillWidth:true;wrapMode:Text.Wrap;objectName:"deviceSummary_"+modelData.id
-                text:modelData.name+" · "+remote.roleLabel(modelData.role)+" · "+(modelData.revokedAt?"Revoked":modelData.lifetime==="until-revoked"?"Until revoked":"Expires "+new Date(modelData.expiresAt).toLocaleDateString())+" · "+(modelData.actionAuthentication==="trusted-device"?"Trusted phone":"Biometric actions")
+                readonly property bool browser:modelData.surface==="browser"
+                text:modelData.name+" · "+(browser?"Browser · ":"")+remote.roleLabel(modelData.role)+" · "+(modelData.revokedAt?"Revoked":modelData.lifetime==="until-revoked"?"Until revoked":"Expires "+new Date(modelData.expiresAt).toLocaleDateString())+(browser?"":" · "+(modelData.actionAuthentication==="trusted-device"?"Trusted phone":"Biometric actions"))
                     +(modelData.role==="owner"?"\nWorking profile: "+remote.profileLabel(modelData.profile):"\n"+(modelData.caps||[]).join(", "));font.pixelSize:Theme.caption }
             // A full-access phone's working profile: what PAL does by itself for that phone's conversations.
             CComboBox { visible:modelData.role==="owner"&&!modelData.revokedAt;objectName:"deviceProfile_"+modelData.id;Layout.fillWidth:true;Accessible.name:"Working profile for "+modelData.name
                 readonly property var profiles:["desktop","review","automatic"]
                 model:profiles.map(p=>remote.profileLabel(p));currentIndex:Math.max(0,profiles.indexOf(modelData.profile||"desktop"))
                 onActivated:index=>remote.call("remote.setProfile",{id:modelData.id,profile:profiles[index]}) }
+            // Optional wake-ups: the phone names a push server, and only the owner's answer here lets PAL send to it.
+            CText { visible:!modelData.revokedAt&&(modelData.wake?.state||"off")!=="off";objectName:"deviceWake_"+modelData.id;Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:Theme.caption
+                color:modelData.wake?.state==="waiting"||modelData.wake?.state==="failing"?Theme.amber:Theme.muted
+                text:modelData.wake?.state==="waiting"?modelData.name+" asks to be woken through "+modelData.wake.host+". PAL would send it an empty, encrypted hint when something waits for you and the phone is not connected; that server sees only the time."
+                    :modelData.wake?.state==="failing"?"Wake-ups through "+(modelData.wake?.host||"")+" are failing: "+(modelData.wake?.problem||"the push server did not answer")+"."
+                    :"Woken through "+(modelData.wake?.host||"")+" when something waits for you. Hints are empty and encrypted." }
+            Flow { visible:!modelData.revokedAt&&(modelData.wake?.state||"off")!=="off";Layout.fillWidth:true;spacing:Theme.space2;Layout.preferredHeight:childrenRect.height
+                CButton { objectName:"allowWake_"+modelData.id;visible:modelData.wake?.state==="waiting";text:"Allow wake-ups";primary:true;enabled:remote.requestId<0;Accessible.description:"Allow hints to "+modelData.name+" through "+(modelData.wake?.host||"");onClicked:remote.call("remote.decideWake",{id:modelData.id,approved:true,host:modelData.wake.host}) }
+                CButton { objectName:"stopWake_"+modelData.id;text:modelData.wake?.state==="waiting"?"Don’t allow":"Stop wake-ups";enabled:remote.requestId<0;onClicked:remote.call("remote.decideWake",{id:modelData.id,approved:false}) }
+            }
             Flow { Layout.fillWidth:true;spacing:Theme.space2;Layout.preferredHeight:childrenRect.height
             CButton { text:"Revoke";danger:true;enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:remote.call("remote.revoke",{id:modelData.id}) }
-            CButton { objectName:"promoteDevice_"+modelData.id;visible:modelData.role!=="owner";text:"Give full access…";enabled:!modelData.revokedAt&&remote.requestId<0;Accessible.description:"Review full access for "+modelData.name;onClicked:remote.openPromotion(modelData) }
+            CButton { objectName:"promoteDevice_"+modelData.id;visible:modelData.role!=="owner"&&modelData.surface!=="browser";text:"Give full access…";enabled:!modelData.revokedAt&&remote.requestId<0;Accessible.description:"Review full access for "+modelData.name;onClicked:remote.openPromotion(modelData) }
             CButton { objectName:"limitDevice_"+modelData.id;visible:modelData.role==="owner";text:"Limit access…";enabled:!modelData.revokedAt&&remote.requestId<0;Accessible.description:"Choose the projects "+modelData.name+" keeps before limiting access";onClicked:remote.openLimitation(modelData) }
-            CButton { visible:modelData.role!=="owner";text:"Edit grants";enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:{remote.editingDevice=modelData.id;remote.selectedCaps=modelData.caps;remote.selectedCategories=modelData.categories;remote.selectedApiProviders=modelData.apiProviders||[];remote.compatibleConnection=(remote.status.compatibleConnections||[]).find(c=>!c.settingsDefault&&c.origin===modelData.compatibleEndpoint)?.id||"";projects.text=modelData.projects.map(p=>p.path).join("; ");scripts.text=modelData.scriptIds.join(", ")} }
-            CButton { text:"Replace pairing";enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:{remote.replacingDevice=modelData.id;remote.accessRole=modelData.role||"limited";remote.selectedCaps=modelData.caps;remote.selectedCategories=modelData.categories;remote.selectedApiProviders=modelData.apiProviders||[];remote.compatibleConnection=(remote.status.compatibleConnections||[]).find(c=>!c.settingsDefault&&c.origin===modelData.compatibleEndpoint)?.id||"";projects.text=modelData.projects.map(p=>p.path).join("; ");scripts.text=modelData.scriptIds.join(", ");trustedPhone.checked=modelData.actionAuthentication==="trusted-device";remote.offer=({});remote.review=({});response.text=""} }
-            CButton { visible:modelData.lifetime!=="until-revoked";text:"Renew 90 days";enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:remote.call("remote.renewDevice",{id:modelData.id,confirmed:true}) }
-            CButton { text:"Clear retained images";enabled:remote.requestId<0;onClicked:remote.call("remote.purgeMedia",{id:modelData.id,confirmed:true}) }
+            CButton { visible:modelData.role!=="owner"&&modelData.surface!=="browser";text:"Edit grants";enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:{remote.editingDevice=modelData.id;remote.selectedCaps=modelData.caps;remote.selectedCategories=modelData.categories;remote.selectedApiProviders=modelData.apiProviders||[];remote.selectedApiConnections=modelData.apiConnections||[];remote.compatibleConnection=(remote.status.compatibleConnections||[]).find(c=>!c.settingsDefault&&c.origin===modelData.compatibleEndpoint)?.id||"";projects.text=modelData.projects.map(p=>p.path).join("; ");scripts.text=modelData.scriptIds.join(", ")} }
+            CButton { visible:modelData.surface!=="browser";text:"Replace pairing";enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:{remote.replacingDevice=modelData.id;remote.accessRole=modelData.role||"limited";remote.selectedCaps=modelData.caps;remote.selectedCategories=modelData.categories;remote.selectedApiProviders=modelData.apiProviders||[];remote.selectedApiConnections=modelData.apiConnections||[];remote.compatibleConnection=(remote.status.compatibleConnections||[]).find(c=>!c.settingsDefault&&c.origin===modelData.compatibleEndpoint)?.id||"";projects.text=modelData.projects.map(p=>p.path).join("; ");scripts.text=modelData.scriptIds.join(", ");trustedPhone.checked=modelData.actionAuthentication==="trusted-device";remote.offer=({});remote.review=({});response.text=""} }
+            CButton { visible:modelData.lifetime!=="until-revoked";text:modelData.surface==="browser"?"Renew 14 days":"Renew 90 days";enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:remote.call("remote.renewDevice",{id:modelData.id,confirmed:true}) }
+            CButton { visible:modelData.surface!=="browser";text:"Clear retained images";enabled:remote.requestId<0;onClicked:remote.call("remote.purgeMedia",{id:modelData.id,confirmed:true}) }
             }
         }
     }
     CText { visible:!!remote.error;text:remote.error;color:Theme.danger;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    Rectangle { Layout.fillWidth:true;implicitHeight:Theme.hairline;color:Theme.line }
+    BrowserCompanionSettings { Layout.fillWidth:true;candidates:(remote.status.addressCandidates||[]).filter(c=>["tailscale","wireguard","lan"].indexOf(c.kind)>=0);knownProjects:remote.status.knownProjects||[];onChanged:remote.reload() }
+    Rectangle { Layout.fillWidth:true;implicitHeight:Theme.hairline;color:Theme.line }
     CText { text:"Changed IP address or expired certificate? Update the addresses or renew the certificate, then replace each phone’s pairing; or reset the gateway identity and pair each phone again. Reset revokes every phone and stops its work.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CCheckBox { id:endpointsConfirmed;text:"Update addresses or renew certificate; paired phones will need replacement pairing" }
     CButton { text:"Update gateway addresses / certificate";enabled:endpointsConfirmed.checked&&remote.requestId<0&&remote.addressList().length>0;onClicked:{remote.call("remote.configureEndpoints",{addresses:remote.addressList(),confirmed:true});endpointsConfirmed.checked=false} }

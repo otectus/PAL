@@ -1,0 +1,176 @@
+{
+  "checkedAt": "2026-11-23T14:48:01.101Z",
+  "matrix": {
+    "openai": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "anthropic": {
+      "credential": "saved",
+      "live": "text response received",
+      "catalog": 14,
+      "model": "claude-haiku-4-5-20251001",
+      "usage": {
+        "inputTokens": 13,
+        "outputTokens": 4
+      },
+      "operations": {
+        "originalPdf": {
+          "upload": "ready",
+          "resolved": true,
+          "removal": "deleted"
+        }
+      }
+    },
+    "google": {
+      "credential": "saved",
+      "live": "text response received",
+      "catalog": 49,
+      "model": "gemini-flash-lite-latest",
+      "firstAttempt": {
+        "model": "gemini-2.5-flash-lite",
+        "error": "Google Gemini (HTTP 404). Model or endpoint unavailable. Refresh models or check the model ID."
+      },
+      "usage": {
+        "inputTokens": 7,
+        "outputTokens": 2
+      },
+      "operations": {
+        "embedding": {
+          "model": "gemini-embedding-001",
+          "dimension": 768
+        },
+        "realtimeSetup": {
+          "model": "gemini-3.8-live",
+          "outcome": "ready"
+        },
+        "speech": {
+          "outputModel": "gemini-3.8-flash-lite-tts",
+          "pcmBytes": 107520,
+          "inputModel": "gemini-flash-lite-latest",
+          "recognizedHello": true
+        },
+        "originalPdf": {
+          "upload": "ready",
+          "resolved": true,
+          "removal": "deleted"
+        },
+        "timedMedia": {
+          "music.generate": {
+            "model": "lyria-3-clip-preview",
+            "state": "failed",
+            "error": {
+              "code": "provider_rejected",
+              "message": "Media provider returned HTTP 429"
+            },
+            "artifact": false
+          },
+          "video.generate": {
+            "model": "gemini-omni-1.2-flash",
+            "state": "failed",
+            "error": {
+              "code": "failed",
+              "message": "Provider reported failed"
+            },
+            "artifact": false
+          }
+        }
+      }
+    },
+    "azure_openai": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "deepseek": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "mistral": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "xai": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "perplexity": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "openrouter": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "huggingface": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "litellm": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "forge": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "edenai": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "compatible": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "elevenlabs": {
+      "credential": "saved",
+      "live": "catalog HTTP 200",
+      "synthesis": {
+        "error": "ElevenLabs credits are exhausted. Check your account usage or choose a local voice."
+      }
+    },
+    "voyage": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "jev": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "azure_speech": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "google_search": {
+      "credential": "missing",
+      "live": "unverified"
+    },
+    "ollama": {
+      "variant": "local",
+      "version": "0.34.4",
+      "models": 19,
+      "chat": {
+        "model": "hf.co/XHToken/Spark-X2.5-4B-GGUF:Q4_K_M",
+        "httpStatus": 200,
+        "hasText": true,
+        "inputTokens": 20,
+        "outputTokens": 3
+      }
+    },
+    "piper": {
+      "variant": "local",
+      "model": "en_US-amy-medium",
+      "synthesis": {
+        "audioSeconds": 4.783,
+        "result": "Produced WAV speech from a synthetic test sentence"
+      }
+    },
+    "indextts": {
+      "variant": "local CPU",
+      "version": "2.5",
+      "reference": "synthetic Piper WAV",
+      "synthesis": "Offline test synthesized every language advertised by the installed runtime. The worker also confirmed network denial.",
+      "testDurationSeconds": 222.219
+    }
+  },
+  "lastFollowUpAt": "2026-11-23T16:40:00Z"
+}

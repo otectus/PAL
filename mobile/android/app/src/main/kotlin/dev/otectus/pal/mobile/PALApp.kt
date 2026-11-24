@@ -17,6 +17,8 @@ class PALApp : Application() {
         }
         // Channels exist from the start, so Android's notification settings list them before the first alert.
         PALNotifications.ensureChannels(this)
+        GlanceUpdates(this).start()
+        Thread { sweepShared(this) }.start()
         // Network changes reach the connection while the app is open, with or without background monitoring.
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) { repository.networkAvailable() }

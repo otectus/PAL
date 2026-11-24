@@ -15,7 +15,7 @@ const proofs = Object.keys(methods).filter(method => needsProof(method, {})).map
 });
 if (JSON.stringify(proofs.sort()) !== JSON.stringify([...contract.actions.signedMethods].sort()))
   throw new Error('The documented mobile proof requirements differ from the gateway');
-for (const method of ['sessions.create', 'providers.models', 'sessions.handoffCreate']) {
+for (const method of ['sessions.create', 'providers.models', 'sessions.handoffCreate', 'owner.credentials.set']) {
   const params = z.toJSONSchema(methods[method]);
   const actual = (params.properties?.provider as { enum: string[] }).enum;
   if (JSON.stringify([...actual].sort()) !== JSON.stringify(contract.operations[method].params.provider.split('|').sort()))

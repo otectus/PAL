@@ -8,6 +8,7 @@ CDialog {
     preferredWidth:Theme.dialogWide
     property var items:[]
     property string host:""
+    property var space:({state:"unknown"})
     property int listRequest:-1
     property int request:-1
     property string busyModel:""
@@ -27,6 +28,11 @@ CDialog {
         Layout.fillWidth:true
         CField { id:pullName;objectName:"modelPullName";Layout.fillWidth:true;placeholderText:"Model to download, such as qwen3:8b";maximumLength:200;Accessible.name:"Model to download";onAccepted:if(pullButton.enabled)pullButton.clicked() }
         CButton { id:pullButton;objectName:"modelPull";text:"Download";enabled:App.connected&&!models.pulling&&models.request<0&&pullName.text.trim().length>0;onClicked:models.call("models.pull",{model:pullName.text.trim()}) }
+    }
+    // RC-11: a warning only; a download is never refused for it.
+    CText {
+        objectName:"modelSpace";visible:models.host.length>0;Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:Theme.caption;color:models.space.state==="low"?Theme.amber:Theme.muted
+        text:models.space.state==="unknown"?"Free space where this server keeps its models is unknown.":models.space.state==="low"?"Only "+models.size(models.space.free)+" is free where models are kept. A download may fail or fill the disk.":models.size(models.space.free)+" free where models are kept."
     }
     ColumnLayout {
         visible:!!models.pull;Layout.fillWidth:true;spacing:Theme.space2
@@ -91,7 +97,7 @@ CDialog {
     Connections {
         target:App
         function onResult(id,value){
-            if(id===models.listRequest){models.listRequest=-1;if(value?.error)models.error=String(value.error);else{models.items=value.models||[];models.host=value.host||""};return}
+            if(id===models.listRequest){models.listRequest=-1;if(value?.error)models.error=String(value.error);else{models.items=value.models||[];models.host=value.host||"";models.space=value.space||{state:"unknown"}};return}
             if(id!==models.request)return
             models.request=-1;models.busyModel=""
             if(value?.error){models.error=String(value.error);models.feedback=""}

@@ -49,9 +49,9 @@ well, for example `compactPanel themesAndAvatars`.
 
 ## Avatars and themes
 
-<a href="avatars.png"><img src="avatars.png" alt="The PAL robot and the other 24 companion avatars standing side by side"></a>
+<a href="avatars.png"><img src="avatars.png" alt="The PAL robot and the other 23 companion avatars standing side by side"></a>
 
-**Companion avatars.** The default PAL robot and the 24 other selectable appearances in their reference poses.
+**Companion avatars.** The default PAL robot and the 23 other selectable appearances in their reference poses.
 
 <a href="themes.png"><img src="themes.png" alt="The compact panel in each avatar's color theme"></a>
 
@@ -78,7 +78,7 @@ with its expression badge.
 <td width="50%" valign="top"><a href="handoff.png"><img src="handoff.png" alt="The handoff review dialog with an editable draft"></a><br><b>Handoff.</b> Review the draft that would continue this work with another provider. Nothing is sent until you submit it.</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><a href="context-drawer.png"><img src="context-drawer.png" alt="The Conversation context dialog"></a><br><b>Context.</b> Destination, a rough token estimate and the memory recalled for the latest turn.</td>
+<td width="50%" valign="top"><a href="context-drawer.png"><img src="context-drawer.png" alt="The Conversation context dialog"></a><br><b>Context.</b> Where messages go, a rough token estimate and what the latest turn was given.</td>
 <td width="50%" valign="top"><a href="completion-inbox.png"><img src="completion-inbox.png" alt="The completion inbox listing four finished runs"></a><br><b>Completion inbox.</b> Finished runs from every conversation.</td>
 </tr>
 </table>

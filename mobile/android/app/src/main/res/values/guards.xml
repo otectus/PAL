@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="shortcut_refused">The home screen did not take this shortcut.</string>
+    <string name="copy_refused">This is too long to copy at once. Select a part of it instead.</string>
+    <string name="open_refused">No app on this phone can open this.</string>
+    <string name="picture_too_large">This picture is too large to edit on this phone. Edit it on the desktop.</string>
+</resources>

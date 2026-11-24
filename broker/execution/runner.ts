@@ -53,29 +53,49 @@ function systemBinds() {
 export type Bind = { source: string; target: string; writable?: boolean };
 export type SandboxResult = { exitCode: number | null; signal: string | null; timedOut: boolean; cancelled: boolean; stdout: string; stderr: string; truncated: boolean; durationMs: number;
   outputs: { name: string; bytes: Buffer }[]; outputProblem?: string; enforced: Enforcement };
+/** What the launcher itself gets: no keys and no session variables beyond what a systemd scope needs. */
+function spawnEnv(status: Isolation) { return { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', ...(status.cgroup ? { XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || '', DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || '' } : {}) }; }
+type SandboxRequest = { argv: string[]; binds: Bind[]; cwd: string; env?: Record<string, string>; network?: boolean; limits?: Partial<Limits>; collectOutput?: boolean };
+/** The one command line every confined program starts with; the limits it enforces are the ones `isolation` reports. */
+function sandboxCommand(status: Isolation, p: SandboxRequest, limits: Limits, outputFolder: boolean, inner: string[]) {
+  const env = { PATH: '/usr/bin', LANG: 'C.UTF-8', HOME: '/work/home', TMPDIR: '/tmp', MPLBACKEND: 'Agg', MPLCONFIGDIR: '/tmp/matplotlib', PYTHONDONTWRITEBYTECODE: '1', OPENBLAS_NUM_THREADS: '2', OMP_NUM_THREADS: '2', ...(p.env || {}) };
+  const args = [...systemBinds(), '--unshare-all', '--unshare-user', ...(p.network ? ['--share-net', '--ro-bind-try', '/etc/resolv.conf', '/etc/resolv.conf', '--ro-bind-try', '/etc/hosts', '/etc/hosts'] : []),
+    '--die-with-parent', '--new-session', '--disable-userns', '--hostname', 'pal-lab', '--size', String(256 * 1024 * 1024), '--tmpfs', '/tmp', '--dir', '/work', '--size', String(32 * 1024 * 1024), '--tmpfs', '/work/home',
+    ...(outputFolder ? ['--size', String(limits.outputBytes), '--tmpfs', '/work/output'] : []),
+    ...p.binds.flatMap(bind => [bind.writable ? '--bind' : '--ro-bind', bind.source, bind.target]), '--chdir', p.cwd, '--clearenv', ...Object.entries(env).flatMap(([key, value]) => ['--setenv', key, value]), '--'];
+  let command = '/usr/bin/bwrap', commandArgs = [...args, ...inner];
+  if (status.cgroup) { commandArgs = ['--user', '--scope', '--quiet', '--collect', '-p', `TasksMax=${limits.processes}`, '-p', `MemoryMax=${limits.memoryBytes}`, '-p', 'MemorySwapMax=0', command, ...commandArgs]; command = 'systemd-run'; }
+  else if (status.prlimit) { commandArgs = [`--as=${limits.memoryBytes + 1024 ** 3}`, `--fsize=${limits.outputBytes}`, '--core=0', '--', command, ...commandArgs]; command = '/usr/bin/prlimit'; }
+  return { command, args: commandArgs };
+}
+/**
+ * Starts a confined program that stays: standard input for its commands, descriptor 3 for its events. The caller bounds
+ * what it reads and ends the whole process group with `stop`; nothing it wrote outlives its namespaces.
+ */
+export async function startSandbox(p: SandboxRequest) {
+  const status = await isolation();
+  if (!status.available) throw Object.assign(new Error(status.problem || 'Isolation is unavailable'), { code: 'isolation_unavailable' });
+  const limits = { ...defaultLimits, ...p.limits }, { command, args } = sandboxCommand(status, p, limits, true, p.argv);
+  const child = spawn(command, args, { detached: true, stdio: ['pipe', 'pipe', 'pipe', 'pipe'], env: spawnEnv(status) });
+  const stop = () => { try { process.kill(-child.pid!, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } } };
+  return { child, stop, control: child.stdio[3] as NodeJS.ReadableStream, enforced: status.enforced };
+}
 /**
  * Runs argv inside the boundary. Outputs written to /work/output are returned (bounded); everything
  * else the run wrote disappears with its namespaces. The caller's signal stops it; only this run's
  * process group and namespaces are affected.
  */
-export async function sandboxed(p: { argv: string[]; binds: Bind[]; cwd: string; env?: Record<string, string>; network?: boolean; limits?: Partial<Limits>; signal: AbortSignal; collectOutput?: boolean; onControl?: (data: Buffer) => void; onOutput?: (stream: 'stdout' | 'stderr', text: string) => void }): Promise<SandboxResult> {
+export async function sandboxed(p: SandboxRequest & { signal: AbortSignal; onControl?: (data: Buffer) => void; onOutput?: (stream: 'stdout' | 'stderr', text: string) => void }): Promise<SandboxResult> {
   const status = await isolation();
   if (!status.available) throw Object.assign(new Error(status.problem || 'Isolation is unavailable'), { code: 'isolation_unavailable' });
   const limits = { ...defaultLimits, ...p.limits };
-  const env = { PATH: '/usr/bin', LANG: 'C.UTF-8', HOME: '/work/home', TMPDIR: '/tmp', MPLBACKEND: 'Agg', MPLCONFIGDIR: '/tmp/matplotlib', PYTHONDONTWRITEBYTECODE: '1', OPENBLAS_NUM_THREADS: '2', OMP_NUM_THREADS: '2', ...(p.env || {}) };
-  const args = [...systemBinds(), '--unshare-all', '--unshare-user', ...(p.network ? ['--share-net', '--ro-bind-try', '/etc/resolv.conf', '/etc/resolv.conf', '--ro-bind-try', '/etc/hosts', '/etc/hosts'] : []),
-    '--die-with-parent', '--new-session', '--disable-userns', '--hostname', 'pal-lab', '--size', String(256 * 1024 * 1024), '--tmpfs', '/tmp', '--dir', '/work', '--size', String(32 * 1024 * 1024), '--tmpfs', '/work/home',
-    ...(p.collectOutput !== false ? ['--size', String(limits.outputBytes), '--tmpfs', '/work/output'] : []),
-    ...p.binds.flatMap(bind => [bind.writable ? '--bind' : '--ro-bind', bind.source, bind.target]), '--chdir', p.cwd, '--clearenv', ...Object.entries(env).flatMap(([key, value]) => ['--setenv', key, value]), '--'];
   // After the program ends, the output folder is packed onto descriptor 3 (bounded and parsed here, untrusted).
   const inner = p.collectOutput !== false ? ['/usr/bin/sh', '-c', '"$@"; status=$?; cd /work/output && /usr/bin/tar -cf - --format=ustar . >&3 2>/dev/null; exit $status', 'pal-run', ...p.argv] : p.argv;
-  let command = '/usr/bin/bwrap', commandArgs = [...args, ...inner];
-  if (status.cgroup) { commandArgs = ['--user', '--scope', '--quiet', '--collect', '-p', `TasksMax=${limits.processes}`, '-p', `MemoryMax=${limits.memoryBytes}`, '-p', 'MemorySwapMax=0', command, ...commandArgs]; command = 'systemd-run'; }
-  else if (status.prlimit) { commandArgs = [`--as=${limits.memoryBytes + 1024 ** 3}`, `--fsize=${limits.outputBytes}`, '--core=0', '--', command, ...commandArgs]; command = '/usr/bin/prlimit'; }
+  const { command, args: commandArgs } = sandboxCommand(status, p, limits, p.collectOutput !== false, inner);
   const started = Date.now();
   return new Promise<SandboxResult>((resolve, reject) => {
     p.signal.throwIfAborted();
-    const child = spawn(command, commandArgs, { detached: true, stdio: ['ignore', 'pipe', 'pipe', 'pipe', ...(p.onControl ? ['pipe' as const] : [])], env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', ...(status.cgroup ? { XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || '', DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || '' } : {}) } });
+    const child = spawn(command, commandArgs, { detached: true, stdio: ['ignore', 'pipe', 'pipe', 'pipe', ...(p.onControl ? ['pipe' as const] : [])], env: spawnEnv(status) });
     let stdout = '', stderr = '', truncated = false, timedOut = false, cancelled = false, archive: Buffer[] = [], archiveBytes = 0, archiveOverflow = false;
     const take = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
       const text = chunk.toString('utf8'), used = Buffer.byteLength(stdout) + Buffer.byteLength(stderr);

@@ -454,3 +454,130 @@ test('TER-01/TER-03/TER-05 an owner phone runs Bash on this computer: ordered in
   const closed = await client.mutate('terminal.close', { terminalId: id });
   assert.equal(closed.result.state, 'exited'); assert.equal(closed.result.stopReport.remaining, 0);
 });
+
+test('paired owner reviews an original PDF and resumes provider research, while a limited phone cannot access either operation', async t => {
+  const f = await fixture(t), phone = await connect(t, f);
+  await f.core.rpc('provider.credentials', {provider:'xai', key:'test-owner-files'});
+  const s = await f.core.create({provider:'xai', model:'fixture', cwd:f.directory});
+  const pdf = await f.core.workbench.artifacts.install({sessionId:s.id,bytes:Buffer.from('%PDF-1.7\nexample\n%%EOF'),name:'Review.pdf',mime:'application/pdf',source:'user-import',policy:{cloud:true,remote:true},provenance:{kind:'test'}});
+  let uploads=0;
+  f.core.providerFiles.fetch = async (_url, init) => {
+    if(init?.method==='DELETE') return Response.json({deleted:true});
+    uploads++; return Response.json({id:'file-reference'});
+  };
+  const request={sessionId:s.id,artifactId:pdf.artifactId,versionId:pdf.versionId,acknowledgeUpload:true,expectedSessionRevision:s.configRevision||'0',expectedConnectionRevision:0};
+  const changed=await phone.action('owner.originalFiles.upload',{...request,expectedSessionRevision:'stale'},f);
+  assert.ok(changed.error); assert.equal(uploads,0);
+  const upload=await phone.action('owner.originalFiles.upload',request,f);
+  assert.equal(upload.error,undefined,JSON.stringify(upload.error)); assert.equal(uploads,1);
+  const handle=upload.result.id;
+  assert.ok((await phone.request('owner.originalFiles.list',{sessionId:s.id})).result.some((file:any)=>file.id===handle));
+  assert.equal((await phone.action('owner.originalFiles.remove',{sessionId:s.id,id:handle},f)).result.state,'deleted');
+
+  await f.core.rpc('provider.credentials',{provider:'perplexity',key:'fixture-pplx'});
+  const research=await f.core.create({provider:'perplexity',model:'fixture',cwd:f.directory});
+  let submissions=0;
+  f.core.providerJobs.fetch=async(url,init)=>{
+    const cancel=String(url).endsWith('/cancel');
+    if(init?.method==='POST'&&!cancel) submissions++;
+    return Response.json({id:'response-fixture',status:cancel?'cancelled':'queued',output:[]});
+  };
+  const intent={sessionId:research.id,requestId:randomUUID(),prompt:'Find public fixture sources',effort:'low'};
+  const started=await phone.action('owner.research.provider.start',intent,f);
+  assert.equal(started.error,undefined,JSON.stringify(started.error)); assert.equal(started.result.id,intent.requestId);
+  assert.equal((await phone.action('owner.research.provider.start',intent,f)).result.id,intent.requestId); assert.equal(submissions,1);
+  const resumed=await connect(t,f), lookup={sessionId:research.id,id:intent.requestId};
+  assert.equal((await resumed.request('owner.research.provider.list',{sessionId:research.id})).result[0].id,intent.requestId);
+  assert.equal((await resumed.mutate('owner.research.provider.poll',lookup)).result.status,'queued');
+  assert.equal((await resumed.action('owner.research.provider.cancel',lookup,f)).result.status,'cancelled');
+
+  const limited=await fixture(t,'limited'), other=await connect(t,limited);
+  assert.equal((await other.request('owner.originalFiles.list',{sessionId:s.id})).error.code,'SCOPE_DENIED');
+  assert.equal((await other.request('owner.research.provider.list',{sessionId:research.id})).error.code,'SCOPE_DENIED');
+});
+
+test('a phone lists running work and projects, checks a reviewed result, gets a reviewed draft as a conversation, and empties the trash', { skip: !workspace && 'the workspace helper is not built' }, async t => {
+  const f = await fixture(t), client = await connect(t, f);
+  const project = await mkdtemp(join(tmpdir(), 'pal-owner-desk-')); f.own(() => rm(project, { recursive: true, force: true })); await writeFile(join(project, 'note.txt'), 'text\n');
+  const session = await f.core.create({ provider: 'codex', cwd: project, trusted: true, title: 'Desk' });
+  // Work in progress is listed with the ID that cancels it.
+  let cancelled = false;
+  const done = f.core.jobs.add('codelab', 'Long run', () => { cancelled = true; });
+  const jobs = (await client.request('owner.jobs.list')).result.jobs;
+  assert.deepEqual(jobs.map((job: any) => [job.kind, job.label]), [['codelab', 'Long run']]);
+  await client.mutate('owner.jobs.cancel', { id: jobs[0].id }); assert.equal(cancelled, true); done();
+  // Projects come with what saving one needs.
+  const listed = (await client.request('owner.projects.list')).result.projects.find((row: any) => row.cwd === project);
+  const saved = await client.action('owner.projects.save', { cwd: project, name: 'Desk work', favorite: true, expectedRevision: listed.revision, defaults: listed.defaults }, f);
+  assert.equal(saved.result?.name, 'Desk work', JSON.stringify(saved.error)); assert.equal(saved.result.favorite, true);
+  // A check runs against the result that was reviewed, and not against a later one.
+  const script = { id: 'check', name: 'Check', executable: '/usr/bin/true', args: [], cwd: project, timeout: 30_000 };
+  await f.core.updateSettings({ scripts: [script], categories: ['scripts'], bypassComputerPermissions: true });
+  await f.core.send({ id: session.id, text: 'Do it' }); await f.finish(session.id);
+  const results = (await client.request('owner.results.list', { sessionId: session.id })).result;
+  assert.ok(results.length, 'the finished turn has a result');
+  const stale = await client.action('owner.results.verify', { sessionId: session.id, resultId: 'older', scriptId: 'check', expectedScript: f.core.settings.scripts[0], reviewed: true }, f);
+  assert.match(stale.error?.message || '', /older result/);
+  const verified = await client.action('owner.results.verify', { sessionId: session.id, resultId: results[0].id, scriptId: 'check', expectedScript: f.core.settings.scripts[0], reviewed: true }, f);
+  assert.equal(verified.error, undefined, JSON.stringify(verified.error));
+  // A reviewed recipe becomes a conversation this phone can open, described like any other and never as stored.
+  const recipes = (await client.request('owner.recipes.list')).result.recipes, recipe = recipes.find((row: any) => row.inputs.every((input: any) => input.type === 'text') && !row.workbench);
+  const inputs = Object.fromEntries(recipe.inputs.map((input: any) => [input.name, 'A clear request']));
+  const prepared = (await client.request('owner.recipes.prepare', { sessionId: session.id, recipeId: recipe.id, inputs })).result;
+  const drafted = await client.action('owner.recipes.createDraft', { previewToken: prepared.token, reviewed: true }, f);
+  assert.equal(drafted.error, undefined, JSON.stringify(drafted.error));
+  assert.ok(drafted.result.session.id && drafted.result.session.draft.length); assert.equal(drafted.result.session.nativeId, undefined);
+  // Workspace history is read as it is; erasing it is signed and says what it erases.
+  f.core.workspaceHistory.configure({ enabled: true, approved: [{ root: project, real: project }], days: 7 });
+  f.core.workspaceHistory.observe({ source: 'editor', kind: 'DOCUMENT_SAVED', freshness: 'fresh', properties: { path: join(project, 'note.txt') } } as any, undefined);
+  const history = (await client.request('owner.workspace.history', {})).result;
+  assert.deepEqual([history.enabled, history.days, history.items.map((row: any) => [row.kind, row.item, row.count])], [true, 7, [['document', 'note.txt', 1]]]);
+  assert.ok((await client.mutate('owner.workspace.historyErase', { all: true })).error, 'an unsigned erase is refused');
+  assert.equal((await client.action('owner.workspace.historyErase', {}, f)).error?.code, 'INVALID_ARGUMENT', 'erasing names a folder or everything');
+  assert.equal((await client.action('owner.workspace.historyErase', { project }, f)).result.removed, 1);
+  // Trash is shown, and one item is deleted only with a signed confirmation.
+  const root = await f.core.rpc('workspace.addRoot', { sessionId: session.id, path: project, policy: { write: true, organize: true } });
+  const set = await f.core.rpc('changes.propose', { sessionId: session.id, reason: 'Remove', operations: [{ kind: 'trash', rootId: root.id, path: 'note.txt' }] });
+  await f.core.rpc('changes.apply', { id: set.id, digest: set.digest });
+  const trash = (await client.request('workbench.changes.trash', { sessionId: session.id })).result;
+  assert.equal(trash[0].path, 'note.txt');
+  assert.ok((await client.mutate('workbench.changes.purge', { sessionId: session.id, trashId: trash[0].id, confirmed: true })).error, 'an unsigned purge is refused');
+  assert.equal((await client.action('workbench.changes.purge', { sessionId: session.id, trashId: trash[0].id, confirmed: true }, f)).result, true);
+  assert.deepEqual((await client.request('workbench.changes.trash', { sessionId: session.id })).result, []);
+});
+
+test('an owner phone checks a saved account, sees what uses it and moves it; another phone cannot', async t => {
+  const f = await fixture(t), client = await connect(t, f);
+  const save = async (name: string) => { const account: any = await f.core.rpc('connections.save', { kind: 'openai', name }); await f.core.rpc('provider.credentials', { provider: 'openai', connectionId: account.id, key: 'key-' + name }); return account; };
+  const work = await save('Work'), home = await save('Home'), session = await f.core.create({ provider: 'openai', connectionId: work.id, model: 'gpt-5.2', cwd: f.directory, title: 'Bound' } as any);
+  const seen: any[] = []; f.core.connectionTools.check = async (params: any) => { seen.push(params); return { stages: [{ id: 'configured', label: 'Set up', state: 'ok', detail: 'https://api.openai.com' }], models: [], unlisted: false, checkedAt: 1 }; };
+  const checked = await client.action('owner.connections.check', { connectionId: work.id }, f); assert.equal(checked.error, undefined, JSON.stringify(checked.error)); assert.equal(checked.result.stages[0].state, 'ok'); assert.deepEqual(seen, [{ connectionId: work.id }], 'without tests nothing is sent to a model');
+  assert.equal((await client.action('owner.connections.check', { connectionId: work.id, tests: ['everything'], paid: true }, f)).error?.code, 'INVALID_ARGUMENT'); assert.ok((await client.mutate('owner.connections.check', { connectionId: work.id })).error, 'a check is signed'); assert.equal(seen.length, 1);
+  const uses = (await client.request('owner.connections.uses', { id: work.id })).result; assert.deepEqual(uses.uses.map((use: any) => [use.kind, use.label]), [['conversation', 'Bound']]); assert.deepEqual(uses.targets, [{ id: home.id, name: 'Home' }]);
+  assert.ok((await client.mutate('owner.connections.reassign', { id: work.id, to: home.id, reviewed: true })).error, 'an unsigned move is refused'); assert.equal((await client.action('owner.connections.reassign', { id: work.id, to: home.id }, f)).error?.code, 'INVALID_ARGUMENT', 'a move says it was reviewed');
+  assert.equal(f.core.store.session(session.id).connectionId, work.id);
+  const moved = await client.action('owner.connections.reassign', { id: work.id, to: home.id, reviewed: true }, f); assert.deepEqual(moved.result, { moved: 1, problems: [] }); assert.equal(f.core.store.session(session.id).connectionId, home.id);
+  assert.doesNotMatch(JSON.stringify([uses, moved.result, checked.result]), /key-Work|key-Home/);
+  const observer = await fixture(t, 'observer'), limited = await connect(t, observer, null);
+  for (const method of ['owner.connections.uses', 'owner.connections.check', 'owner.connections.reassign']) assert.ok((await limited.request(method, { id: work.id, connectionId: work.id, to: home.id, reviewed: true })).error, method);
+});
+
+test('large model catalogs never keep a phone from connecting, and one is served on request', async t => {
+  const f = await fixture(t), client = await connect(t, f);
+  const account: any = await f.core.rpc('connections.save', { kind: 'openrouter', name: 'Router' }); await f.core.rpc('provider.credentials', { provider: 'openrouter', connectionId: account.id, key: 'key-router' });
+  for (const provider of ['openrouter', 'huggingface', 'mistral']) await f.core.rpc('provider.credentials', { provider, key: 'key-' + provider });
+  const models = (provider: string, count: number) => Array.from({ length: count }, (_, index) => ({ id: `${provider}/model-${index}`, displayName: `Model ${index}`, description: 'What it is. '.repeat(50), detail: '200K context · free', free: true, efforts: [{ id: 'low', displayName: 'Low', description: '' }], defaultEffort: '', isDefault: false, cloud: true, pricing: { prompt: '0' }, supportedParameters: ['tools'], capabilities: ['local-tools'] }));
+  const big = { available: true, modelsStatus: 'ready', modelsMayBeStale: false };
+  f.core.capabilities = { ...f.core.capabilities, openrouter: { ...big, models: models('openrouter', 900) }, huggingface: { ...big, models: models('huggingface', 900) }, mistral: { ...big, models: models('mistral', 40) } } as any;
+  const opened = await client.request('sync.open', {}); assert.equal(opened.error, undefined, JSON.stringify(opened.error)); const providers = opened.result.providers;
+  assert.deepEqual([providers.openrouter.models.length, providers.openrouter.modelsStatus, providers.huggingface.models.length], [0, 'unknown', 0]);
+  assert.equal(providers.mistral.models.length, 40); assert.equal(providers.mistral.modelsStatus, 'ready'); assert.equal(providers.mistral.models[0].detail, '200K context · free'); assert.ok(!('pricing' in providers.mistral.models[0]));
+  f.core.accountModels = async () => Object.assign(models('openrouter', 4000), {}) as any;
+  const listed = await client.request('providers.models', { provider: 'openrouter', connectionId: account.id, listing: true }); assert.equal(listed.error, undefined, JSON.stringify(listed.error));
+  assert.ok(listed.result.items.length > 1000 && Buffer.byteLength(JSON.stringify(listed.result)) < 900_000); assert.equal(listed.result.items[0].id, 'openrouter/model-0');
+  // Who serves a model is asked through the same account, and only of OpenRouter.
+  const rpc = f.core.rpc.bind(f.core), asked: any[] = []; f.core.rpc = (async (method: string, params: any) => { if (method !== 'provider.modelEndpoints') return rpc(method, params); asked.push(params); return { endpoints: [{ provider: 'Anthropic', slug: 'anthropic', detail: '1M context', available: true, parameters: [] }] }; }) as any;
+  const served = await client.request('owner.connections.modelEndpoints', { connectionId: account.id, model: 'anthropic/claude' }); assert.equal(served.result?.endpoints[0].slug, 'anthropic', JSON.stringify(served.error)); assert.deepEqual(asked, [{ provider: 'openrouter', connectionId: account.id, model: 'anthropic/claude' }]);
+  f.core.rpc = rpc as any; await assert.rejects(f.core.rpc('provider.modelEndpoints', { provider: 'openai', model: 'a/b' }), /Only OpenRouter/);
+  const observer = await fixture(t, 'observer'), limited = await connect(t, observer, null); assert.ok((await limited.request('owner.connections.modelEndpoints', { model: 'anthropic/claude' })).error);
+});

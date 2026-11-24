@@ -1,12 +1,14 @@
 import { z } from 'zod';
-import type { ChatConnection } from '../connections.ts';
-import { endpointOrigin } from '../compatible-endpoint.ts';
+import { credentialDestination, type ChatConnection } from '../connections.ts';
 import { HttpStatusError } from '../http-retry.ts';
 import { bindingSchema, assertTaskRouteAllowed, routeFingerprint, StaleTaskRouteError, TaskProviderFinishError, TaskRoutePolicyError,
   type ProcessingClass, type ResolvedTaskRoute, type StructuredTaskRequest, type StructuredTaskResult,
   type TaskModelBinding, type TaskModelCapabilities, type TaskOutputMode, type TaskProviderAdapter } from './task-models.ts';
 
-type CredentialProvider = 'openai' | 'anthropic' | 'google' | 'compatible';
+import { resolveProviderEndpoint } from '../provider-registry.ts';
+import { platformAuth } from '../provider-auth.ts';
+import type { ApiProvider as CredentialProvider } from '../provider-catalog.ts';
+import type { ApiAccess } from '../api-providers.ts';
 export interface TaskCredentialSource {
   key(provider: CredentialProvider, origin?: string, credentialRef?: string): string;
   /** Opaque monotonic/random revision. It must never be derived from the key. */
@@ -20,7 +22,7 @@ export interface TaskConnectionResolverOptions {
   defaultOllamaHost(): string;
 }
 
-type DispatchRoute = ResolvedTaskRoute & { key(): string; dialect?: 'chat_completions' | 'responses'; runtimeModelId?: string };
+type DispatchRoute = ResolvedTaskRoute & { access?:()=>ApiAccess; key(): string; dialect?: 'chat_completions' | 'responses'; runtimeModelId?: string };
 
 function inferredProcessing(endpoint: string): ProcessingClass {
   const hostname = new URL(endpoint).hostname.replace(/^\[|\]$/gu, '');
@@ -49,25 +51,33 @@ export class TaskConnectionResolver {
         processing: inferredProcessing(endpoint), key: () => '' };
     } else if (binding.connectionRef.startsWith('native:')) {
       const provider = binding.connectionRef.slice(7) as Exclude<CredentialProvider, 'compatible'>;
-      const endpoints = { openai: 'https://api.openai.com/v1', anthropic: 'https://api.anthropic.com/v1', google: 'https://generativelanguage.googleapis.com/v1beta' } as const;
+
       const credentialRef = `provider:${provider}`;
       base = { connectionRef: binding.connectionRef, connectionRevision: 1, credentialRef, credentialRevision: this.credentialRevision(credentialRef), adapterId: provider,
-        endpoint: endpoints[provider], processing: 'cloud', key: () => this.options.credentials.key(provider, undefined, credentialRef) };
+        endpoint: resolveProviderEndpoint(provider).replace(/\/$/,''), processing: 'cloud', key: () => this.options.credentials.key(provider, undefined, credentialRef) };
     } else {
       const id = binding.connectionRef.slice('connection:'.length), connection = this.options.readConnection(id), credentialRef = `connection:${connection.id}`;
       if (connection.kind === 'ollama') {
         const endpoint = connection.ollama!.host;
         base = { connectionRef: binding.connectionRef, connectionRevision: connection.revision, credentialRef, credentialRevision: 'none', adapterId: 'ollama', endpoint,
           processing: declaredProcessing(endpoint, connection.task?.processing ?? inferredProcessing(endpoint)), key: () => '' };
+      } else if (connection.kind!=='compatible') {
+        const provider=connection.kind, endpoint=connection.compatible!, rev=this.credentialRevision(credentialRef), token=platformAuth(connection);
+        const key=()=>this.options.credentials.key(provider,credentialDestination(connection),credentialRef);
+        base={connectionRef:binding.connectionRef,connectionRevision:connection.revision,credentialRef,credentialRevision:rev,adapterId:provider,endpoint:endpoint.baseUrl,
+          processing:declaredProcessing(endpoint.baseUrl,connection.task?.processing || 'cloud'),key,
+          access:()=>({key:token?()=>'platform-identity':key,token,endpoint:()=>endpoint,route:()=>({baseUrl:endpoint.baseUrl,variant:connection.variant,deployment:connection.deployment,apiVersion:connection.apiVersion})})};
       } else {
-        const endpoint = connection.compatible!.baseUrl, origin = endpointOrigin(endpoint);
+        const configured=connection.compatible!,endpoint=configured.baseUrl,destination=credentialDestination(connection);
+        const key=()=>this.options.credentials.key('compatible',destination,credentialRef);
         base = { connectionRef: binding.connectionRef, connectionRevision: connection.revision, credentialRef, credentialRevision: this.credentialRevision(credentialRef), adapterId: 'compatible', endpoint,
-          processing: declaredProcessing(endpoint, connection.task?.processing ?? connection.compatible!.processing ?? 'unknown'), dialect: connection.task?.dialect ?? 'chat_completions',
-          key: () => this.options.credentials.key('compatible', origin, credentialRef) };
+          processing: declaredProcessing(endpoint, connection.task?.processing ?? configured.processing ?? 'unknown'), dialect: connection.task?.dialect ?? 'chat_completions',key,
+          access:()=>({key,endpoint:()=>configured,route:()=>({baseUrl:endpoint,variant:connection.task?.dialect==='responses'?'responses':'chat'})}) };
       }
     }
     const withoutCapabilities = { ...base, modelId: binding.modelId };
     const publicBase = { ...withoutCapabilities };
+    delete (publicBase as Partial<DispatchRoute>).access;
     delete (publicBase as Partial<DispatchRoute>).key;
     delete (publicBase as Partial<DispatchRoute>).dialect;
     const fingerprint = routeFingerprint(publicBase as Omit<ResolvedTaskRoute, 'fingerprint' | 'capabilities'>);
@@ -113,14 +123,14 @@ export class TaskModelRouter {
     return route;
   }
   resolve(binding: TaskModelBinding): ResolvedTaskRoute {
-    const { key: _key, dialect: _dialect, runtimeModelId: _runtimeModelId, ...route } = this.dispatch(binding);
+    const { access:_access,key: _key, dialect: _dialect, runtimeModelId: _runtimeModelId, ...route } = this.dispatch(binding);
     return route;
   }
   private async prepared(binding: TaskModelBinding, signal: AbortSignal): Promise<DispatchRoute> {
     const configured = this.dispatch(binding), adapter = this.adapter(configured.adapterId);
     const inspected = adapter.inspect ? await adapter.inspect(configured, signal) : {};
     const route = { ...configured, ...inspected, capabilities: inspected.capabilities ?? configured.capabilities } as DispatchRoute;
-    const { key: _key, dialect: _dialect, runtimeModelId: _runtimeModelId, capabilities: _capabilities, fingerprint: _fingerprint, ...identity } = route;
+    const { access:_access,key: _key, dialect: _dialect, runtimeModelId: _runtimeModelId, capabilities: _capabilities, fingerprint: _fingerprint, ...identity } = route;
     route.fingerprint = routeFingerprint(identity);
     const cached = this.negotiated.get(route.fingerprint);
     if (cached) Object.assign(route.capabilities.outputModes, cached);
@@ -129,7 +139,7 @@ export class TaskModelRouter {
   /** Re-resolve immediately before reviewed apply; route or credential changes reject the old result. */
   async recheck(pinned: ResolvedTaskRoute, signal: AbortSignal = AbortSignal.timeout(15_000)): Promise<ResolvedTaskRoute> {
     const currentRoute = await this.prepared({ connectionRef: pinned.connectionRef, modelId: pinned.modelId, fallbackBindingRefs: [] }, signal);
-    const { key: _key, dialect: _dialect, runtimeModelId: _runtimeModelId, ...current } = currentRoute;
+    const { access:_access,key: _key, dialect: _dialect, runtimeModelId: _runtimeModelId, ...current } = currentRoute;
     if (current.fingerprint !== pinned.fingerprint) throw new StaleTaskRouteError();
     return current;
   }
@@ -216,7 +226,7 @@ export class TaskModelRouter {
     if ([...request.system].length + [...request.input].length > (request.maxInputCodePoints ?? 65_536)) throw new TypeError('Task input exceeds the configured bound');
     if (!Number.isSafeInteger(request.maxOutputTokens) || request.maxOutputTokens < 1 || request.maxOutputTokens > 65_536) throw new TypeError('Invalid task output limit');
     const pinnedDispatch = await this.prepared(binding, signal);
-    const { key: _key, dialect: _dialect, runtimeModelId: _runtimeModelId, ...pinned } = pinnedDispatch;
+    const { access:_access,key: _key, dialect: _dialect, runtimeModelId: _runtimeModelId, ...pinned } = pinnedDispatch;
     const mode = forcedMode ?? this.mode(pinned);
     assertTaskRouteAllowed(pinned, request.sourcePolicy, request.allowCloud);
     const adapter = this.adapter(pinned.adapterId);

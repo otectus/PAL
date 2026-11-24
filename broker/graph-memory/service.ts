@@ -1,3 +1,7 @@
+import { voyageRerank } from '../evaluation-services.ts';
+import { hostedEmbeddings, type EmbeddingProvider } from './hosted-embeddings.ts';
+import type { ApiAccess } from '../api-providers.ts';
+import type { ApiProvider } from '../provider-catalog.ts';
 import { extractionChunk, relocateWitness } from "./extraction-chunks.ts";
 import { TaskConnectionResolver, TaskModelRouter } from './task-router.ts';
 import { taskProviderAdapters } from './task-providers.ts';
@@ -10,6 +14,8 @@ import { randomUUID } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { GraphMemory, pointId } from "./client.ts";
 import { Neo4jGraphRepository } from "./adapters/neo4j.ts";
+import { DatabaseSync } from "node:sqlite";
+import { ServiceVectorRepository, vectorConfig, vectorConfigId, type VectorProjection, type VectorConfig } from "./adapters/vector-services.ts";
 import { QdrantVectorRepository } from "./adapters/qdrant.ts";
 import { ApiExtractionAdapter, RoutedExtractionAdapter, googleEmbeddings } from './adapters/api.ts';
 import { ProviderCredentials } from '../credentials.ts';
@@ -17,6 +23,7 @@ import { OllamaExtractionAdapter, ExtractionPolicyError } from "./adapters/ollam
 import { LiveWorkspaceState } from "./adapters/live.ts";
 import { HyprlandCollector } from "./adapters/hyprland.ts";
 import { KittyCollector } from "./adapters/kitty.ts";
+import { SessionCollector, SuspendWatch, type SessionProbe } from "./adapters/session.ts";
 import {
   FilesystemMetadataCollector,
   RepositoryCollector,
@@ -42,9 +49,9 @@ export interface MemoryConfiguration {
   host: string;
   embedding_model: string;
   extraction_model: string;
-  embedding_provider?: 'ollama' | 'google';
+  embedding_provider?: EmbeddingProvider; embedding_connection_id?:string; embedding_dimensions?:number; embedding_pooling?:'mean'|'cls'; voyage_rerank_model?:string;
   allow_cloud_embedding?: boolean;
-  extraction_provider?: 'ollama' | 'google' | 'anthropic';
+  extraction_provider?: 'ollama' | 'google' | 'anthropic'; extraction_connection_id?: string;
   allow_cloud_extraction: boolean;
   allow_cloud_memory: boolean;
 }
@@ -63,7 +70,10 @@ export class MemoryService {
   collectors: LiveCollector[] = [];
   collectorRpc?: CollectorRpc;
   graph?: Neo4jGraphRepository;
-  vectors = new Map<string, QdrantVectorRepository>();
+  vectors = new Map<string, VectorProjection>();
+  private openingVectors = new Map<string, Promise<VectorProjection>>();
+  private vectorDirectory: string;
+  private vectorManifest?: DatabaseSync;
   extractor?: OllamaExtractionAdapter | ApiExtractionAdapter | RoutedExtractionAdapter;
   credentials: ProviderCredentials;
   timer: NodeJS.Timeout;
@@ -94,9 +104,15 @@ export class MemoryService {
   vectorsPacked = false;
   /** Collector generation: callbacks from a stopped generation are discarded. */
   collectorGeneration = 0;
+  /** Set while this computer is locked: what was last seen of the desktop is not known to hold. */
+  sessionLocked = false;
+  /** Replaced by tests; asks the login manager and the compositor otherwise. */
+  sessionProbe?: SessionProbe;
+  suspend = new SuspendWatch((gap) => void this.resumed(gap));
   /** Current collector policy with resolved approved roots, used to filter every live read. */
   livePolicy: { policy: Row; roots: string[] } = { policy: { enabled: false }, roots: [] };
   constructor(directory: string, notify: (event: Row) => void = () => {}) {
+    this.vectorDirectory = directory;
     this.notify = notify;
     this.credentials = new ProviderCredentials(join(directory, 'credentials'));
     this.canonical = new GraphMemory(directory, (event) => {
@@ -131,6 +147,8 @@ export class MemoryService {
     return [reviewModel,...Object.values(overrides)].some(b=>b&&matches(b));
   }
   async bindingChanged(ref:string){
+    // A changed account is resolved afresh by the next extraction, whichever way it was chosen.
+    if(ref==='connection:'+this.configuration.extraction_connection_id)this.extractor=undefined;
     if(!this.usesBinding(ref))return;
     this.reviewController.abort();this.reviewController=new AbortController();
     this.extractor=undefined;
@@ -141,7 +159,7 @@ export class MemoryService {
   }
   async configure(p: MemoryConfiguration) {
     const changed = JSON.stringify(this.configuration) !== JSON.stringify(p);
-    const extractionChanged = ["host", "extraction_model", "extraction_provider", "allow_cloud_extraction"].some(
+    const extractionChanged = ["host", "extraction_model", "extraction_provider", "extraction_connection_id", "allow_cloud_extraction"].some(
       (key) => (this.configuration as any)[key] !== (p as any)[key],
     );
     const settings=await this.canonical.call("curation_settings");
@@ -181,15 +199,16 @@ export class MemoryService {
     this.collectorRpc = undefined;
     for (const c of this.collectors) await c.stop();
     this.collectors = [];
+    this.sessionLocked = false;
     const { policy } = await this.canonical.call("policy_get");
-    const roots = (
-      await Promise.all(
-        (policy.approved_roots as string[]).map((root) => realpath(root).catch(() => "")),
-      )
-    ).filter(Boolean);
+    const approved = await Promise.all(
+        (policy.approved_roots as string[]).map(async (root) => ({ root, real: await realpath(root).catch(() => "") })),
+      ),
+      roots = approved.map((item) => item.real).filter(Boolean);
     // Configuration and canonical policy must both allow collection; otherwise nothing survives.
     const enabled = !this.recoveryFrozen && this.configuration.enabled && !this.configuration.paused && policy.enabled;
     this.livePolicy = { policy: enabled ? policy : { ...policy, enabled: false }, roots };
+    if (generation === this.collectorGeneration) this.notify({ type: "workspace_policy", enabled: enabled && policy.history_enabled, approved, days: policy.history_days });
     // Revocation takes effect before any new collector starts: revoked sources, roots
     // and titles leave the live state immediately.
     this.live.redact((o) => this.permitted(o));
@@ -197,6 +216,8 @@ export class MemoryService {
     if (!enabled || generation !== this.collectorGeneration) return;
     const accept = (o: LiveObservation) => {
       if (generation !== this.collectorGeneration || this.closed) return false;
+      // Nothing is learned about a locked desktop; only that it is locked.
+      if (this.sessionLocked && o.source !== "session" && o.source !== "repository") return false;
       const permitted = this.permitted(o);
       if (!permitted) return false;
       this.live.apply(permitted);
@@ -204,9 +225,25 @@ export class MemoryService {
         type: "workspace",
         generation: this.live.snapshot().generation,
       });
+      // Durable history is its own choice; it is given what policy permits, inside approved folders.
+      if (policy.history_enabled && o.freshness === "fresh") this.notify({ type: "workspace_observation", observation: permitted, current: this.workspace().current });
       return true;
     };
-    if (policy.fish_enabled) {
+    this.suspend.stop();
+    if (policy.hyprland_enabled || policy.kitty_enabled || policy.fish_enabled || policy.editor_enabled || policy.filesystem_enabled) this.suspend.start();
+    if (policy.session_enabled)
+      this.collectors.push(
+        new SessionCollector({
+          changed: (locked) => {
+            if (generation !== this.collectorGeneration || this.closed) return;
+            this.sessionLocked = locked;
+            if (locked) this.unknown("locked");
+            else void this.reverify();
+          },
+          ...(this.sessionProbe ? { probe: this.sessionProbe } : {}),
+        }),
+      );
+    if (policy.fish_enabled || policy.editor_enabled) {
       this.collectorRpc = new CollectorRpc(
         palEnv('RUNTIME_DIR')
           ? join(paths().runtime, "memory")
@@ -230,12 +267,14 @@ export class MemoryService {
         new HyprlandCollector({
           captureTitles: policy.capture_titles,
           titleApplicationAllowlist: policy.title_applications,
+          includePids: policy.kitty_enabled || policy.editor_enabled,
         }),
       );
-    if (policy.kitty_enabled && palEnv('KITTY_INSPECT_ENDPOINT'))
+    const kittyEndpoint = policy.kitty_endpoint || palEnv('KITTY_INSPECT_ENDPOINT');
+    if (policy.kitty_enabled && kittyEndpoint)
       this.collectors.push(
         new KittyCollector({
-          endpoint: palEnv('KITTY_INSPECT_ENDPOINT')!,
+          endpoint: kittyEndpoint,
           instanceId: palEnv('KITTY_INSTANCE_ID') || randomUUID(),
           approvedCwdRoots: policy.approved_roots,
         }),
@@ -254,6 +293,22 @@ export class MemoryService {
       } catch {
         this.lastError = "COLLECTOR_UNAVAILABLE";
       }
+  }
+  /** Says, for every desktop source, that its last observation may no longer hold, and why. */
+  private unknown(reason: "locked" | "suspended") {
+    for (const source of ["hyprland", "kitty", "fish", "editor", "filesystem"] as const) this.live.markSourceUnknown(source, reason);
+    this.notify({ type: "workspace", generation: this.live.snapshot().generation });
+  }
+  /** Asks every source again; one that cannot answer stays unknown. */
+  private async reverify() {
+    const generation = this.collectorGeneration;
+    for (const c of this.collectors) { if (generation !== this.collectorGeneration || this.closed) return; await c.reconcile().catch(() => {}); }
+  }
+  /** The computer slept: nothing seen before it did is current until it is seen again. */
+  async resumed(_gapMs: number) {
+    if (this.closed || !this.livePolicy.policy.enabled) return;
+    this.unknown("suspended");
+    await this.reverify();
   }
   /**
    * Applies the current collector policy to one live observation: the kept
@@ -276,7 +331,8 @@ export class MemoryService {
       kitty: policy.kitty_enabled,
       filesystem: policy.filesystem_enabled,
       repository: roots.length > 0,
-      editor: false,
+      editor: policy.editor_enabled,
+      session: policy.session_enabled,
     };
     if (!enabled[o.source]) return null;
     if (o.source === "hyprland" && "title" in properties &&
@@ -284,6 +340,7 @@ export class MemoryService {
       delete properties.title;
     if ((o.source === "fish" || o.source === "kitty") && "cwd" in properties && !within(properties.cwd))
       delete properties.cwd;
+    if (o.source === "editor" && "path" in properties && !within(properties.path)) return null;
     if (o.source === "filesystem" && o.freshness !== "unknown" && !(within(properties.path) && within(properties.root)))
       return null;
     if (o.source === "repository" && o.freshness !== "unknown") {
@@ -302,7 +359,15 @@ export class MemoryService {
    * models are refused, so local-only sources never leave through indexing. A
    * user-configured remote Ollama server remains supported; it is not cloud.
    */
+  embeddingAccess?:(provider:ApiProvider,id?:string)=>ApiAccess;
+  cloudEmbeddings() {return (this.configuration.embedding_provider || 'ollama')!=='ollama';}
   async identity(host: string, signal: AbortSignal, model = this.configuration.embedding_model) {
+    if (this.cloudEmbeddings() && (this.configuration.embedding_provider!=='google' || this.configuration.embedding_connection_id || this.configuration.embedding_dimensions)) {
+      if (!this.configuration.allow_cloud_embedding) fail('POLICY_DENIED','Enable cloud memory embeddings for this account');
+      const account=this.configuration.embedding_connection_id?this.readConnection(this.configuration.embedding_connection_id):undefined;
+      const key=JSON.stringify(['hosted-embeddings-v1',this.configuration.embedding_provider,account?.id||'default',account?.revision, this.credentials.credentialRevision(account?'connection:'+account.id:'provider:'+this.configuration.embedding_provider),this.configuration.embedding_dimensions||'native',this.configuration.embedding_pooling||'mean',model,'query-document','unit','cosine','codepoint-chunks-480-v1']);
+      return {key,digest:createHash('sha256').update(key).digest('hex')};
+    }
     if (this.configuration.embedding_provider === 'google') {
       if (!this.configuration.allow_cloud_embedding) fail('POLICY_DENIED', 'Enable cloud memory embeddings before using Gemini');
       const digest = createHash('sha256').update(JSON.stringify(['google-embedding-route-v1', model])).digest('hex');
@@ -340,7 +405,7 @@ export class MemoryService {
     signal: AbortSignal,
     model = this.configuration.embedding_model,
   ) {
-    const cloud = this.configuration.embedding_provider === 'google';
+    const cloud = this.cloudEmbeddings(), provider=this.configuration.embedding_provider ?? 'ollama';
     if (cloud && !this.configuration.allow_cloud_embedding) fail('POLICY_DENIED', 'Enable cloud memory embeddings before using Gemini');
     const prompts = embeddingPrompts(model),
       prefix = kind === "query" ? prompts.query : prompts.document;
@@ -354,7 +419,7 @@ export class MemoryService {
     const flat = chunks.flat(),
       vectors: number[][] = [];
     for (let i = 0; i < flat.length; i += 16) {
-      const result = cloud ? { embeddings: await googleEmbeddings({ key: () => this.credentials.key('google') }, model, flat.slice(i, i + 16), kind, signal) } : await ollamaJson(
+      const result = cloud ? { embeddings: await hostedEmbeddings(provider as Exclude<EmbeddingProvider,'ollama'>, provider==='voyage'?{key:()=>this.credentials.key('voyage')}:this.embeddingAccess?.(provider as ApiProvider,this.configuration.embedding_connection_id)??{key:()=>this.credentials.key(provider as ApiProvider)},model,flat.slice(i,i+16),kind,signal,this.configuration.embedding_dimensions || undefined,this.configuration.embedding_pooling || 'mean') } : await ollamaJson(
         host,
         "embed",
         {
@@ -397,27 +462,47 @@ export class MemoryService {
     });
   }
   fingerprint(identity: { key: string }, dimension: number) {
+    const config = vectorConfig();
+    const qdrant=palEnv('QDRANT_URL') || 'http://127.0.0.1:6333';
+    const destination=config?vectorConfigId(config):qdrant==='http://127.0.0.1:6333'?'':qdrant;
     return createHash("sha256")
-      .update(identity.key + ":" + dimension)
+      .update(identity.key + ":" + dimension + (destination ? ":" + destination : ""))
       .digest("hex");
   }
-  async vectorRepo(fingerprint: string, dimension: number, signal?: AbortSignal) {
-    let repo = this.vectors.get(fingerprint);
-    if (!repo) {
-      repo = new QdrantVectorRepository({
-        endpoint: palEnv('QDRANT_URL') || "http://127.0.0.1:6333",
-        apiKey: await this.secret("qdrant"),
-        // Stable legacy namespace: changing it would strand existing vectors during the PAL upgrade.
-        collectionPrefix: "cere_" + fingerprint.slice(0, 12),
-        dimension,
-        distance: "Cosine",
-        requestTimeoutMs: 1000,
-      });
-      await repo.initialize(signal);
-      await this.canonical.call("embedding_space", { fingerprint, dimension }, signal);
-      this.vectors.set(fingerprint, repo);
+  async vectorRepo(fingerprint: string, dimension: number, signal?: AbortSignal, historical = false): Promise<VectorProjection> {
+    const ready = this.vectors.get(fingerprint);
+    if (ready) return ready;
+    const opening = this.openingVectors.get(fingerprint);
+    if (opening) return opening;
+    const pending = this.openVector(fingerprint, dimension, signal, historical);
+    this.openingVectors.set(fingerprint, pending);
+    try { return await pending; } finally { this.openingVectors.delete(fingerprint); }
+  }
+  private async openVector(fingerprint: string, dimension: number, signal?: AbortSignal, historical = false) {
+    if (!this.vectorManifest) {
+      this.vectorManifest = new DatabaseSync(join(this.vectorDirectory, 'vector-targets.sqlite'));
+      this.vectorManifest.exec('CREATE TABLE IF NOT EXISTS targets(space TEXT PRIMARY KEY, config TEXT NOT NULL)');
     }
-    return repo;
+    const manifest = this.vectorManifest;
+    const saved = manifest.prepare('SELECT config FROM targets WHERE space=?').get(fingerprint);
+    const active = vectorConfig();
+    const recorded=saved?JSON.parse(String(saved.config)):undefined;
+    const config: VectorConfig | undefined = saved ? recorded?.engine==='qdrant'?undefined:recorded : historical ? undefined : active;
+    const currentQdrant=palEnv('QDRANT_URL') || 'http://127.0.0.1:6333';
+    const qdrantEndpoint=recorded?.engine==='qdrant'?recorded.endpoint:currentQdrant;
+    if (config?.external && palEnv('VECTOR_CLOUD') !== '1') throw new Error('External vector store is disabled');
+    // A historical target never receives a credential configured for another destination.
+    const key = config && active && vectorConfigId(config) === vectorConfigId(active) ? palEnv('VECTOR_API_KEY') || '' : '';
+    const repo: VectorProjection = config ? new ServiceVectorRepository(config, fingerprint, dimension, this.vectorDirectory, key)
+      : new QdrantVectorRepository({endpoint:qdrantEndpoint,apiKey:qdrantEndpoint===currentQdrant?await this.secret('qdrant'):'',
+          collectionPrefix:'cere_' + fingerprint.slice(0,12),dimension,distance:'Cosine',requestTimeoutMs:1000});
+    try {
+      await repo.initialize(signal);
+      manifest.prepare('INSERT OR IGNORE INTO targets VALUES(?,?)').run(fingerprint, JSON.stringify(config || {engine:'qdrant',endpoint:qdrantEndpoint}));
+      await this.canonical.call('embedding_space', {fingerprint, dimension}, signal);
+      this.vectors.set(fingerprint, repo);
+      return repo;
+    } catch (error) { await repo.close(); throw error; }
   }
   async secret(kind: string) {
     const path = palEnv('MEMORY_CREDENTIALS_FILE');
@@ -477,13 +562,13 @@ export class MemoryService {
         // generation's deletion and every publication in it succeeded.
         if (data.deletedIds.length) {
           for (const space of await this.canonical.call("embedding_spaces"))
-            await this.vectorRepo(space.fingerprint, space.dimension, signal);
+            await this.vectorRepo(space.fingerprint, space.dimension, signal, true);
           for (const repo of this.vectors.values())
             await repo.deleteByArtifacts(data.deletedIds, data.erasureEpoch, signal);
         }
         const byHost = new Map<string, Row[]>();
         for (const artifact of data.artifacts) {
-          if (this.configuration.embedding_provider === 'google' && artifact.sensitivity !== 'cloud_allowed') continue;
+          if ((this.cloudEmbeddings() || vectorConfig()?.external) && artifact.sensitivity !== 'cloud_allowed') continue;
           const host = artifact.embedding_host || this.configuration.host;
           const group = byHost.get(host) || [];
           group.push(artifact);
@@ -600,7 +685,7 @@ export class MemoryService {
       signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(30000)]);
     try {
       const space = await this.space(host, signal);
-      const batch: Row[] = await this.canonical.call("vector_backlog", { host, fingerprint: space.fingerprint, limit: 16, cloud: this.configuration.embedding_provider === 'google' });
+      const batch: Row[] = await this.canonical.call("vector_backlog", { host, fingerprint: space.fingerprint, limit: 16, cloud: this.cloudEmbeddings() });
       if (!batch.length) return false;
       const vectors = await this.embed(host, batch.map((a) => a.text), "document", signal);
       for (const [index, a] of batch.entries()) {
@@ -639,7 +724,7 @@ export class MemoryService {
       const provider = this.configuration.extraction_provider || 'ollama';
       const override=this.reviewSettings.profile.overrides.extract;
       if(override)this.extractor=new RoutedExtractionAdapter(this.review.router,override,this.configuration.allow_cloud_extraction);
-      this.extractor ??= provider !== 'ollama' ? new ApiExtractionAdapter({ provider, model: this.configuration.extraction_model, allowCloud: this.configuration.allow_cloud_extraction }, { key: () => this.credentials.key(provider) }) : new OllamaExtractionAdapter({
+      this.extractor ??= provider !== 'ollama' ? new ApiExtractionAdapter({ provider, model: this.configuration.extraction_model, allowCloud: this.configuration.allow_cloud_extraction }, (this.configuration.extraction_connection_id && this.embeddingAccess?.(provider as ApiProvider, this.configuration.extraction_connection_id)) || { key: () => this.credentials.key(provider) }) : new OllamaExtractionAdapter({
         endpoint: extractionHost,
         model: this.configuration.extraction_model,
         allowCloud: this.configuration.allow_cloud_extraction,
@@ -779,13 +864,14 @@ export class MemoryService {
       return this.canonical.call('graph_pointers',{scope_id:p.scope_id,seeds,nodes:expanded.nodes,edges:expanded.edges,known_revision:seedQuery.known_revision,world_at_us:seedQuery.world_at_us,model_route:seedQuery.model_route});
     })().catch(()=>{coverage.push('graph_degraded');return [];});
     try {
+      if ((this.cloudEmbeddings() || vectorConfig()?.external) && p.model_route === "local_only") throw new Error("This query requires local processing");
       const host = p.host || this.configuration.host,
         identity = await this.identity(host, guard),
         [vector] = await this.embed(host, [p.text], "query", guard),
         fingerprint = this.fingerprint(identity, vector.length);
       const pending = await this.canonical.call("pending_artifacts", {
         scope_id: p.scope_id,
-        fingerprint, cloud: this.configuration.embedding_provider === 'google',
+        fingerprint, cloud: this.cloudEmbeddings(),
       }, guard);
       if (pending.length) {
         const vectors = await this.embed(
@@ -849,7 +935,7 @@ export class MemoryService {
     const graphIds=await graphPromise;
     // Setup that outlived the deadline must not keep the foreground waiting on stragglers.
     if (guard.aborted && !signal?.aborted && !coverage.includes("deadline_partial")) coverage.push("deadline_partial");
-    const settings=this.reviewSettings,rank=settings.profile.mode==='automatic'&&settings.profile.rerank&&!!settings.profile.reviewModel;
+    const settings=this.reviewSettings,rank=settings.profile.mode==='automatic'&&settings.profile.rerank&&(!!settings.profile.reviewModel||!!this.configuration.voyage_rerank_model);
     let result = await this.canonical.call(
       "retrieve",
       {
@@ -869,9 +955,11 @@ export class MemoryService {
     if(rank&&result.review_pool?.length>1&&!guard.aborted){
       let strategy='baseline',ordered:string[]=[],fingerprint:string|undefined,usage;
       try{
-        const ranked=await this.review.rerank(query,result,settings,policy.policy.allow_cloud_memory===true && p.model_route==='cloud',
+        const voyage=this.configuration.voyage_rerank_model;
+        if(voyage && !(policy.policy.allow_cloud_memory===true && p.model_route==='cloud' && settings.profile.allowCloudCuration)) throw new Error('Cloud reranking is not authorized');
+        const ranked=voyage?await voyageRerank(this.credentials.key('voyage'),voyage,query.text,result.review_pool,AbortSignal.any([guard,AbortSignal.timeout(settings.profile.rerankMs),this.reviewController.signal])):await this.review.rerank(query,result,settings,policy.policy.allow_cloud_memory===true && p.model_route==='cloud',
           AbortSignal.any([guard,AbortSignal.timeout(deep?deadline:settings.profile.rerankMs),this.reviewController.signal]));
-        if(ranked){ordered=ranked.ids;fingerprint=ranked.route;usage=ranked.usage;strategy='model';}
+        if(ranked){ordered=ranked.ids;fingerprint=ranked.route;usage=ranked.usage;strategy=voyage?'voyage':'model';}
       }catch(e){strategy='fallback_'+errorCode(e);}
       // Reranking never grants access. Re-run baseline hydration even after failure
       // so a concurrent forget, correction or route change cannot reuse stale text.
@@ -914,6 +1002,7 @@ export class MemoryService {
   workspace() {
     const snapshot = this.liveSnapshot(),
       fresh = snapshot.observations.filter((o) => o.freshness === "fresh");
+    const session = snapshot.observations.find((o) => o.source === "session" && o.kind === "SESSION_STATE");
     const focus = fresh.find((o) => o.kind === "WINDOW_FOCUS"),
       address = focus?.properties.address;
     const window = address
@@ -921,6 +1010,8 @@ export class MemoryService {
           (o) =>
             o.source === "hyprland" &&
             o.properties.address === address &&
+            // The focus event names the same address but is not the window.
+            o.kind !== "WINDOW_FOCUS" &&
             !o.kind.endsWith("CLOSED"),
         )
       : undefined;
@@ -931,17 +1022,26 @@ export class MemoryService {
         o.properties.tabActive &&
         o.properties.paneFocused,
     );
+    // With several terminals running, the focused window's own process says which one it is.
+    const pid = window?.properties.pid,
+      own = pid === undefined ? panes : panes.filter((o) => o.properties.kittyPid === undefined || o.properties.kittyPid === pid);
     let pane =
       window &&
       /kitty/i.test(String(window.properties.appClass)) &&
-      panes.length === 1
-        ? panes[0]
+      own.length === 1
+        ? own[0]
         : undefined;
+    // Pane numbers repeat between terminals; a shell or editor that names its terminal must name this one.
+    const sameInstance = (o: LiveObservation) => o.properties.kittyPid === undefined || pane?.properties.kittyPid === undefined || o.properties.kittyPid === pane.properties.kittyPid;
+    // An editor counts only for the window or the terminal pane it says it is in.
+    const editors = window ? fresh.filter((o) => o.source === "editor" && typeof o.properties.path === "string" && /^DOCUMENT_(OPENED|FOCUSED|SAVED)$/.test(o.kind) &&
+        (pane ? o.properties.kittyPaneId === pane.properties.paneId && sameInstance(o) : pid !== undefined && o.properties.kittyPaneId === undefined && o.properties.pid === pid)) : [],
+      document = editors.length === 1 ? editors[0] : undefined;
     const shells = pane
       ? fresh.filter(
           (o) =>
             o.kind === "SHELL_STATE" &&
-            o.properties.kittyPaneId === pane!.properties.paneId,
+            o.properties.kittyPaneId === pane!.properties.paneId && sameInstance(o),
         )
       : [];
     const shell = shells.length === 1 ? shells[0] : undefined,
@@ -965,9 +1065,12 @@ export class MemoryService {
         window: window || null,
         pane: pane || null,
         shell: shell || null,
+        document: document || null,
         cwd: cwd || null,
         checkout: checkouts.length === 1 ? checkouts[0] : null,
         freshness: window ? "fresh" : "unknown",
+        ...(this.sessionLocked ? { reason: "locked" } : {}),
+        ...(session ? { locked: session.properties.locked === true } : {}),
       },
       unknown: [
         ...(!window ? ["focused_window"] : []),
@@ -1037,6 +1140,7 @@ export class MemoryService {
     if (this.closed) return;
     this.closed = true;
     clearInterval(this.timer);
+    this.suspend.stop();
     this.reviewController.abort();
     await this.collectorRpc?.close();
     this.controller.abort(new Error("Memory service closed"));
@@ -1047,6 +1151,7 @@ export class MemoryService {
       ...[...this.vectors.values()].map((v) => v.close()),
     ]);
     await Promise.allSettled([this.reviewWork,this.retentionWork]);
+    this.vectorManifest?.close();
     await this.canonical.close();
   }
 }

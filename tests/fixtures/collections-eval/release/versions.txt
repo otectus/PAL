@@ -1,0 +1,3 @@
+Version 4.2 raised the minimum database to PostgreSQL 15.
+Version 4.3 removed the legacy importer.
+Version 4.4 added audit exports in Parquet.

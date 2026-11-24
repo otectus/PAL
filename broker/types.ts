@@ -4,6 +4,7 @@ import { defaultElevenConfig, type ElevenConfig } from './elevenlabs.ts';
 import { defaultPersonality, defaultAssistantName, defaultAvatar, type AvatarId } from './personality.ts';
 import type { RemoteExecution } from './execution.ts';
 import { defaultIndexConfig, type IndexConfig } from './indextts-config.ts';
+import { defaultTimeSettings } from './time.ts';
 
 export type Provider = typeof import('./provider-catalog.ts').providerIds[number];
 export type EffortOption = { id: string; displayName: string; description?: string };
@@ -13,6 +14,12 @@ export type ModelOption = {
   capabilities?: string[]; cloud?: boolean; contextLength?: number;
   /** The provider's advertised output-token ceiling, when its catalog states one. */
   maxOutputTokens?: number;
+  inputModalities?:string[];outputModalities?:string[];supportedParameters?:string[];
+  pricing?:Record<string,string>;routeProvider?:string;
+  /** What the catalog states, in plain words: context, price, what it reads and makes. */
+  detail?:string;free?:boolean;
+  /** The day the provider says it stops serving the model. */
+  expires?:string;
 };
 export type Status = 'idle' | 'starting' | 'working' | 'waiting' | 'stopping' | 'error' | 'interrupted' | 'disconnected';
 export type SessionActivity = 'recalling' | 'thinking' | 'speaking' | 'working' | 'delegating' | 'waitingForAgents' | 'compacting' | 'planning';
@@ -28,7 +35,7 @@ export type Session = {
   ollama?: { host: string; tools: boolean }; parentId?: string;
   /** The named connection this conversation was created on (connections.ts) and its revision then. */
   connectionId?: string; connectionRevision?: number;
-  api?: { tools: boolean };
+  api?: { tools: boolean; options?: Record<string, unknown> };
   revision?: string; draftRevision?: string; configRevision?: string; turnId?: string;
   /**
    * The authorization snapshot of the phone controlling this conversation now (authority.ts). `effectivePolicy`
@@ -54,6 +61,10 @@ export type Session = {
   capabilities?: import('./tools/contracts.ts').SessionCapabilities;
   /** Per-conversation model options, sent only where the provider supports them. */
   modelOptions?: ModelOptions;
+  /** This conversation's own time zone; absent follows Settings › Application › Time awareness. */
+  timeZone?: string;
+  /** A05: the project task the person said this conversation works on; it ends with the task. */
+  task?: { id: string; cwd: string; revision: string; text: string };
 };
 /** Overrides of a provider's defaults; an absent field keeps the provider's default. */
 export type ModelOptions = { temperature?: number; maxOutputTokens?: number; contextTokens?: number; keepAlive?: string };
@@ -73,7 +84,7 @@ export type ConversationDefaults = Omit<ProjectDefaults, 'trusted'>;
 export type Project = { cwd: string; name: string; revision: string; updated: number; favorite: boolean; defaults: ProjectDefaults; behaviorProfileId?: string;
   /** A06: whether PAL-managed API/Ollama turns read the project's convention files. */
   conventions?: boolean };
-export type Source = { title: string; url: string };
+export type Source = { title: string; url: string; provider?:string;responseId?:string;resultId?:string;sourceType?:'web'|'x'|'file'|'document'|'unknown';startOffset?:number;endOffset?:number;offsetUnit?:'unicode-code-point'|'utf16-code-unit'|'utf8-byte'|'unknown' };
 /** Small display fields retained when a provider replaces a tool's input with its result. */
 export type ToolActivity = {
   name?: string; target?: string; description?: string; summary?: string; action?: 'read' | 'search' | 'listFiles';
@@ -85,12 +96,16 @@ export type ToolActivity = {
  * 'answer', 'queued' or 'queue-cancelled'. A 'delegation' row is user-role text that PAL writes itself when
  * delegated work reports back to the conversation that started it; it is never the user's words.
  */
-export type Message = { id: string; sessionId: string; role: string; text: string; time: number; kind?: string; sources?: Source[]; revision?: string; turnId?: string;
+export type Message = { providerOutputTrace?:import('./research/provider-output-files.ts').ProviderResponseTrace;id: string; sessionId: string; role: string; text: string; time: number; kind?: string; sources?: Source[]; revision?: string; turnId?: string;
   toolActivity?: ToolActivity;
+  /** When PAL received this message and the zone it was read in; `time` keeps ordering the transcript. */
+  timing?: import('./temporal-context.ts').AcceptedMessageTime;
   /** M02: formatting checks this reply did not meet. A note only: the text is never changed. */
   styleNotes?: { constraint: string; label: string; count: number }[];
   /** Broker-issued artifact versions this row produced or refers to; cards resolve them through the broker. */
   artifacts?: import('./tools/contracts.ts').ArtifactRef[];
+  /** Transcripts the turn referred to: times the reply cites, such as [12:34], open them there. */
+  recordings?: { artifactId: string; versionId: string; name: string }[];
   /** A durable Workbench operation (image job, change set, run) this row reports on. */
   operationId?: string;
   /** A change set this row asks the user to review. */
@@ -102,19 +117,19 @@ export type RunCompletion = {
   verification?: 'not-run' | 'passed' | 'failed' | 'inconclusive';
   evidence?: { label: string; path?: string; command?: string; exitCode?: number; observedAt: number }[];
 };
-export type SearchProvider = 'auto' | 'duckduckgo' | 'brave' | 'mojeek' | 'searxng';
+export type SearchProvider = 'auto' | 'duckduckgo' | 'brave' | 'mojeek' | 'searxng' | 'perplexity' | 'google_custom';
 export type Settings = {
   telemetry: import('./telemetry/protocol.ts').TelemetryConfig;
   personality: string;
   assistantName: string;
   avatar: AvatarId;
-  ttsProvider:'local'|'indextts'|'elevenlabs'; indextts:IndexConfig; elevenlabs:ElevenConfig;
-  voice: string; speechEnabled: boolean; speechProviders:Record<Provider,boolean>; speechRate:number; speechPitch:number; speechVolume:number; speechBrief:boolean; transcription:{executable:string;model:string};
+  ttsProvider:'local'|'indextts'|'elevenlabs'|import('./hosted-speech.ts').HostedSpeechProvider; hostedVoice?:import('./hosted-speech.ts').HostedVoice; indextts:IndexConfig; elevenlabs:ElevenConfig;
+  voice: string; speechEnabled: boolean; speechProviders:Record<Provider,boolean>; speechRate:number; speechPitch:number; speechVolume:number; speechBrief:boolean; /** M11: synthesized audio of saved messages, kept only while on. */ speechCache: import('./speech-cache.ts').SpeechCacheSettings; transcription:import('./transcription.ts').TranscriptionSettings;
   ollama: { host: string; model: string };
   /** The new-conversation dialog's starting choices for general conversations; null keeps its stock choices. Projects keep their own defaults. */
   conversationDefaults: ConversationDefaults | null;
-  webSearch: { enabled: boolean; provider: SearchProvider; searxngUrl: string };
-  memory: { enabled: boolean; model: string; extractionModel?: string; extractionProvider?: 'ollama' | 'google' | 'anthropic'; embeddingProvider?: 'ollama' | 'google'; allowCloudEmbedding?: boolean; allowCloudMemory?: boolean; allowCloudExtraction?: boolean };
+  webSearch: { enabled: boolean; provider: SearchProvider; googleEngineId?:string; searxngUrl: string };
+  memory: { enabled: boolean; model: string; extractionModel?: string; extractionProvider?: 'ollama' | 'google' | 'anthropic'; /** The named account extraction uses; unset uses the provider's default key. */ extractionConnectionId?: string; embeddingProvider?: import('./graph-memory/hosted-embeddings.ts').EmbeddingProvider; embeddingPooling?:'mean'|'cls'; voyageRerankModel?:string; embeddingConnectionId?:string; embeddingDimensions?:number; allowCloudEmbedding?: boolean; allowCloudMemory?: boolean; allowCloudExtraction?: boolean };
   desktopProfile: 'normal'|'focus'|'gaming'|'presentation'; interfaceScale:number; homePositions:Record<string,{x:number;y:number}>;
   topmost: boolean; scale: number; roaming: boolean; quiet: boolean; reducedMotion: boolean;
   motionIntensity: number; expressiveCues: boolean; idleEnergy: 'calm' | 'lively';
@@ -123,7 +138,8 @@ export type Settings = {
   /** Which key sends from the composer; Shift+Enter always adds a line. */
   sendKey: 'enter' | 'ctrlEnter' | 'button';
   /** M07: an optional Markdown notes vault the user chose; cloud models read it only when allowed. */
-  notesVault: { path: string; enabled: boolean; allowCloud: boolean };
+  /** folders: the parts of the vault assistants may use, relative to it; none means the whole vault. */
+  notesVault: { path: string; enabled: boolean; allowCloud: boolean; folders: string[] };
   /** M13: one OpenAI-compatible chat endpoint. Its capabilities are the user's declaration, not verified. */
   compatible: CompatibleEndpoint;
   /** A02: outbound MCP tool servers. Secret values live in the owner-only secrets file, never here. */
@@ -136,10 +152,14 @@ export type Settings = {
   audio: { input: string; output: string };
   /** M21: spoken commands from the allowlist; off by default and shown before running unless confirm is off. */
   voiceCommands: { enabled: boolean; confirm: boolean; speakFeedback: boolean };
+  /** A07: local services PAL may start, and which of them start with it. Both are empty until chosen. */
+  localServices: import('./service-manager.ts').LocalServiceSettings;
   /** M16: measure responsiveness (durations only) while on. */
   responsiveness: boolean;
   /** When a delegated Codex or Claude turn ends, its parent conversation takes an automatic turn to report it. */
   delegationUpdates: boolean;
+  /** Time awareness: what models are told about the current date and time, and how PAL shows it. */
+  time: import('./time.ts').TimeSettings;
   hidden: boolean; profile: 'manual' | 'scoped' | 'broad'; paused: boolean;
   bypassCliPermissions: boolean; bypassComputerPermissions: boolean;
   categories: string[]; grants: { category: string; cwd: string; expires: number }[];
@@ -164,6 +184,7 @@ export type Approval = {
 };
 export type ProviderEvent = { type: string; id?: string; text?: string; data?: any; toolActivity?: ToolActivity };
 export type SendOptions = {
+  originalFiles?:string[];
   /** Sources the user referenced with @, resolved and re-authorized by the Workbench; kept apart from the user's words. */
   references?: { text: string; images: string[]; restricted?: import('./tools/contracts.ts').DestinationPolicy };
   webSearch?: boolean;
@@ -171,6 +192,8 @@ export type SendOptions = {
   webConstraints?: import('./web-plan.ts').SearchConstraints;
   /** Reauthorize immediately before the provider request can leave the broker. */
   beforeAccept?: () => void;
+  /** The serialized request as it should leave now: a later attempt, or one that waited, carries a newer clock sample. */
+  refresh?: (payload: string) => string;
   /** The request left the broker, so a missing acknowledgement has an unknown outcome. */
   onDispatched?: () => void;
   /** The provider positively acknowledged the turn. */
@@ -194,22 +217,24 @@ export const defaultSettings: Settings = {
   personality: defaultPersonality,
   assistantName: defaultAssistantName, avatar: defaultAvatar,
   ttsProvider:'local', indextts:structuredClone(defaultIndexConfig), elevenlabs:structuredClone(defaultElevenConfig),
-  voice: 'en_US-amy-medium', speechEnabled: true, speechProviders:Object.fromEntries(providerIds.map(id=>[id,true])) as Record<Provider,boolean>, speechRate:1, speechPitch:0, speechVolume:1, speechBrief:false, transcription:{executable:'',model:''},
+  voice: 'en_US-amy-medium', speechEnabled: true, speechProviders:Object.fromEntries(providerIds.map(id=>[id,true])) as Record<Provider,boolean>, speechRate:1, speechPitch:0, speechVolume:1, speechBrief:false, speechCache:{enabled:false,days:7,megabytes:100}, transcription:{executable:'',model:''},
   ollama: { host: 'http://127.0.0.1:11434', model: '' },
   conversationDefaults: null,
   webSearch: { enabled: false, provider: 'auto', searxngUrl: '' },
   memory: { enabled: false, model: 'nomic-embed-text', extractionModel: defaultExtractionModel },
   desktopProfile: 'normal', interfaceScale:1, homePositions:{},
   topmost: true, scale: 1, roaming: false, quiet: false, reducedMotion: false, motionIntensity: .7, expressiveCues: true, idleEnergy: 'lively', hidden: false,
-  showMemoryCitations: false, sendKey: 'enter', notesVault: { path: '', enabled: false, allowCloud: false },
+  showMemoryCitations: false, sendKey: 'enter', notesVault: { path: '', enabled: false, allowCloud: false, folders: [] },
   compatible: { baseUrl: '', label: '', requiresKey: true, tools: false, images: false, streaming: true, usage: false, contextLength: 0, maxOutputTokens: 0 },
-  extensions: [], customTools: [], workbench: { imageConnections: [], vision: { provider: '', model: '' }, helper: { provider: '', model: '' }, ocr: { languages: 'eng' }, codeLab: { enabled: false }, lowMemory: false }, audio: { input: '', output: '' }, voiceCommands: { enabled: false, confirm: true, speakFeedback: false }, responsiveness: false, delegationUpdates: true,
+  extensions: [], customTools: [], workbench: { imageConnections: [], vision: { provider: '', model: '' }, helper: { provider: '', model: '' }, ocr: { languages: 'eng' }, codeLab: { enabled: false }, lowMemory: false }, audio: { input: '', output: '' }, voiceCommands: { enabled: false, confirm: true, speakFeedback: false }, localServices: { managed: [], autostart: [] }, responsiveness: false, delegationUpdates: true, time: { ...defaultTimeSettings },
   profile: 'scoped', paused: false, bypassCliPermissions: false, bypassComputerPermissions: false, categories: [], grants: [],
   position: { output: '', x: 0.86, y: 0.78 }, roamArea: { left: 0.05, right: 0.95, top: 0.5, bottom: 0.95 },
   onboarding: true, scripts: [],
 };
 
 export type CompatibleEndpoint = { baseUrl: string; label: string; requiresKey: boolean; tools: boolean; images: boolean; streaming: boolean; usage: boolean; contextLength: number; maxOutputTokens: number;
+  /** One reviewed API-key header name for a named account. Omitted means Authorization: Bearer. */
+  authHeader?: string;
   /** Where the endpoint processes requests, as the user declared it; 'unknown' is never treated as local. */
   processing?: import('./tools/contracts.ts').ProcessingRoute };
 export type ToolDefinition = { name: string; title: string; category: string; description: string; schema: Record<string, any>; required?: string[]; readOnly?: boolean };

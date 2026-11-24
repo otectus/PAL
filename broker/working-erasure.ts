@@ -2,6 +2,7 @@ import { readFileSync,unlinkSync,readdirSync } from 'node:fs';
 import { resolve,join } from 'node:path';
 import { eraseImageRecipeCopies } from './media/recipes.ts';
 import { eraseResearchCopies } from './research/library.ts';
+import { eraseSpeechCopies } from './speech-cache.ts';
 import type { Store } from './store.ts';
 import type { Session } from './types.ts';
 export type ErasureMatcher = ((text:string)=>boolean)&{identifies?:(id:unknown)=>boolean};
@@ -39,6 +40,7 @@ export function eraseWorkingCopies(store:Store,session:Session,matches:ErasureMa
   }
   const runKey='workflow-run:'+session.id,run=store.get<any>(runKey,null);if(run)store.set(runKey,{...scrub(run),...(identified(run.messageId,run.turnId,run.sourceEventId)?{prompt:removedText}:{})});
   store.set('workflow:results',store.get<any[]>('workflow:results',[]).flatMap(row=>row.sessionId===session.id?(identified(row.messageId,row.turnId,row.sourceEventId)?[]:[scrub(row)]):[row]));
+  eraseSpeechCopies(store,session.id,message=>!message||matches(message.text)||identified(message.id,message.turnId));
   eraseImageRecipeCopies(store.directory,session.id,matches);
   for (const row of store.db.prepare("SELECT id,data FROM operations WHERE session_id=? AND kind LIKE 'image.%'").all(session.id)) {
     const operation=JSON.parse(String(row.data));
