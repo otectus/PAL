@@ -99,6 +99,7 @@ CSection {
         ScrollBar.vertical:CScrollBar {}
         CTextArea {
             id:editor;objectName:"personalityText"
+            rightPadding:Theme.space4
             textFormat:TextEdit.PlainText
             wrapMode:TextEdit.Wrap;selectByMouse:true
             readOnly:personality.requestId>=0
@@ -206,13 +207,13 @@ CSection {
         ScrollView {
             Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredHeight:Theme.editorMedium;clip:true
             ScrollBar.horizontal.policy:ScrollBar.AlwaysOff;ScrollBar.vertical:CScrollBar {}
-            CTextArea { objectName:"personalityPreviewDraft";readOnly:true;textFormat:TextEdit.PlainText;wrapMode:TextEdit.Wrap;selectByMouse:true;font.family:Theme.font;font.pixelSize:Theme.secondary;padding:Theme.space2;text:personality.preview.draft||"";Accessible.name:"Draft personality instructions" }
+            CTextArea { objectName:"personalityPreviewDraft";rightPadding:Theme.space4;readOnly:true;textFormat:TextEdit.PlainText;wrapMode:TextEdit.Wrap;selectByMouse:true;font.family:Theme.font;font.pixelSize:Theme.secondary;padding:Theme.space2;text:personality.preview.draft||"";Accessible.name:"Draft personality instructions" }
         }
         CText { text:"Saved · settings revision "+(personality.preview.settingsRevision||"0")+" · "+(personality.preview.characters?.saved||0)+" characters";font.pixelSize:Theme.caption;color:Theme.muted }
         ScrollView {
             Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredHeight:Theme.editorMedium;clip:true
             ScrollBar.horizontal.policy:ScrollBar.AlwaysOff;ScrollBar.vertical:CScrollBar {}
-            CTextArea { objectName:"personalityPreviewSaved";readOnly:true;textFormat:TextEdit.PlainText;wrapMode:TextEdit.Wrap;selectByMouse:true;font.family:Theme.font;font.pixelSize:Theme.secondary;padding:Theme.space2;text:personality.preview.saved||"";Accessible.name:"Saved personality instructions" }
+            CTextArea { objectName:"personalityPreviewSaved";rightPadding:Theme.space4;readOnly:true;textFormat:TextEdit.PlainText;wrapMode:TextEdit.Wrap;selectByMouse:true;font.family:Theme.font;font.pixelSize:Theme.secondary;padding:Theme.space2;text:personality.preview.saved||"";Accessible.name:"Saved personality instructions" }
         }
         CButton { objectName:"personalityPreviewRefresh";text:"Refresh preview";quiet:true;enabled:App.connected&&personality.previewRequest<0;onClicked:personality.requestPreview() }
     }

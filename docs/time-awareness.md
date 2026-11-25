@@ -49,6 +49,8 @@ The zone and local time are context sent to the model you are talking to, includ
 
 **Current date and time** in the command palette (Ctrl+K), **Open the clock** in Settings, and **More › Clock and time zone…** open the same view. It needs no model. It shows the reading, its zone and source, and the conversation’s times, and it marks a reading as old when PAL is reconnecting.
 
+![The Date and time view with the reading, its zone and the conversation’s times](../screenshots/clock.png)
+
 On the phone, the conversation menu’s **Clock and time zone** shows the desktop’s reading in the zone the next message would use. Between checks it moves on with the phone’s interval clock, and it expires. Offline, or with an older desktop, the phone shows its own clock and labels it as such. A phone’s own time is never sent or used.
 
 ## What is stored

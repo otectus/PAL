@@ -163,7 +163,7 @@ ColumnLayout {
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ScrollBar.vertical: CScrollBar {}
             ColumnLayout {
-                width: Math.max(0, preferences.availableWidth - Theme.space3)
+                width: Math.max(0, preferences.availableWidth - Theme.minimumTarget)
                 spacing: Theme.space4
                 ResearchSearchSettings {}
                 Rectangle { Layout.fillWidth: true; implicitHeight: Theme.hairline; color: Theme.line }

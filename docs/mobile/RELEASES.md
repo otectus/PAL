@@ -1,12 +1,12 @@
 # Sideload releases
 
-[Download PAL Mobile 2.0.0 for Android](https://github.com/otectus/PAL/releases/download/mobile-dev-v2.0.0/pal-mobile-v2.0.0-dev.apk) · [Release notes](https://github.com/otectus/PAL/releases/tag/mobile-dev-v2.0.0) · [SHA-256 checksums](https://github.com/otectus/PAL/releases/download/mobile-dev-v2.0.0/SHA256SUMS)
+[Download PAL Mobile 2.0.2 for Android](https://github.com/otectus/PAL/releases/download/mobile-dev-v2.0.2/pal-mobile-v2.0.2-dev.apk) · [Release notes](https://github.com/otectus/PAL/releases/tag/mobile-dev-v2.0.2) · [SHA-256 checksums](https://github.com/otectus/PAL/releases/download/mobile-dev-v2.0.2/SHA256SUMS)
 
-The 2.0.0 APK is the optimized development build for Android 11 and later. Its package is `dev.otectus.cere.mobile.debug` and its version code is `2000000`. To upgrade from 0.1.5, download the APK and choose **Update** in Android’s installer. The old in-app checker expects the former GitHub repository name. Keeping the app installed preserves the keys, encrypted cache and drafts. The release includes the same APK under its older filename for compatibility.
+The 2.0.2 APK is the optimized development build for Android 11 and later. Its package is `dev.otectus.cere.mobile.debug` and its version code is `2000002`. To upgrade from 2.0.0 or 0.1.5, download the APK and choose **Update** in Android’s installer. The old in-app checker expects the former GitHub repository name. Keeping the app installed preserves the keys, encrypted cache and drafts. The release includes the same APK under its older filename for compatibility.
 
-The desktop and Android source versions are both 2.0.2. The Android source uses version code `2000002`.
+The desktop and Android source versions are both 2.0.2.
 
-Previous development releases include [0.1.5](https://github.com/otectus/PAL/releases/tag/mobile-dev-v0.1.5), [0.1.4](https://github.com/otectus/PAL/releases/tag/mobile-dev-v0.1.4) and [0.1.3](https://github.com/otectus/PAL/releases/tag/mobile-dev-v0.1.3).
+Previous development releases include [2.0.0](https://github.com/otectus/PAL/releases/tag/mobile-dev-v2.0.0), [0.1.5](https://github.com/otectus/PAL/releases/tag/mobile-dev-v0.1.5), [0.1.4](https://github.com/otectus/PAL/releases/tag/mobile-dev-v0.1.4) and [0.1.3](https://github.com/otectus/PAL/releases/tag/mobile-dev-v0.1.3).
 
 Tags are `mobile-vX.Y.Z`; the Android `versionName` must be `X.Y.Z`, and `versionCode = major*1000000 + minor*1000 + patch`, with each component below 1000. Do not reuse/downgrade a released version. Stable package: `dev.otectus.cere.mobile`; debug: `.debug` suffix.
 

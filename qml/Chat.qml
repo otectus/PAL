@@ -768,7 +768,7 @@ Item {
         id:composerCard;objectName:"composerCard"
         readonly property int minimumHeight:(chat.height<Theme.wideToolbar?Theme.composerCompact:Theme.composerNormal)+(composerActions.folded?extras.height+Theme.space1:0)
         readonly property real heightLimit: Math.max(minimumHeight, chat.height * .48)
-        readonly property real automaticHeight: Math.min(Math.max(minimumHeight, chat.height * .30), Math.max(minimumHeight, composer.contentHeight + composerActions.implicitHeight + 3 * Theme.space3))
+        readonly property real automaticHeight: Math.min(Math.max(minimumHeight, chat.height * .30), Math.max(minimumHeight, composer.contentHeight + composer.topPadding + composer.bottomPadding + composerActions.implicitHeight + 3 * Theme.space3))
         Layout.fillWidth:true;implicitHeight:Math.max(minimumHeight,Math.min(heightLimit,WorkbenchState.layout.composerHeight || automaticHeight));radius:Theme.radiusPanel;color:Theme.surface;border.color:composer.visualFocus?Theme.focus:Theme.border;border.width:composer.visualFocus?Theme.focusWidth:Theme.hairline
         Accessible.role:Accessible.Grouping;Accessible.name:"Message composer"
         DropArea {
@@ -1299,7 +1299,7 @@ Item {
             Layout.fillWidth:true;Layout.preferredHeight:Math.min(Theme.previewHeight,chat.height*.5);clip:true;contentWidth:availableWidth
             ScrollBar.horizontal.policy:ScrollBar.AlwaysOff
             ScrollBar.vertical:CScrollBar{}
-            CTextArea{id:handoffText;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.body;wrapMode:TextEdit.Wrap;selectByMouse:true}
+            CTextArea{id:handoffText;rightPadding:Theme.space4;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.body;wrapMode:TextEdit.Wrap;selectByMouse:true}
         }
         CButton { objectName:"handoffCreate";Layout.fillWidth:true;text:"Create handoff draft";primary:true;enabled:App.connected&&chat.handoffRequest<0&&(!handoffTrust.visible||handoffTrust.checked)&&(!handoffModel.visible||!!handoffModel.currentValue);onClicked:{chat.handoff=handoffText.text;chat.handoffRequest=App.rpc("session.create",{provider:handoffProvider.currentValue,model:handoffModel.visible?handoffModel.currentValue:"",cwd:App.session.cwd,temporary:App.session.temporary===true,trusted:!handoffTrust.visible||handoffTrust.checked,title:"Handoff · "+App.session.title})} }
     }

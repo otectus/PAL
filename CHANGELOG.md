@@ -4,6 +4,17 @@ Notable changes to PAL, the desktop application and its broker, and to PAL Mobil
 
 ## [Unreleased]
 
+### Fixed
+
+- **Code Lab.** Inspecting an input no longer changes the columns that were chosen. The sample analysis could fail because its Y column moved to the first column. Columns that were not chosen are left to the recipe instead of being set to the first one.
+- Scroll bars of bubbles, approvals, notes, personality and other scrolling areas lie along the right edge. They were a short thumb at the top left. A bar that has nothing to scroll is not shown and takes no clicks.
+- The Codex protocol check accepts Codex 0.171.0, which no longer asks PAL for the time.
+
+### Documentation
+
+- The README is an overview again. Its detail moved to guides: [using PAL](docs/GUIDE.md), [providers](docs/PROVIDERS.md), [memory](docs/memory/README.md), [permissions](docs/PERMISSIONS.md), [avatars](docs/AVATARS.md) and [development](docs/DEVELOPMENT.md).
+- All screenshots were retaken from 2.0.2. The gallery now also shows the Workbench, Research, documents, connected accounts, the model list, the clock, the newer Settings pages and the phone. `tools/screenshots/run.sh --phone` takes the phone images.
+
 ## [2.0.2] - 2026-11-24
 
 ### Added

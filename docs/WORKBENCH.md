@@ -2,11 +2,22 @@
 
 The Workbench lets an Ollama or API conversation work with real files, images and analysis runs without a coding CLI. You can always use it yourself; three switches decide what the **model** is offered.
 
-The expanded workspace opens the Workbench alongside saved conversations. Use the panel icon in the bottom-right corner of the window or press **Ctrl+Shift+W** to open or close the Workbench. PAL remembers your choice. Drag the divider to resize the pane, or focus the divider and use the arrow keys. Double-click or press **Home** to restore its default width. **Expand Workbench** gives the active pane the main area, and **Restore split view** returns to side-by-side chat.
+The expanded workspace starts with the conversation. Use the panel icon in the bottom-right corner of the window or press **Ctrl+Shift+W** to open or close the Workbench. PAL remembers your choice. Drag the divider to resize the pane, or focus the divider and use the arrow keys. Double-click or press **Home** to restore its default width. **Expand Workbench** gives the active pane the main area, and **Restore split view** returns to side-by-side chat.
 
 In a narrow window, the same bottom-right button opens and closes the Workbench sheet. **Chat** returns to the composer. **Panes** folds the list of tools, and the command palette can jump directly to a tool such as **Open Notes** or **Browse project files**.
 
 The tabs are **Files**, **Preview**, **Changes**, **Images**, **Runs**, **Terminal**, **Research**, **Canvas**, **Media**, **Notes**, **Shelf** and **Accounts**.
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="../screenshots/workbench-files.png" alt="The Files pane listing a project folder beside a conversation"><br><b>Files</b> beside the conversation.</td>
+<td width="50%" valign="top"><img src="../screenshots/workbench-changes.png" alt="A change waiting for review with its diff"><br>A change waiting in <b>Changes</b>.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img src="../screenshots/reference-picker.png" alt="The reference picker above the composer after typing @dra"><br><b>@</b> in the composer.</td>
+<td width="50%" valign="top"><img src="../screenshots/image-editor.png" alt="The image editor with its tools below a screenshot"><br>The image editor.</td>
+</tr>
+</table>
 
 ## What the model may use
 
@@ -103,7 +114,7 @@ Images and files are never sent to a helper whose destination their permissions 
 
 ## Analysis: Code Lab, commands and Git
 
-Open **Workbench › Runs › Code Lab**. If execution is off, the setup action opens **Settings › Connections › Images & analysis**. Try the sample revenue analysis to see a chart and the six records behind it. The desktop uses Python and Bubblewrap. The status panel lists the installed packages and the limits your system enforces. A full-access Android phone uses that same desktop runtime.
+Open **Workbench › Runs › Code Lab**. If execution is off, the setup action opens **Settings › Connections › Images & analysis**. Try the sample revenue analysis (**Load sample**) to see a chart and the six records behind it. The desktop uses Python and Bubblewrap. The status panel lists the installed packages and the limits your system enforces. A full-access Android phone uses that same desktop runtime.
 
 **Start with your data.** Open a file in Code Lab from the desktop preview or artifact library, or choose **Use in Code Lab** from the phone’s Library. Inputs are ordered and pinned to immutable versions. The first input is the “before” file in a comparison. Use the input review to inspect fields and worksheets, then choose a recipe or edit the code. The plot recipe lets you choose both axes and keeps excluded records with reasons. The keyed comparison flags duplicate or missing keys. The contribution recipe ranks groups by how much they account for a change between two periods.
 
@@ -179,6 +190,8 @@ Open a report in Research or use **Read** on its conversation card. Select a cit
 
 **Pause** saves the remaining work. **Finish now** saves an early report from the collected evidence. **Continue** grants another bounded period of work. Rename, pin, archive and reopen investigations across conversations in the same project. Save a finding to Notes or export a conversation file as Markdown, CSV, BibTeX or JSON. Markdown exports include linked passages so readers can check quotations outside the app. **Refresh** rechecks sources and compares the findings with the previous revision. On desktop, choose a refresh interval to monitor an investigation while the broker is running. Archiving disables its schedule.
 
+![A research report with its answer, citations and sources](../screenshots/research-report.png)
+
 **Canvas** shows an HTML or SVG file from a Workbench folder in an isolated browser preview (Chrome or Chromium must be installed). You can click and type in it, read its console, resize it to phone width, take screenshots, export it, and leave notes on an element; a note says which version of the page it was made on. The page cannot reach the network or PAL.
 
 **Media** keeps an audio or video file with the conversation and shows its time-coded transcript beside it. Search it, correct lines as a new version, ask about the part you select, make a clip of up to 15 minutes, export SubRip or WebVTT subtitles, and translate them with their times. A time cited in a reply opens the recording there. Playing needs `qt6-multimedia`; the transcript works without it. Only the first hour of a recording is transcribed.
@@ -194,6 +207,8 @@ Open a report in Research or use **Read** on its conversation card. Select a cit
 - Assistants see an account only if you let them read it, or prepare changes for you to send, for the projects and kinds of model you choose. No permission bypass sends a draft.
 - Tokens stay in an owner-only file. Nothing read is cached.
 - A routine can deliver its result to an address or issue you name.
+
+![The Accounts pane with an agenda](../screenshots/workbench-accounts.png)
 
 The adapters were tested against local stand-ins for the three services, not against real accounts.
 

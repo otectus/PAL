@@ -3,27 +3,28 @@
 //   fixture.mjs codex app-server   Codex app-server protocol with scripted turns
 //   fixture.mjs claude -p ...      Claude Code model discovery
 //   fixture.mjs agy ...            AntiGravity CLI help and model list
-//   fixture.mjs ollama             Ollama and SearXNG over HTTP; prints its address
-//   fixture.mjs hyprctl|busctl|wpctl|check|quiet   desktop commands the broker runs
+//   fixture.mjs ollama [port]      Ollama and SearXNG over HTTP; prints its address
+//   fixture.mjs hyprctl|busctl|wpctl|whisper|check|quiet   desktop commands the broker runs
 import { createInterface } from 'node:readline';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 
 const [role, ...args] = process.argv.slice(2);
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
 const later = (ms, work) => setTimeout(work, ms);
 
 const codexModels = [
-  ['gpt-6.1-sol', 'GPT-6.1-Sol', 'Latest workhorse model for coding and everyday work.', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], 'medium', true],
-  ['gpt-6-astra', 'GPT-6-Astra', 'Frontier intelligence for the most demanding work.', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], 'medium', false],
+  ['gpt-6.2-sol', 'GPT-6.2-Sol', 'Fast, go-to model for coding and everyday work.', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], 'medium', true],
+  ['gpt-6.2-astra', 'GPT-6.2-Astra', 'Our most capable model for complex coding and professional work.', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], 'medium', false],
+  ['gpt-6.1-terra', 'GPT-6.1 Terra', 'Efficient model that excels at visual understanding and computer use.', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], 'medium', false],
   ['gpt-6-luna', 'GPT-6-Luna', 'Fast and affordable model for easier tasks.', ['low', 'medium', 'high', 'xhigh', 'max'], 'medium', false],
-  ['gpt-5.6-terra', 'GPT-5.6-Terra', 'Older balanced model for straightforward work.', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], 'medium', false],
 ].map(([id, displayName, description, efforts, defaultReasoningEffort, isDefault]) => ({ id, model: id, displayName, description, isDefault, defaultReasoningEffort,
   supportedReasoningEfforts: efforts.map(reasoningEffort => ({ reasoningEffort, description: reasoningEffort })) }));
 const claudeModels = [
   ['default', 'Default (recommended)', 'Opus 5.5 · Best for everyday, complex tasks'],
   ['opus', 'Opus 5.5', 'For complex work and everyday tasks'],
-  ['fable', 'Fable 5.1', 'For your toughest challenges'],
+  ['fable', 'Fable 5.2', 'For your toughest challenges'],
   ['sonnet', 'Sonnet 5.5', 'Most efficient for simpler tasks'],
   ['haiku', 'Haiku 5.5', 'Fastest for quick answers'],
 ].map(([value, displayName, description]) => ({ value, displayName, description, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'] }));
@@ -151,7 +152,7 @@ function codex() {
 }
 
 function claude() {
-  if (args.includes('--version')) { console.log('2.1.300 (Claude Code)'); return; }
+  if (args.includes('--version')) { console.log('2.1.331 (Claude Code)'); return; }
   if (args.includes('--help')) { console.log('Usage: claude [options]\n  --permission-prompts <mode>'); return; }
   createInterface({ input: process.stdin }).on('line', line => {
     const m = JSON.parse(line);
@@ -163,7 +164,7 @@ function claude() {
 function antigravity() {
   if (args.includes('--help')) { console.log('Usage: agy [options]\n  --input-format --output-format --conversation --disable-slash-commands'); return; }
   if (args.includes('models')) {
-    console.log(['gemini-3.8-flash-high\tGemini 3.8 Flash (High)', 'gemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)', 'claude-opus-4-6-thinking\tClaude Opus 4.6 (Thinking)'].join('\n'));
+    console.log(['gemini-4-carbon-high\tGemini 4 Carbon (High)', 'gemini-4-carbon-medium\tGemini 4 Carbon (Medium)', 'gemini-3.8-flash-high\tGemini 3.8 Flash (High)'].join('\n'));
     return;
   }
   process.exit(1);
@@ -180,11 +181,27 @@ const ollamaModels = {
 const ollamaReplies = [
   [/workspace 9|spotify/i, 'Give Spotify a window rule keyed on its class, and Hyprland will put it on workspace 9 every time it opens:\n\n```ini\nwindowrule = workspace 9 silent, class:^(Spotify)$\n```\n\n`silent` keeps you where you are instead of jumping along with it. Reload with `hyprctl reload`, then reopen Spotify to check.'],
   [/discord/i, 'Same rule, different class: give `class:^(discord)$` a `workspace 8 silent` rule.\n\nDiscord\'s class is lowercase, unlike Spotify\'s. If it still lands elsewhere, `hyprctl clients` shows the exact class to match.'],
+  [/drafts/i, 'Two things stand out in `src/drafts/store.ts`:\n\n- `saveDraft` writes on every keystroke. A 400 ms pause before the write keeps typing smooth on slow phones.\n- `syncDrafts` drops a draft when the server answers **409**. Keep both versions and let the person choose.\n\nThe schema itself is fine to freeze. I can propose the change for review in **Changes**.'],
   [/.*/, 'Happy to help. What would you like to work on?'],
 ];
 function vector(text) {
   const digest = createHash('sha256').update(String(text).toLowerCase()).digest();
   return Array.from({ length: 32 }, (_, i) => (digest[i] - 128) / 128);
+}
+// A research report repeats the note's own sentences, each with its passage, and the check confirms the same words.
+function research(prompt) {
+  if (prompt.startsWith('Write a Markdown research report.')) {
+    const passages = prompt.slice(prompt.lastIndexOf('Passages:')), header = /\[(E\d+\.P\d+)\][^\n]*\n([\s\S]*?)(?=\n\[E\d+\.P\d+\]|$)/g;
+    const lines = [...passages.matchAll(header)].flatMap(([, id, text]) => text.split('\n').map(line => line.replace(/^[-#\s]+/, '').trim()).filter(line => /[.]$/.test(line)).map(line => `${line} [${id}]`));
+    return ['## Answer', '', ...lines.slice(0, 2), '', '## What else the notes say', '', ...lines.slice(2).map(line => '- ' + line), '', '## Open questions', '', '- The notes do not say how long an unsynced draft is kept.'].join('\n');
+  }
+  if (prompt.startsWith('Check each claim against only its cited passages.')) {
+    const audit = JSON.parse(prompt.slice(prompt.lastIndexOf('[{"index"')));
+    return JSON.stringify(audit.map(({ index, claim, passages }) => {
+      const sentence = claim.replace(/\s*\[E[^\]]*\]/g, '').replace(/^[-*\s]+/, '').trim();
+      return { index, status: 'supported', quote: passages.some(p => p.text.includes(sentence)) ? sentence : passages[0]?.text.split('\n')[0] ?? '' };
+    }));
+  }
 }
 function ollama() {
   const server = createServer(async (req, res) => {
@@ -199,18 +216,20 @@ function ollama() {
       { title: 'Dispatchers – Hyprland Wiki', url: 'https://wiki.hypr.land/Configuring/Dispatchers/', content: 'workspace, movetoworkspace and movetoworkspacesilent dispatchers.' },
     ] }));
     if (url.pathname === '/api/chat') {
+      const last = [...(body.messages || [])].reverse().find(message => message.role === 'user')?.content || '';
+      const report = research(String(last));
+      if (report) return res.end(JSON.stringify({ model: body.model, message: { role: 'assistant', content: report }, done: true, done_reason: 'stop', prompt_eval_count: 1840, eval_count: 312 }));
       // Memory extraction asks for schema-shaped JSON; the demo proposes nothing.
       if (body.format) return res.end(JSON.stringify({ model: body.model, message: { role: 'assistant', content: '{"entities":[],"assertions":[]}' }, done: true }));
-      const last = [...(body.messages || [])].reverse().find(message => message.role === 'user')?.content || '';
       const answer = ollamaReplies.find(([pattern]) => pattern.test(last))[1];
       res.setHeader('Content-Type', 'application/x-ndjson');
       const words = answer.split(/(?<= )/);
       for (let i = 0; i < words.length; i += 6) res.write(JSON.stringify({ message: { role: 'assistant', content: words.slice(i, i + 6).join('') }, done: false }) + '\n');
-      return res.end(JSON.stringify({ message: { role: 'assistant', content: '' }, done: true, done_reason: 'stop' }) + '\n');
+      return res.end(JSON.stringify({ message: { role: 'assistant', content: '' }, done: true, done_reason: 'stop', prompt_eval_count: 900 + answer.length, eval_count: Math.ceil(answer.length / 4) }) + '\n');
     }
     res.statusCode = 404; res.end('{}');
   });
-  server.listen(11434, '127.0.0.1', () => console.log('http://127.0.0.1:' + server.address().port));
+  server.listen(Number(args[0] || 11434), '127.0.0.1', () => console.log('http://127.0.0.1:' + server.address().port));
   process.on('SIGTERM', () => { server.closeAllConnections(); server.close(); });
 }
 
@@ -234,12 +253,19 @@ function busctl() {
   else if (call.includes('Identity')) reply('Spotify');
 }
 
-if (role === 'codex') { if (args.includes('--version')) console.log('codex-cli 0.162.1'); else codex(); }
+if (role === 'codex') { if (args.includes('--version')) console.log('codex-cli 0.171.0'); else codex(); }
 else if (role === 'claude') claude();
 else if (role === 'agy') antigravity();
 else if (role === 'ollama') ollama();
 else if (role === 'hyprctl') hyprctl();
 else if (role === 'busctl') busctl();
 else if (role === 'wpctl') { if (args[0] === 'get-volume') console.log('Volume: 0.45'); }
+else if (role === 'whisper') {
+  // Writes the transcript whisper.cpp would: plain text and time-coded WebVTT.
+  const lines = ['Thanks for making the time today.', 'We lose the signal for hours at a site.', 'So the drafts have to be safe on the phone first.', 'Last week two of us edited the same form.', 'One version was gone when we got back.', 'I would rather choose between both myself.', 'And I want to see what is still waiting to be sent.', 'A small count next to the title would be enough.'];
+  const stamp = s => `00:00:${String(s).padStart(2, '0')}.000`, out = args[args.indexOf('--output-file') + 1];
+  writeFileSync(out + '.txt', lines.join('\n') + '\n');
+  writeFileSync(out + '.vtt', 'WEBVTT\n\n' + lines.map((line, i) => `${stamp(i * 5)} --> ${stamp(i * 5 + 5)}\n${line}\n`).join('\n'));
+}
 else if (role === 'check') console.log(args[0] === 'test' ? 'Test Files  64 passed (64)\n     Tests  412 passed (412)\n  Duration  52.3s' : 'Notes backed up.');
-else if (role !== 'quiet') { console.error('Usage: fixture.mjs codex|claude|agy|ollama|hyprctl|busctl|wpctl|check|quiet'); process.exit(2); }
+else if (role !== 'quiet') { console.error('Usage: fixture.mjs codex|claude|agy|ollama|hyprctl|busctl|wpctl|whisper|check|quiet'); process.exit(2); }

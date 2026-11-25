@@ -466,7 +466,7 @@ Item {
                     Layout.fillWidth: true; Layout.preferredHeight: Theme.editorShort; clip: true; contentWidth: availableWidth
                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                     ScrollBar.vertical: CScrollBar {}
-                    CTextArea { readOnly: true; text: notes.conflictText; placeholderText: "Their version is empty."; Accessible.name: "Note version from the other device" }
+                    CTextArea { readOnly: true; rightPadding: Theme.space4; text: notes.conflictText; placeholderText: "Their version is empty."; Accessible.name: "Note version from the other device" }
                 }
                 Flow {
                     Layout.fillWidth: true; spacing: Theme.space1

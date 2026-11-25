@@ -389,7 +389,7 @@ Rectangle {
             ScrollView {
                 id:approvalsScroll;objectName:"globalApprovals";visible:shell.globalApprovals.length>0
                 Layout.fillWidth:true;Layout.preferredHeight:Math.min(shell.height*.28,approvalColumn.implicitHeight)
-                clip:true;contentWidth:availableWidth;contentHeight:approvalColumn.implicitHeight;rightPadding:Theme.space2
+                clip:true;contentWidth:availableWidth;contentHeight:approvalColumn.implicitHeight;rightPadding:approvalColumn.implicitHeight>shell.height*.28?Theme.minimumTarget:Theme.space2
                 ScrollBar.horizontal.policy:ScrollBar.AlwaysOff;ScrollBar.vertical:CScrollBar{}
                 Column {
                     id:approvalColumn;width:approvalsScroll.availableWidth;spacing:Theme.space2

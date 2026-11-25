@@ -7369,6 +7369,8 @@ Flickable {
         QTRY_VERIFY_WITH_TIMEOUT(item("codeLabToggle"), 5000);
         QVERIFY(click("codeLabToggle"));
         QTRY_VERIFY_WITH_TIMEOUT(item("codeLabSample") && item("codeLabSample")->isVisible(), 5000);
+        // The recipes come with the status; a sample loaded before it has no column fields to check.
+        QTRY_VERIFY_WITH_TIMEOUT(item("codeLabStatus") && item("codeLabStatus")->isVisible(), 10000);
         QVERIFY(click("codeLabSample"));
         QTRY_VERIFY_WITH_TIMEOUT(item("codeLabCode") && item("codeLabCode")->property("text").toString().contains("savefig"), 6000);
         // A real run needs the confined Python sandbox and the sample's plotting package. Where
@@ -7385,6 +7387,19 @@ Flickable {
             QSKIP(qPrintable("Code Lab cannot run the sample here: " + unavailable));
         }
         QTRY_VERIFY_WITH_TIMEOUT(item("codeLabRun")->isEnabled(), 5000);
+        // Inspecting the sample lists its columns; the ones it was loaded with stay chosen.
+        // A Repeater's delegates are visual children only, and each field has a hidden twin of the other kind.
+        std::function<QQuickItem*(QQuickItem*, const QString&)> shown = [&](QQuickItem *from, const QString &name) -> QQuickItem* {
+            if (!from->isVisible()) return nullptr;
+            if (from->objectName() == name) return from;
+            for (auto child : from->childItems()) if (auto match = shown(child, name)) return match;
+            return nullptr;
+        };
+        const auto column = [&](const char *key) { return shown(view.rootObject(), QString("codeLabRecipeField_") + key); };
+        QTRY_VERIFY_WITH_TIMEOUT(column("y") && column("y")->property("count").toInt() == 2, 8000);
+        QTest::qWait(200);
+        QCOMPARE(column("x")->property("currentText").toString(), QString("month"));
+        QCOMPARE(column("y")->property("currentText").toString(), QString("revenue"));
         QVERIFY(click("codeLabRun"));
         QVariantMap chart;
         QVERIFY2(waitFor([&]{

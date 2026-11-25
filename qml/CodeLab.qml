@@ -239,10 +239,21 @@ ColumnLayout {
         GridLayout { visible: lab.recipeFields.length > 0; Layout.fillWidth: true; columns: width < Theme.narrowPane ? 1 : 2
             Repeater { model: lab.recipeFields; RowLayout { required property var modelData; Layout.fillWidth: true
                 CText { Layout.preferredWidth: Theme.fieldShort; text: modelData.label || modelData.key; elide: Text.ElideRight }
-                CComboBox { objectName: "codeLabRecipeField_" + modelData.key; visible: modelData.type === "column"; Layout.fillWidth: true; editable: true; model: lab.columnModel(modelData); Accessible.name: (modelData.label || modelData.key) + " column"; onEditTextChanged: lab.setFieldValue(modelData.key, editText.trim()) }
+                CComboBox {
+                    id: column
+                    objectName: "codeLabRecipeField_" + modelData.key; visible: modelData.type === "column"; Layout.fillWidth: true
+                    model: lab.columnModel(modelData); Accessible.name: (modelData.label || modelData.key) + " column"
+                    displayText: currentIndex < 0 ? qsTr("Choose a column") : currentText
+                    // Inspecting the inputs gives the box a new list, which puts it on the first entry. Only a person's choice is a value.
+                    function showChosen() { currentIndex = find(lab.fieldValues[modelData.key] || modelData.default || "") }
+                    onModelChanged: showChosen()
+                    Component.onCompleted: showChosen()
+                    onActivated: lab.setFieldValue(modelData.key, currentText)
+                    Connections { target: lab; function onFieldValuesChanged() { column.showChosen() } }
+                }
                 CField { objectName: "codeLabRecipeField_" + modelData.key; visible: modelData.type !== "column"; Layout.fillWidth: true; text: fieldValues[modelData.key] || modelData.default || ""; placeholderText: modelData.type === "number" ? "Number" : "Value"; inputMethodHints: modelData.type === "number" ? Qt.ImhFormattedNumbersOnly : Qt.ImhNone; Accessible.name: modelData.label || modelData.key; onTextEdited: lab.setFieldValue(modelData.key, text.trim()) }
             } }
-            CText { Layout.columnSpan: lab.width < Theme.narrowPane ? 1 : 2; Layout.fillWidth: true; text: lab.preflightColumns().length ? "Column choices were inspected from the selected input(s). You can still type a name." : "Run preflight to inspect selected input columns; you can also type a name."; color: Theme.muted; font.pixelSize: Theme.caption; wrapMode: Text.Wrap }
+            CText { Layout.columnSpan: lab.width < Theme.narrowPane ? 1 : 2; Layout.fillWidth: true; text: lab.preflightColumns().length ? "Column choices were inspected from the selected input(s). Parameters below can name others." : "Choose an input to list its columns, or name them in the parameters below."; color: Theme.muted; font.pixelSize: Theme.caption; wrapMode: Text.Wrap }
         }
         ScrollView { Layout.fillWidth: true; Layout.preferredHeight: Theme.editorMedium; Layout.minimumHeight: Theme.editorShort; clip: true
             CCheckBox { visible:lab.cells.length>0; text:"Share Python variables between cells"; checked:lab.sharedPython; onToggled:lab.sharedPython=checked; Accessible.description:"Starts a fresh Python interpreter on each run. All cells must be Python." }

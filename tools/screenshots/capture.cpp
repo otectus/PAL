@@ -13,6 +13,7 @@
 #include <QScreen>
 #include <QDir>
 #include <QImageWriter>
+#include <QProcess>
 #include <cmath>
 #include <memory>
 
@@ -21,7 +22,7 @@ class Showcase : public QObject {
     std::unique_ptr<Controller> app;
     QPointer<QQuickWindow> window;
     QString out;
-    const QSize workspaceSize{1280,860};
+    const QSize workspaceSize{1280,860},benchSize{1440,900};
 
     bool waitFor(const std::function<bool()> &ready,int timeout=10000){
         QElapsedTimer clock;clock.start();
@@ -98,14 +99,22 @@ class Showcase : public QObject {
         if(root->inherits("QQuickShape")&&!clip.contains(area.center())){root->setVisible(false);hidden.append(root);return;}
         for(auto child:root->childItems())hideClippedIcons(child,clip,hidden);
     }
+    // A software-rendered layer is grabbed on black; without it, hideClippedIcons does the layer's work.
+    static void dropLayers(QQuickItem *root,QList<QPointer<QObject>> &dropped){
+        auto layer=root->property("layer").value<QObject*>();
+        if(layer&&layer->property("enabled").toBool()){layer->setProperty("enabled",false);dropped.append(layer);}
+        for(auto child:root->childItems())dropLayers(child,dropped);
+    }
     // Notices float over the page for a few seconds; shots wait for them to clear. Changing the size
     // repaints the whole window, so nothing an earlier page drew stays behind.
     void shot(const QString &name){
         QVERIFY(window);rest();waitFor([&]{return app->toast().isEmpty();},8000);QTest::qWait(400);
+        QList<QPointer<QObject>> dropped;if(auto scroll=item("workbenchScroll"))dropLayers(scroll,dropped);
         QList<QPointer<QQuickItem>> hidden;hideClippedIcons(window->contentItem(),QRectF(QPointF(),window->size()),hidden);
         const auto size=window->size();window->resize(size+QSize(0,1));QTest::qWait(150);window->resize(size);QTest::qWait(350);
         save(window->grabWindow(),name);
         for(const auto &icon:hidden)if(icon)icon->setVisible(true);
+        for(const auto &layer:dropped)if(layer)layer->setProperty("enabled",true);
     }
     // Scrolls the nearest flickable so a control's top sits just below the viewport's top.
     void reveal(const QString &name,qreal gap=8){
@@ -150,6 +159,8 @@ class Showcase : public QObject {
     }
     void scrollTo(const QString &list,qreal fraction){
         auto view=item(list);QVERIFY2(view,qPrintable(list));
+        // A conversation that follows its newest reply is pulled back until a reader turns the wheel up.
+        if(fraction<1){QTest::wheelEvent(window,view->mapToScene(QPointF(view->width()/2,view->height()/2)),QPoint(0,120));QTest::qWait(300);}
         const qreal range=view->property("contentHeight").toDouble()-view->height();
         if(range>0)view->setProperty("contentY",view->property("originY").toDouble()+range*fraction);
         QTest::qWait(300);
@@ -218,6 +229,40 @@ class Showcase : public QObject {
         return image.copy(used.adjusted(-12,-12,12,12).intersected(image.rect()));
     }
 
+    // A conversation with a project folder, and the Workbench beside it on a chosen tab.
+    const QString draftsTitle="Review offline drafts";
+    QString drafts(){
+        create("ollama","aurora-web",draftsTitle,{{"model","gpt-oss:20b"},{"capabilities",QVariantMap{{"files",true},{"images",true},{"analysis",true}}}});
+        const auto id=sessionNamed(draftsTitle).value("id").toString();
+        if(call("workspace.roots",{{"sessionId",id}}).value("roots").toList().isEmpty()){
+            call("workspace.addRoot",{{"sessionId",id},{"path",QDir::homePath()+"/Projects/aurora-web"},{"policy",QVariantMap{{"write",true},{"organize",true}}}});
+            send(draftsTitle,"Look at how offline drafts are saved and synced. What should change before we freeze the schema?");
+            waitFor([&]{return status(draftsTitle)=="idle"&&app->state().value("sessions").toList().size()>0;},15000);QTest::qWait(1500);
+        }
+        return id;
+    }
+    QString bench(const QString &tab){
+        workspace();const auto id=drafts();open(draftsTitle);window->resize(benchSize);QTest::qWait(300);
+        if(!item("workbench"))click("chatWorkbench");
+        waitFor([&]{return item("workbench")!=nullptr;});
+        if(!item("workbenchTab_"+tab))click("workbenchPaneList");
+        click("workbenchTab_"+tab);QTest::qWait(900);unfocus();
+        return id;
+    }
+    // A focused tab shows its tooltip; the message box has none.
+    void unfocus(){if(auto composer=item("composer"))composer->forceActiveFocus();QTest::qWait(300);}
+    void closeBench(){if(item("workbench"))click("chatWorkbench");}
+    // A simple generated illustration, so the image pages have something original to show.
+    static QImage artwork(int kind,QSize size){
+        QImage image=wallpaper(size);QPainter p(&image);p.setRenderHint(QPainter::Antialiasing);p.setPen(Qt::NoPen);
+        const qreal w=size.width(),h=size.height();
+        if(kind==0){p.setBrush(QColor("#f4d58d"));p.drawEllipse(QPointF(w*.72,h*.28),h*.12,h*.12);p.setBrush(QColor(255,255,255,26));for(int i=0;i<4;++i)p.drawRoundedRect(QRectF(w*.1,h*(.3+.13*i),w*(.42-.05*i),h*.07),8,8);}
+        if(kind==1){p.setBrush(QColor("#2ad3c9"));p.drawRoundedRect(QRectF(w*.2,h*.16,w*.6,h*.68),h*.14,h*.14);p.setBrush(QColor("#0b1322"));p.drawRoundedRect(QRectF(w*.32,h*.32,w*.36,h*.06),6,6);p.drawRoundedRect(QRectF(w*.32,h*.46,w*.28,h*.06),6,6);p.drawRoundedRect(QRectF(w*.32,h*.6,w*.2,h*.06),6,6);}
+        if(kind==2){const qreal bars[]={.35,.55,.48,.72,.9};for(int i=0;i<5;++i){p.setBrush(QColor::fromHsv(190+i*12,150,220));p.drawRoundedRect(QRectF(w*(.12+.16*i),h*(.9-.75*bars[i]),w*.1,h*.75*bars[i]),6,6);}}
+        if(kind==3){p.setBrush(QColor(255,255,255,230));p.drawRoundedRect(QRectF(w*.14,h*.2,w*.72,h*.6),14,14);p.setBrush(QColor("#d9503f"));p.drawRoundedRect(QRectF(w*.18,h*.28,w*.64,h*.1),6,6);p.setPen(Qt::white);QFont f=p.font();f.setPixelSize(int(h*.055));p.setFont(f);p.drawText(QRectF(w*.2,h*.28,w*.6,h*.1),Qt::AlignVCenter,"Your draft could not be synced");p.setPen(Qt::NoPen);p.setBrush(QColor("#c9d3de"));for(int i=0;i<3;++i)p.drawRoundedRect(QRectF(w*.18,h*(.46+.09*i),w*(.6-.1*i),h*.04),4,4);}
+        return image;
+    }
+
     bool conversationTool(const QString &name){
         return click("conversationMore") && waitFor([&]{return item(name)!=nullptr;}) && click(name);
     }
@@ -244,7 +289,7 @@ private slots:
 
     // The compact panel beside the pet after a scripted Codex run: the hero image and the panel alone.
     void compactPanel(){
-        create("codex","aurora-web","Fix the flaky login test",{{"model","gpt-6.1-sol"},{"effort","medium"}});
+        create("codex","aurora-web","Fix the flaky login test",{{"model","gpt-6.2-sol"},{"effort","medium"}});
         send("Fix the flaky login test","The login test keeps flaking on CI. Can you find out why?");
         const auto id=sessionNamed("Fix the flaky login test").value("id");
         QVERIFY(waitFor([&]{for(const auto &entry:app->state().value("completions").toList())if(entry.toMap().value("sessionId")==id)return status("Fix the flaky login test")=="idle";return false;},15000));
@@ -269,7 +314,7 @@ private slots:
 
     // A provider question with options, several selections and a written answer, then its answer.
     void questionForm(){
-        create("codex","aurora-web","Write the 2.4 release notes",{{"model","gpt-6.1-sol"},{"effort","medium"}});
+        create("codex","aurora-web","Write the 2.4 release notes",{{"model","gpt-6.2-sol"},{"effort","medium"}});
         send("Write the 2.4 release notes","Draft the release notes for 2.4.");
         QVERIFY(waitFor([&]{return !approvalFor("Write the 2.4 release notes").isEmpty();},15000));
         workspace();open("Write the 2.4 release notes");
@@ -290,8 +335,8 @@ private slots:
 
     // Delegated work with a file change and a deploy command, both waiting beside the pet and in the panel.
     void waitingForYou(){
-        create("codex","aurora-web","Speed up the test suite",{{"model","gpt-6-astra"},{"effort","high"}});
-        create("codex","tidepool","Deploy the pipeline to staging",{{"model","gpt-6.1-sol"},{"effort","low"}});
+        create("codex","aurora-web","Speed up the test suite",{{"model","gpt-6.2-astra"},{"effort","high"}});
+        create("codex","tidepool","Deploy the pipeline to staging",{{"model","gpt-6.2-sol"},{"effort","low"}});
         send("Speed up the test suite","The test suite takes four minutes now. Profile it and make it faster.");
         QVERIFY(waitFor([&]{return !approvalFor("Speed up the test suite").isEmpty();},15000));
         send("Deploy the pipeline to staging","Ship the reviewed build to staging so QA can start.");
@@ -417,15 +462,164 @@ private slots:
         shot("memory-review");closePopups();
     }
 
+    // The Workbench beside a conversation: files with a preview, a change to review, images and a Code Lab run.
+    void workbenchFiles(){
+        bench("files");const auto done=qScopeGuard([&]{closeBench();});
+        QVERIFY(waitFor([&]{return item("workspaceEntry_src")!=nullptr;}));
+        shot("workbench-files");
+        click("workspaceEntry_docs");QVERIFY(waitFor([&]{return item("workspaceEntry_roadmap.md")!=nullptr;}));
+        QVERIFY(item("workspaceEntry_roadmap.md"));
+        click("composer");for(const QChar c:QString("Check @dra"))QTest::keyClick(window,c.toLatin1());
+        QVERIFY(waitFor([&]{return item("referenceCandidate_0")!=nullptr;}));QTest::qWait(500);
+        shot("reference-picker");
+        QTest::keyClick(window,Qt::Key_Escape);if(auto composer=item("composer"))composer->setProperty("text","");
+    }
+    void workbenchChanges(){
+        const auto id=bench("files");const auto done=qScopeGuard([&]{closeBench();});
+        QVERIFY(waitFor([&]{return item("workspaceEntry_src")!=nullptr||item("crumbRoot")!=nullptr;}));
+        if(!item("workspaceEntry_src"))click("crumbRoot");
+        QVERIFY(waitFor([&]{return item("workspaceEntry_src")!=nullptr;}));click("workspaceEntry_src");
+        QVERIFY(waitFor([&]{return item("workspaceEntry_drafts")!=nullptr;}));click("workspaceEntry_drafts");
+        QVERIFY(waitFor([&]{return item("workspaceEntry_store.ts")!=nullptr;}));click("workspaceEntry_store.ts");
+        QVERIFY(waitFor([&]{return item("previewEdit")!=nullptr;}));QTest::qWait(500);
+        shot("workbench-preview");
+        click("previewEdit");QVERIFY(waitFor([&]{return item("previewEditor")!=nullptr;}));
+        auto text=item("previewEditor")->property("text").toString();
+        text.replace("    if (response.status === 409) continue;","    if (response.status === 409) await keepBoth(draft, await response.json());");
+        item("previewEditor")->setProperty("text",text);click("previewProposeEdit");
+        QVERIFY(waitFor([&]{return item("changeAcceptAll")!=nullptr;}));QTest::qWait(700);unfocus();
+        shot("workbench-changes");
+        click("changeReject");QTest::qWait(400);Q_UNUSED(id);
+    }
+    void workbenchImages(){
+        const auto id=drafts();
+        const QString folder=QDir::homePath()+"/Pictures";QVERIFY(QDir().mkpath(folder));
+        const QStringList names{"Release banner.png","App icon.png","Signup chart.png","Sync error.png"};
+        for(int i=0;i<names.size();++i){
+            QVERIFY(artwork(i,i==1?QSize(512,512):QSize(960,600)).save(folder+"/"+names[i]));
+            QVERIFY(!call("artifacts.import",{{"sessionId",id},{"path",folder+"/"+names[i]}}).contains("error"));
+        }
+        bench("images");const auto done=qScopeGuard([&]{closeBench();});
+        QVERIFY(waitFor([&]{return item("artifactTile_3")!=nullptr;}));QTest::qWait(1200);
+        shot("workbench-images");
+        click("artifactTile_0");QVERIFY(waitFor([&]{return item("imageView")!=nullptr;}));click("imageView");
+        QVERIFY(waitFor([&]{return item("imageWorkbench")!=nullptr;}));QTest::qWait(700);
+        if(item("workbenchFocus"))click("workbenchFocus");
+        QTest::qWait(500);clickText("Fit");QTest::qWait(500);shot("image-editor");
+        if(item("workbenchFocus"))click("workbenchFocus");
+        if(item("imageEditorBack"))click("imageEditorBack");
+    }
+    void workbenchCodeLab(){
+        QVERIFY(settings({{"workbench",QVariantMap{{"codeLab",QVariantMap{{"enabled",true}}}}}}));
+        const auto id=bench("runs");const auto done=qScopeGuard([&]{if(item("workbenchFocus")&&!item("chatView"))click("workbenchFocus");closeBench();});
+        const auto lab=call("codelab.status",{{"sessionId",id}});
+        if(!lab.value("available").toBool())QSKIP(qPrintable("Code Lab cannot run here: "+lab.value("problem").toString()));
+        if(!item("codeLabSample"))click("codeLabToggle");
+        QVERIFY(waitFor([&]{return item("codeLabSample")!=nullptr;}));click("codeLabSample");
+        QVERIFY(waitFor([&]{return item("codeLabCode")&&item("codeLabCode")->property("text").toString().contains("savefig");}));
+        QVERIFY(waitFor([&]{return item("codeLabRun")->isEnabled();}));QTest::qWait(1500);
+        click("codeLabRun");
+        QVERIFY(waitFor([&]{return !call("artifacts.list",{{"sessionId",id},{"query","plot.png"}}).value("artifacts").toList().isEmpty();},40000));
+        QTest::qWait(2500);click("workbenchFocus");QTest::qWait(900);
+        if(auto scroll=item("workbenchScroll"))scroll->setProperty("contentY",0);
+        unfocus();shot("workbench-code-lab");
+        if(item("codeLabSample"))click("codeLabToggle");
+        QTest::qWait(700);shot("workbench-runs");
+    }
+    void workbenchMedia(){
+        const auto id=drafts();
+        const auto kept=call("artifacts.import",{{"sessionId",id},{"path",QDir::homePath()+"/Recordings/Field team interview.wav"}});QVERIFY(!kept.contains("error"));
+        bench("recordings");const auto done=qScopeGuard([&]{closeBench();});
+        QVERIFY(waitFor([&]{return item("recordingRow_0")!=nullptr;}));click("recordingRow_0");
+        QVERIFY(waitFor([&]{return item("recordingTranscribe")&&item("recordingTranscribe")->isEnabled();}));click("recordingTranscribe");
+        QVERIFY(waitFor([&]{return item("recordingLine_3")!=nullptr;},20000));QTest::qWait(1200);
+        shot("workbench-media");
+    }
+    void workbenchNotes(){
+        const auto id=drafts();const QString project=QDir::homePath()+"/Projects/aurora-web";Q_UNUSED(id);
+        const auto note=call("notebook.create",{{"project",project},{"title","Offline drafts"}});QVERIFY(!note.contains("error"));
+        QVERIFY(!call("notebook.saveNote",{{"id",note.value("id")},{"expectedRevision","0"},{"text",
+            "# Offline drafts\n\nA draft is written to the phone before anything is sent.\nTwo edits of the same draft are both kept until a person chooses.\nThe title shows how many drafts still wait to be sent.\nField teams lose the signal for hours at a site.\n"}}).contains("error"));
+        bench("notes");const auto done=qScopeGuard([&]{closeBench();});
+        QVERIFY(waitFor([&]{return item("showNoteLibrary")!=nullptr;}));click("showNoteLibrary");
+        QVERIFY(waitFor([&]{return findText(window->contentItem(),"Offline drafts")!=nullptr;}));clickText("Offline drafts");QTest::qWait(900);unfocus();
+        shot("workbench-notes");
+        click("workbenchTab_shelf");QVERIFY(waitFor([&]{return item("projectShelf")!=nullptr;}));QTest::qWait(900);
+        shot("workbench-shelf");
+    }
+    // A report written from the project's notes, with its findings checked against their passages.
+    void research(){
+        const auto id=drafts();workspace();open(draftsTitle);click("sidebarResearchTasks");QVERIFY(waitFor([&]{return item("researchPage")!=nullptr;}));
+        click("researchTab_new");auto pane=item("researchPane");QVERIFY(pane);QVERIFY(QMetaObject::invokeMethod(pane,"loadSources",Q_ARG(QVariant,QString())));
+        auto scope=item("researchScope");QVERIFY(scope);scope->setProperty("currentIndex",2);QMetaObject::invokeMethod(scope,"activated",Q_ARG(int,2));
+        QVERIFY(waitFor([&]{return !pane->property("projectSources").toList().isEmpty();},8000));
+        for(const auto &source:pane->property("projectSources").toList()){
+            const auto row=source.toMap();bool named=false;for(const auto &value:row)named=named||value.toString().contains("Offline drafts");
+            if(named)QMetaObject::invokeMethod(pane,"toggleSource",Q_ARG(QVariant,row.value("id")));
+        }
+        item("researchQuestion")->setProperty("text","What do field teams need from offline drafts?");
+        QMetaObject::invokeMethod(pane,"loadRoutes");
+        QVERIFY(waitFor([&]{return item("researchQuick")->isEnabled();}));QTest::qWait(400);shot("research-new");
+        click("researchQuick");QVERIFY(waitFor([&]{return !pane->property("selectedId").toString().isEmpty();}));
+        const auto run=pane->property("selectedId").toString();
+        QVERIFY(waitFor([&]{return call("research.get",{{"id",run}}).value("state").toString()=="completed";},40000));
+        QMetaObject::invokeMethod(pane,"reload");QTest::qWait(1500);
+        shot("research-report");Q_UNUSED(id);click("tab_Chat");
+    }
+    void documentWriting(){
+        workspace();open("Plan the 2.4 release");QVERIFY(conversationTool("menuDocument"));
+        QVERIFY(waitFor([&]{return item("documentTitle")!=nullptr;}));item("documentTitle")->setProperty("text","Release 2.4 decision record");
+        auto box=item("documentTemplate");QVERIFY(box);box->setProperty("currentIndex",2);QMetaObject::invokeMethod(box,"activated",Q_ARG(int,2));QTest::qWait(1000);
+        shot("document-writing");closePopups();
+    }
+    void clockView(){
+        workspace();open("Plan the 2.4 release");QVERIFY(conversationTool("menuClock"));QVERIFY(waitFor([&]{return item("clockTime")!=nullptr;}));QTest::qWait(800);
+        shot("clock");closePopups();
+    }
+    // Connected accounts against local stand-ins: what Connections lists, and the agenda in the Workbench.
+    void accounts(){
+        call("accounts.save",{{"provider","github"},{"label","Work GitHub"}});
+        const auto google=call("accounts.save",{{"provider","google"},{"label","Work calendar and mail"},{"clientId","demo-client"},{"clientSecret","demo-secret"},{"services",QVariantMap{{"calendar","write"},{"mail","write"},{"drive","read"}}}});
+        QVERIFY(!google.contains("error"));
+        const auto flow=call("accounts.signIn",{{"id",google.value("id")},{"method","browser"}});QVERIFY(!flow.contains("error"));
+        QCOMPARE(QProcess::execute("curl",{"-sSL","-m","10","-o","/dev/null",flow.value("url").toString()}),0);
+        QVERIFY(waitFor([&]{for(const auto &account:call("accounts.list").value("accounts").toList())if(account.toMap().value("id")==google.value("id")&&account.toMap().value("state")=="signed-in")return true;return false;},15000));
+        bench("accounts");const auto done=qScopeGuard([&]{closeBench();});
+        QVERIFY(waitFor([&]{return item("agendaEvent_review")!=nullptr;},10000));click("agendaEvent_review");QTest::qWait(900);
+        shot("workbench-accounts");
+        click("accountsTab_mail");QVERIFY(waitFor([&]{return item("mailThread_t-m1")!=nullptr;},10000));QTest::qWait(500);shot("workbench-mail");
+    }
+    // A long provider list, searched in the New session dialog.
+    void modelBrowser(){
+        QVERIFY(!call("provider.credentials",{{"provider","openrouter"},{"key","demo-key"}}).contains("error"));call("provider.models",{{"provider","openrouter"}});
+        QVERIFY(waitFor([&]{return app->state().value("capabilities").toMap().value("openrouter").toMap().value("models").toList().size()>10;},15000));
+        workspace();open("Plan the 2.4 release");click("sidebarNewSession");QVERIFY(waitFor([&]{return item("sessionProvider")!=nullptr;}));
+        auto provider=item("sessionProvider");const int index=app->state().value("providerOrder").toStringList().indexOf("openrouter");QVERIFY(index>=0);
+        provider->setProperty("currentIndex",index);QMetaObject::invokeMethod(provider,"activated",Q_ARG(int,index));
+        QVERIFY(waitFor([&]{return item("sessionModelsBrowse")!=nullptr;}));click("sessionModelsBrowse");QVERIFY(waitFor([&]{return item("modelSearch")!=nullptr;}));QTest::qWait(600);
+        reveal("modelSearch",40);shot("model-browser");closePopups();
+        call("provider.credentials",{{"provider","openrouter"},{"key",""}});
+    }
+
     void settingsPages(){
+        for(const QString skill:{"release-notes","accessibility-check"}){
+            const auto imported=call("skills.importFolder",{{"path",QDir::homePath()+"/Skills/"+skill}});QVERIFY(!imported.contains("error"));
+            const auto version=imported.value("id").toString();
+            if(skill=="release-notes"&&!version.isEmpty())call("skills.enable",{{"versionId",version},{"invocation","automatic"}});
+        }
         workspace();open("Plan the 2.4 release");click("tab_Settings");
         auto page=item("settingsPage");QVERIFY(page);
-        for(const QString id:{"companion","personality","voice","motion","connections","assistance","scripts","mobile","telemetry","application"}){
+        for(const QString id:{"companion","personality","voice","motion","connections","assistance","scripts","skills","setups","usage","mobile","telemetry","application"}){
             QMetaObject::invokeMethod(page,"open",Q_ARG(QVariant,id),Q_ARG(QVariant,QString()));
             QVERIFY(waitFor([&]{return page->property("category").toString()==id;}));QTest::qWait(900);
             if(id=="motion"){QMetaObject::invokeMethod(page,"revealControl",Q_ARG(QVariant,"motionStage"));QTest::qWait(1500);}
             shot("settings-"+id);
         }
+        for(const auto &[target,name]:std::initializer_list<std::pair<QString,QString>>{{"accountsSettings","settings-accounts"},{"imageConnections","settings-images"}}){
+            QMetaObject::invokeMethod(page,"open",Q_ARG(QVariant,QString()),Q_ARG(QVariant,target));QTest::qWait(1500);
+            reveal(target,40);shot(name);
+        }
+        QMetaObject::invokeMethod(page,"open",Q_ARG(QVariant,QString("application")),Q_ARG(QVariant,QString()));QTest::qWait(900);
         QVERIFY(click("openHealth"));QTest::qWait(1500);
         shot("health");closePopups();
         auto search=item("settingsSearch");QVERIFY(search);
@@ -440,7 +634,7 @@ private slots:
         for(const auto &entry:app->avatars()){
             const QString id=entry.toMap().value("id").toString();
             QVERIFY(settings({{"avatar",id}}));QTest::qWait(900);
-            open("Fix the flaky login test");compact();QTest::qWait(900);scrollTo("messageList",0);rest();
+            open("Fix the flaky login test");compact();QTest::qWait(900);rest();
             panels<<window->grabWindow();pets<<petImage();
         }
         QVERIFY(settings({{"avatar","pal"},{"reducedMotion",false}}));
@@ -464,6 +658,11 @@ private slots:
         save(lineup(poses,8,40,false),"gestures");
     }
 
+    // What a failed slot was looking at, for whoever repairs it.
+    void cleanup(){
+        const auto folder=qEnvironmentVariable("PAL_SCREENSHOTS_DEBUG");
+        if(!folder.isEmpty()&&QTest::currentTestFailed()&&window&&QDir().mkpath(folder))window->grabWindow().save(folder+"/"+QTest::currentTestFunction()+".png");
+    }
     void cleanupTestCase(){QTest::qWait(200);}
 };
 

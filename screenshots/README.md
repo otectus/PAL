@@ -7,10 +7,15 @@ These images come from PAL's real interface, captured by
   renderer at 1× scale.
 - Conversations, projects and folders are seeded demo content. Codex, Claude Code, AntiGravity and
   Ollama are local scripted fixtures, so replies show what the interface does, not real model output.
-  Windows, volume and media playback on the Desktop page are simulated.
+  Connected accounts and OpenRouter's model list are local stand-ins; the models and prices in that list
+  are made up. Windows, volume and media playback on the Desktop page are simulated.
+- Code Lab, the change review, the image tools and the transcript player are the real services, working
+  on demo files.
 - Desktop scenes draw PAL's own windows (pet, compact panel and bubbles) at their real positions over a
   generated wallpaper, with drop shadows added. The avatar, theme and gesture strips place several
   captures side by side on the same wallpaper. The other images are single-window captures.
+- The phone images are the 2.0.2 debug app on an Android 15 emulator, paired with full access to the same
+  demo profile.
 
 ## Regenerate
 
@@ -19,16 +24,27 @@ cmake --build build --target pal pal-screenshots
 tools/screenshots/run.sh
 ```
 
-The run takes about three minutes and overwrites the images in this folder; set `PAL_SCREENSHOTS_DIR`
+The run takes about six minutes and overwrites the images in this folder; set `PAL_SCREENSHOTS_DIR`
 to write elsewhere. It needs a build configured with tests (the default), unprivileged user namespaces
-(`unshare`) and `ip` from iproute2. Everything runs in private user, mount, process and network
-namespaces with `/home/demo` as the home folder. It reads nothing from your PAL profile, compositor,
+(`unshare`), `setpriv` from util-linux, `ip` from iproute2, `curl` and `python3`; Code Lab's pictures also need
+Bubblewrap and Matplotlib, and are skipped without them. Everything runs in private user, mount, process,
+host-name and network namespaces with `/home/demo` as the home folder. It reads nothing from your PAL profile, compositor,
 media players or provider accounts, and it cannot reach the network.
 
 To retake some images, name their slots from
 [`tools/screenshots/capture.cpp`](../tools/screenshots/capture.cpp), for example
 `tools/screenshots/run.sh settingsPages`. Slots that reuse earlier conversations need those slots as
 well, for example `compactPanel themesAndAvatars`.
+
+The phone images come from an Android emulator with the debug app and its test APK installed
+(`:app:installDebug :app:installDebugAndroidTest`) and `adb` on `PATH`:
+
+```sh
+ANDROID_SERIAL=emulator-5554 tools/screenshots/run.sh --phone
+```
+
+It pairs that app with the demo desktop, so the app's data on the emulator is cleared first; connected phones
+are refused. This run uses the computer's own network instead of a private one, to reach the emulator.
 
 ## On the desktop
 
@@ -66,7 +82,7 @@ with its expression badge.
 
 <table>
 <tr>
-<td width="50%" valign="top"><a href="workspace-conversation.png"><img src="workspace-conversation.png" alt="The expanded workspace showing a Claude Code release plan with a table and a task list"></a><br><b>Workspace.</b> A Claude Code release plan with a table and task lists.</td>
+<td width="50%" valign="top"><a href="workspace-conversation.png"><img src="workspace-conversation.png" alt="The expanded workspace showing a Claude Code release plan with a table"></a><br><b>Workspace.</b> A Claude Code release plan with a table.</td>
 <td width="50%" valign="top"><a href="workspace-activity.png"><img src="workspace-activity.png" alt="The Activity panel listing two working subagents and test output"></a><br><b>Activity.</b> Two Codex subagents still at work after the reply, with the tool trail below.</td>
 </tr>
 <tr>
@@ -80,6 +96,52 @@ with its expression badge.
 <tr>
 <td width="50%" valign="top"><a href="context-drawer.png"><img src="context-drawer.png" alt="The Conversation context dialog"></a><br><b>Context.</b> Where messages go, a rough token estimate and what the latest turn was given.</td>
 <td width="50%" valign="top"><a href="completion-inbox.png"><img src="completion-inbox.png" alt="The completion inbox listing four finished runs"></a><br><b>Completion inbox.</b> Finished runs from every conversation.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="model-browser.png"><img src="model-browser.png" alt="A searchable model list in the New session dialog"></a><br><b>Model list.</b> Search and narrow a long list, with context and price. These models are made up.</td>
+<td width="50%" valign="top"><a href="clock.png"><img src="clock.png" alt="The Date and time view of a conversation"></a><br><b>Date and time.</b> What the next message is told, and the conversation’s own times.</td>
+</tr>
+</table>
+
+## Workbench
+
+<table>
+<tr>
+<td width="50%" valign="top"><a href="workbench-files.png"><img src="workbench-files.png" alt="The Files pane listing a project folder beside a conversation"></a><br><b>Files.</b> A project folder beside the conversation that works in it.</td>
+<td width="50%" valign="top"><a href="workbench-preview.png"><img src="workbench-preview.png" alt="A TypeScript file in the Preview pane"></a><br><b>Preview.</b> A file with its line numbers and version.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="workbench-changes.png"><img src="workbench-changes.png" alt="A change set with one changed file and its diff"></a><br><b>Changes.</b> An edit waits for review, with its diff.</td>
+<td width="50%" valign="top"><a href="reference-picker.png"><img src="reference-picker.png" alt="The reference picker above the composer"></a><br><b>References.</b> Typing @ offers files, folders and more.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="workbench-images.png"><img src="workbench-images.png" alt="The Images pane with four pictures"></a><br><b>Images.</b> Pictures the conversation keeps.</td>
+<td width="50%" valign="top"><a href="image-editor.png"><img src="image-editor.png" alt="The image editor with its tools below a screenshot"></a><br><b>Image editor.</b> Crop, annotate, mask, compare and read text.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="workbench-code-lab.png"><img src="workbench-code-lab.png" alt="Code Lab with a recipe, column choices and Python code"></a><br><b>Code Lab.</b> The sample analysis, with its columns and code.</td>
+<td width="50%" valign="top"><a href="workbench-runs.png"><img src="workbench-runs.png" alt="Run history with a finished analysis, its table and its chart"></a><br><b>Runs.</b> The finished analysis with its table and chart.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="workbench-media.png"><img src="workbench-media.png" alt="A recording with playback controls and a time-coded transcript"></a><br><b>Media.</b> A recording beside its transcript.</td>
+<td width="50%" valign="top"><a href="workbench-notes.png"><img src="workbench-notes.png" alt="A note about offline drafts in the Notes pane"></a><br><b>Notes.</b> A project note.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="workbench-shelf.png"><img src="workbench-shelf.png" alt="The project Shelf with conversations and recipes"></a><br><b>Shelf.</b> Other conversations and the sixteen built-in recipes.</td>
+<td width="50%" valign="top"><a href="workbench-accounts.png"><img src="workbench-accounts.png" alt="An agenda in the Accounts pane"></a><br><b>Accounts.</b> The agenda of a connected calendar.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="workbench-mail.png"><img src="workbench-mail.png" alt="Mail threads in the Accounts pane"></a><br><b>Mail.</b> Threads of a connected mailbox.</td>
+<td width="50%" valign="top"><a href="document-writing.png"><img src="document-writing.png" alt="The Write a document dialog with a decision record template"></a><br><b>Documents.</b> A decision record from its template.</td>
+</tr>
+</table>
+
+## Research
+
+<table>
+<tr>
+<td width="50%" valign="top"><a href="research-new.png"><img src="research-new.png" alt="The Start a research run form"></a><br><b>New run.</b> A question answered from chosen project sources.</td>
+<td width="50%" valign="top"><a href="research-report.png"><img src="research-report.png" alt="A research report whose sentences cite saved passages"></a><br><b>Report.</b> Every sentence cites its passage.</td>
 </tr>
 </table>
 
@@ -141,7 +203,34 @@ with its expression badge.
 <td width="50%" valign="top"><a href="settings-application.png"><img src="settings-application.png" alt="Application settings"></a><br><b>Application.</b> Shortcut, maintenance and quitting.</td>
 </tr>
 <tr>
+<td width="50%" valign="top"><a href="settings-skills.png"><img src="settings-skills.png" alt="Skills settings with one enabled skill and one waiting for review"></a><br><b>Skills.</b> One skill on, one waiting for review.</td>
+<td width="50%" valign="top"><a href="settings-setups.png"><img src="settings-setups.png" alt="Working setups settings with the built-in examples"></a><br><b>Working setups.</b> The built-in examples, applied after you see what changes.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="settings-usage.png"><img src="settings-usage.png" alt="Usage and budgets settings with totals by provider and project"></a><br><b>Usage & budgets.</b> Requests and tokens by provider, model and project.</td>
+<td width="50%" valign="top"><a href="settings-accounts.png"><img src="settings-accounts.png" alt="Connected accounts in Connections settings"></a><br><b>Connected accounts.</b> GitHub and Google through apps you register.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="settings-images.png"><img src="settings-images.png" alt="Images and analysis settings"></a><br><b>Images & analysis.</b> Image backends, the vision and review helpers, and Code Lab.</td>
+<td></td>
+</tr>
+<tr>
 <td width="50%" valign="top"><a href="settings-search.png"><img src="settings-search.png" alt="Settings search results for the word voice"></a><br><b>Find a setting.</b> Search across every category.</td>
 <td width="50%" valign="top"><a href="health.png"><img src="health.png" alt="The Health and recovery dialog"></a><br><b>Health and recovery.</b> The API providers show network problems here because the demo profile has no network access and no API keys.</td>
+</tr>
+</table>
+
+## PAL Mobile
+
+<table>
+<tr>
+<td width="33%" valign="top"><a href="mobile-chats.png"><img src="mobile-chats.png" alt="The conversation list on the phone"></a><br><b>Chats.</b> Conversations with their project, provider and model.</td>
+<td width="33%" valign="top"><a href="mobile-conversation.png"><img src="mobile-conversation.png" alt="A conversation on the phone"></a><br><b>Conversation.</b> The release plan, continued from the desktop.</td>
+<td width="33%" valign="top"><a href="mobile-inbox.png"><img src="mobile-inbox.png" alt="A command waiting in the phone’s Inbox"></a><br><b>Inbox.</b> A command with its project and the exact request.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="mobile-work.png"><img src="mobile-work.png" alt="The Work tab with a project folder"></a><br><b>Work.</b> A project folder with full access.</td>
+<td width="33%" valign="top"><a href="mobile-voice.png"><img src="mobile-voice.png" alt="Voice settings in a conversation"></a><br><b>Voice settings.</b> Talk and read replies, from the conversation menu.</td>
+<td width="33%" valign="top"><a href="mobile-computer.png"><img src="mobile-computer.png" alt="Settings, This computer"></a><br><b>This computer.</b> Desktop settings on a phone with full access.</td>
 </tr>
 </table>

@@ -242,7 +242,7 @@ Rectangle {
                 selectionColor: Theme.selectionFill
                 selectedTextColor: Theme.selectionInk
                 background: null
-                padding: Theme.space2
+                padding: Theme.space2; rightPadding: Theme.space4
             }
         }
 
@@ -363,7 +363,7 @@ Rectangle {
                             placeholderTextColor: Theme.muted
                             font.family: Theme.font
                             font.pixelSize: Theme.secondary
-                            wrapMode: TextEdit.Wrap
+                            wrapMode: TextEdit.Wrap; rightPadding: Theme.space4
                             selectByMouse: true
                             Accessible.name: questionBody.question.question
                             onTextChanged: if (activeFocus && text !== card.otherValue(questionBody.question)) card.setOther(questionBody.question, text)

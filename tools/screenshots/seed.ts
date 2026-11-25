@@ -1,8 +1,8 @@
 // Seeds the isolated demo profile used by the documentation screenshots: folders, projects, past
 // conversations across providers, saved scripts and a completion record. Run before the broker starts:
 //   node tools/screenshots/seed.ts <fresh demo home>
-import { closeSync, openSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { closeSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { privateDir } from '../../broker/paths.ts';
 import { randomUUID } from 'node:crypto';
 import { Store } from '../../broker/store.ts';
@@ -10,12 +10,50 @@ import type { Message, Session, SessionFolder } from '../../broker/types.ts';
 
 const home = process.argv[2];
 if (!home) throw new Error('Usage: seed.ts <demo home>');
-const projects = `${home}/Projects`, ollamaHost = 'http://127.0.0.1:11434';
+const projects = `${home}/Projects`, ollamaHost = process.env.PAL_OLLAMA_HOST || 'http://127.0.0.1:11434';
 const directory = privateDir(resolve(home, '.local/state/pal'));
 // Claim a new database before Store opens it. A concurrent seeder or an existing profile wins.
 closeSync(openSync(resolve(directory, 'pal.sqlite'), 'wx', 0o600));
 const store = new Store(directory);
 const now = Date.now(), minutes = (n: number) => now - n * 60_000, hours = (n: number) => minutes(n * 60), days = (n: number) => hours(n * 24);
+
+// Files of the demo projects, a recording and a skill package, for the Workbench and Settings pages.
+const file = (path: string, content: string | Buffer) => { const target = resolve(home, path); mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, content); };
+file('Projects/aurora-web/README.md', '# Aurora web app\n\nOffline-first notes for field teams.\n\n- `pnpm dev` starts the app\n- `pnpm test` runs the suite\n');
+file('Projects/aurora-web/docs/roadmap.md', '# Roadmap\n\n- 2.4: offline drafts, settings page, SSO\n- 2.5: plugin API\n');
+file('Projects/aurora-web/docs/draft-sync.md', '# Draft sync\n\nA draft is written locally first and sent when the connection returns.\n');
+file('Projects/aurora-web/src/drafts/store.ts', `import { openDatabase } from "../db";
+
+export type Draft = { id: string; body: string; version: number; updated: number };
+
+/** Writes a draft locally. The server copy follows when the connection returns. */
+export async function saveDraft(draft: Draft) {
+  const db = await openDatabase();
+  await db.put("drafts", { ...draft, updated: Date.now() });
+}
+
+export async function syncDrafts(drafts: Draft[]) {
+  for (const draft of drafts) {
+    const response = await fetch("/api/drafts/" + draft.id, {
+      method: "PUT",
+      body: JSON.stringify(draft),
+    });
+    if (response.status === 409) continue;
+  }
+}
+`);
+file('Projects/aurora-web/src/settings/panels.ts', 'export const panels = ["profile", "drafts", "sync", "security"];\n');
+file('Projects/aurora-web/data/signups.csv', 'month,plan,signups\n2026-07,team,120\n2026-08,team,164\n2026-09,team,181\n');
+// Forty seconds of a quiet tone stand in for the interview the transcript belongs to.
+const rate = 8000, seconds = 40, pcm = Buffer.alloc(rate * seconds * 2), head = Buffer.alloc(44);
+for (let i = 0; i < rate * seconds; i++) pcm.writeInt16LE(Math.round(Math.sin(i / 12) * 900 * (0.4 + 0.6 * Math.abs(Math.sin(i / 2600)))), i * 2);
+head.write('RIFF', 0); head.writeUInt32LE(36 + pcm.length, 4); head.write('WAVEfmt ', 8); head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20); head.writeUInt16LE(1, 22);
+head.writeUInt32LE(rate, 24); head.writeUInt32LE(rate * 2, 28); head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34); head.write('data', 36); head.writeUInt32LE(pcm.length, 40);
+file('Recordings/Field team interview.wav', Buffer.concat([head, pcm]));
+file('Recordings/whisper-model.bin', 'demo');
+file('Skills/release-notes/SKILL.md', '---\nname: release-notes\ndescription: Turn merged changes into release notes people can read.\nlicense: MIT\n---\n\n# Release notes\n\nGroup changes by what they mean for the reader.\n');
+file('Skills/accessibility-check/SKILL.md', '---\nname: accessibility-check\ndescription: Review a screen for contrast, focus order and labels.\n---\n\n# Accessibility check\n\nStart with the keyboard.\n');
+file('Skills/accessibility-check/scripts/contrast.py', 'print("contrast")\n');
 
 const folder = (name: string, created: number): SessionFolder => ({ id: randomUUID(), name, revision: '1', created, updated: created });
 const work = folder('Client work', days(20)), lab = folder('Home lab', days(14)), learning = folder('Learning', days(9));
@@ -74,7 +112,7 @@ conversation({ provider: 'claude', title: 'Rust error handling cleanup', cwd: `$
   ['tool', 'cargo clippy -- -D clippy::unwrap_used\n\nerror: used `unwrap()` on a `Result` value (14 occurrences)'],
   ['assistant', 'All fourteen `unwrap()` calls are gone. `ConfigError` now uses `thiserror`, and every failure names the file and key involved:\n\n```rust\n#[derive(Debug, thiserror::Error)]\npub enum ConfigError {\n    #[error("cannot read {path}: {source}")]\n    Read { path: PathBuf, source: io::Error },\n    #[error("{key} in {path} is not valid: {reason}")]\n    Invalid { path: PathBuf, key: String, reason: String },\n}\n```\n\n`cargo clippy -- -D clippy::unwrap_used` is clean and all 86 tests pass.'],
 ]);
-conversation({ provider: 'codex', title: 'Backfill March sensor data', cwd: `${projects}/tidepool`, model: 'gpt-6.1-sol', effort: 'high', folderId: work.id }, days(3), [
+conversation({ provider: 'codex', title: 'Backfill March sensor data', cwd: `${projects}/tidepool`, model: 'gpt-6.2-sol', effort: 'high', folderId: work.id }, days(3), [
   ['user', 'Backfill the missing March readings from the raw archive, then rerun the daily rollups.'],
   ['tool', 'python -m tidepool.backfill --from 2026-03-01 --to 2026-03-31\n\nRecovered 41,882 readings from 12 archives'],
   ['assistant', 'Backfilled **41,882** readings for March and rebuilt 31 daily rollups. Two sensors (`TP-07`, `TP-19`) still have gaps on March 14: their raw archives are truncated, so I logged them in `reports/gaps-2026-03.md` rather than inventing values.'],
@@ -83,11 +121,11 @@ conversation({ provider: 'ollama', title: 'Explain lifetimes like I\'m tired', c
   ['user', 'Explain Rust lifetimes like I\'m tired.'],
   ['assistant', 'A lifetime is a promise: "this reference won\'t outlive the thing it points at." The compiler checks the promise so you don\'t have to remember it at 2 a.m.\n\n`fn longest<\'a>(x: &\'a str, y: &\'a str) -> &\'a str` just says the answer lives as long as the shorter of the two inputs. That\'s it. Go to sleep.'],
 ]);
-conversation({ provider: 'anthropic', title: 'Ramen night shopping list', cwd: home, model: 'claude-sonnet-5', api: { tools: false } }, days(6), [
+conversation({ provider: 'anthropic', title: 'Ramen night shopping list', cwd: home, model: 'claude-sonnet-5-5', api: { tools: false } }, days(6), [
   ['user', 'Ramen for six on Saturday. What do I need?'],
   ['assistant', '**Broth:** 2 kg pork bones, chicken wings, kombu, dried shiitake\n**Tare:** soy sauce, mirin, sake\n**Toppings:** 6 eggs (marinate Friday), chashu pork belly, scallions, nori, bamboo shoots\n**Noodles:** 6 portions of fresh ramen noodles\n\nStart the broth Saturday morning. It needs the whole day, and so will you.'],
 ]);
-const tests = conversation({ provider: 'codex', title: 'Upgrade to Vite 8', cwd: `${projects}/aurora-web`, model: 'gpt-6.1-sol', effort: 'medium', folderId: work.id }, hours(27), [
+const tests = conversation({ provider: 'codex', title: 'Upgrade to Vite 8', cwd: `${projects}/aurora-web`, model: 'gpt-6.2-sol', effort: 'medium', folderId: work.id }, hours(27), [
   ['user', 'Upgrade the app to Vite 8 and fix whatever breaks.'],
   ['tool', 'pnpm up vite@8 @vitejs/plugin-react@6\n\nProgress: resolved 812, reused 790, downloaded 22, added 22, done'],
   ['tool', 'pnpm build\n\n✓ 1,204 modules transformed.\ndist/assets/index-4f2a9c.js  412.66 kB │ gzip: 131.20 kB'],
@@ -99,14 +137,15 @@ const reply = store.messages(tests.id).at(-1)!;
 store.set('completionInbox', [{ id: randomUUID(), sessionId: tests.id, title: tests.title, provider: tests.provider, cwd: tests.cwd, time: reply.time, messageId: reply.id }]);
 
 for (const [cwd, name, favorite, defaults] of [
-  [`${projects}/aurora-web`, 'Aurora web app', true, { provider: 'codex', model: 'gpt-6.1-sol', effort: 'medium', tools: false, trusted: true, temporary: false }],
+  [`${projects}/aurora-web`, 'Aurora web app', true, { provider: 'codex', model: 'gpt-6.2-sol', effort: 'medium', tools: false, trusted: true, temporary: false }],
   [`${projects}/lumen`, 'Lumen CLI', false, { provider: 'claude', model: 'opus', effort: 'high', tools: false, trusted: true, temporary: false }],
-  [`${projects}/tidepool`, 'Tidepool pipeline', false, { provider: 'codex', model: 'gpt-6-astra', effort: 'high', tools: false, trusted: true, temporary: false }],
+  [`${projects}/tidepool`, 'Tidepool pipeline', false, { provider: 'codex', model: 'gpt-6.2-astra', effort: 'high', tools: false, trusted: true, temporary: false }],
   [`${projects}/dotfiles`, 'dotfiles', false, { provider: 'ollama', model: 'gpt-oss:20b', effort: '', tools: true, trusted: true, temporary: false }],
 ] as const) store.db.prepare('INSERT INTO projects VALUES (?,?)').run(cwd, JSON.stringify({ cwd, name, revision: '1', updated: days(2), favorite, defaults }));
 
 store.set('settings', { ...store.settings(), onboarding: false, topmost: false, roaming: false, quiet: false,
   position: { output: 'Primary', x: 0.9, y: 0.92 }, categories: ['apps', 'windows', 'audio', 'media', 'timers'],
+  transcription: { executable: `${home}/.local/bin/demo-whisper`, model: `${home}/Recordings/whisper-model.bin` },
   scripts: [
     { id: randomUUID(), name: 'Run the test suite', executable: `${home}/.local/bin/demo-check`, args: ['test'], cwd: `${projects}/aurora-web`, timeout: 300000 },
     { id: randomUUID(), name: 'Back up notes', executable: `${home}/.local/bin/demo-check`, args: ['backup', '--quiet'], cwd: home, timeout: 60000 },

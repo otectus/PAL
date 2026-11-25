@@ -86,6 +86,8 @@ See [current implementation and validation limits](TESTING.md) before using this
 
 A phone you carry yourself can act as the desktop does. Choose **My phone — full PAL access** when showing the pairing QR (the offer the phone scans says so, and the words still have to match), or promote an existing phone with **Give full access** in Settings › PAL Mobile; **Limit access** lowers it again. The phone needs this app version or later: it declares support for full access on each connection, and an older app on a promoted device keeps working with limited access. Full access does not expire; revoke or limit it on the desktop, or lower it on the phone itself (Settings › This computer).
 
+<p><img src="../../screenshots/mobile-work.png" alt="The Work tab with a project folder" width="200"> <img src="../../screenshots/mobile-computer.png" alt="Settings › This computer" width="200"> <img src="../../screenshots/mobile-voice.png" alt="Voice settings in a conversation" width="200"></p>
+
 What changes on the phone:
 
 - **Working profile** (Settings › This computer): *Use my desktop choices* follows the desktop's CLI and computer switches, *Review changes* asks before CLI and computer actions, *Work automatically* allows them. A running turn keeps the narrower of the profile it started with and the current one.

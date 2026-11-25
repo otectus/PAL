@@ -1,6 +1,6 @@
 # Implementation and publication status
 
-Date: 2026-09-29. This initial repository publication contains an integrated, experimental graph-memory implementation. It does **not** satisfy every completion criterion in `docs/PAL_Graph_Memory_Implementation.md` yet.
+Date: 2026-09-29. This initial repository publication contains an integrated, experimental graph-memory implementation. It does **not** satisfy every completion criterion in the reference design (`PAL_Graph_Memory_Implementation.md`, kept outside the repository) yet.
 
 ## Status reconciled with source (2026-10-20)
 

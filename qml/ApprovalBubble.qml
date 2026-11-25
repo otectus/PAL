@@ -61,6 +61,7 @@ Item {
         ScrollView {
             id:viewport;anchors.fill:parent;anchors.margins:Theme.space3;clip:true
             contentWidth:availableWidth;contentHeight:body.implicitHeight
+            rightPadding:body.implicitHeight>Theme.bubbleHeight-Theme.space6?Theme.minimumTarget:0
             ScrollBar.horizontal.policy:ScrollBar.AlwaysOff;ScrollBar.vertical:CScrollBar{}
             ColumnLayout {
                 id:body;width:viewport.availableWidth;spacing:Theme.space2

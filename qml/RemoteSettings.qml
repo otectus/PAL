@@ -125,6 +125,7 @@ CSection {
         ScrollBar.vertical:CScrollBar{}
         CTextArea {
             id: response; objectName: "pairingResponse"
+            rightPadding: Theme.space4
             placeholderText: qsTr("Paste the phone’s public signed response")
             Accessible.name: qsTr("Phone pairing response")
             onTextChanged: remote.review = ({})

@@ -5,6 +5,9 @@
  *
  *   node tools/check-codex-protocol.ts            # exit 1 lists methods the installed Codex lacks
  *
+ * A request only Codex makes, which a later Codex stopped making, is listed as retired instead: PAL
+ * keeps answering it for the older versions it supports.
+ *
  * A pass shows the protocol names are still offered. It does not prove the payload semantics; the
  * fixture tests (tests/providers.test.ts) and a live check cover those.
  */
@@ -14,6 +17,9 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+
+/** Requests from Codex that PAL answers, and the first version whose schema no longer has them. */
+const retiredRequests: Record<string, string> = { 'currentTime/read': '0.171.0' }; // openai/codex#61382
 
 const run = promisify(execFile);
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -27,7 +33,10 @@ try {
   await run('codex', ['app-server', 'generate-json-schema', '--experimental', '--out', directory], { timeout: 60_000 });
   const schema = (await Promise.all((await readdir(directory)).filter(name => name.endsWith('.json')).map(name => readFile(join(directory, name), 'utf8')))).join('\n');
   const offered = new Set([...schema.matchAll(/"([a-zA-Z]+\/[a-zA-Z/]+)"/g)].map(match => match[1]));
-  const missing = [...used].filter(method => !offered.has(method)).sort();
-  console.log(JSON.stringify({ codex: version, methodsUsed: used.size, missing }));
+  const installed = version.match(/\d+\.\d+\.\d+/)?.[0] ?? '';
+  const absent = [...used].filter(method => !offered.has(method)).sort();
+  const retired = absent.filter(method => method in retiredRequests && installed.localeCompare(retiredRequests[method], 'en', { numeric: true }) >= 0);
+  const missing = absent.filter(method => !retired.includes(method));
+  console.log(JSON.stringify({ codex: version, methodsUsed: used.size, missing, retired }));
   if (missing.length) process.exitCode = 1;
 } finally { await rm(directory, { recursive: true, force: true }); }

@@ -1,6 +1,6 @@
 # PAL Everywhere: decisions, inventory and evidence
 
-This records the architecture decisions, the restriction inventory and the verification map for the PAL Everywhere expansion (`PAL_Everywhere_Feature_Expansion_and_Mobile_Parity_Handoff.md`). The work was made over `dd82dae` (desktop 0.1.6) and released with PAL 2.0.0; parts listed below came with 2.0.2. The code is the authority where this file and the source disagree. User-facing behavior is described in [WORKBENCH.md](WORKBENCH.md), [mobile/SETUP.md](mobile/SETUP.md#phones-with-full-access), [mobile/SECURITY.md](mobile/SECURITY.md#device-roles-pal-everywhere), [mobile/PROTOCOL.md](mobile/PROTOCOL.md#device-roles-and-owner-parity-pal-everywhere-11-additions) and the rows added to [FEATURE-MATRIX.md](FEATURE-MATRIX.md).
+This records the architecture decisions, the restriction inventory and the verification map for the PAL Everywhere expansion (`PAL_Everywhere_Feature_Expansion_and_Mobile_Parity_Handoff.md`, kept outside the repository). The work was made over `dd82dae` (desktop 0.1.6) and released with PAL 2.0.0; parts listed below came with 2.0.2. The code is the authority where this file and the source disagree. User-facing behavior is described in [WORKBENCH.md](WORKBENCH.md), [mobile/SETUP.md](mobile/SETUP.md#phones-with-full-access), [mobile/SECURITY.md](mobile/SECURITY.md#device-roles-pal-everywhere), [mobile/PROTOCOL.md](mobile/PROTOCOL.md#device-roles-and-owner-parity-pal-everywhere-11-additions) and the rows added to [FEATURE-MATRIX.md](FEATURE-MATRIX.md).
 
 ## Decisions
 
