@@ -22,7 +22,7 @@ ColumnLayout {
             CText { text:"Motion intensity";font.pixelSize:Theme.secondary;Layout.fillWidth:false }
             CSlider {
                 objectName:"motionIntensity";Layout.fillWidth:true;Layout.minimumWidth:0
-                from:0;to:1;stepSize:.1;value:motion.intensity
+                from:0;to:1;stepSize:.1;saved:motion.intensity
                 enabled:!motion.settings.quiet&&!motion.settings.reducedMotion
                 Accessible.name:"Motion intensity";onMoved:motion.update({motionIntensity:Math.round(value*10)/10})
             }

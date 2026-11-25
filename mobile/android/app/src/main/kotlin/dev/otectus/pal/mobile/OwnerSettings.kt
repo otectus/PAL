@@ -482,7 +482,7 @@ private fun KeysSection(repository: PALRepository, state: MobileState, activity:
     }
     if (accountProvider == "azure_openai") {
         OutlinedTextField(deployment, { deployment = it.take(128) }, Modifier.fillMaxWidth(), label = { Text("Azure deployment name (required)") }, singleLine = true)
-        OutlinedTextField(underlyingModel, { underlyingModel = it.take(128) }, Modifier.fillMaxWidth(), label = { Text("Underlying model") }, singleLine = true)
+        ModelField(underlyingModel, { underlyingModel = it }, stringResource(R.string.care_underlying_model), modelSource(repository, state, "openai"), maximum = 128)
         OutlinedTextField(region, { region = it.take(128) }, Modifier.fillMaxWidth(), label = { Text("Azure region (optional)") }, singleLine = true)
         OutlinedTextField(apiVersion, { apiVersion = it.take(128) }, Modifier.fillMaxWidth(), label = { Text("Azure API version (optional)") }, singleLine = true)
     }
@@ -885,7 +885,7 @@ private fun SetupsSection(repository: PALRepository, state: MobileState, activit
     var editing by remember { mutableStateOf<JsonObject?>(null) }
     fun load() = scope.launch { ownerCall { repository.request("owner.setups.list", buildJsonObject {}) as JsonObject }.onSuccess { setups = it.list("setups"); setupsRevision = it.str("revision") ?: "0"; supportsStartRevision = it.isTrue("supportsStartRevision") }.onFailure { failure(it.message ?: "") } }
     LaunchedEffect(Unit) { load() }
-    editing?.let { setup -> SetupEditor(state, setup, { editing = null }) { value ->
+    editing?.let { setup -> SetupEditor(state, setup, repository, { editing = null }) { value ->
         editing = null
         scope.launch { ownerCall { signed(activity, repository, "owner.setups.save", buildJsonObject { put("setup", value); put("expectedRevision", setupsRevision) }, strings.getString(R.string.extras_setup_action, value.str("name").orEmpty())) }
             .onSuccess { feedback(strings.getString(R.string.extras_setup_saved)); load() }.onFailure { failure(it.message.orEmpty()) } }
@@ -929,7 +929,9 @@ private fun SetupsSection(repository: PALRepository, state: MobileState, activit
         }
     }
     OutlinedTextField(folder, { folder = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.computer_project_folder_for_new_conversations)) })
-    OutlinedTextField(model, { model = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.computer_model_when_the_setup_names_none_optional)) })
+    // The desktop starts a setup that names no provider on Ollama.
+    val unnamed = setups.filter { it.str("model").isNullOrBlank() }.map { it.str("provider") ?: "ollama" }
+    ModelField(model, { model = it }, stringResource(R.string.computer_model_when_the_setup_names_none_optional), modelSource(repository, state, unnamed), none = stringResource(R.string.sheet_provider_default_model))
     startReview?.let { setup ->
         AlertDialog({ startReview = null }, title = { Text(stringResource(R.string.computer_start_with_host_commands)) },
             text = { Text("“" + setup.str("name").orEmpty() + stringResource(R.string.computer_will_open_a_new_conversation_in) + folder.trim() +
@@ -997,7 +999,7 @@ private fun SpecialistsSection(repository: PALRepository, state: MobileState, ac
             state.providers.keys.filter { state.traits(it).kind.let { kind -> kind == "api" || kind == "local" } }.forEach { id -> FilterChip(provider == id, { if (provider != id) { provider = id; account = "" } }, { Text(state.traits(id).label) }) }
         }
         AccountChoice(state, provider, account, byName = false) { account = it }
-        if (provider.isNotEmpty()) OutlinedTextField(model, { model = it.trim().take(512) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.care_model)) })
+        if (provider.isNotEmpty()) ModelField(model, { model = it.trim() }, stringResource(R.string.care_model), modelSource(repository, state, provider, connectionId = account))
     }
     Button({ scope.launch {
         ownerCall { signed(activity, repository, "owner.specialists.save", buildJsonObject { put("specialist", buildJsonObject { put("name", name.trim()); put("role", role); if (provider.isNotEmpty() && role != "visual_review") { put("provider", provider); put("model", model); if (account.isNotEmpty()) put("connectionId", account) } }) }, strings.getString(R.string.computer_add_the_specialist, name.trim())) }

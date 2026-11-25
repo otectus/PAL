@@ -1056,6 +1056,16 @@ class PALRepository(context: Context) {
         val listing = WireCodec.json.decodeFromJsonElement(ModelListing.serializer(), result)
         return ModelCatalog(listing.items, listing.unlisted)
     }
+    /** The models one use other than a conversation can be given: the account's own list with what the desktop names itself (models.uses). */
+    suspend fun modelsFor(provider: String, use: String, connectionId: String? = null, task: String? = null): ModelCatalog {
+        if (use == "chat") return modelCatalog(provider, connectionId = connectionId)
+        if (!_state.value.has("models.uses")) return ModelCatalog(emptyList())
+        val fence = fence()
+        val result = request("providers.models", buildJsonObject { put("provider", provider); put("operation", use); task?.let { put("task", it) }; connectionId?.takeIf(String::isNotBlank)?.let { put("connectionId", it) }; put("listing", true) })
+        if (!authorityFenceCurrent(fence)) throw StaleResultException()
+        val listing = WireCodec.json.decodeFromJsonElement(ModelListing.serializer(), result)
+        return ModelCatalog(listing.items, listing.unlisted, listing.problem)
+    }
     suspend fun models(provider: String, refresh: Boolean = false, sessionId: String? = null, connectionId: String? = null): List<ModelOption> {
         val cached = ((_state.value.providers[provider] as? JsonObject)?.get("models") as? JsonArray).orEmpty().mapNotNull { runCatching { WireCodec.json.decodeFromJsonElement(ModelOption.serializer(), it) }.getOrNull() }
         if (!refresh && sessionId == null && cached.isNotEmpty()) return cached; if (!_state.value.supports("providers.models")) return emptyList()

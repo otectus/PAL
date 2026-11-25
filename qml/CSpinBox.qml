@@ -5,6 +5,9 @@ SpinBox {
     implicitWidth: Theme.fieldMedium; implicitHeight: Theme.controlHeight
     leftPadding: Theme.fieldActionInset; rightPadding: Theme.fieldActionInset; editable: true
     font.family: Theme.font; font.pixelSize: Theme.body
+    // What is stored. A number being chosen outlives the state updates in between: only a stored value that really changes replaces it.
+    property int saved: -1
+    onSavedChanged: value = saved
     background: Rectangle { color: Theme.input; radius: Theme.radiusControl; border.color: control.activeFocus ? Theme.focus : control.hovered ? Theme.borderHover : Theme.border; border.width: control.activeFocus ? Theme.focusWidth : Theme.hairline }
     contentItem: TextInput {
         text: control.textFromValue(control.value,control.locale)

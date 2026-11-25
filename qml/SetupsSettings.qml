@@ -100,11 +100,11 @@ ColumnLayout {
         }
         ProviderAccountPicker { id:specialistAccount;name:"specialist";anyLabel:"Helper model";commandLine:false;Layout.fillWidth:true }
         RowLayout { Layout.fillWidth:true
-            CField { id:specialistModel;objectName:"specialistModel";Layout.fillWidth:true;enabled:specialistAccount.provider.length>0;placeholderText:specialistAccount.provider?"Model":"Runs on the helper model" }
+            ModelPicker { id:specialistModel;name:"specialistModel";Layout.fillWidth:true;enabled:specialistAccount.provider.length>0;provider:specialistAccount.provider;connectionId:specialistAccount.accountId;emptyText:specialistAccount.provider?"Choose a model":"Runs on the helper model";label:"Specialist model" }
         }
         CField { id:specialistInstructions;Layout.fillWidth:true;placeholderText:"Standing instructions (optional)" }
-        CButton { objectName:"specialistAdd";text:"Add specialist";enabled:specialistName.text.trim().length>0&&(!specialistAccount.provider||specialistModel.text.trim().length>0)
-            onClicked:rpc.call("specialists.save",{specialist:{name:specialistName.text,role:specialistRole.currentText,provider:specialistAccount.provider||undefined,connectionId:specialistAccount.account||undefined,model:specialistAccount.provider?specialistModel.text||undefined:undefined,instructions:specialistInstructions.text||undefined}},value=>{if(value.error){setups.error=value.error;return}specialistName.clear();specialistModel.clear();specialistAccount.set("","");specialistInstructions.clear();setups.loadSpecialists()}) }
+        CButton { objectName:"specialistAdd";text:"Add specialist";enabled:specialistName.text.trim().length>0&&(!specialistAccount.provider||specialistModel.value.length>0)
+            onClicked:rpc.call("specialists.save",{specialist:{name:specialistName.text,role:specialistRole.currentText,provider:specialistAccount.provider||undefined,connectionId:specialistAccount.account||undefined,model:specialistAccount.provider?specialistModel.value||undefined:undefined,instructions:specialistInstructions.text||undefined}},value=>{if(value.error){setups.error=value.error;return}specialistName.clear();specialistModel.set("");specialistAccount.set("","");specialistInstructions.clear();setups.loadSpecialists()}) }
     }
     CDialog {
         id:applyDialog
@@ -132,14 +132,14 @@ ColumnLayout {
     }
     CDialog {
         id:editor
-        function load(){const s=setups.editing;name.text=s.name||"";description.text=s.description||"";account.set(s.provider,s.connection);model.text=s.model||"";style.text=s.style||"";posture.text=s.posture||"";instructions.text=s.instructions||"";collections.text=(s.collections||[]).join("\n");skillsText.text=(s.skills||[]).join("\n");voice.text=s.voice||"";chosen=Object.assign({},s.families||{});open()}
+        function load(){const s=setups.editing;name.text=s.name||"";description.text=s.description||"";account.set(s.provider,s.connection);model.set(s.model||"");style.text=s.style||"";posture.text=s.posture||"";instructions.text=s.instructions||"";collections.text=(s.collections||[]).join("\n");skillsText.text=(s.skills||[]).join("\n");voice.text=s.voice||"";chosen=Object.assign({},s.families||{});open()}
         property var chosen:({})
         function lines(t){return String(t||"").split("\n").map(x=>x.trim()).filter(x=>x)}
         CText { text:setups.editing&&setups.editing.id?"Edit setup":"New setup";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
         CField { id:name;objectName:"setupName";Layout.fillWidth:true;placeholderText:"Name";maximumLength:80 }
         CField { id:description;Layout.fillWidth:true;placeholderText:"What it is for" }
         ProviderAccountPicker { id:account;name:"setup";byName:true;Layout.fillWidth:true }
-        CField { id:model;objectName:"setupModel";Layout.fillWidth:true;placeholderText:"Model (optional)" }
+        ModelPicker { id:model;name:"setupModel";Layout.fillWidth:true;provider:account.provider;connectionId:account.accountId;emptyText:"Any model";label:"Setup model" }
         Flow { Layout.fillWidth:true;spacing:Theme.space2
             Repeater { model:setups.families;CCheckBox { required property var modelData;text:setups.familyNames[modelData];checked:!!editor.chosen[modelData];onToggled:{const next=Object.assign({},editor.chosen);next[modelData]=checked;editor.chosen=next} } }
         }
@@ -157,7 +157,7 @@ ColumnLayout {
             CButton { text:"Cancel";onClicked:editor.close() }
             Item { Layout.fillWidth:true }
             CButton { objectName:"setupSave";text:"Save";primary:true;enabled:name.text.trim().length>0
-                onClicked:rpc.call("setups.save",{expectedRevision:setups.revision,setup:Object.assign(setups.editing&&setups.editing.id?{id:setups.editing.id}:{},{name:name.text,description:description.text,provider:account.provider||undefined,connection:account.account||undefined,model:model.text||undefined,families:editor.chosen,style:style.text||undefined,posture:posture.text||undefined,instructions:instructions.text||undefined,collections:editor.lines(collections.text),skills:editor.lines(skillsText.text),voice:voice.text||undefined})},value=>{if(setups.done(value,"Saved."))editor.close()}) }
+                onClicked:rpc.call("setups.save",{expectedRevision:setups.revision,setup:Object.assign(setups.editing&&setups.editing.id?{id:setups.editing.id}:{},{name:name.text,description:description.text,provider:account.provider||undefined,connection:account.account||undefined,model:model.value||undefined,families:editor.chosen,style:style.text||undefined,posture:posture.text||undefined,instructions:instructions.text||undefined,collections:editor.lines(collections.text),skills:editor.lines(skillsText.text),voice:voice.text||undefined})},value=>{if(setups.done(value,"Saved."))editor.close()}) }
         }
     }
 }

@@ -98,7 +98,7 @@ ColumnLayout {
                 textRole: "label"
                 valueRole: "id"
                 Accessible.name: "Search provider"
-                currentIndex: Math.max(0, searchSettings.providers.findIndex(row => row.id === searchSettings.search.provider))
+                keepsChoice: true; saved: searchSettings.search.provider || "auto"
                 onCurrentValueChanged: if (searchApiKey) searchApiKey.clear()
             }
             CText {
@@ -114,7 +114,7 @@ ColumnLayout {
                 visible: provider.currentValue === "searxng"
                 Layout.fillWidth: true
                 placeholderText: "http://localhost:8080"
-                text: searchSettings.search.searxngUrl || ""
+                saved: searchSettings.search.searxngUrl || ""
                 Accessible.name: "SearXNG server base URL"
                 Accessible.description: "Base URL of your SearXNG server with JSON search enabled"
             }
@@ -124,7 +124,7 @@ ColumnLayout {
                 visible: provider.currentValue === "google_custom"
                 Layout.fillWidth: true
                 placeholderText: "Programmable Search engine ID"
-                text: searchSettings.search.googleEngineId || ""
+                saved: searchSettings.search.googleEngineId || ""
                 Accessible.name: "Google Programmable Search engine ID"
             }
 

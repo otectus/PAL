@@ -14,15 +14,15 @@ ColumnLayout {
     spacing: Theme.space2
     function save() {
         feedback = ""; failed = false
-        rpc.call("settings.update", { transcription: { provider: "local-server", serverUrl: address.text.trim(), serverModel: model.text.trim() } }, value => { server.failed = !!value.error; server.feedback = value.error || "Saved." })
+        rpc.call("settings.update", { transcription: { provider: "local-server", serverUrl: address.text.trim(), serverModel: model.value } }, value => { server.failed = !!value.error; server.feedback = value.error || "Saved." })
     }
     function check() {
         feedback = ""; failed = false
         rpc.call("transcription.checkServer", { url: address.text.trim() }, value => { server.failed = !!value.error || !value.answers; server.feedback = value.error || value.detail })
     }
     RpcClient { id: rpc }
-    CField { id: address; objectName: "speechServerAddress"; Layout.fillWidth: true; placeholderText: "http://127.0.0.1:8080"; maximumLength: 200; text: server.savedUrl; Accessible.name: "Speech server address"; onAccepted: if (server.typed) server.save() }
-    CField { id: model; objectName: "speechServerModel"; Layout.fillWidth: true; placeholderText: "Model (optional)"; maximumLength: 160; text: server.savedModel; Accessible.name: "Speech server model"; onAccepted: if (server.typed) server.save() }
+    CField { id: address; objectName: "speechServerAddress"; Layout.fillWidth: true; placeholderText: "http://127.0.0.1:8080"; maximumLength: 200; saved: server.savedUrl; Accessible.name: "Speech server address"; onAccepted: if (server.typed) server.save() }
+    ModelPicker { id: model; name: "speechServerModel"; Layout.fillWidth: true; provider: server.savedUrl ? "local-server" : ""; url: server.savedUrl; operation: "speech.transcribe"; saved: server.savedModel; emptyText: "The server’s default model"; label: "Speech server model"; maximumLength: 160; onAccepted: if (server.typed) server.save() }
     RowLayout {
         Layout.fillWidth: true; spacing: Theme.space2
         CButton { objectName: "speechServerSave"; text: "Save"; enabled: server.typed && !rpc.busy; onClicked: server.save() }

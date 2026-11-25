@@ -10,6 +10,7 @@
     <string name="care_try">Try it</string>
     <string name="care_try_heading">Try a model</string>
     <string name="care_model">Model ID</string>
+    <string name="care_underlying_model">Underlying model</string>
     <string name="care_billed">Each sends one short request with this account. The service may bill it. Nothing is kept as a conversation.</string>
     <string name="care_loads">This loads the model on its server and sends it short requests. Nothing is kept as a conversation.</string>
     <string name="care_test_reply">Reply</string>

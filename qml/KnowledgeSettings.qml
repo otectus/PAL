@@ -36,7 +36,7 @@ ColumnLayout {
     property int impactRequest:-1
     property var impact:null
     property string impactError:""
-    function saveEmbedding(){impact=null;impactError="";checkAfterSave=true;memoryError="";checkResult="";memoryRequest=App.rpc("settings.update",{memory:{model:embedding.text.trim()}})}
+    function saveEmbedding(){impact=null;impactError="";checkAfterSave=true;memoryError="";checkResult="";memoryRequest=App.rpc("settings.update",{memory:{model:embedding.value}})}
     function impactText(){
         if(!impact)return ""
         const next=impact.next||{},current=impact.current||{}
@@ -68,35 +68,35 @@ ColumnLayout {
                 onActivated:knowledge.memoryRequest=App.rpc("settings.update",{memory:{embeddingConnectionId:currentValue}})
             }
             CCheckBox { objectName:"cloudEmbeddingEnabled";visible:embeddingProvider.currentValue!=="ollama";text:"Allow this provider to embed eligible memory and search queries";checked:knowledge.memory.allowCloudEmbedding===true;onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{allowCloudEmbedding:checked}}) }
-            CField { visible:embeddingProvider.currentValue!=="ollama";Layout.fillWidth:true;placeholderText:"Dimensions (provider default)";text:knowledge.memory.embeddingDimensions?String(knowledge.memory.embeddingDimensions):"";validator:IntValidator{bottom:1} Accessible.name:"Embedding dimensions";onEditingFinished:knowledge.memoryRequest=App.rpc("settings.update",{memory:{embeddingDimensions:text.trim()?Number(text):0}}) }
+            CField { visible:embeddingProvider.currentValue!=="ollama";Layout.fillWidth:true;placeholderText:"Dimensions (provider default)";saved:knowledge.memory.embeddingDimensions?String(knowledge.memory.embeddingDimensions):"";validator:IntValidator{bottom:1} Accessible.name:"Embedding dimensions";onEditingFinished:knowledge.memoryRequest=App.rpc("settings.update",{memory:{embeddingDimensions:text.trim()?Number(text):0}}) }
             CComboBox { visible:embeddingProvider.currentValue==="huggingface";Layout.fillWidth:true;model:[{id:"mean",label:"Mean pooling"},{id:"cls",label:"CLS token pooling"}];textRole:"label";valueRole:"id";currentIndex:Math.max(0,model.findIndex(row=>row.id===(knowledge.memory.embeddingPooling||"mean")));Accessible.name:"Hugging Face embedding pooling";onActivated:knowledge.memoryRequest=App.rpc("settings.update",{memory:{embeddingPooling:currentValue}}) }
             CText { text:"Embedding model";color:Theme.muted;font.pixelSize:Theme.secondary }
             RowLayout {
                 Layout.fillWidth:true
-                CField { id:embedding;objectName:"embeddingModel";Layout.fillWidth:true;Layout.minimumWidth:0;text:knowledge.memory.model;placeholderText:"nomic-embed-text";Accessible.name:"Memory embedding model" }
+                ModelPicker { id:embedding;name:"embeddingModel";Layout.fillWidth:true;provider:knowledge.memory.embeddingProvider||"ollama";connectionId:knowledge.memory.embeddingConnectionId||"";operation:"embed";saved:knowledge.memory.model||"";label:"Memory embedding model";emptyText:"Choose an embedding model";placeholder:"Embedding model ID" }
                 CButton {
-                    objectName:"memoryCheck";text:knowledge.checkRequest>=0||knowledge.impactRequest>=0?"Checking…":"Check & save";enabled:knowledge.memoryRequest<0&&knowledge.checkRequest<0&&knowledge.impactRequest<0&&embedding.text.trim().length>0
+                    objectName:"memoryCheck";Layout.alignment:Qt.AlignTop;text:knowledge.checkRequest>=0||knowledge.impactRequest>=0?"Checking…":"Check & save";enabled:knowledge.memoryRequest<0&&knowledge.checkRequest<0&&knowledge.impactRequest<0&&embedding.value.length>0
                     onClicked:{
-                        if(embedding.text.trim()===knowledge.memory.model){knowledge.saveEmbedding();return}
-                        knowledge.impact=null;knowledge.impactError="";knowledge.checkResult="";knowledge.impactRequest=App.rpc("memory.embeddingImpact",{model:embedding.text.trim()})
+                        if(embedding.value===knowledge.memory.model){knowledge.saveEmbedding();return}
+                        knowledge.impact=null;knowledge.impactError="";knowledge.checkResult="";knowledge.impactRequest=App.rpc("memory.embeddingImpact",{model:embedding.value})
                     }
                 }
             }
             ColumnLayout {
                 objectName:"embeddingImpact";visible:!!knowledge.impact||!!knowledge.impactError;Layout.fillWidth:true;spacing:Theme.space2
-                CText { objectName:"embeddingImpactText";Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:Theme.secondary;color:knowledge.impactError?Theme.danger:Theme.text;text:knowledge.impactError?"Could not check "+embedding.text.trim()+": "+knowledge.impactError:knowledge.impactText() }
+                CText { objectName:"embeddingImpactText";Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:Theme.secondary;color:knowledge.impactError?Theme.danger:Theme.text;text:knowledge.impactError?"Could not check "+embedding.value+": "+knowledge.impactError:knowledge.impactText() }
                 RowLayout {
                     Layout.fillWidth:true
-                    CButton { objectName:"embeddingSwitch";Layout.fillWidth:true;primary:!knowledge.impactError;text:knowledge.impactError?"Save anyway":"Switch to "+embedding.text.trim();enabled:knowledge.memoryRequest<0;onClicked:knowledge.saveEmbedding() }
-                    CButton { objectName:"embeddingKeep";Layout.fillWidth:true;text:"Keep "+knowledge.memory.model;onClicked:{embedding.text=knowledge.memory.model;knowledge.impact=null;knowledge.impactError=""} }
+                    CButton { objectName:"embeddingSwitch";Layout.fillWidth:true;primary:!knowledge.impactError;text:knowledge.impactError?"Save anyway":"Switch to "+embedding.value;enabled:knowledge.memoryRequest<0;onClicked:knowledge.saveEmbedding() }
+                    CButton { objectName:"embeddingKeep";Layout.fillWidth:true;text:"Keep "+knowledge.memory.model;onClicked:{embedding.set(knowledge.memory.model);knowledge.impact=null;knowledge.impactError=""} }
                 }
             }
             CText { text:embeddingProvider.currentValue==="ollama"?"Default: nomic-embed-text. Install it with ollama pull nomic-embed-text. The saved Ollama server is used for memory.":"Uses the selected provider account in Connections. Eligible memories and search queries leave this computer; local-only sources keep keyword recall. Switching provider, model or dimensions rebuilds a separate vector space.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
             CText { text:"Retrieval reranking (optional)";color:Theme.muted;font.pixelSize:Theme.secondary }
             RowLayout {
                 Layout.fillWidth:true
-                CField { id:voyageRerank;Layout.fillWidth:true;text:knowledge.memory.voyageRerankModel||"";placeholderText:"Voyage rerank model · blank disables";Accessible.name:"Voyage rerank model" }
-                CButton { text:"Save";onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{voyageRerankModel:voyageRerank.text.trim()}}) }
+                ModelPicker { id:voyageRerank;name:"voyageRerank";Layout.fillWidth:true;provider:"voyage";operation:"rerank";saved:knowledge.memory.voyageRerankModel||"";emptyText:"No reranking";label:"Voyage rerank model";maximumLength:128 }
+                CButton { text:"Save";Layout.alignment:Qt.AlignTop;onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{voyageRerankModel:voyageRerank.value}}) }
             }
             CComboBox {
                 objectName:"memoryExtractionProvider";Layout.fillWidth:true;model:knowledge.extractionProviders;textRole:"label";valueRole:"id"
@@ -142,26 +142,14 @@ ColumnLayout {
         title:"Structured evaluation"
         id:jevSection;objectName:"jevSection"
         description:"Jev can check structured outputs as an independent service. Add its key in Connections, then choose a model. Without a model it stays off."
-        property var models:[]
         property string problem:""
         property string saved:""
         function save(value){problem="";saved="";jevRpc.call("settings.update",{workbench:{jevModel:value}},result=>{if(result.error)jevSection.problem=String(result.error.message||result.error);else jevSection.saved=value?"Jev uses "+value+".":"Jev is off."})}
         RpcClient { id:jevRpc }
         RowLayout {
             Layout.fillWidth:true
-            CField { id:jevModel;objectName:"jevModel";Layout.fillWidth:true;text:App.state.settings?.workbench?.jevModel||"";placeholderText:"Model name · blank keeps Jev off";Accessible.name:"Jev evaluation model";onAccepted:jevSection.save(text.trim()) }
-            CButton { objectName:"jevSave";text:"Save";enabled:App.connected&&!jevRpc.busy;onClicked:jevSection.save(jevModel.text.trim()) }
-            CButton { objectName:"jevModels";text:jevRpc.busy?"Loading…":"List models";enabled:App.connected&&!jevRpc.busy;onClicked:{jevSection.problem="";jevRpc.call("evaluation.models",{},value=>{if(value.error)jevSection.problem=String(value.error.message||value.error);else{jevSection.models=value;if(!value.length)jevSection.problem="The service lists no models."}})} }
-        }
-        Repeater {
-            model:jevSection.models
-            CButton {
-                required property var modelData
-                required property int index
-                objectName:"jevModel_"+index;Layout.fillWidth:true;alignLeft:true;quiet:true
-                text:modelData.name+(modelData.description?" · "+modelData.description:"");help:modelData.release_date?"Released "+modelData.release_date:"";primary:(App.state.settings?.workbench?.jevModel||"")===modelData.name
-                onClicked:{jevModel.text=modelData.name;jevSection.save(modelData.name)}
-            }
+            ModelPicker { id:jevModel;name:"jevModel";Layout.fillWidth:true;provider:"jev";operation:"evaluate";saved:App.state.settings?.workbench?.jevModel||"";emptyText:"Jev is off";label:"Jev evaluation model";onAccepted:jevSection.save(value) }
+            CButton { objectName:"jevSave";text:"Save";Layout.alignment:Qt.AlignTop;enabled:App.connected&&!jevRpc.busy;onClicked:jevSection.save(jevModel.value) }
         }
         CText { visible:!!jevSection.problem;text:jevSection.problem;color:Theme.danger;font.pixelSize:Theme.secondary;Accessible.role:Accessible.AlertMessage }
         CText { visible:!!jevSection.saved;text:jevSection.saved;color:Theme.accentText;font.pixelSize:Theme.secondary }

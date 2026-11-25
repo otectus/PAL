@@ -2968,7 +2968,33 @@
                 "image.generate",
                 "video.generate",
                 "music.generate",
-                "ocr"
+                "ocr",
+                "inference"
+              ]
+            },
+            "task": {
+              "type": "string",
+              "enum": [
+                "feature-extraction",
+                "sentence-similarity",
+                "text-classification",
+                "token-classification",
+                "zero-shot-classification",
+                "question-answering",
+                "fill-mask",
+                "summarization",
+                "translation",
+                "text-generation",
+                "table-question-answering",
+                "image-classification",
+                "object-detection",
+                "image-segmentation",
+                "audio-classification",
+                "automatic-speech-recognition",
+                "text-to-image",
+                "image-to-image",
+                "text-to-video",
+                "text-to-speech"
               ]
             },
             "connectionId": {

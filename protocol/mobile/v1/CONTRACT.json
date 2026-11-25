@@ -521,6 +521,8 @@
         "provider": "codex|claude|ollama|antigravity|openai|anthropic|google|azure_openai|deepseek|mistral|xai|perplexity|openrouter|huggingface|litellm|forge|edenai|compatible",
         "sessionId": "optional — the conversation's own route: its Ollama host or named compatible connection",
         "listing": "optional true — answer {items, unlisted} (feature models.listing)",
+        "operation": "optional — the use a model is wanted for (chat when absent)",
+        "task": "with operation inference — a Hugging Face task (feature models.uses)",
         "connectionId": "optional authorized account UUID"
       },
       "result": "[] of models, or {items, unlisted} with listing; a compatible catalog's capabilities are the route's declaration. A model may carry detail (context, price and what it reads, in words), free and expires; price and parameter tables stay on the desktop, and an answer is kept under a megabyte by leaving out descriptions and then the end of the list"
@@ -4878,6 +4880,7 @@
     "sessions.toolsState": "session tools is the stored choice for Ollama and hosted API conversations, with toolsAvailable (true, false, or null when the model decides) and toolsUnavailableReason; sessions.configure keeps an omitted effort or tools",
     "sessions.routeRevision": "compatible sessions name routeRevision, imagesAvailable and connectionName; sessions.send and sessions.configure accept expectedRouteRevision and refuse with REVISION_CONFLICT when the connection changed",
     "models.listing": "providers.models listing:true answers {items, unlisted}; snapshot providers carry modelsUnlisted, and traits carry customModel and toolCalling",
+    "models.uses": "providers.models listing:true with another operation than chat answers the desktop's list for that use: the account's models, those PAL names itself, and problem when the list could not be loaded; operation inference names a Hugging Face task",
     "workbench.takeover": "sessions name workbenchFamilies, workbenchTakeover ('acknowledge' or null) and workbenchNote; sessions.send takes workbenchAcknowledged; Workbench results arrive as role 'workbench' messages with desktopOnly {kind,label}",
     "owner.policy.v1": "device roles (observer, limited, owner), client.features negotiation, working profiles, owner device and power management, View desktop (view.*); an owner connection keeps Workbench families and the desktop launch policy",
     "workbench.remote.v1": "workbench.* and canvas.*: folders, files, reviewed changes, artifacts, runs, Code Lab, commands, images and live previews of a conversation, through the desktop services",

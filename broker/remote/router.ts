@@ -621,7 +621,11 @@ export class Router {
         const currentOllama=p.provider==='ollama'&&ollamaHost(this.core.settings.ollama.host)===ollamaHost(host);
         const route=p.provider==='compatible'?this.compatibleRoute(session):undefined;
         if(p.connectionId && !isApiProvider(p.provider) && !this.owner(device) && !(p.provider==='ollama' && device.apiConnections?.includes(p.connectionId))) throw remoteError('SCOPE_DENIED','Choose a granted provider account.');
-        const models:any[]=p.connectionId?await this.core.accountModels(this.core.chatConnections.get(p.connectionId,p.provider),p.operation):p.operation&&p.operation!=='chat'&&isApiProvider(p.provider)?await apiModels(p.provider,this.core.accountAccess(p.provider,session?.connectionId),p.operation):currentOllama?await this.core.refreshProviderModels('ollama'):p.provider==='ollama'?await ollamaModels(host):session?await this.core.sessionModels(session):await this.core.refreshProviderModels(p.provider);
+        // What a use other than a conversation can be given, as the desktop's own drop-downs offer it (models.uses).
+        const use=p.listing&&p.operation&&p.operation!=='chat'&&isApiProvider(p.provider)?await this.core.modelChoices.choices({provider:p.provider,operation:p.operation,refresh:true,...(session?.connectionId?{connectionId:session.connectionId}:{}),...(p.task?{task:p.task}:{})}):undefined;
+        if(p.operation==='inference'&&!use)throw remoteError('INVALID_ARGUMENT','Choose Hugging Face for a task.');
+        const operation=p.operation==='inference'?undefined:p.operation;
+        const models:any[]=use?use.models:p.connectionId?await this.core.accountModels(this.core.chatConnections.get(p.connectionId,p.provider),operation):operation&&operation!=='chat'&&isApiProvider(p.provider)?await apiModels(p.provider,this.core.accountAccess(p.provider,session?.connectionId),operation):currentOllama?await this.core.refreshProviderModels('ollama'):p.provider==='ollama'?await ollamaModels(host):session?await this.core.sessionModels(session):await this.core.refreshProviderModels(p.provider);
         this.current(device);
         if(isApiProvider(p.provider)) {
           // The destination and its grant must still be the ones the catalog was read from.
@@ -634,7 +638,9 @@ export class Router {
         const items=declared?models.map(model=>({...model,capabilities:declared})):models;
         // One answer is one message, and a message holds a megabyte. A model that did not fit is still chosen by its ID.
         const fitting=compactModels(items,850_000).items;
-        return p.listing?{items:fitting,unlisted:(models as {unlisted?:boolean}).unlisted===true}:fitting;
+        // A list that could not be loaded is said beside what is known; a limited phone gets the fixed words of safeError.
+        const problem=use?.problem&&!use.unlisted?this.owner(device)?use.problem:'The desktop could not load this list.':undefined;
+        return p.listing?{items:fitting,unlisted:use?use.unlisted===true:(models as {unlisted?:boolean}).unlisted===true,...(problem?{problem}:{})}:fitting;
       }
       case 'sessions.configure': {
         this.require(device,'chat.write');const s=this.session(device,p.sessionId);

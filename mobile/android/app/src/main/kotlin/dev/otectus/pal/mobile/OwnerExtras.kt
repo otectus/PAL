@@ -54,7 +54,7 @@ internal fun ProjectsSection(repository: PALRepository, state: MobileState, acti
             TextButton({ editing = project }) { Text(stringResource(R.string.extras_project_edit)) }
         }
     }
-    editing?.let { project -> ProjectEditor(state, project, { editing = null }) { saved ->
+    editing?.let { project -> ProjectEditor(state, project, repository, { editing = null }) { saved ->
         editing = null
         scope.launch {
             ownerCall { signed(activity, repository, "owner.projects.save", saved, strings.getString(R.string.extras_project_action, saved.str("name"))) }
@@ -63,7 +63,7 @@ internal fun ProjectsSection(repository: PALRepository, state: MobileState, acti
     } }
 }
 @Composable
-internal fun ProjectEditor(state: MobileState, project: JsonObject, dismiss: () -> Unit, save: (JsonObject) -> Unit) {
+internal fun ProjectEditor(state: MobileState, project: JsonObject, repository: PALRepository?, dismiss: () -> Unit, save: (JsonObject) -> Unit) {
     val defaults = project.obj("defaults")
     var name by rememberSaveable { mutableStateOf(project.str("name").orEmpty()) }
     var favorite by rememberSaveable { mutableStateOf(project.isTrue("favorite")) }
@@ -89,7 +89,7 @@ internal fun ProjectEditor(state: MobileState, project: JsonObject, dismiss: () 
         ToolCheck(stringResource(R.string.extras_project_favorite), favorite) { favorite = it }
         Text(stringResource(R.string.extras_project_provider), style = MaterialTheme.typography.labelMedium)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { (state.providers.keys + provider).distinct().forEach { id -> FilterChip(provider == id, { provider = id; model = ""; effort = "" }, { Text(state.traits(id).label) }) } }
-        OutlinedTextField(model, { model = it.take(512) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.extras_project_model)) })
+        ModelField(model, { model = it }, stringResource(R.string.extras_project_model), modelSource(repository, state, provider), none = stringResource(R.string.sheet_provider_default_model).takeIf { kind != "api" })
         if (!managed) OutlinedTextField(effort, { effort = it.take(32) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.extras_project_effort)) })
         if (managed && !temporary) ToolCheck(stringResource(R.string.extras_project_tools), tools) { tools = it }
         ToolCheck(stringResource(R.string.extras_project_trusted), trusted) { trusted = it }
@@ -174,7 +174,7 @@ internal fun VerifyResult(repository: PALRepository, activity: FragmentActivity,
 
 /** A setup of one's own: a model, what it may use, and standing instructions. Built-ins are saved as copies. */
 @Composable
-internal fun SetupEditor(state: MobileState, setup: JsonObject, dismiss: () -> Unit, save: (JsonObject) -> Unit) {
+internal fun SetupEditor(state: MobileState, setup: JsonObject, repository: PALRepository?, dismiss: () -> Unit, save: (JsonObject) -> Unit) {
     val copy = setup.isTrue("builtin")
     var name by rememberSaveable { mutableStateOf(setup.str("name").orEmpty() + if (copy) " (copy)" else "") }
     var description by rememberSaveable { mutableStateOf(setup.str("description").orEmpty()) }
@@ -201,7 +201,9 @@ internal fun SetupEditor(state: MobileState, setup: JsonObject, dismiss: () -> U
             state.providers.keys.forEach { id -> FilterChip(provider == id, { if (provider != id) { provider = id; account = "" } }, { Text(state.traits(id).label) }) }
         }
         AccountChoice(state, provider, account, byName = true) { account = it }
-        OutlinedTextField(model, { model = it.take(512) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.extras_setup_model)) })
+        // A setup names its account; the list is asked for by the account's ID.
+        val accountId = (state.providers[provider] as? JsonObject)?.list("connections").orEmpty().firstOrNull { it.str("name") == account }?.str("id").orEmpty()
+        ModelField(model, { model = it }, stringResource(R.string.extras_setup_model), modelSource(repository, state, provider, connectionId = accountId), none = stringResource(R.string.extras_setup_any_model))
         Text(stringResource(R.string.extras_setup_families), style = MaterialTheme.typography.labelMedium)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             listOf("files" to R.string.work_option_files, "images" to R.string.work_option_images, "analysis" to R.string.work_option_analysis, "host" to R.string.work_host_commands).forEach { (id, label) ->
@@ -338,7 +340,7 @@ internal fun BridgeTest(repository: PALRepository, state: MobileState, activity:
     ToolDialog(stringResource(R.string.extras_bridge_title, connection.str("name").orEmpty()), dismiss, busy = busy, error = error) {
         Text(stringResource(R.string.extras_bridge_hint), style = MaterialTheme.typography.bodySmall)
         if (session == null) Text(stringResource(R.string.extras_bridge_conversation), color = MaterialTheme.colorScheme.tertiary)
-        OutlinedTextField(model, { model = it.take(512) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.extras_bridge_model)) })
+        ModelField(model, { model = it }, stringResource(R.string.extras_bridge_model), modelSource(repository, state, connection.str("kind") ?: "litellm", connectionId = connection.str("id").orEmpty()))
         OutlinedTextField(text, { text = it.take(2000) }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.extras_bridge_text)) })
         FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) {
             Button({ send(false) }, enabled = !busy && session != null && model.isNotBlank() && text.isNotBlank()) { Text(stringResource(R.string.extras_bridge_chat)) }

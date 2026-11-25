@@ -23,7 +23,7 @@ CSection {
     function refresh(){if(!available)return;loaded=true;voicesRequest=App.rpc("tts.voices",{})}
     function refreshHosted(){
         if(!["google_cloud","azure_speech"].includes(ttsProvider.currentValue))return
-        hostedVoices=[];hostedVoicesRequest=App.rpc("voice.hostedVoices",{provider:ttsProvider.currentValue,settings:{model:hostedVoiceModel.text.trim(),voice:hostedVoiceName.text.trim(),language:hostedVoiceLanguage.text.trim(),region:hostedVoiceRegion.text.trim(),connectionId:hostedVoiceConnection.currentValue||""}})
+        hostedVoices=[];hostedVoicesRequest=App.rpc("voice.hostedVoices",{provider:ttsProvider.currentValue,settings:{model:hostedVoiceModel.value,voice:hostedVoiceName.text.trim(),language:hostedVoiceLanguage.text.trim(),region:hostedVoiceRegion.text.trim(),connectionId:hostedVoiceConnection.currentValue||""}})
     }
     function saveTuning(patch){
         error=""
@@ -59,11 +59,14 @@ CSection {
             id:control;objectName:tuning.settingKey;Layout.fillWidth:true;Layout.minimumWidth:0
             from:tuning.minimum;to:tuning.maximum;stepSize:tuning.increment
             snapMode:Slider.SnapAlways
-            value:voiceSettings.settings[tuning.settingKey]===undefined?tuning.neutral:voiceSettings.settings[tuning.settingKey]
+            saved:voiceSettings.settings[tuning.settingKey]===undefined?tuning.neutral:voiceSettings.settings[tuning.settingKey]
             Accessible.name:tuning.label
             // Persist once when a pointer drag ends; keyboard adjustments save immediately.
             onMoved:if(!pressed)tuning.save()
             onPressedChanged:if(!pressed)tuning.save()
+            // A value that was refused is not shown as if it were kept.
+            readonly property string problem:voiceSettings.error
+            onProblemChanged:if(problem)follow()
             Keys.onPressed:event=>{
                 if(event.key===Qt.Key_Home||event.key===Qt.Key_End){
                     tuning.saveValue(event.key===Qt.Key_Home?from:to);event.accepted=true
@@ -95,30 +98,30 @@ CSection {
         model:[{id:"local",label:"Local voices · Piper / Kokoro"},{id:"indextts",label:"IndexTTS · voice cloning"},{id:"elevenlabs",label:"ElevenLabs · API"},{id:"openai",label:"OpenAI speech"},{id:"xai",label:"Grok (xAI) speech"},{id:"google",label:"Google Gemini speech"},{id:"google_cloud",label:"Google Cloud Speech · ADC"},{id:"azure_speech",label:"Azure Speech"},{id:"azure_openai",label:"Azure OpenAI speech"},{id:"mistral",label:"Mistral speech"},{id:"openrouter",label:"OpenRouter speech"}];textRole:"label";valueRole:"id"
         currentIndex:Math.max(0,model.findIndex(row=>row.id===(voiceSettings.settings.ttsProvider||"local")))
         Accessible.name:"Speech provider"
-        onActivated:App.rpc("settings.update",{ttsProvider:currentValue})
+        onActivated:{hostedVoiceModel.set("");App.rpc("settings.update",{ttsProvider:currentValue})}
     }
     Loader { Layout.fillWidth:true;active:voiceSettings.settings.ttsProvider==="indextts";visible:active;source:"IndexTTSSettings.qml" }
     Loader { Layout.fillWidth:true;active:voiceSettings.settings.ttsProvider==="elevenlabs";visible:active;source:"ElevenLabsSettings.qml" }
     ColumnLayout {
         readonly property bool hosted:["openai","xai","google","google_cloud","azure_speech","azure_openai","mistral","openrouter"].includes(ttsProvider.currentValue)
         visible:hosted;Layout.fillWidth:true;spacing:Theme.space2
-        CField { id:hostedVoiceModel;Layout.fillWidth:true;placeholderText:"Speech model";text:voiceSettings.settings.hostedVoice?.model||"";Accessible.name:"Hosted speech model" }
-        CField { id:hostedVoiceName;Layout.fillWidth:true;placeholderText:"Voice";text:voiceSettings.settings.hostedVoice?.voice||"";Accessible.name:"Hosted voice" }
+        ModelPicker { id:hostedVoiceModel;name:"hostedVoiceModel";visible:["openai","google","mistral","openrouter"].includes(ttsProvider.currentValue);Layout.fillWidth:true;provider:visible?ttsProvider.currentValue:"";connectionId:hostedVoiceConnection.currentValue||"";operation:"speech.synthesize";saved:voiceSettings.settings.hostedVoice?.model||"";emptyText:"Provider’s default model";label:"Speech model";maximumLength:160 }
+        CField { id:hostedVoiceName;Layout.fillWidth:true;placeholderText:"Voice";saved:voiceSettings.settings.hostedVoice?.voice||"";Accessible.name:"Hosted voice" }
         CComboBox { visible:voiceSettings.hostedVoices.length>0;Layout.fillWidth:true;model:voiceSettings.hostedVoices;textRole:"label";valueRole:"id";currentIndex:Math.max(0,model.findIndex(row=>row.id===hostedVoiceName.text));Accessible.name:"Hosted voice catalog";onActivated:hostedVoiceName.text=currentValue }
-        CField { id:hostedVoiceLanguage;Layout.fillWidth:true;placeholderText:"Language (optional)";text:voiceSettings.settings.hostedVoice?.language||"";Accessible.name:"Hosted voice language" }
-        CField { id:hostedVoiceRegion;visible:ttsProvider.currentValue==="azure_speech";Layout.fillWidth:true;placeholderText:"Azure region";text:voiceSettings.settings.hostedVoice?.region||"";Accessible.name:"Azure Speech region" }
+        CField { id:hostedVoiceLanguage;Layout.fillWidth:true;placeholderText:"Language (optional)";saved:voiceSettings.settings.hostedVoice?.language||"";Accessible.name:"Hosted voice language" }
+        CField { id:hostedVoiceRegion;visible:ttsProvider.currentValue==="azure_speech";Layout.fillWidth:true;placeholderText:"Azure region";saved:voiceSettings.settings.hostedVoice?.region||"";Accessible.name:"Azure Speech region" }
         CText { visible:ttsProvider.currentValue==="google";text:"Optional Gemini two-speaker dialogue";font.weight:Font.DemiBold }
         RowLayout { visible:ttsProvider.currentValue==="google";Layout.fillWidth:true
-            CField { id:speakerOne;Layout.fillWidth:true;placeholderText:"Speaker 1 name";text:voiceSettings.settings.hostedVoice?.speakers?.[0]?.speaker||"" }
-            CField { id:speakerOneVoice;Layout.fillWidth:true;placeholderText:"Speaker 1 voice";text:voiceSettings.settings.hostedVoice?.speakers?.[0]?.voice||"" }
+            CField { id:speakerOne;Layout.fillWidth:true;placeholderText:"Speaker 1 name";saved:voiceSettings.settings.hostedVoice?.speakers?.[0]?.speaker||"" }
+            CField { id:speakerOneVoice;Layout.fillWidth:true;placeholderText:"Speaker 1 voice";saved:voiceSettings.settings.hostedVoice?.speakers?.[0]?.voice||"" }
         }
         RowLayout { visible:ttsProvider.currentValue==="google";Layout.fillWidth:true
-            CField { id:speakerTwo;Layout.fillWidth:true;placeholderText:"Speaker 2 name";text:voiceSettings.settings.hostedVoice?.speakers?.[1]?.speaker||"" }
-            CField { id:speakerTwoVoice;Layout.fillWidth:true;placeholderText:"Speaker 2 voice";text:voiceSettings.settings.hostedVoice?.speakers?.[1]?.voice||"" }
+            CField { id:speakerTwo;Layout.fillWidth:true;placeholderText:"Speaker 2 name";saved:voiceSettings.settings.hostedVoice?.speakers?.[1]?.speaker||"" }
+            CField { id:speakerTwoVoice;Layout.fillWidth:true;placeholderText:"Speaker 2 voice";saved:voiceSettings.settings.hostedVoice?.speakers?.[1]?.voice||"" }
         }
-        CComboBox { id:hostedVoiceConnection;visible:voiceSettings.connections.some(row=>row.kind===ttsProvider.currentValue);Layout.fillWidth:true;readonly property var choices:[{id:"",name:"Default account"}].concat(voiceSettings.connections.filter(row=>row.kind===ttsProvider.currentValue));model:choices;textRole:"name";valueRole:"id";currentIndex:Math.max(0,choices.findIndex(row=>row.id===(voiceSettings.settings.hostedVoice?.connectionId||"")));Accessible.name:"Hosted speech account" }
+        CComboBox { id:hostedVoiceConnection;visible:voiceSettings.connections.some(row=>row.kind===ttsProvider.currentValue);Layout.fillWidth:true;readonly property var choices:[{id:"",name:"Default account"}].concat(voiceSettings.connections.filter(row=>row.kind===ttsProvider.currentValue));model:choices;textRole:"name";valueRole:"id";keepsChoice:true;saved:voiceSettings.settings.hostedVoice?.connectionId||"";Accessible.name:"Hosted speech account" }
         CText { visible:ttsProvider.currentValue==="azure_openai"&&!hostedVoiceConnection.currentValue;text:"Choose a named Azure deployment account.";color:Theme.amber;font.pixelSize:Theme.caption }
-        CButton { text:"Save hosted voice";enabled:ttsProvider.currentValue!=="azure_openai"||!!hostedVoiceConnection.currentValue;onClicked:{const value={model:hostedVoiceModel.text.trim(),voice:hostedVoiceName.text.trim(),language:hostedVoiceLanguage.text.trim(),region:hostedVoiceRegion.text.trim(),connectionId:hostedVoiceConnection.currentValue||""};if(ttsProvider.currentValue==="google"&&speakerOne.text.trim()&&speakerOneVoice.text.trim()&&speakerTwo.text.trim()&&speakerTwoVoice.text.trim())value.speakers=[{speaker:speakerOne.text.trim(),voice:speakerOneVoice.text.trim()},{speaker:speakerTwo.text.trim(),voice:speakerTwoVoice.text.trim()}];App.rpc("settings.update",{hostedVoice:value})} }
+        CButton { text:"Save hosted voice";enabled:ttsProvider.currentValue!=="azure_openai"||!!hostedVoiceConnection.currentValue;onClicked:{const value={model:hostedVoiceModel.value,voice:hostedVoiceName.text.trim(),language:hostedVoiceLanguage.text.trim(),region:hostedVoiceRegion.text.trim(),connectionId:hostedVoiceConnection.currentValue||""};if(ttsProvider.currentValue==="google"&&speakerOne.text.trim()&&speakerOneVoice.text.trim()&&speakerTwo.text.trim()&&speakerTwoVoice.text.trim())value.speakers=[{speaker:speakerOne.text.trim(),voice:speakerOneVoice.text.trim()},{speaker:speakerTwo.text.trim(),voice:speakerTwoVoice.text.trim()}];App.rpc("settings.update",{hostedVoice:value})} }
         CButton { visible:["google_cloud","azure_speech"].includes(ttsProvider.currentValue);text:voiceSettings.hostedVoicesRequest>=0?"Loading voices…":"Browse provider voices";enabled:voiceSettings.hostedVoicesRequest<0;onClicked:voiceSettings.refreshHosted() }
         CText { text:"Audio is sent to the selected provider account and may be billed.";color:Theme.muted;font.pixelSize:Theme.caption }
     }
@@ -155,29 +158,29 @@ CSection {
     CText { visible:!voiceSettings.settings.ttsProvider||voiceSettings.settings.ttsProvider==="local";text:"Add a voice’s .onnx and .onnx.json files to ~/.local/share/piper/voices/ or PAL’s config/voices/ folder, then refresh. Test voice plays even in quiet mode.";color:Theme.muted;font.pixelSize:Theme.secondary }
     Rectangle { Layout.fillWidth:true;implicitHeight:Theme.hairline;color:Theme.line }
     CText { text:"Voice input";font.weight:Font.DemiBold }
-    CComboBox { id:transcriptionProvider;objectName:"transcriptionProvider";readonly property bool hosted:!["local","local-server"].includes(currentValue);Layout.fillWidth:true;model:[{id:"local",label:"Local · whisper.cpp"},{id:"local-server",label:"Local · speech server"},{id:"openai",label:"OpenAI"},{id:"xai",label:"Grok (xAI)"},{id:"google",label:"Google"},{id:"google_cloud",label:"Google Cloud Speech · ADC"},{id:"azure_speech",label:"Azure Speech"},{id:"azure_openai",label:"Azure OpenAI"},{id:"mistral",label:"Mistral"},{id:"openrouter",label:"OpenRouter"}];textRole:"label";valueRole:"id";currentIndex:Math.max(0,model.findIndex(row=>row.id===(voiceSettings.transcriptionSettings.provider||"local")));Accessible.name:"Transcription provider";onActivated:App.rpc("settings.update",{transcription:{provider:currentValue}}) }
+    CComboBox { id:transcriptionProvider;objectName:"transcriptionProvider";readonly property bool hosted:!["local","local-server"].includes(currentValue);Layout.fillWidth:true;model:[{id:"local",label:"Local · whisper.cpp"},{id:"local-server",label:"Local · speech server"},{id:"openai",label:"OpenAI"},{id:"xai",label:"Grok (xAI)"},{id:"google",label:"Google"},{id:"google_cloud",label:"Google Cloud Speech · ADC"},{id:"azure_speech",label:"Azure Speech"},{id:"azure_openai",label:"Azure OpenAI"},{id:"mistral",label:"Mistral"},{id:"openrouter",label:"OpenRouter"}];textRole:"label";valueRole:"id";currentIndex:Math.max(0,model.findIndex(row=>row.id===(voiceSettings.transcriptionSettings.provider||"local")));Accessible.name:"Transcription provider";onActivated:{cloudTranscriptionModel.set("");App.rpc("settings.update",{transcription:{provider:currentValue}})} }
     CText { text:transcriptionProvider.currentValue==="local"?"Push-to-talk uses whisper.cpp already installed on this computer. PAL never uploads recordings.":transcriptionProvider.currentValue==="local-server"?"Push-to-talk asks a speech server on this computer, which keeps its model loaded between recordings. PAL never uploads recordings.":"Push-to-talk sends audio to the selected provider account and may be billed.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     CField {
         id:whisperExecutable;objectName:"whisperExecutable";visible:transcriptionProvider.currentValue==="local";Layout.fillWidth:true
-        placeholderText:"Absolute path to whisper-cli";text:voiceSettings.transcriptionSettings.executable||""
+        placeholderText:"Absolute path to whisper-cli";saved:voiceSettings.transcriptionSettings.executable||""
         Accessible.name:"whisper.cpp executable path"
     }
-    CField {
-        id:whisperModel;objectName:"whisperModel";visible:transcriptionProvider.currentValue==="local";Layout.fillWidth:true
-        placeholderText:"Absolute path to a local GGML model";text:voiceSettings.transcriptionSettings.model||""
-        Accessible.name:"whisper.cpp model path"
+    ModelPicker {
+        id:whisperModel;name:"whisperModel";visible:transcriptionProvider.currentValue==="local";Layout.fillWidth:true
+        provider:visible?"whisper":"";operation:"speech.transcribe";saved:voiceSettings.transcriptionSettings.model||""
+        emptyText:"Choose a GGML model";customText:"Enter a path…";placeholder:"Absolute path to a local GGML model";label:"whisper.cpp model"
     }
     CButton {
         objectName:"saveTranscription";visible:transcriptionProvider.currentValue==="local";text:"Save local voice-input paths"
-        enabled:whisperExecutable.text.trim().startsWith("/")&&whisperModel.text.trim().startsWith("/")
-        onClicked:App.rpc("settings.update",{transcription:{executable:whisperExecutable.text.trim(),model:whisperModel.text.trim()}})
+        enabled:whisperExecutable.text.trim().startsWith("/")&&whisperModel.value.startsWith("/")
+        onClicked:App.rpc("settings.update",{transcription:{executable:whisperExecutable.text.trim(),model:whisperModel.value}})
     }
-    CField { id:cloudTranscriptionModel;visible:transcriptionProvider.hosted;Layout.fillWidth:true;placeholderText:"Transcription model";text:voiceSettings.transcriptionSettings.cloudModel||"";Accessible.name:"Cloud transcription model" }
-    CField { id:cloudTranscriptionLanguage;visible:transcriptionProvider.hosted;Layout.fillWidth:true;placeholderText:"Language (optional)";text:voiceSettings.transcriptionSettings.language||"";Accessible.name:"Transcription language" }
-    CField { id:cloudTranscriptionRegion;visible:transcriptionProvider.currentValue==="azure_speech";Layout.fillWidth:true;placeholderText:"Azure region";text:voiceSettings.transcriptionSettings.region||"";Accessible.name:"Azure transcription region" }
-    CComboBox { id:cloudTranscriptionConnection;visible:transcriptionProvider.hosted&&voiceSettings.connections.some(row=>row.kind===transcriptionProvider.currentValue);Layout.fillWidth:true;readonly property var choices:[{id:"",name:"Default account"}].concat(voiceSettings.connections.filter(row=>row.kind===transcriptionProvider.currentValue));model:choices;textRole:"name";valueRole:"id";currentIndex:Math.max(0,choices.findIndex(row=>row.id===(voiceSettings.transcriptionSettings.connectionId||"")));Accessible.name:"Transcription account" }
+    ModelPicker { id:cloudTranscriptionModel;name:"cloudTranscriptionModel";visible:["openai","xai","google","mistral","openrouter"].includes(transcriptionProvider.currentValue);Layout.fillWidth:true;provider:visible?transcriptionProvider.currentValue:"";connectionId:cloudTranscriptionConnection.currentValue||"";operation:"speech.transcribe";saved:voiceSettings.transcriptionSettings.cloudModel||"";emptyText:"Provider’s default model";label:"Transcription model";maximumLength:160 }
+    CField { id:cloudTranscriptionLanguage;visible:transcriptionProvider.hosted;Layout.fillWidth:true;placeholderText:"Language (optional)";saved:voiceSettings.transcriptionSettings.language||"";Accessible.name:"Transcription language" }
+    CField { id:cloudTranscriptionRegion;visible:transcriptionProvider.currentValue==="azure_speech";Layout.fillWidth:true;placeholderText:"Azure region";saved:voiceSettings.transcriptionSettings.region||"";Accessible.name:"Azure transcription region" }
+    CComboBox { id:cloudTranscriptionConnection;visible:transcriptionProvider.hosted&&voiceSettings.connections.some(row=>row.kind===transcriptionProvider.currentValue);Layout.fillWidth:true;readonly property var choices:[{id:"",name:"Default account"}].concat(voiceSettings.connections.filter(row=>row.kind===transcriptionProvider.currentValue));model:choices;textRole:"name";valueRole:"id";keepsChoice:true;saved:voiceSettings.transcriptionSettings.connectionId||"";Accessible.name:"Transcription account" }
     CText { visible:transcriptionProvider.currentValue==="azure_openai"&&!cloudTranscriptionConnection.currentValue;text:"Choose a named Azure deployment account.";color:Theme.amber;font.pixelSize:Theme.caption }
-    CButton { visible:transcriptionProvider.hosted;text:"Save cloud transcription";enabled:transcriptionProvider.currentValue!=="azure_openai"||!!cloudTranscriptionConnection.currentValue;onClicked:App.rpc("settings.update",{transcription:{provider:transcriptionProvider.currentValue,cloudModel:cloudTranscriptionModel.text.trim(),language:cloudTranscriptionLanguage.text.trim(),region:cloudTranscriptionRegion.text.trim(),connectionId:cloudTranscriptionConnection.currentValue||""}}) }
+    CButton { visible:transcriptionProvider.hosted;text:"Save cloud transcription";enabled:transcriptionProvider.currentValue!=="azure_openai"||!!cloudTranscriptionConnection.currentValue;onClicked:App.rpc("settings.update",{transcription:{provider:transcriptionProvider.currentValue,cloudModel:cloudTranscriptionModel.value,language:cloudTranscriptionLanguage.text.trim(),region:cloudTranscriptionRegion.text.trim(),connectionId:cloudTranscriptionConnection.currentValue||""}}) }
     SpeechServerSettings { visible:transcriptionProvider.currentValue==="local-server";Layout.fillWidth:true;saved:voiceSettings.transcriptionSettings }
     CText { visible:transcriptionProvider.currentValue!=="local-server";text:"Follow the whisper.cpp README at github.com/ggml-org/whisper.cpp: build whisper-cli locally and download a GGML model with the project’s model script. Paste both absolute paths above. Audio capture uses PipeWire pw-record, with ALSA arecord as a fallback. Recordings are limited to 60 seconds and deleted after finish, cancel, or error.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
     // M21: spoken commands from a fixed list; the transcript stays ordinary text unless it is one of them.

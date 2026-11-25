@@ -15,5 +15,8 @@ TextField {
     leftPadding: Theme.space3
     rightPadding: Theme.space3
     selectByMouse: true
+    // What is stored. Text being typed outlives the state updates in between: only a stored value that really changes replaces it.
+    property string saved: ""
+    onSavedChanged: text = saved
     background: Rectangle { color: Theme.input; radius: Theme.radiusControl; border.color: control.activeFocus ? Theme.focus : control.hovered ? Theme.borderHover : Theme.border; border.width: control.activeFocus ? Theme.focusWidth : Theme.hairline }
 }

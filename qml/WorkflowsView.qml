@@ -87,6 +87,14 @@ ColumnLayout {
     function loadRecipes(){loadAnalyses();call("recipes.list",{})}
     function loadResults(){call("results.list",{limit:100})}
     function refresh(){if(requestId>=0){refreshPending=true;return}if(tab===0)loadProject();else if(tab===1){loadRecipes();loadSchedules()}else loadResults()}
+    // Reloading the list keeps the chosen recipe, and what was filled in for it unless the recipe itself changed.
+    function adoptRecipes(value){
+        const kept=selectedRecipe,next=value.recipes||[]
+        recipeVersions=value.versions||[];recipes=next
+        const index=kept?next.findIndex(recipe=>recipe.id===kept.id):-1
+        recipePicker.currentIndex=index>=0?index:next.length?0:-1
+        if(index<0||next[index].version!==kept.version||next[index].revision!==kept.revision)chooseRecipe()
+    }
     function chooseRecipe(){
         newDefinition=false
         preview=null;error="";feedback="";recipeValues={}
@@ -117,7 +125,7 @@ ColumnLayout {
     }
     function deactivate(){active=false;capsuleOwner="";refreshPending=false}
     function focusInitial(){forceActiveFocus()}
-    onActiveSessionChanged:{capsuleOwner="";relatedRequest=-1;relatedSessions=[];if(active){syncCapsule(null);if(tab===0)refresh();else if(tab===1)loadAnalyses()}}
+    onActiveSessionChanged:{capsuleOwner="";relatedRequest=-1;relatedSessions=[];if(active){syncCapsule(null);if(tab===0)refresh();else if(tab===1){preview=null;loadAnalyses()}}}
     onTabChanged:if(active)refresh()
 
     CText { visible:!App.selectedId&&workflow.tab!==2;text:"Select a saved session to use project workflows.";color:Theme.amber }
@@ -545,7 +553,7 @@ ColumnLayout {
             else if(workflow.action==="capsules.task")workflow.capsule=value.capsule
             else if(workflow.action==="capsules.setRequiredChecks"){workflow.capsule=value;workflow.feedback="Required checks saved."}
             else if(workflow.action==="capsules.resume")workflow.sessionRequested(value.session.id)
-            else if(workflow.action==="recipes.list"){workflow.recipes=value.recipes||[];workflow.recipeVersions=value.versions||[];recipePicker.currentIndex=workflow.recipes.length?0:-1;workflow.chooseRecipe()}
+            else if(workflow.action==="recipes.list"){workflow.adoptRecipes(value)}
             else if(workflow.action==="recipes.prepare")workflow.preview=value
             else if(workflow.action==="schedules.create"){scheduleDialog.close();workflow.preview=null;workflow.feedback="Scheduled. Runs wait for you on any permission question; results go to the inbox.";workflow.loadSchedules()}
             else if(workflow.action==="schedules.setEnabled"||workflow.action==="schedules.delete"||workflow.action==="schedules.adopt")workflow.loadSchedules()

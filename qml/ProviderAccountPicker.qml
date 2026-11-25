@@ -11,6 +11,7 @@ GridLayout {
     /** The account by its ID, or by its name when `byName` is set; empty for the provider's default. */
     property string account: ""
     property bool byName: false
+    readonly property string accountId: byName ? accounts.find(row => row.kind === provider && row.name === account)?.id || "" : account
     property string anyLabel: "Any provider"
     /** Command-line assistants hold conversations; a helper runs on a model PAL calls itself. */
     property bool commandLine: true

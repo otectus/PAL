@@ -6,7 +6,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.fragment.app.FragmentActivity
+import dev.otectus.pal.mobile.data.MobileState
 import dev.otectus.pal.mobile.data.PALRepository
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
@@ -18,7 +20,7 @@ import kotlinx.serialization.json.put
 /** Reviewed two-step entry point for provider-billed video and music operations. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun TimedMediaDialog(activity: FragmentActivity, repository: PALRepository, sessionId: String, dismiss: () -> Unit) {
+internal fun TimedMediaDialog(activity: FragmentActivity, repository: PALRepository, state: MobileState, sessionId: String, dismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     var provider by remember { mutableStateOf("google") }
     var kind by remember { mutableStateOf("video.generate") }
@@ -50,7 +52,7 @@ internal fun TimedMediaDialog(activity: FragmentActivity, repository: PALReposit
                 FilterChip(kind == "video.generate", { kind = "video.generate"; model = when (provider) { "xai" -> "grok-imagine-video"; "edenai" -> "video/generation_async/bytedance"; else -> "gemini-omni-1.2-flash" }; prepared = null }, { Text("Video") })
                 if (provider == "google") FilterChip(kind == "music.generate", { kind = "music.generate"; source = null; model = "lyria-3.5"; prepared = null }, { Text("Music") })
             }
-            OutlinedTextField(model, { model = it.take(256); prepared = null }, label = { Text("Provider model") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            ModelField(model, { model = it; prepared = null }, stringResource(R.string.models_provider), modelSource(repository, state, provider, kind), maximum = 256)
             OutlinedTextField(prompt, { prompt = it.take(10_000); prepared = null }, label = { Text("Describe the result") }, minLines = 3, modifier = Modifier.fillMaxWidth())
             if (provider != "edenai" && kind == "video.generate") {
                 Text("Source Workbench version", style = MaterialTheme.typography.labelMedium)

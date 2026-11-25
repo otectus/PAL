@@ -43,6 +43,7 @@ import { behaviorInstructions, builtinPostures, resolveBehavior, type ResolvedBe
 import { checkReply } from './style-checks.ts';
 import { exportConversation } from './conversation-export.ts';
 import { LocalModels } from './local-models.ts';
+import { ModelChoiceList } from './model-choices.ts';
 import { KnowledgeCollections, type CollectionAuthorization } from './knowledge-collections.ts';
 import { NotesVault, notesDefinitions } from './notes-vault.ts';
 import { apply as applyProposal, propose } from './file-proposals.ts';
@@ -163,6 +164,7 @@ export class Core extends EventEmitter {
   diagnostics: Diagnostics; utilities: Utilities; recovery: Recovery; memoryReview:MemoryReview; workflows:Workflows;
   presets: BehaviorPresets;
   localModels: LocalModels;
+  modelChoices: ModelChoiceList;
   collections: KnowledgeCollections;
   vault: NotesVault;
   packages: ProfilePackages;
@@ -268,7 +270,7 @@ export class Core extends EventEmitter {
     // RC-04: observed edits make earlier passing checks in the same folder stale.
     this.telemetry.edited=(path,at)=>this.workflows.observeEdit(path,at,'telemetry');
     this.presets=new BehaviorPresets(store,()=>{if(!this.closed)this.changed();});
-    this.localModels=new LocalModels(this);
+    this.localModels=new LocalModels(this); this.modelChoices = new ModelChoiceList(this);
     this.collections=new KnowledgeCollections(this);
     this.vault=new NotesVault(()=>this.settings.notesVault.enabled?this.settings.notesVault.path:'',()=>this.settings.notesVault.folders);
     this.packages=new ProfilePackages(this);
@@ -431,7 +433,7 @@ export class Core extends EventEmitter {
       }:{}),};
   }
   private accountCatalogs = new Map<string, {revision:string; models:ModelOption[]}>();
-  private ollamaKey(connectionId?: string){
+  ollamaKey(connectionId?: string){
     const ref=connectionId?'connection:'+connectionId:undefined;
     return ()=>this.credentials.key('ollama_cloud',connectionId?'https://ollama.com':undefined,ref);
   }
@@ -2660,6 +2662,7 @@ export class Core extends EventEmitter {
       case 'collections.cancel': return this.collections.cancel();
       case 'collections.delete': return this.collections.remove(p);
       // M09: local model management on the configured Ollama server.
+      case 'models.choices': return this.modelChoices.choices(p);
       case 'models.local': return this.localModels.list();
       case 'models.pull': return this.localModels.pull(p.model);
       case 'models.cancelPull': return this.localModels.cancel();

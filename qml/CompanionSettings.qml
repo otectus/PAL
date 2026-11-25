@@ -148,7 +148,7 @@ ColumnLayout {
         RowLayout {
             Layout.fillWidth:true
             CText { text:"Character size";font.pixelSize:Theme.secondary;Layout.fillWidth:false }
-            CSlider { objectName:"characterSize";Layout.fillWidth:true;Layout.minimumWidth:0;from:.5;to:3;stepSize:.25;value:companion.settings.scale||1;Accessible.name:"Character size";onMoved:App.resizePet(value) }
+            CSlider { objectName:"characterSize";Layout.fillWidth:true;Layout.minimumWidth:0;from:.5;to:3;stepSize:.25;saved:companion.settings.scale||1;Accessible.name:"Character size";onMoved:App.resizePet(value) }
             Text { text:Math.round((companion.settings.scale||1)*100)+"%";color:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.secondary }
         }
         Flow {
@@ -168,7 +168,7 @@ ColumnLayout {
         RowLayout {
             Layout.fillWidth:true
             CText { text:"Interface size";Layout.fillWidth:false }
-            CSlider { objectName:"interfaceScale";Layout.fillWidth:true;Layout.minimumWidth:0;from:.8;to:1.5;stepSize:.1;value:companion.settings.interfaceScale||1;Accessible.name:"Interface size";onMoved:companion.update({interfaceScale:value}) }
+            CSlider { objectName:"interfaceScale";Layout.fillWidth:true;Layout.minimumWidth:0;from:.8;to:1.5;stepSize:.1;saved:companion.settings.interfaceScale||1;Accessible.name:"Interface size";onMoved:companion.update({interfaceScale:value}) }
             CText { text:Math.round((companion.settings.interfaceScale||1)*100)+"%";Layout.fillWidth:false }
         }
     }

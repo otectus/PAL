@@ -25,7 +25,7 @@ CSection {
     }
     CButton { objectName:"telemetryAddWorkspace";text:"Add workspace…";onClicked:{const path=telemetry.backend.chooseFolder();if(path)telemetry.update({roots:[...telemetry.config.roots,path]})} }
     CText { text:"Ignore patterns (one per line, relative to each workspace)";color:Theme.muted;font.pixelSize:Theme.secondary }
-    CTextArea { id:ignores;objectName:"telemetryIgnores";Layout.fillWidth:true;Layout.preferredHeight:Theme.editorShort;text:telemetry.config.ignores.join("\n");color:Theme.text;wrapMode:TextEdit.Wrap;Accessible.name:"Telemetry ignore patterns" }
+    CTextArea { id:ignores;objectName:"telemetryIgnores";Layout.fillWidth:true;Layout.preferredHeight:Theme.editorShort;saved:telemetry.config.ignores.join("\n");color:Theme.text;wrapMode:TextEdit.Wrap;Accessible.name:"Telemetry ignore patterns" }
     CButton { text:"Save ignore patterns";onClicked:telemetry.update({ignores:ignores.text.split("\n").map(p=>p.trim()).filter(Boolean)}) }
     CCheckBox { objectName:"telemetryCommands";text:"Include command text (secrets are redacted)";checked:telemetry.config.commands;onClicked:telemetry.update({commands:checked}) }
     CCheckBox { objectName:"telemetryOutput";text:"Include stderr from explicit pal-run commands";checked:telemetry.config.output;onClicked:telemetry.update({output:checked}) }

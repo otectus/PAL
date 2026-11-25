@@ -15,7 +15,7 @@ ColumnLayout {
     CText { text:"Server URL";color:Theme.muted;font.pixelSize:Theme.secondary }
     RowLayout {
         Layout.fillWidth:true
-        CField { id:host;objectName:"ollamaHost";Layout.fillWidth:true;text:connection.settings.host;placeholderText:"http://127.0.0.1:11434";Accessible.name:"Ollama server URL" }
+        CField { id:host;objectName:"ollamaHost";Layout.fillWidth:true;saved:connection.settings.host;placeholderText:"http://127.0.0.1:11434";Accessible.name:"Ollama server URL" }
         CButton { objectName:"ollamaConnect";text:"Connect";enabled:App.connected&&connection.saveRequest<0;onClicked:{connection.connecting=true;connection.error="";connection.saveRequest=App.rpc("settings.update",{ollama:{host:host.text.trim()}})} }
     }
     CText { text:"Messages go to this server. Models marked Cloud run through Ollama Cloud. Existing conversations keep their server.";color:Theme.muted;font.pixelSize:Theme.caption }

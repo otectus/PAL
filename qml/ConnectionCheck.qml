@@ -25,19 +25,19 @@ CDialog {
     signal declared(var found)
     function openFor(item) {
         connectionId = item.id || ""; provider = item.provider || item.kind || ""; name = item.name || item.label || ""; declares = item.kind === "compatible" && !!item.id
-        stages = []; models = []; unlisted = false; found = null; error = ""; trying = false; chosen = ["reply"]; model.text = ""
+        stages = []; models = []; unlisted = false; found = null; error = ""; trying = false; chosen = ["reply"]; model.set("")
         open(); run([])
     }
     function choose(id, on) { chosen = tests.map(test => test.id).filter(test => test === id ? on : chosen.indexOf(test) >= 0) }
     function run(list) {
         error = ""; trying = list.length > 0
-        const request = list.length ? { tests: list, model: model.text.trim(), paid: true } : {}
+        const request = list.length ? { tests: list, model: model.value, paid: true } : {}
         if (connectionId) request.connectionId = connectionId; else request.provider = provider
         rpc.call("connections.check", request, value => {
             check.trying = false
             if (value.error) { check.error = String(value.error); return }
             check.stages = value.stages || []; check.models = value.models || []; check.unlisted = value.unlisted === true; check.found = value.found || null
-            if (!model.text && check.models.length === 1) model.text = check.models[0].id
+            if (!model.value && check.models.length === 1) model.set(check.models[0].id)
         })
     }
     RpcClient { id: rpc; endpoint: check.app; scope: check.connectionId || check.provider }
@@ -57,13 +57,7 @@ CDialog {
     CText { objectName: "checkBusy"; visible: rpc.busy; text: check.trying ? "Trying the model…" : "Checking…"; color: Theme.accentText; font.pixelSize: Theme.secondary }
     CText { objectName: "checkError"; visible: !!check.error; text: check.error; color: Theme.danger; font.pixelSize: Theme.secondary; Accessible.role: Accessible.AlertMessage }
     SectionLabel { text: "TRY A MODEL" }
-    CComboBox {
-        objectName: "checkModels"
-        visible: check.models.length > 0; Layout.fillWidth: true
-        model: [{ id: "", name: "Choose a model" }].concat(check.models); textRole: "name"; valueRole: "id"; Accessible.name: "Model to try"
-        onActivated: if (currentValue) model.text = currentValue
-    }
-    CField { id: model; objectName: "checkModel"; Layout.fillWidth: true; placeholderText: "Model ID"; maximumLength: 512; Accessible.name: "Model ID to try" }
+    ModelPicker { id: model; app: check.app; name: "checkModel"; Layout.fillWidth: true; given: check.models; label: "Model to try"; placeholder: "Model ID to try" }
     Flow {
         Layout.fillWidth: true; spacing: Theme.space3
         Repeater {
@@ -78,6 +72,6 @@ CDialog {
         CButton { objectName: "checkAgain"; text: "Check again"; quiet: true; enabled: !rpc.busy; onClicked: check.run([]) }
         Item { Layout.fillWidth: true }
         CButton { text: "Close"; onClicked: check.close() }
-        CButton { objectName: "checkTry"; text: check.trying ? "Trying…" : "Try it"; primary: true; enabled: !rpc.busy && model.text.trim().length > 0 && check.chosen.length > 0; onClicked: check.run(check.chosen) }
+        CButton { objectName: "checkTry"; text: check.trying ? "Trying…" : "Try it"; primary: true; enabled: !rpc.busy && model.value.length > 0 && check.chosen.length > 0; onClicked: check.run(check.chosen) }
     }
 }

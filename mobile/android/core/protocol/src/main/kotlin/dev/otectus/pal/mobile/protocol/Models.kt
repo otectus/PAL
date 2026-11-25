@@ -326,8 +326,8 @@ data class Approval(
     val expires: String? = null,
 )
 
-/** A providers.models answer with listing:true (feature models.listing). */
-@Serializable data class ModelListing(val items: List<ModelOption> = emptyList(), val unlisted: Boolean = false)
+/** A providers.models answer with listing:true (feature models.listing); problem says why a use's own list is missing (models.uses). */
+@Serializable data class ModelListing(val items: List<ModelOption> = emptyList(), val unlisted: Boolean = false, val problem: String? = null)
 
 /**
  * W11 sessions.behavior: the style a conversation's next turn uses. The desktop sends JSON null for

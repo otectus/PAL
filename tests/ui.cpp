@@ -112,6 +112,10 @@ class UiCheck : public QObject {
     }
     // Clicks once the control has stopped moving: a page that is still laying out late content can
     // shift a row under the pointer between finding it and clicking it.
+    // The ModelPicker a drop-down belongs to; its choice as a person makes it, and what is chosen.
+    QQuickItem *modelPicker(const QString &name){auto parent=item(name);while(parent&&!parent->property("customId").isValid())parent=parent->parentItem();return parent;}
+    void pickModel(const QString &name,const QString &id){auto picker=modelPicker(name);QVERIFY2(picker,qPrintable(name));QVERIFY(QMetaObject::invokeMethod(picker,"pick",Q_ARG(QVariant,id)));}
+    QString pickedModel(const QString &name){auto picker=modelPicker(name);return picker?picker->property("value").toString():QString();}
     void stableClick(const QString &name){
         if(!scrollTo(name))return;QPointF last(-1,-1);
         for(int stable=0,tries=0;stable<3&&tries<40;++tries){QTest::qWait(50);auto control=item(name);QVERIFY2(control,qPrintable(name));const auto at=control->mapToScene(QPointF(0,0));stable=at==last?stable+1:0;last=at;}
@@ -1023,7 +1027,7 @@ kill -KILL $$
         stableClick("namedConnectionCheck_"+QString::number(row("Check one")));
         QTRY_COMPARE_WITH_TIMEOUT(text("checkStage_account"),QString("The server answered."),8000);QVERIFY(text("checkStage_models").endsWith(" models"));QVERIFY(!item("checkStage_reply"));QVERIFY(!item("checkTry")->isEnabled());
         capture("connection-check");
-        item("checkModel")->setProperty("text","fixture-chat:latest");QTRY_VERIFY(item("checkTry")->isEnabled());stableClick("checkTry");
+        pickModel("checkModel","fixture-chat:latest");QTRY_VERIFY(item("checkTry")->isEnabled());stableClick("checkTry");
         QTRY_VERIFY_WITH_TIMEOUT(text("checkStage_reply").startsWith(QString::fromUtf8("It said “Hello from Ollama.")),10000);QTest::qWait(100);capture("connection-check-reply");
         QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!item("checkTry"));
         stableClick("namedConnectionRemove_"+QString::number(row("Check one")));
@@ -1092,7 +1096,7 @@ kill -KILL $$
         // A setup keeps its account, and changing its provider lets go of it.
         QVERIFY(openSetting("newSetup"));stableClick("newSetup");QTRY_VERIFY(item("setupName"));item("setupName")->setProperty("text","Routed");
         const auto choose=[&](const QString &name,const QString &label){auto box=item(name);if(!box)return false;const int count=box->property("count").toInt();for(int i=0;i<count;i++){QString value;QMetaObject::invokeMethod(box,"textAt",Q_RETURN_ARG(QString,value),Q_ARG(int,i));if(value==label){box->setProperty("currentIndex",i);return QMetaObject::invokeMethod(box,"activated",Q_ARG(int,i));}}return false;};
-        QVERIFY(choose("setupProvider","OpenRouter"));QTRY_VERIFY(item("setupAccount"));QVERIFY(choose("setupAccount","Work router"));item("setupModel")->setProperty("text","anthropic/model-0");QTest::qWait(100);capture("setup-account");
+        QVERIFY(choose("setupProvider","OpenRouter"));QTRY_VERIFY(item("setupAccount"));QVERIFY(choose("setupAccount","Work router"));pickModel("setupModel","anthropic/model-0");QTest::qWait(100);capture("setup-account");
         stableClick("setupSave");QTRY_VERIFY(!item("setupName"));
         const auto setup=[&]{for(const auto &value:call("setups.list",{}).value("setups").toList())if(value.toMap().value("name").toString()=="Routed")return value.toMap();return QVariantMap();};
         QTRY_COMPARE(setup().value("connection").toString(),QString("Work router"));QCOMPARE(setup().value("provider").toString(),QString("openrouter"));
@@ -1100,7 +1104,7 @@ kill -KILL $$
         // A specialist runs on a model of one account; without a provider it is the helper's.
         QVERIFY(openSetting("specialistsSettings"));QVERIFY(item("specialistProvider"));QVERIFY(!item("specialistAccount"));QVERIFY(!item("specialistModel")->isEnabled());
         item("specialistName")->setProperty("text","Second reader");QVERIFY(choose("specialistProvider","OpenRouter"));QTRY_VERIFY(item("specialistAccount"));QVERIFY(choose("specialistAccount","Work router"));
-        QTRY_VERIFY(item("specialistModel")->isEnabled());QVERIFY(!item("specialistAdd")->isEnabled());item("specialistModel")->setProperty("text","anthropic/model-0");QTRY_VERIFY(item("specialistAdd")->isEnabled());
+        QTRY_VERIFY(item("specialistModel")->isEnabled());QVERIFY(!item("specialistAdd")->isEnabled());pickModel("specialistModel","anthropic/model-0");QTRY_VERIFY(item("specialistAdd")->isEnabled());
         QVERIFY(scrollTo("specialistModel"));QTest::qWait(150);capture("specialist-account");stableClick("specialistAdd");QTRY_VERIFY2(text("specialistName").isEmpty(),qPrintable(item("setupsSettings")->property("error").toString()));
         const auto reader=[&]{for(const auto &value:call("specialists.list",{}).value("specialists").toList())if(value.toMap().value("name").toString()=="Second reader")return value.toMap();return QVariantMap();};
         QTRY_COMPARE(reader().value("connectionId").toString(),router.value("id").toString());QCOMPARE(reader().value("provider").toString(),QString("openrouter"));QVERIFY(!call("specialists.delete",{{"id",reader().value("id")}}).contains("error"));
@@ -1302,7 +1306,7 @@ kill -KILL $$
         QVERIFY(!call("tts.stop").contains("error"));
         QVERIFY(item("ttsTest")&&item("ttsStop")&&item("ttsStatus"));
         auto pitch=item("speechPitch"),rate=item("speechRate"),volume=item("speechVolume");QVERIFY(pitch&&rate&&volume);
-        click("speechPitch");QTest::keyClick(window,Qt::Key_Right);
+        click("speechPitch");QTRY_VERIFY2(pitch->hasActiveFocus(),qPrintable(window->activeFocusItem()?window->activeFocusItem()->objectName()+" "+window->activeFocusItem()->metaObject()->className():QString("nothing")));QTest::keyClick(window,Qt::Key_Right);
         QTRY_COMPARE(app->state().value("settings").toMap().value("speechPitch").toDouble(),.5);
         click("speechRate");QTest::keyClick(window,Qt::Key_End);
         QTRY_COMPARE(app->state().value("settings").toMap().value("speechRate").toDouble(),2.);
@@ -1317,7 +1321,8 @@ kill -KILL $$
         QCOMPARE(app->state().value("settings").toMap().value("voice"),original.value("voice"));
         // A continuous pointer drag writes one setting update on release.
         click("speechPitch");
-        // The click may save a value of its own; its revision arrives with a later state.
+        // The click may save a value of its own; it is handled before this call, and its revision arrives with a later state.
+        QVERIFY(!call("time.now").contains("error"));
         QVariant revision;do{revision=app->state().value("settingsRevision");QTest::qWait(400);}while(revision!=app->state().value("settingsRevision"));
         const auto start=pitch->mapToScene(QPointF(pitch->width()/2,pitch->height()/2)).toPoint();
         const auto end=pitch->mapToScene(QPointF(pitch->width()*.7,pitch->height()/2)).toPoint();
@@ -1818,11 +1823,11 @@ kill -KILL $$
         QTRY_VERIFY([&]{for(const auto &value:app->state().value("sessions").toList())if(value.toMap().value("id").toString()==app->selectedId())return true;return false;}());
         const auto sessions=app->state().value("sessionCount").toInt();
         openWorkflows();click("workflowTab1");QTRY_VERIFY(item("recipePicker"));
-        auto picker=item("recipePicker");
+        auto picker=item("recipePicker");QTRY_VERIFY_WITH_TIMEOUT(picker->property("count").toInt()>0,15000);
         for(int index=0;index<picker->property("count").toInt();++index){picker->setProperty("currentIndex",index);if(picker->property("currentText").toString()=="Review a proposed plan")break;}
         QVERIFY(QMetaObject::invokeMethod(picker,"activated",Q_ARG(int,picker->property("currentIndex").toInt())));
         QTRY_VERIFY(item("recipeInput_plan"));item("recipeInput_plan")->setProperty("text","Ship on Friday");
-        click("prepareRecipe");QTRY_VERIFY(item("scheduleRecipe"));
+        QTRY_VERIFY(item("prepareRecipe")->isEnabled());click("prepareRecipe");QTRY_VERIFY(item("scheduleRecipe"));
         click("scheduleRecipe");QTRY_VERIFY(item("scheduleFormSave"));
         QVERIFY(!item("scheduleFormSave")->isEnabled());
         click("scheduleFormUnattended");QTRY_VERIFY(item("scheduleFormSave")->isEnabled());
@@ -2644,12 +2649,16 @@ Unicode: café ✦ 日本語
         auto provider=item("webSearchProvider");QVERIFY(provider);QCOMPARE(provider->property("count").toInt(),7);
         provider->setProperty("currentIndex",4);QVERIFY(QMetaObject::invokeMethod(provider,"activated",Q_ARG(int,4)));
         QVERIFY(item("searxngUrl"));item("searxngUrl")->setProperty("text",qEnvironmentVariable("PAL_OLLAMA_HOST"));
+        // A choice that is not applied yet outlives whatever else changes meanwhile.
+        const bool motion=app->state().value("settings").toMap().value("reducedMotion").toBool();
+        for(const bool value:{!motion,motion}){QVERIFY(!call("settings.update",{{"reducedMotion",value}}).contains("error"));QTRY_COMPARE(app->state().value("settings").toMap().value("reducedMotion").toBool(),value);}
+        QCOMPARE(item("webSearchProvider")->property("currentIndex").toInt(),4);QCOMPARE(item("searxngUrl")->property("text").toString(),qEnvironmentVariable("PAL_OLLAMA_HOST"));
         reveal("webSearchSave");click("webSearchSave");
         QTRY_COMPARE(app->state().value("settings").toMap().value("webSearch").toMap().value("provider").toString(),QString("searxng"));
         capture("web-search-settings");
         reveal("memoryEnabled");click("memoryEnabled");
         QTRY_VERIFY(app->state().value("settings").toMap().value("memory").toMap().value("enabled").toBool());
-        QCOMPARE(item("embeddingModel")->property("text").toString(),QString("nomic-embed-text"));
+        QTRY_COMPARE(item("embeddingModel")->property("currentValue").toString(),QString("nomic-embed-text:latest"));QCOMPARE(pickedModel("embeddingModel"),QString("nomic-embed-text"));
         reveal("memoryCheck");click("memoryCheck");
         QTRY_COMPARE_WITH_TIMEOUT(app->state().value("memory").toMap().value("state").toString(),QString("ready"),5000);
         capture("memory-settings");
@@ -4470,11 +4479,11 @@ Unicode: café ✦ 日本語
         QVERIFY(QMetaObject::invokeMethod(item(loadName),"clicked"));
         QTRY_VERIFY2(item(loadName)&&item(loadName)->property("text").toString()=="Load for 10 minutes",qPrintable(shown()));
         QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
-        QVERIFY(openSetting("embeddingModel"));item("embeddingModel")->setProperty("text","fixture-embed-2");click("memoryCheck");
+        QVERIFY(openSetting("embeddingModel"));pickModel("embeddingModel","fixture-embed-2");click("memoryCheck");
         QTRY_VERIFY_WITH_TIMEOUT(item("embeddingImpactText")&&item("embeddingImpactText")->property("text").toString().contains("will be re-embedded"),15000);
         QVERIFY(item("embeddingImpactText")->property("text").toString().contains("never mixed"));
         QCOMPARE(app->state().value("settings").toMap().value("memory").toMap().value("model").toString(),QString("nomic-embed-text"));
-        click("embeddingKeep");QTRY_COMPARE(item("embeddingModel")->property("text").toString(),QString("nomic-embed-text"));
+        click("embeddingKeep");QTRY_COMPARE(pickedModel("embeddingModel"),QString("nomic-embed-text"));
         QVERIFY(openSetting("manageLocalModels"));click("manageLocalModels");QTRY_VERIFY(find("fixture-embed-2:latest")>=0);
         click(QString("localModelDelete_%1").arg(find("fixture-embed-2:latest")));QTRY_VERIFY(item("localModelDeleteConfirmed"));click("localModelDeleteConfirmed");
         QTRY_VERIFY(item("localModelName_0")&&find("fixture-embed-2:latest")<0);
@@ -7107,9 +7116,35 @@ private slots:
         click("manifestSave");QTRY_VERIFY(!opened("manifestReview"));QTRY_VERIFY(item("manifestRemove_0"));
         click("manifestRemove_0");QTRY_VERIFY(!item("manifestRemove_0"));
         // Jev stays off without a model, and says what is missing when its models cannot be listed.
-        QVERIFY(openSetting("jevModel"));click("jevModels");
-        QTRY_VERIFY(([&]{auto section=item("jevSection");return section&&!section->property("problem").toString().isEmpty();})());
+        QVERIFY(openSetting("jevModel"));click("jevModelRefresh");
+        QTRY_VERIFY(item("jevModelProblem")&&!item("jevModelProblem")->property("text").toString().isEmpty());
         capture("jev-models");
+    }
+    // Models are chosen from lists, an ID of one's own can be entered, and neither is lost to what else happens meanwhile.
+    void modelListsInSettings(){
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"workbench",QVariantMap{{"imageConnections",QVariantList{}},{"vision",QVariantMap{{"provider",""},{"model",""}}}}}});restoreWorkspace();click("tab_Chat");});
+        const auto workbench=[&]{return app->state().value("settings").toMap().value("workbench").toMap();};
+        const auto choose=[&](const QString &name,const QString &value){auto box=item(name);if(!box)return false;for(int i=0;i<box->property("count").toInt();++i){QVariant id;QMetaObject::invokeMethod(box,"valueAt",Q_RETURN_ARG(QVariant,id),Q_ARG(int,i));if(id.toString()!=value)continue;box->setProperty("currentIndex",i);return QMetaObject::invokeMethod(box,"activated",Q_ARG(int,i));}return false;};
+        const auto unrelated=[&]{for(const bool value:{true,false}){QVERIFY(!call("settings.update",{{"quiet",value}}).contains("error"));QTRY_COMPARE(app->state().value("settings").toMap().value("quiet").toBool(),value);}};
+        QVERIFY(openSetting("imageConnections"));click("addOpenAiImages");
+        QTRY_COMPARE(workbench().value("imageConnections").toList().size(),1);
+        const auto editor=[&]{auto page=item("imageConnections");return page?page->setProperty("editing",0):false;};
+        QVERIFY(editor());QTRY_VERIFY(item("imageModel_0"));QTRY_VERIFY(item("imageModel_0")->property("count").toInt()>5);
+        QVERIFY(choose("imageModel_0",modelPicker("imageModel_0")->property("customId").toString()));QTRY_VERIFY(item("imageModel_0Custom"));
+        item("imageModel_0Custom")->forceActiveFocus();for(const QChar c:QString("my-own-image"))QTest::keyClick(window,c.toLatin1());
+        QTRY_COMPARE(pickedModel("imageModel_0"),QString("gpt-image-2.6-sunburstmy-own-image"));item("imageModel_0Custom")->setProperty("text","my-own-image");
+        unrelated();QCOMPARE(pickedModel("imageModel_0"),QString("my-own-image"));QVERIFY(item("imageModel_0Custom"));QVERIFY(scrollTo("imageModel_0Custom"));QTest::qWait(150);capture("image-model-entered");
+        QVERIFY(QMetaObject::invokeMethod(item("imageSave_0"),"clicked"));
+        QTRY_COMPARE(workbench().value("imageConnections").toList().first().toMap().value("model").toString(),QString("my-own-image"));
+        QVERIFY(openSetting("visionProvider"));QVERIFY(choose("visionProvider","ollama"));QTRY_VERIFY(item("visionModel")->isEnabled());
+        QTRY_VERIFY(choose("visionModel","fixture-chat:latest"));QVERIFY(!choose("visionModel","fixture-plain:latest"));
+        unrelated();QCOMPARE(pickedModel("visionModel"),QString("fixture-chat:latest"));QCOMPARE(item("visionProvider")->property("currentValue").toString(),QString("ollama"));
+        QVERIFY(scrollTo("visionModel"));QTest::qWait(150);capture("vision-model-list");
+        QVERIFY(QMetaObject::invokeMethod(item("visionSave"),"clicked"));QTRY_COMPARE(workbench().value("vision").toMap().value("model").toString(),QString("fixture-chat:latest"));
+        // A service without a catalog still offers its documented models.
+        QVERIFY(!call("settings.update",{{"memory",QVariantMap{{"enabled",true}}}}).contains("error"));
+        QVERIFY(openSetting("embeddingModel"));QTRY_VERIFY(item("voyageRerank")&&item("voyageRerank")->property("count").toInt()>4);
+        QVERIFY(!call("settings.update",{{"memory",QVariantMap{{"enabled",false}}}}).contains("error"));
     }
     void workbenchAcceptance(){
         window=reviewWorkspace();QVERIFY(window);click("tab_Chat");

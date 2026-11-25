@@ -1,6 +1,7 @@
 import {catalogOperations} from '../api-providers.ts';
 import { providerIds } from '../provider-catalog.ts';
 import { z } from 'zod';
+import { huggingFaceTasks } from '../provider-inference/contracts.ts';
 import { timeDefinitions } from '../temporal-context.ts';
 import { ownerOperations, ownerFeatures } from './owner-schemas.ts';
 
@@ -63,8 +64,10 @@ export const methods:Record<string,z.ZodType>={
   'sessions.focusTerminal':z.strictObject({sessionId}),
   'desktop.workspace':z.strictObject({projectId}),
   'memory.health':z.strictObject({sessionId}),
-  // listing: answer {items, unlisted} instead of a bare list (models.listing).
-  'providers.models':z.strictObject({provider,operation:z.enum(catalogOperations).optional(),connectionId:uuid.optional(),sessionId:sessionId.optional(),listing:z.boolean().optional()}),
+  // listing: answer {items, unlisted} instead of a bare list (models.listing). With another use than a conversation it
+  // is the desktop's own list for that use, and a Hugging Face task has one too (models.uses).
+  'providers.models':z.strictObject({provider,operation:z.enum([...catalogOperations,'inference']).optional(),task:z.enum(huggingFaceTasks).optional(),connectionId:uuid.optional(),sessionId:sessionId.optional(),listing:z.boolean().optional()})
+    .refine(p=>(p.operation==='inference')===(p.task!==undefined)&&(p.operation!=='inference'||p.listing===true),'A task is listed for inference'),
   // An omitted effort or tools keeps its current value (sessions.toolsState).
   'sessions.configure':z.strictObject({sessionId,connectionId:uuid.optional(),destinationReviewed:z.boolean().optional(),providerOptions:options.optional(),model:z.string().max(512),effort:z.string().max(32).optional(),tools:z.boolean().optional(),expectedConfigRevision:revision,expectedRouteRevision:routeRevision.optional()}),
   'approvals.list':empty,'approvals.get':z.strictObject({approvalId:uuid}),
@@ -113,7 +116,7 @@ for(const [name,entry] of Object.entries(ownerOperations)){if(methods[name])thro
  * Behaviour a client can rely on beyond the operation list, named in welcome. A client checks for a
  * feature before using it and keeps its older behaviour otherwise; an absent feature is never an error.
  */
-export const protocolFeatures=['activity.page','sessions.batch','search.ids','message.sources','citations.display','agent.refs','captures','drafts.desktopAttachments','messages.bookmarks','workflows.status','sessions.behavior','desktop.portrait','desktop.workspace','memory.health','sessions.focusTerminal','history.claude','sessions.toolsState','sessions.routeRevision','models.listing','workbench.takeover','time.context.v1','wake.v1',...ownerFeatures] as const;
+export const protocolFeatures=['activity.page','sessions.batch','search.ids','message.sources','citations.display','agent.refs','captures','drafts.desktopAttachments','messages.bookmarks','workflows.status','sessions.behavior','desktop.portrait','desktop.workspace','memory.health','sessions.focusTerminal','history.claude','sessions.toolsState','sessions.routeRevision','models.listing','models.uses','workbench.takeover','time.context.v1','wake.v1',...ownerFeatures] as const;
 export const mutations=new Set(['wake.register','wake.clear','sessions.timeZone','sessions.focusTerminal','workflows.pauseSchedule','messages.bookmark','captures.start','captures.discard','captures.attach','memory.correct','memory.resolveConflict','memory.identity','memory.identityUndo','memory.freezeEpisode','sessions.create','sessions.send','sessions.stop','sessions.disconnect','sessions.read','sessions.rename','sessions.organize','drafts.put','sessions.configure','sessions.handoffCreate','sessions.import','approvals.answer','permissions.pause','permissions.reduce','devices.selfRevoke','desktop.execute','timers.cancel','settings.patch','memory.save','memory.forget','memory.clear','attachments.begin','attachments.commit','attachments.abort']);
 for(const [name,entry] of Object.entries(ownerOperations))if(entry.kind==='mutation'||entry.kind==='signed')mutations.add(name);
 const defensive=new Set(['wake.register','wake.clear','sessions.timeZone','workflows.pauseSchedule','messages.bookmark','captures.discard','sessions.stop','sessions.disconnect','sessions.read','sessions.rename','sessions.organize','drafts.put','permissions.pause','permissions.reduce','devices.selfRevoke','attachments.abort']);

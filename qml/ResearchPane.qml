@@ -49,7 +49,7 @@ Item {
     readonly property var selectedRoute: routePicker.currentIndex >= 0 && routePicker.currentIndex < routes.length ? routes[routePicker.currentIndex] : null
     // The broker only publishes compatible routes whose endpoint is configured; connectionId is
     // optional for the legacy default endpoint and present for named connections.
-    readonly property string selectedRouteModel: selectedRoute?.model || routeModel.text.trim()
+    readonly property string selectedRouteModel: selectedRoute?.model || routeModel.value
     readonly property bool routeReady: !!selectedRoute && !!selectedRoute.provider && !!selectedRouteModel
     readonly property bool supportedSession: session.id === sessionId && !session.temporary && (!session.remote || session.remote.role === "owner") && routeReady
     readonly property bool webEnabled: app?.state?.settings?.webSearch?.enabled === true
@@ -88,7 +88,8 @@ Item {
         loadProviderJobs()
     }
     function resetDraft() {
-        for (const field of [question, sourceSearch, librarySearch, routeModel, planField, criteriaField,
+        routeModel.set("")
+        for (const field of [question, sourceSearch, librarySearch, planField, criteriaField,
                              siteField, urlField, providerJobPrompt, steerField, followupField, noteField])
             field.clear()
         for (const picker of [scope, depth, mode, recency, siteMode, outputShape])
@@ -347,8 +348,8 @@ Item {
                 }
                 ColumnLayout{Layout.fillWidth:true;spacing:Theme.space1
                     CText{text:"Research model";color:Theme.muted;font.pixelSize:Theme.caption}
-                    CComboBox{id:routePicker;objectName:"researchRoute";Layout.fillWidth:true;model:research.routes;textRole:"label";Accessible.name:"Research provider and model";onActivated:routeModel.text=""}
-                    CField{id:routeModel;objectName:"researchRouteModel";visible:!!selectedRoute&&!selectedRoute.model;Layout.fillWidth:true;placeholderText:"Model ID";Accessible.name:"Research model ID"}
+                    CComboBox{id:routePicker;objectName:"researchRoute";Layout.fillWidth:true;model:research.routes;textRole:"label";Accessible.name:"Research provider and model";onActivated:routeModel.set("")}
+                    ModelPicker{id:routeModel;app:research.app;name:"researchRouteModel";visible:!!selectedRoute&&!selectedRoute.model;Layout.fillWidth:true;provider:visible?selectedRoute.provider||"":"";connectionId:visible?selectedRoute.connectionId||"":"";label:"Research model"}
                     CText{visible:selectedRoute?.provider==="compatible";Layout.fillWidth:true;text:"Compatible routes appear only after their endpoint is configured.";color:Theme.muted;font.pixelSize:Theme.caption}
                 }
                 CText{visible:scope.currentValue!=="project";Layout.fillWidth:true;text:"Public search receives the question and any web filters, never project text.";color:Theme.muted;font.pixelSize:Theme.caption}
@@ -538,7 +539,7 @@ Item {
                 }
                 CSection{title:"Monitor, revisions, and output";expanded:false
                     GridLayout{Layout.fillWidth:true;columns:research.narrow?1:3;columnSpacing:Theme.space2;rowSpacing:Theme.space1
-                        CSpinBox{id:monitorDays;Layout.fillWidth:true;from:0;to:365;value:selectedRun?.monitorDays||0;Accessible.name:"Monitor interval in days"}
+                        CSpinBox{id:monitorDays;Layout.fillWidth:true;from:0;to:365;saved:selectedRun?.monitorDays||0;readonly property string run:selectedId||"";onRunChanged:value=saved;Accessible.name:"Monitor interval in days"}
                         CButton{Layout.fillWidth:research.narrow;text:monitorDays.value?"Monitor every "+monitorDays.value+" days":"Turn monitoring off";onClicked:research.updateRun({monitorDays:monitorDays.value},monitorDays.value?"Monitoring scheduled.":"Monitoring turned off.")}
                         CButton{Layout.fillWidth:research.narrow;text:"Refresh now";onClicked:research.runAction("research.refresh",{id:selectedId},"Refresh started.")}
                     }

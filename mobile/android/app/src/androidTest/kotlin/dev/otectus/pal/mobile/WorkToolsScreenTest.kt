@@ -85,7 +85,7 @@ class WorkToolsScreenTest {
     @Test fun aSavedSetupKeepsWhatTheFormDoesNotShow() {
         var saved: JsonObject? = null
         val setup = json("""{"id":"s1","revision":"3","name":"Review","description":"","provider":"ollama","connection":"Workstation","families":{"files":true},"collections":["c1"],"skills":["k"],"style":"mentor"}""")
-        dialog { SetupEditor(MobileState(providers = json("""{"ollama":{},"codex":{}}""")), setup, {}) { saved = it } }
+        dialog { SetupEditor(MobileState(providers = json("""{"ollama":{},"codex":{}}""")), setup, null, {}) { saved = it } }
         compose.onNodeWithText(resources.getString(R.string.extras_setup_model)).performScrollTo().performTextInput("fixture-chat")
         compose.onNodeWithText(resources.getString(R.string.extras_setup_save)).performClick(); compose.waitForIdle()
         val value = checkNotNull(saved)
@@ -98,14 +98,14 @@ class WorkToolsScreenTest {
     }
     @Test fun aBuiltInSetupIsSavedAsACopy() {
         var saved: JsonObject? = null
-        dialog { SetupEditor(MobileState(), json("""{"id":"builtin:x","builtin":true,"name":"Example","families":{}}"""), {}) { saved = it } }
+        dialog { SetupEditor(MobileState(), json("""{"id":"builtin:x","builtin":true,"name":"Example","families":{}}"""), null, {}) { saved = it } }
         compose.onNodeWithText(resources.getString(R.string.extras_setup_save)).performClick(); compose.waitForIdle()
         assertNull(checkNotNull(saved)["id"]); assertEquals("Example (copy)", saved!!.getValue("name").jsonPrimitive.content)
     }
     @Test fun aProjectIsSavedAtTheRevisionShownAndAnApiProviderNeedsAModel() {
         var saved: JsonObject? = null
         val state = MobileState(providers = json("""{"openai":{"traits":{"label":"OpenAI API","kind":"api"}},"codex":{"traits":{"label":"Codex","kind":"cli"}}}"""))
-        dialog { ProjectEditor(state, json("""{"cwd":"/work/desk","name":"Desk","revision":"4","favorite":false,"defaults":{"provider":"codex","model":"","effort":"high","tools":false,"trusted":true,"temporary":false}}"""), {}) { saved = it } }
+        dialog { ProjectEditor(state, json("""{"cwd":"/work/desk","name":"Desk","revision":"4","favorite":false,"defaults":{"provider":"codex","model":"","effort":"high","tools":false,"trusted":true,"temporary":false}}"""), null, {}) { saved = it } }
         compose.onNodeWithText("OpenAI API").performScrollTo().performClick()
         compose.onNodeWithText(resources.getString(R.string.extras_project_save)).assertIsNotEnabled()
         compose.onNodeWithText(resources.getString(R.string.extras_project_model)).performScrollTo().performTextReplacement("fixture")

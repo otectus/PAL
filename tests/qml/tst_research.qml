@@ -69,7 +69,7 @@ Item {
         }
         function test_routeWithoutCatalogAcceptsReviewedModelId(){
             subject=createTemporaryObject(paneComponent,scene);verify(subject);answerInitialPaneCalls({provider:"compatible",model:"",connectionId:"22222222-2222-4222-8222-222222222222",label:"Lab endpoint · Enter model ID"})
-            const model=findChild(subject,"researchRouteModel"),scope=findChild(subject,"researchScope"),question=findChild(subject,"researchQuestion");verify(model);tryVerify(()=>model.visible);model.text="lab-chat-v2"
+            const model=findChild(subject,"researchRouteModel"),scope=findChild(subject,"researchScope"),question=findChild(subject,"researchQuestion");verify(model);tryVerify(()=>model.visible);model.currentIndex=model.count-1;model.activated(model.count-1);findChild(subject,"researchRouteModelCustom").text="lab-chat-v2"
             scope.currentIndex=2;scope.activated(2);subject.toggleSource("source-1");question.text="Plan from the configured endpoint";tryCompare(subject,"supportedSession",true);subject.start()
             const id=broker.idFor("research.start");verify(id>0);compare(broker.calls[id].params.provider,"compatible");compare(broker.calls[id].params.model,"lab-chat-v2");compare(broker.calls[id].params.connectionId,"22222222-2222-4222-8222-222222222222")
         }

@@ -8,7 +8,10 @@ ColumnLayout {
     id: page
     objectName: "imageConnections"
     Layout.fillWidth: true; spacing: Theme.space2
-    readonly property var saved: App.state.settings?.workbench || ({ imageConnections: [], vision: { provider: "", model: "" }, ocr: { languages: "eng" }, codeLab: { enabled: false }, lowMemory: false })
+    readonly property var workbench: App.state.settings?.workbench || ({ imageConnections: [], vision: { provider: "", model: "" }, ocr: { languages: "eng" }, codeLab: { enabled: false }, lowMemory: false })
+    // The rows hold unsaved edits, so they are rebuilt only when a connection really changes.
+    readonly property var connectionRows: savedConnections.value || []
+    StableValue { id: savedConnections; source: page.workbench.imageConnections }
     property var details: ({})
     property var accounts: []
     property string error: ""
@@ -19,10 +22,10 @@ ColumnLayout {
     function save(list, message) { error = ""; rpc.call("settings.update", { workbench: { imageConnections: list } }, value => { if (value.error) error = value.error; else { feedback = message || "Saved"; refresh() } }) }
     function plain(c) { return { id: c.id, name: c.name, kind: c.kind, model: c.model, providerAccountId:c.providerAccountId||"", enabled: c.enabled, origin: c.origin, route: c.route, targetedInterrupt: c.targetedInterrupt, workflowId: c.workflowId, estimate:c.estimate, budget: c.budget } }
     Component.onCompleted: {refresh();rpc.call("connections.list",{},value=>{if(!value.error)page.accounts=value.connections||value})}
-    Connections { target: App; function onStateChanged() { if (JSON.stringify(page.saved.imageConnections.map(c => c.revision)) !== page.lastRevisions) { page.lastRevisions = JSON.stringify(page.saved.imageConnections.map(c => c.revision)); page.refresh() } } }
+    Connections { target: App; function onStateChanged() { if (JSON.stringify(page.connectionRows.map(c => c.revision)) !== page.lastRevisions) { page.lastRevisions = JSON.stringify(page.connectionRows.map(c => c.revision)); page.refresh() } } }
     property string lastRevisions: ""
     Repeater {
-        model: page.saved.imageConnections
+        model: page.connectionRows
         Rectangle {
             id: connectionCard
             required property var modelData; required property int index
@@ -41,26 +44,26 @@ ColumnLayout {
                         modelData.kind !== "comfyui" && !(page.details[modelData.id]?.hasKey) ? "API key needed above" : ""].filter(s => s).join(" · ") }
                 ColumnLayout {
                     visible: page.editing === index; Layout.fillWidth: true; spacing: Theme.space2
-                    CField { id: name; Layout.fillWidth: true; text: modelData.name; placeholderText: "Name"; Accessible.name: "Connection name" }
-                    CComboBox { id: model; visible: modelData.kind !== "comfyui"; Layout.fillWidth: true; editable: true; model: page.details[modelData.id]?.suggestions || []; editText: modelData.model; Accessible.name: "Image model ID" }
+                    CField { id: name; Layout.fillWidth: true; saved: modelData.name; placeholderText: "Name"; Accessible.name: "Connection name" }
+                    ModelPicker { id: model; name: "imageModel_" + connectionCard.index; visible: connectionCard.modelData.kind !== "comfyui"; Layout.fillWidth: true; provider: visible ? connectionCard.modelData.kind : ""; connectionId: providerAccount.currentValue || ""; operation: "image.generate"; saved: connectionCard.modelData.model || ""; label: "Image model"; customText: connectionCard.modelData.kind === "azure_openai" ? "Enter a deployment name…" : "Enter a model ID…"; placeholder: connectionCard.modelData.kind === "azure_openai" ? "Azure deployment name" : "Image model ID" }
                     CComboBox { id:providerAccount;visible:modelData.kind!=="comfyui";Layout.fillWidth:true;readonly property var choices:[{id:"",name:"Default provider account"}].concat(page.accounts.filter(row=>row.kind===modelData.kind));model:choices;textRole:"name";valueRole:"id";currentIndex:Math.max(0,choices.findIndex(row=>row.id===(modelData.providerAccountId||"")));Accessible.name:"Image provider account" }
                     CText { visible:modelData.kind==="azure_openai"&&!providerAccount.currentValue;text:"Choose a named Azure deployment account before saving.";color:Theme.amber;font.pixelSize:Theme.caption }
-                    CText { visible: modelData.kind !== "comfyui"; text: "Suggestions come from the provider’s documentation (checked November 2026); availability depends on your account. Test checks it without making an image."; color: Theme.muted; font.pixelSize: Theme.caption }
-                    CField { id: origin; visible: modelData.kind === "comfyui"; Layout.fillWidth: true; text: modelData.origin || ""; placeholderText: "http://127.0.0.1:8188"; Accessible.name: "ComfyUI address" }
+                    CText { visible: modelData.kind !== "comfyui"; text: "Models your account lists come first; others are from the provider’s documentation (checked November 2026). Test checks one without making an image."; color: Theme.muted; font.pixelSize: Theme.caption }
+                    CField { id: origin; visible: modelData.kind === "comfyui"; Layout.fillWidth: true; saved: modelData.origin || ""; placeholderText: "http://127.0.0.1:8188"; Accessible.name: "ComfyUI address" }
                     CComboBox { id: route; visible: modelData.kind === "comfyui"; Layout.fillWidth: true; model: ["Runs on this computer", "Runs on my own server", "Not sure"]; currentIndex: modelData.route === "local" ? 0 : modelData.route === "remote" ? 1 : 2; Accessible.name: "Where the server runs" }
                     CCheckBox { id: targeted; visible: modelData.kind === "comfyui"; checked: !!modelData.targetedInterrupt; text: "This server stops only the job named in a cancel request (newer ComfyUI). Without this, PAL never interrupts a running job." }
                     RowLayout { visible: modelData.kind === "comfyui"; Layout.fillWidth: true
                         CField { id: token; Layout.fillWidth: true; echoMode: TextInput.Password; placeholderText: "Access token (optional, sent only to this server)"; Accessible.name: "ComfyUI access token" }
                         CButton { text: "Save token"; onClicked: rpc.call("images.setToken", { connectionId: modelData.id, token: token.text }, value => { token.text = ""; page.feedback = value.error ? "" : value.set ? "Token saved" : "Token removed"; page.error = value.error || "" }) } }
                     RowLayout { Layout.fillWidth: true
-                        CCheckBox { id: mayStart; Layout.fillWidth: false; implicitWidth: Theme.fieldLong; checked: modelData.budget.modelMayStart; text: App.assistantName + " may start jobs, up to" }
+                        CCheckBox { id: mayStart; Layout.fillWidth: true; Layout.minimumWidth: 0; implicitWidth: 0; checked: modelData.budget.modelMayStart; text: App.assistantName + " may start jobs, up to" }
                         CSpinBox { id: perDay; from: 0; to: 500; value: modelData.budget.imagesPerDay; Accessible.name: "Images a day" }
-                        CText { Layout.fillWidth: true; text: "images a day"; font.pixelSize: Theme.secondary } }
+                        CText { Layout.fillWidth: false; text: "images a day"; font.pixelSize: Theme.secondary } }
                     CText { text:"Estimated price per image (optional)";color:Theme.muted;font.pixelSize:Theme.secondary }
                     RowLayout {
                         Layout.fillWidth:true
-                        CField { id:price; Layout.fillWidth:true; placeholderText:"Amount"; text:modelData.estimate ? String(modelData.estimate.perImage) : ""; validator:DoubleValidator {bottom:0;locale:"C";notation:DoubleValidator.StandardNotation} Accessible.name:"Estimated price per image" }
-                        CField { id:currency; Layout.preferredWidth:Theme.fieldShort; placeholderText:"USD"; maximumLength:3; text:modelData.estimate?.currency || "USD"; Accessible.name:"Currency code" }
+                        CField { id:price; Layout.fillWidth:true; placeholderText:"Amount"; saved:modelData.estimate ? String(modelData.estimate.perImage) : ""; validator:DoubleValidator {bottom:0;locale:"C";notation:DoubleValidator.StandardNotation} Accessible.name:"Estimated price per image" }
+                        CField { id:currency; Layout.preferredWidth:Theme.fieldShort; placeholderText:"USD"; maximumLength:3; saved:modelData.estimate?.currency || "USD"; Accessible.name:"Currency code" }
                     }
                     CCheckBox { id: enabled; checked: modelData.enabled; text: "Turned on" }
                     ColumnLayout {
@@ -82,11 +85,11 @@ ColumnLayout {
                     }
                     RowLayout {
                         Layout.fillWidth: true
-                        CButton { text: "Remove"; danger: true; onClicked: { page.editing = -1; page.save(page.saved.imageConnections.filter((_, i) => i !== index).map(page.plain), "Removed") } }
+                        CButton { text: "Remove"; danger: true; onClicked: { page.editing = -1; page.save(page.connectionRows.filter((_, i) => i !== index).map(page.plain), "Removed") } }
                         Item { Layout.fillWidth: true }
-                        CButton { text: "Save"; primary: true;enabled:modelData.kind!=="azure_openai"||!!providerAccount.currentValue; onClicked: {
-                            const list = page.saved.imageConnections.map(page.plain)
-                            list[index] = Object.assign(list[index], { name: name.text.trim(), model: modelData.kind === "comfyui" ? "" : model.editText.trim(), providerAccountId:modelData.kind==="comfyui"?undefined:(providerAccount.currentValue||""), origin: modelData.kind === "comfyui" ? origin.text.trim() : undefined,
+                        CButton { objectName: "imageSave_" + connectionCard.index; text: "Save"; primary: true;enabled:modelData.kind!=="azure_openai"||!!providerAccount.currentValue; onClicked: {
+                            const list = page.connectionRows.map(page.plain)
+                            list[index] = Object.assign(list[index], { name: name.text.trim(), model: modelData.kind === "comfyui" ? "" : model.value, providerAccountId:modelData.kind==="comfyui"?undefined:(providerAccount.currentValue||""), origin: modelData.kind === "comfyui" ? origin.text.trim() : undefined,
                                 route: modelData.kind === "comfyui" ? ["local", "remote", "unknown"][route.currentIndex] : undefined, targetedInterrupt: modelData.kind === "comfyui" ? targeted.checked : undefined,
                                 estimate:price.text.trim()?{perImage:Number(price.text),currency:currency.text.trim().toUpperCase()}:null, enabled: enabled.checked, budget: { imagesPerDay: perDay.value, modelMayStart: mayStart.checked } })
                             page.save(list, "Saved " + name.text.trim()) } }
@@ -95,43 +98,43 @@ ColumnLayout {
             }
         }
     }
-    CText { visible: !page.saved.imageConnections.length; text: "No image backend yet. A text-only chat model can still make images through one of these."; color: Theme.muted; font.pixelSize: Theme.secondary }
+    CText { visible: !page.connectionRows.length; text: "No image backend yet. A text-only chat model can still make images through one of these."; color: Theme.muted; font.pixelSize: Theme.secondary }
     Flow {
         Layout.fillWidth: true; spacing: Theme.space2
-        CButton { objectName: "addOpenAiImages"; text: "Add OpenAI Images"; onClicked: page.save(page.saved.imageConnections.map(page.plain).concat([{ name: "OpenAI images", kind: "openai", model: "gpt-image-2.6-sunburst", budget: { imagesPerDay: 20, modelMayStart: false } }]), "Added; check the model and test it") }
-        CButton { objectName: "addGoogleImages"; text: "Add Google Gemini"; onClicked: page.save(page.saved.imageConnections.map(page.plain).concat([{ name: "Gemini images", kind: "google", model: "gemini-3.1-flash-image", budget: { imagesPerDay: 20, modelMayStart: false } }]), "Added; check the model and test it") }
-        CButton { objectName: "addXaiImages"; text: "Add Grok Imagine"; onClicked: page.save(page.saved.imageConnections.map(page.plain).concat([{ name: "Grok Imagine", kind: "xai", model: "grok-imagine-image-2.0", budget: { imagesPerDay: 20, modelMayStart: false } }]), "Added; check the model and test it") }
-        CButton { objectName: "addAzureOpenAiImages"; text: "Add Azure OpenAI"; onClicked: page.save(page.saved.imageConnections.map(page.plain).concat([{ name: "Azure OpenAI images", kind: "azure_openai", model: "", budget: { imagesPerDay: 20, modelMayStart: false } }]), "Added; choose a named deployment, model and test it") }
-        CButton { objectName: "addOpenRouterImages"; text: "Add OpenRouter"; onClicked: page.save(page.saved.imageConnections.map(page.plain).concat([{ name: "OpenRouter images", kind: "openrouter", model: "", budget: { imagesPerDay: 20, modelMayStart: false } }]), "Added; choose a model and test it") }
-        CButton { objectName: "addComfyUi"; text: "Add ComfyUI server"; onClicked: page.save(page.saved.imageConnections.map(page.plain).concat([{ name: "ComfyUI", kind: "comfyui", origin: "http://127.0.0.1:8188", budget: { imagesPerDay: 0, modelMayStart: false } }]), "Added; import a workflow and test it") }
+        CButton { objectName: "addOpenAiImages"; text: "Add OpenAI Images"; onClicked: page.save(page.connectionRows.map(page.plain).concat([{ name: "OpenAI images", kind: "openai", model: "gpt-image-2.6-sunburst", budget: { imagesPerDay: 20, modelMayStart: false } }]), "Added; check the model and test it") }
+        CButton { objectName: "addGoogleImages"; text: "Add Google Gemini"; onClicked: page.save(page.connectionRows.map(page.plain).concat([{ name: "Gemini images", kind: "google", model: "gemini-3.1-flash-image", budget: { imagesPerDay: 20, modelMayStart: false } }]), "Added; check the model and test it") }
+        CButton { objectName: "addXaiImages"; text: "Add Grok Imagine"; onClicked: page.save(page.connectionRows.map(page.plain).concat([{ name: "Grok Imagine", kind: "xai", model: "grok-imagine-image-2.0", budget: { imagesPerDay: 20, modelMayStart: false } }]), "Added; check the model and test it") }
+        CButton { objectName: "addAzureOpenAiImages"; text: "Add Azure OpenAI"; onClicked: page.save(page.connectionRows.map(page.plain).concat([{ name: "Azure OpenAI images", kind: "azure_openai", model: "", budget: { imagesPerDay: 20, modelMayStart: false } }]), "Added; choose a named deployment, model and test it") }
+        CButton { objectName: "addOpenRouterImages"; text: "Add OpenRouter"; onClicked: page.save(page.connectionRows.map(page.plain).concat([{ name: "OpenRouter images", kind: "openrouter", model: "", budget: { imagesPerDay: 20, modelMayStart: false } }]), "Added; choose a model and test it") }
+        CButton { objectName: "addComfyUi"; text: "Add ComfyUI server"; onClicked: page.save(page.connectionRows.map(page.plain).concat([{ name: "ComfyUI", kind: "comfyui", origin: "http://127.0.0.1:8188", budget: { imagesPerDay: 0, modelMayStart: false } }]), "Added; import a workflow and test it") }
     }
     CText { visible: !!page.feedback; text: page.feedback; color: Theme.accentText; font.pixelSize: Theme.secondary }
     CText { visible: !!page.error; text: page.error; color: Theme.danger; font.pixelSize: Theme.secondary; Accessible.role: Accessible.AlertMessage }
     SectionLabel { text: "Vision helper" }
     CText { text: "Lets a conversation whose model cannot see images ask another model about one selected image. Its answers are labeled as the helper’s. Private images are never sent to a helper their permissions do not allow."; color: Theme.muted; font.pixelSize: Theme.secondary }
+    CComboBox { id: visionProvider; objectName: "visionProvider"; Layout.fillWidth: true; readonly property var choices:[{id:"",label:"None"}].concat((App.state.providerOrder||[]).filter(id=>(App.state.providerTraits||{})[id]?.images!=="no").map(id=>({id:id,label:(App.state.providerTraits||{})[id]?.label||id})));model:choices;textRole:"label";valueRole:"id"
+        keepsChoice: true; saved: page.workbench.vision?.provider || ""; Accessible.name: "Vision helper provider"; onActivated: visionModel.set("") }
     RowLayout {
         Layout.fillWidth: true
-        CComboBox { id: visionProvider; objectName: "visionProvider"; Layout.preferredWidth: Theme.pickerWidth; readonly property var choices:[{id:"",label:"None"}].concat((App.state.providerOrder||[]).filter(id=>(App.state.providerTraits||{})[id]?.images!=="no").map(id=>({id:id,label:(App.state.providerTraits||{})[id]?.label||id})));model:choices;textRole:"label";valueRole:"id"
-            currentIndex: Math.max(0,choices.findIndex(row=>row.id===page.saved.vision.provider)); Accessible.name: "Vision helper provider" }
-        CField { id: visionModel; objectName: "visionModel"; Layout.fillWidth: true; enabled: visionProvider.currentIndex > 0; text: page.saved.vision.model; placeholderText: "Model, such as an Ollama vision model"; Accessible.name: "Vision helper model" }
-        CButton { text: "Save"; onClicked: rpc.call("settings.update", { workbench: { vision: { provider: visionProvider.currentValue||"", model: visionModel.text.trim() } } }, value => { page.error = value.error || ""; page.feedback = value.error ? "" : "Vision helper saved" }) }
+        ModelPicker { id: visionModel; name: "visionModel"; Layout.fillWidth: true; enabled: visionProvider.currentIndex > 0; provider: visionProvider.currentValue || ""; saved: page.workbench.vision?.model || ""; label: "Vision helper model"; accepts: model => provider !== "ollama" || (model.capabilities || []).indexOf("vision") >= 0 }
+        CButton { objectName: "visionSave"; text: "Save"; Layout.alignment: Qt.AlignTop; onClicked: rpc.call("settings.update", { workbench: { vision: { provider: visionProvider.currentValue||"", model: visionModel.value } } }, value => { page.error = value.error || ""; page.feedback = value.error ? "" : "Vision helper saved" }) }
     }
     SectionLabel { text: "Review helper" }
     CText { text: "A second model a conversation can ask for a narrow review: summarizing documents, reviewing a proposed change, summarizing research. It gets only the inputs chosen for that request, has no tools and changes nothing. Files are never sent to a helper their permissions do not allow."; color: Theme.muted; font.pixelSize: Theme.secondary }
+    CComboBox { id: helperProvider; objectName: "helperProvider"; Layout.fillWidth: true; readonly property var choices:[{id:"",label:"None"}].concat((App.state.providerOrder||[]).filter(id=>["local","api"].includes((App.state.providerTraits||{})[id]?.kind)).map(id=>({id:id,label:(App.state.providerTraits||{})[id]?.label||id})));model:choices;textRole:"label";valueRole:"id"
+        keepsChoice: true; saved: page.workbench.helper?.provider || ""; Accessible.name: "Review helper provider"; onActivated: helperModel.set("") }
     RowLayout {
         Layout.fillWidth: true
-        CComboBox { id: helperProvider; objectName: "helperProvider"; Layout.preferredWidth: Theme.pickerWidth; readonly property var choices:[{id:"",label:"None"}].concat((App.state.providerOrder||[]).filter(id=>["local","api"].includes((App.state.providerTraits||{})[id]?.kind)).map(id=>({id:id,label:(App.state.providerTraits||{})[id]?.label||id})));model:choices;textRole:"label";valueRole:"id"
-            currentIndex: Math.max(0, choices.findIndex(row=>row.id===(page.saved.helper?.provider || ""))); Accessible.name: "Review helper provider" }
-        CField { id: helperModel; objectName: "helperModel"; Layout.fillWidth: true; enabled: helperProvider.currentIndex > 0; text: page.saved.helper?.model || ""; placeholderText: "Model, such as a local Ollama model"; Accessible.name: "Review helper model" }
-        CButton { text: "Save"; onClicked: rpc.call("settings.update", { workbench: { helper: { provider: helperProvider.currentValue||"", model: helperModel.text.trim() } } }, value => { page.error = value.error || ""; page.feedback = value.error ? "" : "Review helper saved" }) }
+        ModelPicker { id: helperModel; name: "helperModel"; Layout.fillWidth: true; enabled: helperProvider.currentIndex > 0; provider: helperProvider.currentValue || ""; saved: page.workbench.helper?.model || ""; label: "Review helper model" }
+        CButton { text: "Save"; Layout.alignment: Qt.AlignTop; onClicked: rpc.call("settings.update", { workbench: { helper: { provider: helperProvider.currentValue||"", model: helperModel.value } } }, value => { page.error = value.error || ""; page.feedback = value.error ? "" : "Review helper saved" }) }
     }
     SectionLabel { text: "OCR, Code Lab and memory" }
     RowLayout {
         Layout.fillWidth: true
         CText { Layout.fillWidth: false; text: "OCR languages (Tesseract)" }
-        CField { id: ocrLanguages; Layout.preferredWidth: Theme.fieldWidth; text: page.saved.ocr.languages; Accessible.name: "OCR languages" }
+        CField { id: ocrLanguages; Layout.preferredWidth: Theme.fieldWidth; saved: page.workbench.ocr.languages; Accessible.name: "OCR languages" }
         CButton { text: "Save"; onClicked: rpc.call("settings.update", { workbench: { ocr: { languages: ocrLanguages.text.trim() } } }, value => page.error = value.error || "") }
     }
-    CCheckBox { objectName: "codeLabEnabled"; checked: page.saved.codeLab.enabled; text: "Turn on Code Lab (isolated Python for analysis, charts and conversions)"; onToggled: rpc.call("settings.update", { workbench: { codeLab: { enabled: checked } } }, value => page.error = value.error || "") }
-    CCheckBox { objectName: "lowMemory"; checked: page.saved.lowMemory; text: "Low-memory mode: image work on this computer waits while a reply is being generated"; onToggled: rpc.call("settings.update", { workbench: { lowMemory: checked } }, value => page.error = value.error || "") }
+    CCheckBox { objectName: "codeLabEnabled"; checked: page.workbench.codeLab.enabled; text: "Turn on Code Lab (isolated Python for analysis, charts and conversions)"; onToggled: rpc.call("settings.update", { workbench: { codeLab: { enabled: checked } } }, value => page.error = value.error || "") }
+    CCheckBox { objectName: "lowMemory"; checked: page.workbench.lowMemory; text: "Low-memory mode: image work on this computer waits while a reply is being generated"; onToggled: rpc.call("settings.update", { workbench: { lowMemory: checked } }, value => page.error = value.error || "") }
 }

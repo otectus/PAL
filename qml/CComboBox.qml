@@ -13,10 +13,34 @@ ComboBox {
     leftPadding: Theme.space3; rightPadding: Theme.space6
     font.family: Theme.font; font.pixelSize: Theme.body
     background: Rectangle { radius: Theme.radiusControl; color: Theme.input; border.color: control.activeFocus ? Theme.focus : control.hovered ? Theme.borderHover : Theme.border; border.width: control.activeFocus ? Theme.focusWidth : Theme.hairline }
+    // `saved` shows what is stored, by value. Unlike a bound currentIndex, a choice that is not stored yet outlives the
+    // state and list updates in between.
+    property bool keepsChoice: false
+    property string saved: ""
+    property string choice: ""
+    function showChoice() { if (keepsChoice && count > 0) currentIndex = Math.max(0, indexOfValue(choice)) }
+    onSavedChanged: if (keepsChoice) { choice = saved; showChoice() }
+    onActivated: index => { if (keepsChoice) choice = String(valueAt(index) ?? "") }
+    onModelChanged: showChoice()
+    onCountChanged: showChoice()
+    Component.onCompleted: {
+        if (keepsChoice) { if (!choice) choice = saved; showChoice() }
+        if (editable) contentItem = editor.createObject(control)
+    }
     contentItem: Text {
         text: control.displayText; font: control.font
         color: control.enabled ? Theme.text : Theme.muted
         verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight; textFormat: Text.PlainText
+    }
+    // An editable box needs a field: plain text takes no typing.
+    Component {
+        id: editor
+        TextInput {
+            focus: true; text: control.editText; font: control.font; clip: true
+            color: control.enabled ? Theme.text : Theme.muted; selectionColor: Theme.selectionFill; selectedTextColor: Theme.selectionInk
+            verticalAlignment: Text.AlignVCenter; selectByMouse: true; readOnly: control.down
+            validator: control.validator; inputMethodHints: control.inputMethodHints
+        }
     }
     indicator: CIcon { x: control.width-width-Theme.space3; y: (control.height-height)/2; width: Theme.iconSmall; height: Theme.iconSmall; name: "down"; color: Theme.muted }
     delegate: ItemDelegate {

@@ -910,12 +910,12 @@ Item {
         readonly property var providerIds:["openai","xai","google","google_cloud","azure_speech","azure_openai","mistral","openrouter"]
         readonly property string providerId:providerIds[provider.currentIndex]||"openai"
         readonly property var accounts:connections.filter(row=>row.kind===providerId&&!row.migrated)
-        function openFor(value){ref=value;provider.currentIndex=0;model.text="";language.text="";region.text="";cloudUri.text="";consent.checked=false;message.text="";rpc.call("connections.list",{},result=>{if(!result.error)connections=result});open()}
+        function openFor(value){ref=value;provider.currentIndex=0;model.set("");language.text="";region.text="";cloudUri.text="";consent.checked=false;message.text="";rpc.call("connections.list",{},result=>{if(!result.error)connections=result});open()}
         CText { text:"Cloud transcription"; font.pixelSize:Theme.title; font.bold:true }
         CText { text:"The selected immutable WAV version will be uploaded to the provider. PAL saves the structured result as a new Library artifact."; wrapMode:Text.Wrap; color:Theme.muted; Layout.fillWidth:true }
-        CComboBox { id:provider; Layout.fillWidth:true; model:transcribe.providerIds.map(id=>id==="google_cloud"?"Google Cloud Speech":(App.state.providerTraits?.[id]?.label||id)); Accessible.name:"Transcription provider" }
+        CComboBox { id:provider; Layout.fillWidth:true; model:transcribe.providerIds.map(id=>id==="google_cloud"?"Google Cloud Speech":(App.state.providerTraits?.[id]?.label||id)); Accessible.name:"Transcription provider"; onActivated:model.set("") }
         CComboBox { id:speechAccount; visible:transcribe.accounts.length>0; Layout.fillWidth:true; model:["Provider default"].concat(transcribe.accounts.map(row=>row.name)); Accessible.name:"Named speech account" }
-        CField { id:model; Layout.fillWidth:true; placeholderText:"Model (optional)"; Accessible.name:"Transcription model" }
+        ModelPicker { id:model; name:"transcriptionModel"; visible:["openai","xai","google","mistral","openrouter"].includes(transcribe.providerId); Layout.fillWidth:true; provider:visible?transcribe.providerId:""; connectionId:speechAccount.visible&&speechAccount.currentIndex>0?transcribe.accounts[speechAccount.currentIndex-1].id:""; operation:"speech.transcribe"; emptyText:"Provider’s default model"; label:"Transcription model"; maximumLength:160 }
         CField { id:language; Layout.fillWidth:true; placeholderText:"Language, such as en-US (optional)"; Accessible.name:"Transcription language" }
         CField { id:region; visible:transcribe.providerId==="azure_speech"||transcribe.providerId==="google_cloud"; Layout.fillWidth:true; placeholderText:"Region (required by some services)"; Accessible.name:"Speech region" }
         CField { id:cloudUri; visible:transcribe.providerId==="google_cloud"; Layout.fillWidth:true; placeholderText:"Google Cloud Storage URI (optional)"; Accessible.name:"Cloud Storage URI" }
@@ -924,7 +924,7 @@ Item {
         RowLayout { Layout.fillWidth:true; Item { Layout.fillWidth:true }
             CButton { text:"Cancel"; onClicked:transcribe.close() }
             CButton { text:"Transcribe"; primary:true; enabled:consent.checked; onClicked:{
-                const settings={};if(model.text.trim())settings.model=model.text.trim();if(language.text.trim())settings.language=language.text.trim();if(region.text.trim())settings.region=region.text.trim();if(speechAccount.visible&&speechAccount.currentIndex>0)settings.connectionId=transcribe.accounts[speechAccount.currentIndex-1].id
+                const settings={};if(model.visible&&model.value)settings.model=model.value;if(language.text.trim())settings.language=language.text.trim();if(region.text.trim())settings.region=region.text.trim();if(speechAccount.visible&&speechAccount.currentIndex>0)settings.connectionId=transcribe.accounts[speechAccount.currentIndex-1].id
                 const request={sessionId:browser.sessionId,artifactId:transcribe.ref.artifactId,versionId:transcribe.ref.versionId,provider:transcribe.providerId,settings:settings,acknowledgeUpload:true};if(cloudUri.visible&&cloudUri.text.trim())request.googleCloudUri=cloudUri.text.trim()
                 rpc.call("voice.transcribeArtifact",request,value=>{if(value.error)message.text=value.error;else{browser.notice="Transcription finished and was saved to the Library.";transcribe.close();browser.refresh(true)}})
             } }

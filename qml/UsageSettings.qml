@@ -16,6 +16,12 @@ ColumnLayout {
     function reload(){
         rpc.call("usage.summary",{days:usage.days},value=>{if(value.error)usage.error=value.error;else{usage.summary=value;usage.policy=value.policy||({});usage.error=""}})
     }
+    /** Models used without a price, as the price table names them. */
+    readonly property var unpriced: {
+        const rows=[],named=prices.text.split("\n").map(line=>line.trim().split(/\s+/)[0])
+        for(const row of usage.summary.byProvider||[]){const parts=String(row.key).split(" · "),key=parts[0]+":"+parts.slice(1).join(" · ");if(!row.priced&&parts.length>1&&App.state.providerTraits?.[parts[0]]?.billed===true&&/^[a-z][a-z0-9_]*:[^\s]{1,200}$/.test(key)&&named.indexOf(key)<0)rows.push(key)}
+        return rows
+    }
     function money(value){return value===null||value===undefined?"—":Number(value).toFixed(2)+" "+(usage.summary.currency||"")}
     function priceLines(){const prices=usage.policy.prices||({});return Object.keys(prices).map(key=>key+" "+prices[key].input+" "+prices[key].output+(prices[key].image!==undefined?" "+prices[key].image:"")).join("\n")}
     function amount(text,label,emptyValue){
@@ -31,7 +37,7 @@ ColumnLayout {
             const line=lines[index].trim();if(!line)continue
             const parts=line.split(/\s+/),label="Price line "+(index+1)
             if(parts.length!==3&&parts.length!==4)return {ok:false,error:label+" needs provider:model, input price, output price, and optionally an image price."}
-            if(!/^[a-z]+:[^\s]{1,200}$/.test(parts[0]))return {ok:false,error:label+" needs a provider:model name, such as openai:gpt-4.1 or openai:*."}
+            if(!/^[a-z][a-z0-9_]*:[^\s]{1,200}$/.test(parts[0]))return {ok:false,error:label+" needs a provider:model name, such as openai:gpt-4.1 or openai:*."}
             const values=parts.slice(1).map(Number)
             if(values.some(value=>!Number.isFinite(value)||value<0))return {ok:false,error:label+" contains an invalid price. Use amounts of 0 or more."}
             table[parts[0]]={input:values[0],output:values[1]};if(values.length===3)table[parts[0]].image=values[2]
@@ -88,6 +94,10 @@ ColumnLayout {
             CField { id:currency;Layout.preferredWidth:Theme.fieldShort;text:usage.policy.currency||"USD";maximumLength:3;Accessible.name:"Three-letter currency code" }
         }
         CText { text:"Token prices in "+(currency.text.trim().toUpperCase()||"currency")+" per million tokens. One line: provider:model input output [per image]. Use provider:* for every model of a provider.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        RowLayout { Layout.fillWidth:true;visible:usage.unpriced.length>0
+            CComboBox { id:priceModel;objectName:"usagePriceModel";Layout.fillWidth:true;model:usage.unpriced;Accessible.name:"Model without a price" }
+            CButton { objectName:"usageAddPrice";text:"Add a price line";quiet:true;onClicked:{const start=prices.text.replace(/\s+$/,"");prices.text=(start?start+"\n":"")+priceModel.currentText+" ";prices.forceActiveFocus();prices.cursorPosition=prices.length} }
+        }
         CTextArea { id:prices;objectName:"usagePrices";Layout.fillWidth:true;Layout.preferredHeight:Theme.editorMedium;text:usage.priceLines();font.family:Theme.mono;font.pixelSize:Theme.caption;placeholderText:"openai:gpt-4.1 2 8\nanthropic:* 3 15";Accessible.name:"Prices per million tokens" }
         Flow { Layout.fillWidth:true;spacing:Theme.space2
             CButton { objectName:"saveUsagePolicy";text:"Save budget and prices";primary:true;onClicked:usage.savePolicy() }

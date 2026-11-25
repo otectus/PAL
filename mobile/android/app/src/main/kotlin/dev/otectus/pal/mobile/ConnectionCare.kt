@@ -17,6 +17,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.fragment.app.FragmentActivity
 import dev.otectus.pal.mobile.data.PALRepository
+import dev.otectus.pal.mobile.protocol.ModelOption
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
 
@@ -63,9 +64,8 @@ internal fun ConnectionCheckDialog(repository: PALRepository, activity: Fragment
     }) {
         result?.list("stages").orEmpty().forEach { CheckStage(it) }
         Text(stringResource(R.string.care_try_heading), Modifier.semantics { heading() }, style = MaterialTheme.typography.titleSmall)
-        val models = result?.list("models").orEmpty()
-        if (models.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { models.take(12).forEach { row -> val id = row.str("id").orEmpty(); FilterChip(model == id, { model = id }, { Text(row.str("name") ?: id, maxLines = 1, overflow = TextOverflow.Ellipsis) }, enabled = !busy) } }
-        OutlinedTextField(model, { model = it.take(512) }, Modifier.fillMaxWidth(), singleLine = true, enabled = !busy, label = { Text(stringResource(R.string.care_model)) }, textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace))
+        val models = remember(result) { result?.list("models").orEmpty().mapNotNull { row -> row.str("id")?.let { ModelOption(it, row.str("name") ?: it) } } }
+        ModelField(model, { model = it }, stringResource(R.string.care_model), null, given = models, enabled = !busy)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { connectionTests.forEach { (id, label) -> FilterChip(id in chosen, { chosen = if (id in chosen) chosen - id else chosen + id }, { Text(stringResource(label)) }, enabled = !busy) } }
         Text(stringResource(if (provider == "ollama") R.string.care_loads else R.string.care_billed), style = MaterialTheme.typography.bodySmall)
     }

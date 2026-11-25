@@ -52,7 +52,7 @@ CButton {
         function review() {
             epoch++; source = action.artifact; context = null; handles = []; message = ""; working = false; loadingHandles = false
             confirmRemoval = ""; accountBox.currentIndex = 0; taskBox.currentIndex = 0; uploadConsent.checked = false
-            processConsent.checked = false; input.text = ""; parameters.text = ""; model.text = ""; pages.text = ""
+            processConsent.checked = false; input.text = ""; parameters.text = ""; model.set(""); pages.text = ""
             open()
             request("providerInference.context", {sessionId: action.sessionId}, value => {
                 if (value.error) { message = value.error; return }
@@ -79,7 +79,7 @@ CButton {
             const ref = {artifactId: source.artifactId, versionId: source.versionId}
             const p = {sessionId: action.sessionId, expectedSessionRevision: context.sessionRevision, expectedProjectRevision: context.projectRevision,
                        connectionId: account.id, connectionRevision: account.revision}
-            if (model.text.trim()) p.model = model.text.trim()
+            if (model.value) p.model = model.value
             try {
                 if (ocr) {
                     p.source = ref
@@ -137,16 +137,16 @@ CButton {
         ColumnLayout {
             visible: dialog.accounts.length > 0
             Layout.fillWidth: true
-            CComboBox { id: accountBox; objectName: "inferenceAccount"; Layout.fillWidth: true; model: dialog.accounts; textRole: "name"; Accessible.name: qsTr("Processing account"); onActivated: { processConsent.checked = false; model.text = "" } }
-            CComboBox { id: taskBox; visible: !dialog.ocr; Layout.fillWidth: true; model: dialog.context?.tasks || []; Accessible.name: qsTr("Hugging Face task"); onActivated: processConsent.checked = false }
-            CField { id: model; Layout.fillWidth: true; placeholderText: dialog.ocr ? qsTr("OCR model (optional)") : qsTr("Hugging Face model ID"); Accessible.name: placeholderText }
+            CComboBox { id: accountBox; objectName: "inferenceAccount"; Layout.fillWidth: true; model: dialog.accounts; textRole: "name"; Accessible.name: qsTr("Processing account"); onActivated: { processConsent.checked = false; model.set("") } }
+            CComboBox { id: taskBox; visible: !dialog.ocr; Layout.fillWidth: true; model: dialog.context?.tasks || []; Accessible.name: qsTr("Hugging Face task"); onActivated: { processConsent.checked = false; model.set("") } }
+            ModelPicker { id: model; app: action.app; name: "inferenceModel"; Layout.fillWidth: true; provider: dialog.ocr ? "mistral" : "huggingface"; connectionId: dialog.ocr ? dialog.account?.id || "" : ""; operation: dialog.ocr ? "ocr" : "inference"; task: dialog.ocr ? "" : taskBox.currentText; emptyText: dialog.ocr ? qsTr("Newest OCR model") : qsTr("Choose a model"); label: dialog.ocr ? qsTr("OCR model") : qsTr("Hugging Face model"); placeholder: dialog.ocr ? qsTr("OCR model ID") : qsTr("Hugging Face model ID") }
             CField { id: pages; visible: dialog.ocr; Layout.fillWidth: true; placeholderText: qsTr("Pages (optional, e.g. 1-3)"); Accessible.name: placeholderText }
             CTextArea { id: input; visible: !dialog.ocr && !dialog.binaryInput; Layout.fillWidth: true; placeholderText: qsTr("Text input or a JSON object for this task"); Accessible.name: placeholderText }
             CField { id: parameters; visible: !dialog.ocr; Layout.fillWidth: true; placeholderText: qsTr("Task parameters as JSON (optional)"); Accessible.name: placeholderText }
             CComboBox { id: pooling; visible: !dialog.ocr && taskBox.currentText === "feature-extraction"; model: ["mean","cls","none"]; Accessible.name: qsTr("Embedding pooling") }
             CCheckBox { id: normalize; visible: pooling.visible; text: qsTr("Normalize vectors") }
             CCheckBox { id: processConsent; objectName: "inferenceConsent"; text: qsTr("Send %1 to %2").arg(dialog.ocr || dialog.binaryInput ? dialog.source?.name || "" : qsTr("the entered text")).arg(dialog.account?.name || "") }
-            CButton { objectName: "inferenceRun"; text: dialog.ocr ? qsTr("Extract text with OCR") : qsTr("Run inference"); enabled: processConsent.checked && !!dialog.account && !dialog.working && (dialog.ocr ? (dialog.pdf || (action.version?.mime || "").startsWith("image/")) : !!model.text.trim() && (dialog.binaryInput || !!input.text.trim())); onClicked: dialog.processInput() }
+            CButton { objectName: "inferenceRun"; text: dialog.ocr ? qsTr("Extract text with OCR") : qsTr("Run inference"); enabled: processConsent.checked && !!dialog.account && !dialog.working && (dialog.ocr ? (dialog.pdf || (action.version?.mime || "").startsWith("image/")) : !!model.value && (dialog.binaryInput || !!input.text.trim())); onClicked: dialog.processInput() }
         }
         CText { visible: dialog.working || !!dialog.message; text: dialog.working ? qsTr("Waiting for the provider…") : dialog.message }
         CButton { text: qsTr("Close"); onClicked: dialog.close() }

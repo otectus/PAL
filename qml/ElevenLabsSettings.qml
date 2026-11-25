@@ -7,6 +7,8 @@ ColumnLayout {
     Layout.fillWidth:true;spacing:Theme.space2
     property var config:App.state.settings?.elevenlabs||({})
     property var status:App.state.elevenlabs||({})
+    StableValue { id:listedModels;source:panel.status.models||[] }
+    readonly property var models:(listedModels.value||[])
     property var credential:status.credential||({})
     property var requests:({})
     property string error:""
@@ -25,10 +27,9 @@ ColumnLayout {
     }
     CText { text:"Voice";font.weight:Font.DemiBold }
     CComboBox { objectName:"elevenVoice";Layout.fillWidth:true;model:panel.status.voices||[];textRole:"name";currentIndex:model.findIndex(v=>v.id===panel.config.voiceId);displayText:(model.find(v=>v.id===panel.config.voiceId)||{}).name||panel.config.voiceId||"Choose a voice after refreshing";Accessible.name:"ElevenLabs voice";onActivated:panel.save({voiceId:model[currentIndex].id}) }
-    CField { objectName:"elevenVoiceId";Layout.fillWidth:true;placeholderText:"Or paste an account voice ID";text:panel.config.voiceId||"";maximumLength:128;Accessible.name:"ElevenLabs voice ID";onEditingFinished:if(text!==panel.config.voiceId)panel.save({voiceId:text.trim()}) }
+    CField { objectName:"elevenVoiceId";Layout.fillWidth:true;placeholderText:"Or paste an account voice ID";saved:panel.config.voiceId||"";maximumLength:128;Accessible.name:"ElevenLabs voice ID";onEditingFinished:if(text!==panel.config.voiceId)panel.save({voiceId:text.trim()}) }
     CText { text:"Model";font.weight:Font.DemiBold }
-    CComboBox { objectName:"elevenModel";Layout.fillWidth:true;model:panel.status.models||[];textRole:"name";currentIndex:model.findIndex(v=>v.id===panel.config.modelId);displayText:(model.find(v=>v.id===panel.config.modelId)||{}).name||panel.config.modelId||"Choose a model";Accessible.name:"ElevenLabs model";onActivated:panel.save({modelId:model[currentIndex].id}) }
-    CField { objectName:"elevenModelId";Layout.fillWidth:true;placeholderText:"Model ID";text:panel.config.modelId||"";maximumLength:128;Accessible.name:"ElevenLabs model ID";onEditingFinished:if(text!==panel.config.modelId)panel.save({modelId:text.trim()}) }
+    ModelPicker { name:"elevenModel";Layout.fillWidth:true;given:panel.models;saved:panel.config.modelId||"";emptyText:"Choose a model";label:"ElevenLabs model";maximumLength:128;onChosen:id=>{if(id&&id!==panel.config.modelId)panel.save({modelId:id})} }
     CText { text:"Flash v2.5 is the default. Account voices, including existing clones, appear after refreshing. To clone PAL, create the voice in your ElevenLabs account, then select its voice ID here.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CButton { text:"Open ElevenLabs";onClicked:Qt.openUrlExternally("https://elevenlabs.io/app/voice-lab") }
     CText { visible:!!panel.error||!!panel.status.error;text:panel.error||panel.status.error||"";color:Theme.danger;font.pixelSize:Theme.secondary }

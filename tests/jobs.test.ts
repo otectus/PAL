@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getPriority, tmpdir } from 'node:os';
 import { Core } from '../broker/core.ts';
@@ -132,6 +132,9 @@ test('A04 transcribing a file runs whisper at background priority; dictation kee
   const result = await transcription.importFile({ sessionId: 'session-a', path: join(root, 'meeting.wav') });
   assert.equal(result.text, `priority ${Math.max(backgroundNice, getPriority())}`);
   await transcription.start({ sessionId: 'session-a' });
-  await new Promise(resolve => setTimeout(resolve, 100));
+  // A started recorder has not written yet; on a busy machine that takes longer than any fixed wait.
+  const captures = join(root, 'runtime', 'transcription');
+  const recorded = async () => { for (const name of await readdir(captures)) if ((await stat(join(captures, name, 'recording.wav')).catch(() => undefined))?.size! > 44) return true; return false; };
+  for (const end = Date.now() + 20_000; !await recorded();) { assert.ok(Date.now() < end, 'the recorder wrote nothing'); await new Promise(resolve => setTimeout(resolve, 20)); }
   assert.equal((await transcription.finish()).text, `priority ${getPriority()}`, 'dictation is interactive and keeps the broker’s priority');
 });

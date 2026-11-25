@@ -562,6 +562,23 @@ test('an owner phone checks a saved account, sees what uses it and moves it; ano
   for (const method of ['owner.connections.uses', 'owner.connections.check', 'owner.connections.reassign']) assert.ok((await limited.request(method, { id: work.id, connectionId: work.id, to: home.id, reviewed: true })).error, method);
 });
 
+test('a phone gets the list for one use that the desktop shows: what the account lists, what PAL names and why the rest is missing', async t => {
+  const f = await fixture(t), client = await connect(t, f), account: any = await f.core.rpc('connections.save', { kind: 'mistral', name: 'Speech' });
+  await f.core.rpc('provider.credentials', { provider: 'mistral', connectionId: account.id, key: 'key-speech' }); await f.core.rpc('provider.credentials', { provider: 'huggingface', key: 'key-hub' });
+  const list = async (params: any) => client.request('providers.models', { listing: true, ...params }), asked: any[] = [];
+  f.core.accountModels = (async (connection: any, operation: string) => { asked.push([connection.id, operation]); return [{ id: 'voxtral-custom', displayName: 'Custom', description: '', efforts: [], defaultEffort: '', isDefault: false }]; }) as any;
+  const speech = await list({ provider: 'mistral', connectionId: account.id, operation: 'speech.transcribe' }); assert.equal(speech.error, undefined, JSON.stringify(speech.error));
+  assert.deepEqual(speech.result.items.map((model: any) => model.id), ['voxtral-custom', 'voxtral-mini-transcribe-3']); assert.ok(!('problem' in speech.result)); assert.deepEqual(asked, [[account.id, 'speech.transcribe']]);
+  // A list that cannot be loaded still offers what is known, and says why it is short.
+  f.core.accountModels = (async () => { throw new Error('Mistral answered 401'); }) as any;
+  const short = (await list({ provider: 'mistral', connectionId: account.id, operation: 'ocr' })).result; assert.deepEqual(short.items.map((model: any) => model.id), ['mistral-ocr-latest']); assert.equal(short.problem, 'Mistral answered 401');
+  // A Hugging Face task has a public list; only the task is named in the request.
+  const urls: string[] = []; f.core.modelChoices.fetch = (async (url: any) => { urls.push(String(url)); return Response.json([{ id: 'google/vit-base', downloads: 1200 }]); }) as any;
+  const task = (await list({ provider: 'huggingface', operation: 'inference', task: 'image-classification' })).result; assert.deepEqual(task.items.map((model: any) => model.id), ['google/vit-base']); assert.match(urls[0], /pipeline_tag=image-classification&/);
+  for (const params of [{ provider: 'huggingface', operation: 'inference' }, { provider: 'huggingface', operation: 'embed', task: 'image-classification' }, { provider: 'huggingface', operation: 'inference', task: 'image-classification', listing: false }]) assert.equal((await list(params)).error?.code, 'INVALID_ARGUMENT', JSON.stringify(params));
+  assert.ok((await list({ provider: 'mistral', operation: 'inference', task: 'image-classification' })).error); assert.equal(urls.length, 1);
+});
+
 test('large model catalogs never keep a phone from connecting, and one is served on request', async t => {
   const f = await fixture(t), client = await connect(t, f);
   const account: any = await f.core.rpc('connections.save', { kind: 'openrouter', name: 'Router' }); await f.core.rpc('provider.credentials', { provider: 'openrouter', connectionId: account.id, key: 'key-router' });

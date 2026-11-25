@@ -119,6 +119,16 @@ export async function checkSpeechServer(value: unknown, signal = AbortSignal.tim
   } catch { return { answers: false, detail: 'Nothing answers at this address.' }; }
 }
 
+/** The models an OpenAI-compatible server on this computer lists. whisper.cpp's own server has one model and no list. */
+export async function speechServerModels(value: unknown, send: typeof fetch = fetch, signal = AbortSignal.timeout(4000)): Promise<string[]> {
+  const url = speechServerAddress(value);
+  if (!compatible(url)) return [];
+  let data: any;
+  try { data = await responseJson(await send(under(url, '/models'), { signal, redirect: 'error' }), 1024 * 1024); } catch { throw new Error('The speech server did not list its models'); }
+  const rows: unknown[] = Array.isArray(data?.data) ? data.data : [];
+  return [...new Set(rows.map((row: any) => row?.id).filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 160))].slice(0, 200);
+}
+
 /** The account the person chose, with its own limits. */
 export const hostedRecognizer = (transcribe: HostedTranscribe | undefined): Recognizer => ({
   name: 'The hosted speech service',

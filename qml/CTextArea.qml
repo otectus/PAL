@@ -11,6 +11,9 @@ TextArea {
     font.pixelSize: Theme.body
     wrapMode: TextEdit.Wrap
     selectByMouse: true
+    // What is stored, as in CField.
+    property string saved: ""
+    onSavedChanged: text = saved
     leftPadding: Theme.space2; rightPadding: Theme.space2; topPadding: Theme.space2; bottomPadding: Theme.space2
     // Tab and Shift+Tab move between controls, so an editor never traps the keyboard.
     Keys.onTabPressed: event => { const next = control.nextItemInFocusChain(true); if (next && next !== control) next.forceActiveFocus(Qt.TabFocusReason); event.accepted = true }

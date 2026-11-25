@@ -871,7 +871,7 @@ private fun ArtifactTranscriptionDialog(
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(PALLayout.small)) {
                 Text("The selected immutable WAV version will be uploaded to the provider. PAL saves a structured transcript as a new Library artifact.", style = MaterialTheme.typography.bodySmall)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small)) { providers.forEach { id ->
-                    FilterChip(provider == id, { provider = id }, { Text(state.traits(id).label.takeIf { id != "google_cloud" } ?: "Google Cloud Speech") })
+                    FilterChip(provider == id, { if (provider != id) { provider = id; model = "" } }, { Text(state.traits(id).label.takeIf { id != "google_cloud" } ?: "Google Cloud Speech") })
                 } }
                 if (accounts.isNotEmpty()) {
                     Text("Named account", style = MaterialTheme.typography.labelMedium)
@@ -879,7 +879,7 @@ private fun ArtifactTranscriptionDialog(
                         accounts.forEach { account -> FilterChip(connectionId == account.id, { connectionId = account.id }, { Text(account.name) }) }
                     }
                 }
-                OutlinedTextField(model, { model = it.take(160) }, Modifier.fillMaxWidth(), label = { Text("Model (optional)") }, singleLine = true)
+                ModelField(model, { model = it }, stringResource(R.string.extras_setup_model), modelSource(repository, state, provider, "speech.transcribe", connectionId), none = stringResource(R.string.sheet_provider_default_model), maximum = 160)
                 OutlinedTextField(language, { language = it.take(32) }, Modifier.fillMaxWidth(), label = { Text("Language, such as en-US (optional)") }, singleLine = true)
                 if (provider in setOf("azure_speech", "google_cloud")) OutlinedTextField(region, { region = it.take(40) }, Modifier.fillMaxWidth(), label = { Text("Region (required by some services)") }, singleLine = true)
                 if (provider == "google_cloud") OutlinedTextField(googleCloudUri, { googleCloudUri = it.take(2048) }, Modifier.fillMaxWidth(), label = { Text("Google Cloud Storage URI (optional)") }, singleLine = true)
@@ -1529,12 +1529,10 @@ private fun ResearchTab(
                 }
             }
             if (routes.isEmpty()) Text(stringResource(R.string.work_no_research_routes_for_this_conversation), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-            if (selectedRoute?.let(::researchRouteNeedsModel) == true) OutlinedTextField(
-                routeModel, { routeModel = it.take(512) }, Modifier.fillMaxWidth(),
-                label = { Text(stringResource(R.string.work_research_model_id)) },
-                supportingText = { Text(stringResource(R.string.work_research_model_id_explanation)) },
-                isError = routeModel.isNotEmpty() && !validResearchModel(routeModel), singleLine = true,
-            )
+            selectedRoute?.takeIf(::researchRouteNeedsModel)?.let { route -> ModelField(
+                routeModel, { routeModel = it }, stringResource(R.string.work_research_model_id), modelSource(repository, state, route.str("provider").orEmpty(), connectionId = route.str("connectionId").orEmpty()),
+                supporting = stringResource(R.string.work_research_model_id_explanation), isError = routeModel.isNotEmpty() && !validResearchModel(routeModel),
+            ) }
             OutlinedTextField(question, { question = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.work_what_should_pal_research)) }, minLines = 2)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(PALLayout.small), verticalArrangement = Arrangement.spacedBy(PALLayout.tight)) {
                 listOf("answer" to strings.getString(R.string.mobile_answer), "compare" to strings.getString(R.string.work_compare), "check" to "Fact-check", "literature" to strings.getString(R.string.work_literature)).forEach { (value, label) -> FilterChip(mode == value, { mode = value }, { Text(label) }) }
@@ -1664,6 +1662,7 @@ private fun ResearchTab(
         selected = handoffTarget,
         model = handoffModel,
         busy = handoffBusy,
+        source = { route -> modelSource(repository, state, route.str("provider").orEmpty(), connectionId = route.str("connectionId").orEmpty()) },
         onSelected = { handoffTarget = it; handoffModel = "" },
         onModel = { handoffModel = it },
         onDismiss = { if (!handoffBusy) handoffOpen = false },
@@ -1703,6 +1702,7 @@ private fun ResearchHandoffDialog(
     selected: String,
     model: String,
     busy: Boolean,
+    source: (JsonObject) -> ModelSource?,
     onSelected: (String) -> Unit,
     onModel: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -1725,12 +1725,10 @@ private fun ResearchHandoffDialog(
                         Text(route.str("label") ?: researchRouteDescription(route), Modifier.weight(1f))
                     }
                 }
-                if (selectedRoute?.let(::researchRouteNeedsModel) == true) OutlinedTextField(
-                    model, { onModel(it.take(512)) }, Modifier.fillMaxWidth(),
-                    label = { Text(stringResource(R.string.work_research_model_id)) },
-                    supportingText = { Text(stringResource(R.string.work_research_model_id_explanation)) },
-                    isError = model.isNotEmpty() && !validResearchModel(model), singleLine = true, enabled = !busy,
-                )
+                selectedRoute?.takeIf(::researchRouteNeedsModel)?.let { route -> ModelField(
+                    model, onModel, stringResource(R.string.work_research_model_id), source(route), enabled = !busy,
+                    supporting = stringResource(R.string.work_research_model_id_explanation), isError = model.isNotEmpty() && !validResearchModel(model),
+                ) }
                 Text(stringResource(R.string.work_existing_conversation), style = MaterialTheme.typography.titleSmall)
                 sessions.forEach { session ->
                     val value = "session:${session.id}"

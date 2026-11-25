@@ -6,6 +6,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.fragment.app.FragmentActivity
 import dev.otectus.pal.mobile.data.MobileState
 import dev.otectus.pal.mobile.data.PALRepository
@@ -56,7 +57,9 @@ internal fun ProviderInferenceDialog(
                     listOf("image-classification", "object-detection", "image-segmentation", "audio-classification", "automatic-speech-recognition", "feature-extraction").forEach { id -> FilterChip(task == id, { task = id }, { Text(id.replace('-', ' ')) }) }
                 }
             } else OutlinedTextField(pages, { pages = it.filter { c -> c.isDigit() || c == ',' || c == '-' }.take(4096) }, label = { Text("Pages (optional, such as 0-4,7)") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(model, { model = it.take(512) }, label = { Text("Provider model") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            ModelField(model, { model = it }, stringResource(R.string.models_provider), connection?.let { account ->
+                if (mode == "ocr") modelSource(repository, state, "mistral", "ocr", account.id) else modelSource(repository, state, "huggingface", "inference", account.id, task)
+            })
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
     }, confirmButton = { Button({

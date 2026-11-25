@@ -192,6 +192,11 @@ test('API conversations keep their tools choice across snapshots and model-only 
   // An endpoint without a model list is reported as such, not as an error; a typed ID still works.
   const listing=(await client.request('providers.models',{provider:'compatible',listing:true})).result;
   assert.deepEqual(listing,{items:[],unlisted:true});
+  assert.deepEqual((await client.request('providers.models',{provider:'compatible',operation:'embed',listing:true})).result,{items:[],unlisted:true});
+  // A limited phone learns that a list is missing, not what the desktop was told about it.
+  const load=f.core.modelChoices.choices;f.core.modelChoices.choices=async()=>({models:[],live:false,problem:'ECONNREFUSED 10.0.0.7'});
+  assert.deepEqual((await client.request('providers.models',{provider:'openai',operation:'embed',listing:true})).result,{items:[],unlisted:false,problem:'The desktop could not load this list.'});
+  f.core.modelChoices.choices=load;
   assert.ok(Array.isArray((await client.request('providers.models',{provider:'compatible'})).result),'an older phone still gets a bare list');
   const created:Record<string,any>={};
   for(const provider of ['openai','anthropic','google'])for(const tools of [true,false]) {

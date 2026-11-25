@@ -617,7 +617,7 @@ private slots:
         }
         for(const auto &[target,name]:std::initializer_list<std::pair<QString,QString>>{{"accountsSettings","settings-accounts"},{"imageConnections","settings-images"}}){
             QMetaObject::invokeMethod(page,"open",Q_ARG(QVariant,QString()),Q_ARG(QVariant,target));QTest::qWait(1500);
-            reveal(target,40);shot(name);
+            reveal(target,target=="imageConnections"?120:40);shot(name);
         }
         QMetaObject::invokeMethod(page,"open",Q_ARG(QVariant,QString("application")),Q_ARG(QVariant,QString()));QTest::qWait(900);
         QVERIFY(click("openHealth"));QTest::qWait(1500);

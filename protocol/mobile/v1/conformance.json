@@ -43,6 +43,7 @@
           "sessions.toolsState",
           "sessions.routeRevision",
           "models.listing",
+          "models.uses",
           "workbench.takeover",
           "time.context.v1",
           "wake.v1",

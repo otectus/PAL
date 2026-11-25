@@ -109,4 +109,4 @@ data class ConfigurationDraft(
 }
 
 /** A provider's catalog as the phone shows it: its models, and whether it lists any at all. */
-data class ModelCatalog(val models: List<ModelOption>, val unlisted: Boolean = false)
+data class ModelCatalog(val models: List<ModelOption>, val unlisted: Boolean = false, val problem: String? = null)

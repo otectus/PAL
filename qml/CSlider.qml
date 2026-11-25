@@ -5,6 +5,11 @@ Slider {
     implicitHeight: Theme.compactHeight
     implicitWidth: Theme.fieldWidth
     padding: Theme.space2
+    // What is stored. It is shown when it really changes and the handle is not being moved: a state update between pressing
+    // and releasing would otherwise put the handle back, and the old value would be saved.
+    property real saved: NaN
+    function follow() { if (!isNaN(saved) && !pressed) value = saved }
+    onSavedChanged: follow()
     background: Rectangle {
         x: control.leftPadding; y: (control.height-height)/2
         width: control.availableWidth; height: Theme.indicatorHeight; radius: Theme.radiusChip; color: Theme.border

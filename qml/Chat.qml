@@ -1208,9 +1208,9 @@ Item {
         }
         readonly property var source:mediaSource.currentIndex>0?sourceOptions[mediaSource.currentIndex]:null
         readonly property bool xaiEdit:mediaProvider.currentValue==="xai"&&!!source
-        function openFresh(){requestId=-1;prepared=null;error="";mediaProvider.currentIndex=0;mediaKind.currentIndex=0;mediaSource.currentIndex=0;mediaPrompt.text="";mediaModel.text="gemini-omni-1.2-flash";open()}
+        function openFresh(){requestId=-1;prepared=null;error="";mediaProvider.currentIndex=0;mediaKind.currentIndex=0;mediaSource.currentIndex=0;mediaPrompt.text="";mediaModel.set("gemini-omni-1.2-flash");open()}
         function prepare(){
-            const params={sessionId:App.selectedId,provider:mediaProvider.currentValue,model:mediaModel.text.trim(),kind:mediaKind.currentValue,prompt:mediaPrompt.text.trim()}
+            const params={sessionId:App.selectedId,provider:mediaProvider.currentValue,model:mediaModel.value,kind:mediaKind.currentValue,prompt:mediaPrompt.text.trim()}
             if(source)params.references=[{artifactId:source.artifactId,versionId:source.versionId}]
             if(!xaiEdit){params.duration=Number(mediaDuration.text);params.resolution=mediaResolution.text.trim();params.aspectRatio=mediaAspect.text.trim()}
             requestId=App.rpc("media.timed.prepare",params)
@@ -1219,10 +1219,10 @@ Item {
         CText { text:"Prepare a video or music operation, review its route, then confirm the potentially billed provider request. Results become immutable conversation artifacts with lineage.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
         RowLayout {
             Layout.fillWidth:true
-            CComboBox { id:mediaProvider;Layout.fillWidth:true;model:[{id:"google",label:"Google"},{id:"xai",label:"xAI"},{id:"edenai",label:"Eden AI"}];textRole:"label";valueRole:"id";onActivated:{mediaModel.text=currentValue==="xai"?"grok-imagine-video":currentValue==="edenai"?"video/generation_async/bytedance":"gemini-omni-1.2-flash";if(currentValue!=="google")mediaKind.currentIndex=0;if(currentValue==="edenai")mediaSource.currentIndex=0;timedMedia.prepared=null} }
-            CComboBox { id:mediaKind;Layout.fillWidth:true;model:mediaProvider.currentValue==="google"?[{id:"video.generate",label:"Video"},{id:"music.generate",label:"Music"}]:[{id:"video.generate",label:"Video"}];textRole:"label";valueRole:"id";onActivated:{if(currentValue==="music.generate"){mediaModel.text="lyria-3.5";mediaSource.currentIndex=0}timedMedia.prepared=null} }
+            CComboBox { id:mediaProvider;Layout.fillWidth:true;model:[{id:"google",label:"Google"},{id:"xai",label:"xAI"},{id:"edenai",label:"Eden AI"}];textRole:"label";valueRole:"id";onActivated:{mediaModel.set(currentValue==="xai"?"grok-imagine-video":currentValue==="edenai"?"video/generation_async/bytedance":"gemini-omni-1.2-flash");if(currentValue!=="google")mediaKind.currentIndex=0;if(currentValue==="edenai")mediaSource.currentIndex=0;timedMedia.prepared=null} }
+            CComboBox { id:mediaKind;Layout.fillWidth:true;model:mediaProvider.currentValue==="google"?[{id:"video.generate",label:"Video"},{id:"music.generate",label:"Music"}]:[{id:"video.generate",label:"Video"}];textRole:"label";valueRole:"id";onActivated:{if(currentValue==="music.generate"){mediaModel.set("lyria-3.5");mediaSource.currentIndex=0}else mediaModel.set(mediaProvider.currentValue==="xai"?"grok-imagine-video":mediaProvider.currentValue==="edenai"?"video/generation_async/bytedance":"gemini-omni-1.2-flash");timedMedia.prepared=null} }
         }
-        CField { id:mediaModel;Layout.fillWidth:true;placeholderText:"Provider model";Accessible.name:"Timed media model" }
+        ModelPicker { id:mediaModel;name:"timedMediaModel";Layout.fillWidth:true;provider:mediaProvider.currentValue||"";operation:mediaKind.currentValue||"video.generate";label:"Video or music model";maximumLength:160;onChosen:timedMedia.prepared=null }
         CTextArea { id:mediaPrompt;Layout.fillWidth:true;Layout.preferredHeight:Theme.editorShort;placeholderText:"Describe the video or music to generate";Accessible.name:"Timed media prompt" }
         CComboBox { id:mediaSource;visible:mediaProvider.currentValue!=="edenai"&&mediaKind.currentValue==="video.generate";Layout.fillWidth:true;model:timedMedia.sourceOptions;textRole:"label";Accessible.name:"Source Workbench version";onActivated:timedMedia.prepared=null }
         CText { visible:mediaSource.visible&&timedMedia.sourceOptions.length===1;text:"Pin or select an image or video version in this conversation's Workbench to use it as a source.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
@@ -1238,7 +1238,7 @@ Item {
             Layout.fillWidth:true
             CButton { text:"Cancel";onClicked:timedMedia.close() }
             Item { Layout.fillWidth:true }
-            CButton { visible:!timedMedia.prepared;text:"Review operation";primary:true;enabled:timedMedia.requestId<0&&mediaPrompt.text.trim().length>0&&(timedMedia.xaiEdit||(Number(mediaDuration.text)>=3&&Number(mediaDuration.text)<=15));onClicked:timedMedia.prepare() }
+            CButton { visible:!timedMedia.prepared;text:"Review operation";primary:true;enabled:timedMedia.requestId<0&&mediaPrompt.text.trim().length>0&&mediaModel.value.length>0&&(timedMedia.xaiEdit||(Number(mediaDuration.text)>=3&&Number(mediaDuration.text)<=15));onClicked:timedMedia.prepare() }
             CButton { visible:!!timedMedia.prepared;text:"Confirm billed generation";primary:true;enabled:timedMedia.requestId<0;onClicked:timedMedia.requestId=App.rpc("media.timed.start",{sessionId:App.selectedId,id:timedMedia.prepared.id}) }
         }
         Connections { target:App;function onResult(id,value){if(id!==timedMedia.requestId)return;timedMedia.requestId=-1;if(value?.error){timedMedia.error=String(value.error.message||value.error);return}if(!timedMedia.prepared){timedMedia.prepared=value;timedMedia.error=""}else{App.notify("Timed media generation started. Watch Workbench → Runs for its artifact.");timedMedia.close()}} }

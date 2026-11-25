@@ -44,7 +44,7 @@ ColumnLayout {
         Accessible.name:"IndexTTS model version";enabled:!panel.status.busy
         onActivated:{panel.edit(null);panel.save({version:currentText,precision:"auto",profileId:"",modelDir:""})}
     }
-    CField { id:modelDirectory;Layout.fillWidth:true;text:panel.config.modelDir||"";placeholderText:"Model directory · blank uses the platform data directory";Accessible.name:"IndexTTS model directory" }
+    CField { id:modelDirectory;Layout.fillWidth:true;saved:panel.config.modelDir||"";placeholderText:"Model directory · blank uses the platform data directory";Accessible.name:"IndexTTS model directory" }
     CButton { text:"Save model directory";enabled:!panel.status.busy;onClicked:panel.save({modelDir:modelDirectory.text.trim()}) }
     CText {
         text:"The bilibili model license is conditional. Commercial use is subject to its terms and voice authorization; large organizations may need a separate license. You must have rights to the reference voice."

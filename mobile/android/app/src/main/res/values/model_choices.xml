@@ -14,6 +14,12 @@
         <item quantity="one">Show %1$d more</item>
         <item quantity="other">Show %1$d more</item>
     </plurals>
+    <string name="models_provider">Provider model</string>
+    <string name="models_loading">Loading models…</string>
+    <string name="models_refresh">Refresh list</string>
+    <string name="models_empty">No models listed. Type a model ID.</string>
+    <string name="models_unlisted">This endpoint doesn\'t list its models. Type a model ID.</string>
+    <string name="models_typed">No model of this list matches. The ID is used as typed.</string>
     <string name="models_ends">Its provider stops serving it on %1$s.</string>
     <string name="models_served">Who serves it</string>
     <string name="models_served_title">Who serves %1$s</string>

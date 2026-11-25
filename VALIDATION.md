@@ -48,7 +48,7 @@ Fixed:
 - A scroll bar given to a `ScrollView` stayed at its top left as a short thumb, for example in approval bubbles and Workflows. It lies along the right edge now, and the content leaves it room. The message box counts its own padding, so an empty one in a short panel no longer scrolls.
 - The Codex protocol check failed on 0.171.0, which removed a request it used to make of PAL (openai/codex#61382). PAL still answers it for older versions.
 
-Found, not changed: the image model box in **Settings › Connections › Images & analysis** cannot be typed into, although it is meant to take a model or deployment name. The shared `CComboBox` draws plain text where an editable box needs a text field.
+Found then and fixed after 0291aa1: the image model box in **Settings › Connections › Images & analysis** could not be typed into, because the shared `CComboBox` drew plain text where an editable box needs a text field. The two load failures above had a cause of their own: an update of PAL's state reset what had not been saved yet in settings fields, boxes and the recipe list.
 
 Corrected in the documents: the README's workspace picture did not show the table its caption named, because the capture was pulled back to the newest reply; a Workbench page said the Workbench opens by default, which it does not; and links in this record and in `docs/ui-review/pal-mobile/progress.md` to evidence kept outside the repository are now plain paths.
 

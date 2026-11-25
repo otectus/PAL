@@ -42,6 +42,7 @@
     <string name="extras_setup_description">Description</string>
     <string name="extras_setup_provider">Provider (optional)</string>
     <string name="extras_setup_model">Model (optional)</string>
+    <string name="extras_setup_any_model">Any model</string>
     <string name="extras_setup_families">The model may use</string>
     <string name="extras_setup_instructions">Standing instructions</string>
     <string name="extras_setup_save">Save setup</string>
