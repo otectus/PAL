@@ -6,7 +6,7 @@ The current paired harness records the SHA-256 of each installed application and
 
 ## PAL Mobile 2.0.2 (2000002, 2026-11-24)
 
-What changed is in the [release notes](RELEASE-NOTES.md) and the [changelog](../../CHANGELOG.md); the operations are in the [feature matrix](../FEATURE-MATRIX.md). No 2.0.2 APK has been published. Validation of the published source, with JDK 17.0.21:
+What changed is in the [release notes](RELEASE-NOTES.md) and the [changelog](../../CHANGELOG.md); the operations are in the [feature matrix](../FEATURE-MATRIX.md). The published APK is the 2.0.2 development snapshot ([release](https://github.com/otectus/PAL/releases/tag/mobile-dev-v2.0.2)), built from `539c89c` and checked on 2026-11-24 with `tools/mobile-upgrade-check.ts` (over the published 2.0.0) and `tools/mobile-ui-pairing-check.ts` on Android 11 and 15 emulators; all four passed. Validation of the published source, with JDK 17.0.21:
 
 - `node tools/mobile-contract.ts --check`, `npx tsc -p tsconfig.mobile.json`, and the Node suite: passed ([VALIDATION.md](../../VALIDATION.md)).
 - `gradlew-quiet.sh mobile/android :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug :app:lintRelease :app:lintDev :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:assembleDev`: passed. 176 unit tests (29 protocol, 105 data, 42 app), 0 failures; lint 0 errors (45, 44 and 44 warnings). `:app:mobileSbom` lists 154 components.
