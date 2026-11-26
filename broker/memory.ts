@@ -342,7 +342,7 @@ export class Memory {
     const matches=erasureMatcher(sources);
     const scrub=(value:any):any=>typeof value==='string'?(matches(value)?'[Content removed by memory erasure]':value):Array.isArray(value)?value.map(scrub):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,scrub(v)])):value;
     const intentId=randomUUID(), scopedSessions = new Set<string>();
-    let publishDelegations: (() => void) | undefined, intent: Record<string, unknown> = {};
+    let publishDelegations: (() => void) | undefined, request: Record<string, unknown> = {};
     this.store.db.exec('BEGIN');
     try { this.invalidateTranscript();for(const other of this.store.sessions()) {
       if(other.temporary)continue;
@@ -358,18 +358,20 @@ export class Memory {
     // Commit transcript scrubbing before canonical deletion. A crash leaves an
     // opaque retry intent, so startup finishes deletion before memory can serve.
     const {expected_revision: _expected,selection: _token,...retryParams}=params;
-    intent={scope_id,...retryParams,...(!params.id?{to_us:params.to_us??Date.now()*1000}:{})};
-    this.store.set('memory-pending-erasure',[...this.store.get<any[]>('memory-pending-erasure',[]),{intentId,...intent}]);
+    // A replay after a restart must not reach what was recorded since, so the stored intent bounds a range
+    // at this moment; the deletion now keeps the request's own bounds, as the sources just read did.
+    request={scope_id,...retryParams};
+    this.store.set('memory-pending-erasure',[...this.store.get<any[]>('memory-pending-erasure',[]),{intentId,...request,...(!params.id?{to_us:params.to_us??Date.now()*1000}:{})}]);
     this.store.db.exec('COMMIT'); } catch(error){this.store.db.exec('ROLLBACK');throw error;}
     // The log's earlier frames still hold the scrubbed pages as they were; a truncating checkpoint
     // removes them from disk.
     this.store.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     publishDelegations?.();
     let result:any;
-    // The preview binding was checked against the sources just read, before anything was scrubbed. The
-    // deletion then runs the recorded intent, as a replay would: a commit elsewhere in memory meanwhile
-    // (another reply, background extraction) must not leave scrubbed text recallable.
-    try { authorize?.();signal?.throwIfAborted();result=await this.service.call(mobileBounded?'mobile_forget':'forget',intent,signal); }
+    // The preview binding was checked against the sources just read, before anything was scrubbed, so the
+    // deletion does not check it again: a commit elsewhere in memory meanwhile (another reply, background
+    // extraction) must not leave scrubbed text recallable.
+    try { authorize?.();signal?.throwIfAborted();result=await this.service.call(mobileBounded?'mobile_forget':'forget',request,signal); }
     catch { throw Object.assign(new Error('Erasure was accepted; its final outcome must be reconciled before retrying.'),{code:'OUTCOME_UNKNOWN'}); }
     this.store.set('memory-pending-erasure',this.store.get<any[]>('memory-pending-erasure',[]).filter(intent=>intent.intentId!==intentId));
     await this.refreshAfterCommit();return result;

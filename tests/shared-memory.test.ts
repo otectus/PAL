@@ -296,3 +296,20 @@ test('a message recorded after its turn stopped waiting for memory is recorded o
     assert.equal(count, 1, 'one message is one source, not two independent ones');
   } finally { database.close(); }
 });
+
+test('clearing memory removes every record it scrubbed even when the wall clock stepped back', async t => {
+  const f = await fixture(t), project = join(f.directory, 'project');
+  await mkdir(project);
+  const codex = session('codex', 'codex-session', project);
+  f.store.saveSession(codex);
+  await f.memory.save(codex, 'The cedar build cache lives on the second disk.');
+  await f.memory.save(codex, 'The orchid deploy runs on Fridays.');
+  assert.equal((await f.memory.list(codex)).total, 2);
+  // The broker's clock is an hour behind the times the store recorded (the store's own clock never goes back).
+  const real = Date.now;
+  t.mock.method(Date, 'now', () => real() - 3_600_000);
+  await f.memory.clear(codex);
+  t.mock.restoreAll();
+  assert.equal((await f.memory.list(codex)).total, 0);
+  assert.deepEqual(f.store.get<any[]>('memory-pending-erasure', []), []);
+});
