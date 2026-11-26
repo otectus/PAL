@@ -337,6 +337,19 @@ test('a keeping provider is not sent an item its transcript still holds; Ollama 
   }
 });
 
+test('a turn that may not write memory still leaves earlier copies of its own message out', async t => {
+  const { memory, sessions } = await broker(t);
+  const question = 'Which orchid is used for the cedar release?';
+  await memory.save(sessions.ollama, 'The release orchid is violet.');
+  // The same question, asked earlier in another conversation, is a recorded passage.
+  await memory.context(sessions.claude, question, signal());
+  await memory.capture(sessions.claude, question, 'It is violet.');
+  // A phone conversation without memory.write recalls without recording its message.
+  const packet = packetData(await memory.context(sessions.codex, question, signal(), 4000, undefined, false));
+  assert.ok(packet.items.some((item: any) => item.text === 'The release orchid is violet.'));
+  assert.ok(!packet.items.some((item: any) => item.text === question), 'the earlier copy of the message is left out, as for a turn that records it');
+});
+
 test('evidence a model found with memory_search counts as supplied to its reply', async t => {
   const { memory, sessions } = await broker(t);
   const note = await memory.save(sessions.ollama, 'The cedar launch moved to Monday.');

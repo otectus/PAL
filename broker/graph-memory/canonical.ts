@@ -1801,6 +1801,7 @@ export class Canonical {
       "intent",
       "backend_coverage",
       "exclude_observation_ids",
+      "exclude_texts",
       "recent_session_id",
       "relevance_floor",
       "semantic_floor",
@@ -1873,6 +1874,9 @@ export class Canonical {
       ).body;
       if (typeof body === "string") excludedDigests.add(digest(body));
     }
+    // A message that was not recorded (a turn that may not write memory) names its text instead.
+    for (const text of (Array.isArray(p.exclude_texts) ? p.exclude_texts : []).slice(0, 4))
+      if (typeof text === "string" && text.trim() && !text.includes("\0")) excludedDigests.add(digest(text));
     // So is the conversation's own recent exchange: its last four user messages and everything
     // recorded after the first of them. Older turns may have left the model's context.
     if (typeof p.recent_session_id === "string" && p.recent_session_id) {

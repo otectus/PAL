@@ -404,7 +404,7 @@ export class Memory {
    * relevance floors, and neither the listed observations (the message itself) nor the session's
    * recent exchange, which the model still has, are recalled.
    */
-  async recall(session: Session, query: unknown, signal: AbortSignal, tokenBudget = 4000, route?: ModelRoute, automatic: { exclude_observation_ids?: string[]; recent_session_id?: string } | false = false) {
+  async recall(session: Session, query: unknown, signal: AbortSignal, tokenBudget = 4000, route?: ModelRoute, automatic: { exclude_observation_ids?: string[]; exclude_texts?: string[]; recent_session_id?: string } | false = false) {
     if (typeof query !== 'string' || !query.trim() || query.length > 1000) throw new Error('Memory queries need 1–1,000 characters');
     if (!this.active()) return { results: [], items: [], mode: 'disabled', warning: '', evidence: [] } as any;
     const host=this.host(session);
@@ -493,7 +493,8 @@ export class Memory {
       authorize?.();signal.throwIfAborted();
       const skip=this.recallSkip(session,text,route,tokenBudget);
       if(skip){Object.assign(trace,skip);return '';}
-      const packet=await this.recall(session,text.slice(0,1000),signal,tokenBudget,route,{recent_session_id:session.id});signal.throwIfAborted();authorize?.();
+      // Nothing is recorded for this message, so earlier copies of it are left out by their text.
+      const packet=await this.recall(session,text.slice(0,1000),signal,tokenBudget,route,{exclude_texts:[text],recent_session_id:session.id});signal.throwIfAborted();authorize?.();
       const shown=this.present(session,packet);this.classify(trace,packet,shown);return shown.text;
     }
     const scope_id = await this.scope(session, signal);
