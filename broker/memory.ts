@@ -257,8 +257,12 @@ export class Memory {
       else if (packet?.snapshot) {
         // Supplied evidence is what this turn's packet and searches gave the model, plus what an
         // earlier packet still in its transcript gave it, when the reply cites that.
-        const cited = citedEvidenceIds(answer);
-        const supplied = [...new Set([...cited.filter(id => offered.has(id)), ...(packet.supplied || [])])].slice(0, 24);
+        // A marker for evidence the model was never given (invented, or copied from an older reply in a
+        // recalled passage) cites nothing it used: it stays in the reply text and out of the record, so
+        // it cannot fail the record of what was supplied.
+        const marked = citedEvidenceIds(answer);
+        const supplied = [...new Set([...marked.filter(id => offered.has(id)), ...(packet.supplied || [])])].slice(0, 24);
+        const cited = [...new Set(marked.filter(id => supplied.includes(id)))];
         await write('record_response', { scope_id, response_ref: response.id, supplied_evidence_ids: supplied, cited_evidence_ids: cited,
           snapshot_revision: packet.snapshot.revision, policy_epoch: packet.snapshot.policy_epoch, erasure_epoch: packet.snapshot.erasure_epoch });
       }

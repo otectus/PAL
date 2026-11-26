@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import { Canonical } from '../broker/graph-memory/canonical.ts';
 import { estimateTokens, ftsQuery, hasInformativeTerm, informativeTerms, lexicalFloor } from '../broker/graph-memory/ranking.ts';
 import { renderPacket, excerpt } from '../broker/graph-memory/packet.ts';
@@ -345,6 +346,22 @@ test('evidence a model found with memory_search counts as supplied to its reply'
   const item = found.items.find((entry: any) => entry.text === 'The cedar launch moved to Monday.');
   assert.ok(item && note.id);
   assert.equal((await memory.capture(sessions.claude, 'Planning the timeline for the cedar launch party', `Monday [evidence:${item.ids[0]}].`)).outcome, 'captured');
+});
+
+test('a reply that also cites evidence it was not given is captured, and records only the citations it was supplied', async t => {
+  const { memory, sessions } = await broker(t);
+  await memory.save(sessions.ollama, 'The release orchid is violet.');
+  const question = 'Which orchid is used for the release?';
+  const id = packetData(await memory.context(sessions.codex, question, signal())).items[0].ids[0];
+  // An identifier the model was not given, such as one copied from an older reply inside a recalled passage.
+  const copied = '11111111-2222-4333-8444-555555555555';
+  assert.equal((await memory.capture(sessions.codex, question, `Violet [evidence:${id}], as noted before [evidence:${copied}].`)).outcome, 'captured');
+  assert.notEqual(memory.status.error, 'Memory could not record this reply.');
+  const database = new DatabaseSync(join(memory.store.directory, 'graph-memory', 'memory.sqlite'), { readOnly: true });
+  try {
+    const records = database.prepare('SELECT supplied_evidence_ids AS supplied,cited_evidence_ids AS cited FROM response_records').all() as { supplied: string; cited: string }[];
+    assert.deepEqual(records.map(row => [JSON.parse(row.supplied), JSON.parse(row.cited)]), [[[id], [id]]]);
+  } finally { database.close(); }
 });
 
 test('each turn records the kinds of memory it sent and the candidates it withheld; the injection rate counts turns, not text', async t => {
