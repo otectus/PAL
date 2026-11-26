@@ -629,4 +629,10 @@ test("a failed extraction is tried again after a growing pause, and gives up aft
   const after = c.one("SELECT attempts,next_retry_us FROM extraction_runs WHERE observation_id=? AND status='retryable'", other.id);
   assert.deepEqual([after.attempts, after.next_retry_us], [before.attempts, before.next_retry_us]);
   assert.equal(claim(), null, "the rescheduled run still waits for its pause");
+  // Changing the extraction settings (the reconciliation configure runs) tries a run that gave up again.
+  c.queue(() => c.reconcileExtraction(true));
+  const again = next();
+  assert.equal(again.observation_id, source.id, "a run that gave up starts over after a settings change");
+  assert.equal(c.one("SELECT attempts FROM extraction_runs WHERE id=?", again.id).attempts, 1);
+  assert.equal(c.health().queues.extraction_failed, 0);
 });

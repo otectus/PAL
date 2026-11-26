@@ -182,7 +182,9 @@ export class Canonical {
   reconcileExtraction(includeDenied = false) {
     const policy = this.epoch("policy"),
       erasure = this.epoch("erasure"),
-      statuses = ["pending", "running", "retryable", "revoked", ...(includeDenied ? ["denied"] : [])];
+      // A configuration change (includeDenied) also gives a fresh start to runs refused by the old route and
+      // to runs that gave up after their last attempt failed.
+      statuses = ["pending", "running", "retryable", "revoked", ...(includeDenied ? ["denied", "failed"] : [])];
     let rescheduled = 0;
     for (const run of this.all(
       `SELECT x.*,o.erased AS source_erased,o.payload_id,p.erased AS payload_erased FROM extraction_runs x JOIN observations o ON o.id=x.observation_id LEFT JOIN payloads p ON p.id=o.payload_id WHERE x.status IN (${statuses.map(() => "?").join(",")}) ORDER BY x.revision,x.id`,
