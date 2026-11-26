@@ -636,3 +636,28 @@ test("a failed extraction is tried again after a growing pause, and gives up aft
   assert.equal(c.one("SELECT attempts FROM extraction_runs WHERE id=?", again.id).attempts, 1);
   assert.equal(c.health().queues.extraction_failed, 0);
 });
+test("a collection's passages are not archived as episode copies, and copies an earlier version made are retired", async (t) => {
+  const { c, scope } = fixture(t);
+  c.policyUpdate({ policy: { enabled: true } });
+  const chunk = (source: string, i: number, text: string) =>
+    c.observeText({ scope_id: scope, text, role: "document", kind: "document", session_id: source, source_event_id: `${source}#${i}` });
+  const idle = () => c.run("UPDATE events SET captured_us=captured_us-700000000 WHERE scope_id=?", scope);
+  const copies = () => c.all("SELECT a.id,a.invalidated,p.erased,p.body FROM artifacts a JOIN payloads p ON p.id=a.payload_id WHERE a.scope_id=? AND a.kind='episode'", scope);
+  // A source indexed by an earlier version, whose episode was archived as a copy of its chunks.
+  const old = [chunk("file:old.md#1", 0, "The zircon flag enables offline mode."), chunk("file:old.md#1", 1, "Run zircon sync daily.")];
+  const episode = c.one("SELECT ep.id FROM episodes ep JOIN episode_events m ON m.episode_id=ep.id JOIN events e ON e.id=m.event_id WHERE e.observation_id=?", old[0].id).id;
+  const frozen = c.freezeEpisode({ scope_id: scope, id: episode });
+  const witnesses = old.map((o) => c.one("SELECT id,witness FROM evidence WHERE observation_id=?", o.id));
+  c.archiveEpisode({ scope_id: scope, id: episode, source_generation: frozen.source_generation, policy_epoch: frozen.policy_epoch, erasure_epoch: frozen.erasure_epoch,
+    claims: witnesses.map((w) => ({ text: w.witness, evidence_ids: [w.id] })) });
+  assert.equal(copies().filter((row) => !row.invalidated).length, 1);
+  // A source indexed now.
+  chunk("file:new.md#1", 0, "The heliotrope build runs nightly.");
+  chunk("file:new.md#1", 1, "Releases ship every second Tuesday.");
+  idle();
+  await c.call("maintenance");
+  assert.deepEqual(copies().filter((row) => !row.invalidated), [], "neither source keeps an episode copy of its chunks");
+  assert.ok(copies().every((row) => row.erased === 1 && row.body === ""), "the retired copy's text is gone");
+  assert.equal(c.retrieve({ scope_id: scope, text: "zircon offline mode" }).results.filter((r: any) => r.kind === "episode").length, 0);
+  assert.ok(c.retrieve({ scope_id: scope, text: "zircon offline mode" }).results.some((r: any) => r.kind === "document"), "the chunks themselves are unchanged");
+});

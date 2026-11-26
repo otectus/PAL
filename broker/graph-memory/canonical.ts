@@ -3872,7 +3872,8 @@ export class Canonical {
     const frozen = this.freezeEpisode(p);
     if (frozen.state === "archived") return frozen;
     const witnesses = this.all(
-      "SELECT e.* FROM evidence e JOIN events ev ON ev.observation_id=e.observation_id JOIN episode_events m ON m.event_id=ev.id WHERE m.episode_id=? AND e.erased=0 AND ev.erased=0 AND ev.actor!='assistant' ORDER BY m.ordering LIMIT 32",
+      // A collection's chunks are reference text, kept and retrieved as chunks: an episode of them would be a second copy.
+      "SELECT e.* FROM evidence e JOIN events ev ON ev.observation_id=e.observation_id JOIN episode_events m ON m.event_id=ev.id WHERE m.episode_id=? AND e.erased=0 AND ev.erased=0 AND ev.actor NOT IN ('assistant','document') ORDER BY m.ordering LIMIT 32",
       p.id,
     );
     if (!witnesses.length)
@@ -4095,8 +4096,36 @@ export class Canonical {
       return {scheduled:true,rescheduled,episodes};
     });
   }
+  /**
+   * Retires, once, the episode copies of knowledge-collection chunks that earlier versions archived. They
+   * repeated their chunks: collection retrieval never showed them, but they took its result slots and were
+   * stored and embedded as a second copy. Their text goes, and projections delete them.
+   */
+  retireDocumentEpisodes() {
+    if (this.meta("document_episodes_retired", false)) return 0;
+    const copies = this.all(
+      `SELECT a.id,a.payload_id FROM artifacts a WHERE a.kind IN ('episode','derived_summary') AND a.invalidated=0 AND a.record_id IN (
+         SELECT ep.id FROM episodes ep WHERE EXISTS (SELECT 1 FROM episode_events m WHERE m.episode_id=ep.id)
+           AND NOT EXISTS (SELECT 1 FROM episode_events m JOIN events e ON e.id=m.event_id WHERE m.episode_id=ep.id AND e.actor!='document'))`,
+    );
+    const retire = () => {
+      for (const copy of copies) {
+        this.run("UPDATE artifacts SET invalidated=1 WHERE id=?", copy.id);
+        this.run("DELETE FROM retrieval_documents WHERE artifact_id=?", copy.id);
+        this.run("DELETE FROM embedding_records WHERE artifact_id=?", copy.id);
+        this.run("UPDATE payloads SET body='',digest='',erased=1 WHERE id=?", copy.payload_id);
+        this.run("UPDATE episodes SET summary_id=NULL WHERE summary_id=?", copy.id);
+        this.effect(copy.id);
+      }
+      this.setMeta("document_episodes_retired", true);
+    };
+    if (copies.length) this.tx(retire);
+    else this.queue(retire);
+    return copies.length;
+  }
   maintenance(){
     if(this.backups)this.pruneMigrationBackups();
+    this.retireDocumentEpisodes();
     const result=this.expire();
     const episodes=[
       ...this.all("SELECT ep.id,ep.scope_id FROM episodes ep JOIN episode_events m ON m.episode_id=ep.id JOIN events e ON e.id=m.event_id WHERE ep.state='open' AND ep.erased=0 AND e.erased=0 GROUP BY ep.id HAVING COUNT(e.id)>=500 OR MAX(e.captured_us)<? LIMIT 4",now()-600e6),
