@@ -127,4 +127,13 @@ INSERT INTO memory_fts(memory_fts,rank) VALUES('secure-delete',1);
 INSERT INTO memory_fts(memory_fts) VALUES('optimize');
 `,
   },
+  {
+    // A failed extraction run was marked 'retryable' and never claimed again, so a message recorded while
+    // the extraction model was unavailable was never extracted. A run now waits until next_retry_us, and
+    // runs marked before this migration are due at once.
+    id: 9,
+    sql: `
+ALTER TABLE extraction_runs ADD COLUMN next_retry_us INTEGER NOT NULL DEFAULT 0;
+`,
+  },
 ];

@@ -182,7 +182,7 @@ export class Canonical {
   reconcileExtraction(includeDenied = false) {
     const policy = this.epoch("policy"),
       erasure = this.epoch("erasure"),
-      statuses = ["pending", "running", "revoked", ...(includeDenied ? ["denied"] : [])];
+      statuses = ["pending", "running", "retryable", "revoked", ...(includeDenied ? ["denied"] : [])];
     let rescheduled = 0;
     for (const run of this.all(
       `SELECT x.*,o.erased AS source_erased,o.payload_id,p.erased AS payload_erased FROM extraction_runs x JOIN observations o ON o.id=x.observation_id LEFT JOIN payloads p ON p.id=o.payload_id WHERE x.status IN (${statuses.map(() => "?").join(",")}) ORDER BY x.revision,x.id`,
@@ -199,9 +199,11 @@ export class Canonical {
         );
         continue;
       }
-      if (run.status === "pending" && run.policy_epoch === policy && run.erasure_epoch === erasure)
+      if (["pending", "retryable"].includes(run.status) && run.policy_epoch === policy && run.erasure_epoch === erasure)
         continue;
       this.run("UPDATE extraction_runs SET status='superseded' WHERE id=?", run.id);
+      // A run waiting after a failure keeps its attempts and its pause under the new epochs.
+      const waiting = run.status === "retryable";
       this.insert("extraction_runs", {
         id: uuid(),
         observation_id: run.observation_id,
@@ -209,7 +211,8 @@ export class Canonical {
         prompt_version: run.prompt_version,
         parser_version: run.parser_version,
         schema_version: run.schema_version,
-        status: "pending",
+        status: waiting ? "retryable" : "pending",
+        ...(waiting ? { attempts: run.attempts, next_retry_us: run.next_retry_us, error_code: run.error_code } : {}),
         policy_epoch: policy,
         erasure_epoch: erasure,
         revision: this.revision,
@@ -4011,10 +4014,16 @@ export class Canonical {
       return { id, supplied: supplied.length, cited: cited.length };
     });
   }
+  /** How many times one source is sent for extraction before its run is failed. */
+  static extractionAttempts = 10;
+  /** The pause after a failed attempt: 30 seconds, doubling each time, at most six hours. */
+  static extractionPause = (attempts: number) => Math.min(6 * 3600e6, 30e6 * 2 ** Math.max(0, attempts - 1));
   extractionNext() {
     if (!this.policy.enabled) return null;
+    // A run that failed waits out its pause; an unavailable model is not asked again in a tight loop.
     const run = this.one(
-      "SELECT x.*,o.scope_id,o.role,o.revision AS source_revision,o.payload_id,p.body AS text,p.sensitivity FROM extraction_runs x JOIN observations o ON o.id=x.observation_id JOIN payloads p ON p.id=o.payload_id WHERE x.status='pending' AND o.erased=0 AND p.erased=0 AND x.policy_epoch=? AND x.erasure_epoch=? ORDER BY x.revision LIMIT 1",
+      "SELECT x.*,o.scope_id,o.role,o.revision AS source_revision,o.payload_id,p.body AS text,p.sensitivity FROM extraction_runs x JOIN observations o ON o.id=x.observation_id JOIN payloads p ON p.id=o.payload_id WHERE (x.status='pending' OR (x.status='retryable' AND x.next_retry_us<=?)) AND o.erased=0 AND p.erased=0 AND x.policy_epoch=? AND x.erasure_epoch=? ORDER BY x.revision LIMIT 1",
+      now(),
       this.epoch("policy"),
       this.epoch("erasure"),
     );
@@ -4049,12 +4058,17 @@ export class Canonical {
       return { denied: true };
     }
     if (p.error) {
+      // An outage or invalid output is tried again after a pause that doubles with each attempt. After
+      // the last attempt the run is failed: no longer queued, and counted separately in health.
+      const failed = run.attempts >= Canonical.extractionAttempts;
       this.run(
-        "UPDATE extraction_runs SET status='retryable',error_code=? WHERE id=?",
+        "UPDATE extraction_runs SET status=?,error_code=?,next_retry_us=? WHERE id=?",
+        failed ? "failed" : "retryable",
         p.error,
+        failed ? 0 : now() + Canonical.extractionPause(run.attempts),
         p.id,
       );
-      return { retryable: true };
+      return failed ? { failed: true } : { retryable: true };
     }
     this.run(
       "UPDATE extraction_runs SET model_identity=?,prompt_version=?,parser_version=?,status='validated' WHERE id=?",
@@ -4095,7 +4109,7 @@ export class Canonical {
   retry(p:Row){
     if(p.scope_id)this.scope(p.scope_id);
     return this.queue(()=>{
-      this.run("UPDATE extraction_runs SET status='pending',error_code=NULL,policy_epoch=?,erasure_epoch=? WHERE status='retryable' AND observation_id IN (SELECT id FROM observations WHERE erased=0 AND (? IS NULL OR scope_id=?))",this.epoch('policy'),this.epoch('erasure'),p.scope_id||null,p.scope_id||null);
+      this.run("UPDATE extraction_runs SET status='pending',error_code=NULL,attempts=0,next_retry_us=0,policy_epoch=?,erasure_epoch=? WHERE status IN ('retryable','failed') AND observation_id IN (SELECT id FROM observations WHERE erased=0 AND (? IS NULL OR scope_id=?))",this.epoch('policy'),this.epoch('erasure'),p.scope_id||null,p.scope_id||null);
       // Stale, revoked and policy-denied runs are revalidated rather than blindly requeued.
       const {rescheduled}=this.reconcileExtraction(true);
       this.run("UPDATE outbox SET next_retry_us=0 WHERE state='retryable'");
@@ -4490,6 +4504,9 @@ export class Canonical {
         ).n,
         extraction_denied: this.one(
           "SELECT COUNT(*) AS n FROM extraction_runs WHERE status='denied'",
+        ).n,
+        extraction_failed: this.one(
+          "SELECT COUNT(*) AS n FROM extraction_runs WHERE status='failed'",
         ).n,
       },
       erasure_registry: {

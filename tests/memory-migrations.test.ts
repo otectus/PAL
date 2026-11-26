@@ -20,6 +20,7 @@ const applied: Record<number, string> = {
   6: '4175254d9bb46e9084eacf29bb6c28d5ef6f0a2b256231dfaa1db27c5544ffa7',
   7: '27c145c4a88ff46ceda9e2dc733c506d002474bbe584cde230af9a20fe413c62',
   8: '7fb1406bdbe1e0fc63cf2df5c423346e5aaeeec464ffba676467de272f9cd373',
+  9: 'a4486b5ee6c35ec24a192eb01e55a1f37a3d73547002e4407130724a7278183e',
 };
 
 test('S3 applied memory migrations are never edited', () => {
@@ -128,4 +129,30 @@ test('a forget and an expiry leave no copy of the removed text in the write-ahea
     assert.equal(c.one('SELECT erased FROM observations WHERE id=?', expiring.id).erased, 1);
     assert.equal(onDisk(directory, 'zqxjtangerine'), false, 'expired text is gone from every file after the housekeeping tick');
   })();
+});
+
+test('S3 migration 9 lets extraction that failed before the upgrade run again', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'pal-extraction-retry-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const ninth = migrations.findIndex(migration => migration.id === 9);
+  assert.notEqual(ninth, -1, 'migration 9 schedules extraction retries');
+  // A store written by code that knew migrations 1–8: a failed run stayed 'retryable' and was never claimed again.
+  const pending = migrations.splice(ninth);
+  let source = '';
+  try {
+    const c = new Canonical(directory);
+    const scope = c.registerScope({ key: 'extraction-retry', label: 'Extraction retry' }).id;
+    c.policyUpdate({ policy: { enabled: true } });
+    source = c.observeText({ scope_id: scope, text: 'Atlas uses Kitty for its terminals.', role: 'user' }).id;
+    // What extraction_next and a failed extraction_result recorded then: one attempt, then 'retryable'.
+    c.run("UPDATE extraction_runs SET status='retryable',attempts=1,error_code='MODEL_UNAVAILABLE_OR_INVALID' WHERE observation_id=?", source);
+    c.close();
+  } finally { migrations.push(...pending); }
+  const c = new Canonical(directory);
+  try {
+    assert.equal(c.one('SELECT MAX(id) AS n FROM schema_migrations').n, migrations.at(-1)!.id);
+    const retried = c.extractionNext();
+    assert.equal(retried?.observation_id, source, 'the stranded run is extracted again after the upgrade');
+    assert.equal(c.one('SELECT attempts FROM extraction_runs WHERE id=?', retried.id).attempts, 2);
+  } finally { c.close(); }
 });

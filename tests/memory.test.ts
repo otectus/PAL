@@ -592,3 +592,41 @@ test("erasure lookups and parent deletes use indexes", (t) => {
   assert.match(plan("SELECT 1 FROM commits WHERE delta_payload_id='x'"), /commits_delta/);
   assert.match(plan("SELECT 1 FROM mutation_effects WHERE target_id='x' AND revision>1"), /mutation_effects_target/);
 });
+test("a failed extraction is tried again after a growing pause, and gives up after its attempts", (t) => {
+  const { c, scope } = fixture(t);
+  c.policyUpdate({ policy: { enabled: true } });
+  const source = c.observeText({ scope_id: scope, text: "Atlas uses Kitty for its terminals.", role: "user" });
+  const claim = () => c.extractionNext();
+  const next = () => { const value = claim(); assert.ok(value, "a run is due"); return value; };
+  let run = next();
+  assert.equal(run.observation_id, source.id);
+  const failed = (id: string) => c.extractionResult({ id, error: "MODEL_UNAVAILABLE_OR_INVALID" });
+  failed(run.id);
+  assert.equal(claim(), null, "an outage is not retried in a tight loop");
+  const due = () => c.run("UPDATE extraction_runs SET next_retry_us=0 WHERE observation_id=? AND status='retryable'", source.id);
+  const pauses: number[] = [];
+  for (let attempt = 2; ; attempt++) {
+    pauses.push(c.one("SELECT next_retry_us AS at FROM extraction_runs WHERE id=?", run.id).at - Date.now() * 1000);
+    due();
+    run = next();
+    assert.equal(run.observation_id, source.id);
+    assert.equal(c.one("SELECT attempts FROM extraction_runs WHERE id=?", run.id).attempts, attempt);
+    failed(run.id);
+    if (c.one("SELECT status FROM extraction_runs WHERE id=?", run.id).status !== "retryable") break;
+    assert.ok(attempt < 20, "attempts are bounded");
+  }
+  assert.ok(pauses.every((pause, index) => index === 0 || pause > pauses[index - 1]), "each pause is longer than the last");
+  assert.equal(c.one("SELECT status FROM extraction_runs WHERE id=?", run.id).status, "failed");
+  due();
+  assert.equal(claim(), null);
+  assert.equal(c.health().queues.extraction, 0, "a run that gave up is not reported as queued");
+  assert.equal(c.health().queues.extraction_failed, 1);
+  // An erasure elsewhere reschedules queued extraction under the new epoch without resetting its pause.
+  const other = c.observeText({ scope_id: scope, text: "Borealis uses Fish for its shell.", role: "user" });
+  failed(next().id);
+  const before = c.one("SELECT attempts,next_retry_us FROM extraction_runs WHERE observation_id=? AND status='retryable'", other.id);
+  c.forget({ scope_id: scope, id: c.observeText({ scope_id: scope, text: "Something to forget.", role: "user" }).id });
+  const after = c.one("SELECT attempts,next_retry_us FROM extraction_runs WHERE observation_id=? AND status='retryable'", other.id);
+  assert.deepEqual([after.attempts, after.next_retry_us], [before.attempts, before.next_retry_us]);
+  assert.equal(claim(), null, "the rescheduled run still waits for its pause");
+});
