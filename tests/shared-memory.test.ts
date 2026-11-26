@@ -368,3 +368,9 @@ test('a Clear interrupted while the wall clock was behind is finished on restart
   assert.deepEqual(store.get<any[]>('memory-pending-erasure', []), []);
   assert.equal((await memory.list(codex)).total, 0, 'the replay reached every record the Clear was asked for');
 });
+
+test('the inspector and pal memory retry can start failed memory work again', async t => {
+  const f = await fixture(t);
+  const result = await f.memory.graph(undefined, 'retry', {});
+  assert.equal(result.scheduled, true);
+});

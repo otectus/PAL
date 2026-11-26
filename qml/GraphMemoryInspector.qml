@@ -202,6 +202,7 @@ CDialog {
         Layout.fillWidth:true
         CButton { text:"Rebuild graph";enabled:inspector.pending<0;onClicked:inspector.call("rebuild",{backend:"graph"}) }
         CButton { text:"Rebuild vectors";enabled:inspector.pending<0;onClicked:inspector.call("rebuild",{backend:"vector"}) }
+        CButton { objectName:"graphMemoryRetry";text:"Retry failed work";enabled:inspector.pending<0;onClicked:inspector.call("retry",{}) }
     }
     CText { visible:!!inspector.error;text:inspector.error;color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     CButton { text:"Done";onClicked:inspector.close() }

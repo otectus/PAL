@@ -661,3 +661,16 @@ test("a collection's passages are not archived as episode copies, and copies an 
   assert.equal(c.retrieve({ scope_id: scope, text: "zircon offline mode" }).results.filter((r: any) => r.kind === "episode").length, 0);
   assert.ok(c.retrieve({ scope_id: scope, text: "zircon offline mode" }).results.some((r: any) => r.kind === "document"), "the chunks themselves are unchanged");
 });
+test("retry starts failed and waiting extraction again at once", (t) => {
+  const { c, scope } = fixture(t);
+  c.policyUpdate({ policy: { enabled: true } });
+  const waiting = c.observeText({ scope_id: scope, text: "Atlas uses Kitty for its terminals.", role: "user" });
+  const gaveUp = c.observeText({ scope_id: scope, text: "Borealis uses Fish for its shell.", role: "user" });
+  c.run("UPDATE extraction_runs SET status='retryable',attempts=3,next_retry_us=? WHERE observation_id=?", Date.now() * 1000 + 3600e6, waiting.id);
+  c.run("UPDATE extraction_runs SET status='failed',attempts=10,next_retry_us=0 WHERE observation_id=?", gaveUp.id);
+  assert.equal(c.extractionNext(), null);
+  assert.deepEqual(c.retry({}).scheduled, true);
+  const runs = c.all("SELECT observation_id,status,attempts FROM extraction_runs WHERE status NOT IN ('superseded') ORDER BY observation_id");
+  assert.ok(runs.every((run) => run.status === "pending" && run.attempts === 0), JSON.stringify(runs));
+  assert.ok(c.extractionNext(), "a run is due at once");
+});
