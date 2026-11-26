@@ -49,9 +49,12 @@ async function fixture(t: any) {
   const settings = { ...defaultSettings };
   const env: NodeJS.ProcessEnv = { ...process.env, PAL_TTS_DISABLED: '0', PAL_VOICES_DIR: voices, PAL_PIPER_BIN: piper, PAL_APLAY_BIN: aplay, PAL_TTS_PYTHON: dispatcher, PAL_SOX_BIN: sox };
   const speech = new Speech(() => settings, () => {}, env);
-  t.after(async () => { await speech.close(); await rm(directory, { recursive: true, force: true }); });
+  // Hooks run in the order they are added, so anything a test opens inside the directory (a Core and its
+  // memory worker) is closed here first; removing its databases while it runs can fail and leave it open.
+  const closers: (() => Promise<unknown> | unknown)[] = [];
+  t.after(async () => { for (const close of closers.reverse()) await close(); await speech.close(); await rm(directory, { recursive: true, force: true }); });
   const logs = async () => (await readFile(calls, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
-  return { directory, voices, addVoice, executable, settings, env, speech, logs };
+  return { directory, voices, addVoice, executable, settings, env, speech, logs, closeFirst: (close: () => Promise<unknown> | unknown) => { closers.push(close); } };
 }
 async function until(predicate: () => Promise<boolean>) {
   for (let i = 0; i < 100; i++) { if (await predicate()) return; await new Promise(r => setTimeout(r, 20)); }
@@ -292,7 +295,7 @@ test('missing or failed tuning reports an error without silently playing an unad
 
 test('voice tuning settings migrate, validate atomically, persist and volume zero stops playback', async t => {
   const f=await fixture(t),core=new Core(new Store(join(f.directory,'tuning-state')));
-  t.after(()=>core.close());
+  f.closeFirst(()=>core.close());
   core.store.set('settings',{voice:defaultVoice,speechRate:.9});
   assert.equal(core.store.settings().speechPitch,0);assert.equal(core.store.settings().speechVolume,1);
   await core.updateSettings({speechPitch:2.5,speechRate:1.1,speechVolume:.7});
@@ -337,7 +340,7 @@ test('real SoX raises and lowers pitch without changing duration, and attenuates
 test('completion hook speaks only final successful top-level local replies, never streaming or old history', async t => {
   const f = await fixture(t); let hooks!: Hooks;
   const core = new Core(new Store(join(f.directory, 'state')), (_s, h) => { hooks = h; return { async send() {}, async interrupt() {}, async close() {} }; });
-  t.after(() => core.close());
+  f.closeFirst(() => core.close());
   const spoken: string[] = []; core.speech.speak = text => { spoken.push(text); return true; };
   const s = await core.create({ provider: 'codex', cwd: f.directory, trusted: true });
   await core.send({ id: s.id, text: 'First' });
@@ -360,7 +363,7 @@ test('completion hook speaks only final successful top-level local replies, neve
 test('voice settings migrate/persist atomically and slash/debug tests bypass the provider', async t => {
   const f = await fixture(t); let sends = 0;
   const core = new Core(new Store(join(f.directory, 'state')), () => ({ async send() { sends++; }, async interrupt() {}, async close() {} }));
-  t.after(() => core.close());
+  f.closeFirst(() => core.close());
   core.store.set('settings', { quiet: true }); assert.equal(core.store.settings().voice, defaultVoice);
   assert.equal(core.store.settings().speechEnabled, true);
   await core.updateSettings({ voice: 'custom', speechEnabled: false });
