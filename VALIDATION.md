@@ -1,5 +1,21 @@
 # Validation record
 
+## PAL 2.0.3 — November 26, 2026
+
+The memory audit's follow-up (every item its first report left open, see [docs/memory/audit-2026-11-26.md](docs/memory/audit-2026-11-26.md#addressed-after-the-first-report)) and the version bump to 2.0.3. Node 26.8.2 ran the full suite on the private virtual desktop with `TZ` unset; Node 26.13.1 ran the type checks and the targeted run.
+
+| Check | Result |
+| --- | --- |
+| `npm run typecheck`, `npx tsc -p tsconfig.mobile.json`, `node tools/mobile-contract.ts --check` | Exit 0. |
+| Every test file the changes touch or depend on (40 files: the memory group, the cleanup-order and date fixes, `core`, `remote`, `tts`, `review-core`) | 477 passed, 0 failed. |
+| `node --test tests/*.test.ts` with `env -u TZ`, Node 26.8.2, private virtual desktop | 1,514 tests: 1,498 passed, 10 failed, 6 skipped, in 6 min 56 s, at a load average up to 21. No memory test failed. Eight failures also fail on the baseline under load (delegation updates DU-3, DU-4, DU-7 and DU-8, state fan-out pacing, a reply before acknowledgement in `remote.test.ts`, F-007 in `review-core.test.ts`, the Thorough search); DU-9 and DU-10 timed out the same way. Every failing file passed alone afterwards: `delegation-pings` 28/28 twice, `core` 41/41, `remote` 48/48, `review-core` 17/17, `research` 22/22. |
+| `pal-ui-check graphInspectorPolicyForgetAndCorrection settingsSectionNavigation searchAndMemory` | The first two passed. `searchAndMemory` expects one saved note and found 16, which the inspector slot run before it had saved in the shared profile; run alone it passed 3 of 3. |
+| `qmltestrunner -input tests/qml` | 109 passed. |
+| Android `:core:protocol:test`, `:core:data:testDebugUnitTest`, `:app:testDebugUnitTest`, run without the build cache | 29, 105 and 42 tests, 0 failures. |
+| Each new test on the code before its fix | Failed there for the reason its fix addresses, except the retry coverage test, which passes on fed710e by design. |
+
+Not run: the full interface job and the Android emulator and paired checks (GitHub runs them on the push), `tools/check-memory-install.py`, live Neo4j, Qdrant, Ollama or hosted providers.
+
 ## Memory audit — November 26, 2026
 
 Branch `audit/memory-2026-11-26`, from 5eadfcb. The findings, fixes and coverage are in [docs/memory/audit-2026-11-26.md](docs/memory/audit-2026-11-26.md). Node 26.8.2 (`.node-version`) ran the tests, the machine's Node 26.13.1 the type checks. The full suite ran on the private virtual desktop (`tools/test-virtual-desktop.sh`, no network) under idle scheduling, while other work kept the load average between 2 and 44.

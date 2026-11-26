@@ -4,19 +4,33 @@ Notable changes to PAL, the desktop application and its broker, and to PAL Mobil
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-11-26
+
+### Added
+
+- **Model lists.** Every place that asks for a model offers a drop-down on the desktop and the phone: the account's own models for that use, the models PAL names where a service lists none, and any ID you type. A list that costs a request is loaded when it is opened.
+- **Memory.** **Retry failed work** in the memory inspector, and `pal memory retry`, start failed or waiting extraction, indexing and summaries again at once.
+
 ### Fixed
 
 - **Code Lab.** Inspecting an input no longer changes the columns that were chosen. The sample analysis could fail because its Y column moved to the first column. Columns that were not chosen are left to the recipe instead of being set to the first one.
 - Scroll bars of bubbles, approvals, notes, personality and other scrolling areas lie along the right edge. They were a short thumb at the top left. A bar that has nothing to scroll is not shown and takes no clicks.
+- Settings fields, boxes, sliders and the recipe list no longer lose what has not been saved when PAL's state updates. The image model box can be typed into.
 - The Codex protocol check accepts Codex 0.171.0, which no longer asks PAL for the time.
 - **Memory.** Forgetting a previewed record (the graph inspector, the phone, or `pal memory forget` with the preview's revision) could fail after the conversation history had already been scrubbed, whenever something else was saved to memory at the same moment, and the forgotten record stayed recallable until PAL restarted. It completes now. A forget that was cut short when memory restarted is finished by the restarted memory, and one whose record no longer exists no longer stops memory from starting.
 - **Memory.** Forgotten and expired text no longer stays on disk. The search index kept the words of every forgotten passage, readable from the database file and from every later backup, and the database logs kept the text until PAL closed. Updating removes what earlier forgets left in the index.
-- **Memory.** A long message scrubbed by a forget no longer leaves its text in the conversation database. Space freed by forgets before this update keeps its contents until SQLite reuses it.
+- **Memory.** A long message scrubbed by a forget no longer leaves its text in the conversation database. The database is rewritten once when 2.0.3 first starts, which removes what earlier forgets left in its free space; on a large database this adds a few seconds to that start.
 - **Memory.** A knowledge collection that cloud models may not read is no longer sent to a hosted embedding provider. Its passages were embedded by Gemini, OpenAI, Voyage or another hosted provider once cloud embedding was allowed. Collections indexed earlier are corrected when PAL starts. Withdrawing the permission while the collection is being indexed stops the indexing; index it again afterwards.
 - **Memory.** A failed extraction was never tried again, so messages recorded while the extraction model was unavailable were never extracted. It is now retried after 30 seconds, then after twice as long each time, up to six hours, for at most ten attempts (about four hours). Changing the extraction settings tries such messages again.
 - **Memory.** Searching memory while it was busy, for example with housekeeping or another conversation's reply, failed with a timeout, and a reply then got no recalled memory at all. The search now waits, finds what matches the words, and says the result is partial.
 - **Memory.** A reply that cites evidence it was not given, such as a marker copied from an older reply, no longer marks memory as degraded or loses the record of what it was given.
 - **Memory.** A message is recorded once when its reply went ahead without memory after the eight-second wait. It was recorded twice and looked like two independent sources.
+- **Memory.** Forgetting also removes the text from the backup PAL takes before a memory update. The backup keeps its own schema and can still be restored; one that cannot be changed is deleted instead.
+- **Memory.** A clear that was cut short is finished after a restart even when the computer's clock had been set back. It could leave the newest memories in place.
+- **Memory.** A phone conversation that may not save to memory no longer gets an earlier copy of its own message back as recalled memory.
+- **Memory.** Knowledge collections are no longer stored a second time as episode summaries. The copies took places in collection results that were then left out. Copies made earlier are removed.
+- **Memory.** Housekeeping that removes expired memories waits while a reply is recalling memory, for ten minutes at most.
+- **Memory.** Notes from the memory of very early versions that begin with the word "Assistant", such as "Assistant should answer in French", are imported as yours.
 
 ### Documentation
 

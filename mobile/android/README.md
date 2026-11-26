@@ -2,7 +2,7 @@
 
 PAL Mobile is a native Android client for a paired PAL desktop broker. It does not run providers, desktop tools, or memory databases on the phone. The app uses the negotiated operation list and, from protocol 1.1, the feature list in the authenticated broker welcome frame to decide which controls exist.
 
-The current source is PAL Mobile 2.0.2 (version code 2000002), matching desktop 2.0.2. The published APK is 2.0.0. The version is set in `app/build.gradle.kts`. The earlier device results and artifact hashes below describe previous builds; they are preserved as historical evidence and do not certify the current APK. Current release QA belongs in [TESTING.md](../../docs/mobile/TESTING.md).
+The current source is PAL Mobile 2.0.3 (version code 2000003), matching desktop 2.0.3. The published APK is 2.0.2. The version is set in `app/build.gradle.kts`. The earlier device results and artifact hashes below describe previous builds; they are preserved as historical evidence and do not certify the current APK. Current release QA belongs in [TESTING.md](../../docs/mobile/TESTING.md).
 
 ## What is implemented
 

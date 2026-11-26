@@ -9,7 +9,7 @@ PAL is a native desktop companion for Arch Linux and Hyprland. One window holds 
 
 The compact panel beside PAL, and the expanded workspace. The [screenshot gallery](screenshots/README.md) shows the rest; its conversations are scripted demo content.
 
-**Current version:** desktop and Android source **2.0.2** ([what changed](CHANGELOG.md#202---2026-11-24)). The published phone app is [PAL Mobile 2.0.2](#on-your-phone).
+**Current version:** desktop and Android source **2.0.3** ([what changed](CHANGELOG.md#203---2026-11-26)). The published phone app is [PAL Mobile 2.0.2](#on-your-phone).
 
 **Contents:** [What it does](#what-it-does) · [Install](#install) · [First steps](#first-steps) · [Conversations](#conversations) · [Workbench](#workbench) · [Research](#research-documents-and-recordings) · [Phone](#on-your-phone) · [Memory](#memory-and-web-search) · [Companion](#the-companion) · [Permissions](#permissions-and-privacy) · [Documentation](#documentation) · [Development](#development)
 

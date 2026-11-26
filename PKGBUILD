@@ -1,7 +1,7 @@
 pkgname=pal
 replaces=('cere')
 conflicts=('cere')
-pkgver=2.0.2
+pkgver=2.0.3
 pkgrel=1
 pkgdesc='Personal Assistant for Linux, a native desktop companion for Hyprland'
 arch=('x86_64' 'aarch64')

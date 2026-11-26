@@ -4,7 +4,7 @@
 
 The 2.0.2 APK is the optimized development build for Android 11 and later. Its package is `dev.otectus.cere.mobile.debug` and its version code is `2000002`. To upgrade from 2.0.0 or 0.1.5, download the APK and choose **Update** in Android’s installer. The old in-app checker expects the former GitHub repository name. Keeping the app installed preserves the keys, encrypted cache and drafts. The release includes the same APK under its older filename for compatibility.
 
-The desktop and Android source versions are both 2.0.2.
+The desktop and Android source versions are both 2.0.3; the 2.0.2 APK above is the latest published build.
 
 Previous development releases include [2.0.0](https://github.com/otectus/PAL/releases/tag/mobile-dev-v2.0.0), [0.1.5](https://github.com/otectus/PAL/releases/tag/mobile-dev-v0.1.5), [0.1.4](https://github.com/otectus/PAL/releases/tag/mobile-dev-v0.1.4) and [0.1.3](https://github.com/otectus/PAL/releases/tag/mobile-dev-v0.1.3).
 
