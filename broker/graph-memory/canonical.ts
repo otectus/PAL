@@ -5045,7 +5045,8 @@ export class Canonical {
       case "forget_sources": {
         const preview=this.forgetPreview(p),texts=new Set<string>();
         for(const id of preview.target_ids){const payload=this.one('SELECT body FROM payloads WHERE id=? AND erased=0',id);if(payload.body)texts.add(payload.body);const witness=this.one('SELECT witness FROM evidence WHERE id=? AND erased=0',id);if(witness.witness)texts.add(witness.witness);}
-        return {texts:[...texts],revision:preview.revision,selection:preview.selection};
+        // The store's own clock at this lookup bounds a range erasure's replay; the wall clock can be behind it.
+        return {texts:[...texts],revision:preview.revision,selection:preview.selection,as_of_us:this.one("SELECT COALESCE(MAX(transaction_us),0) AS t FROM commits").t};
       }
       case "forget": {
         const receipt = this.forget(p);

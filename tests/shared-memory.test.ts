@@ -338,3 +338,33 @@ test('a busy memory worker delays recall but does not fail it: keyword matches a
   assert.match(packet, /aquamarine deploy key rotates every quarter/, 'a turn is still given the keyword match');
   assert.equal(f.memory.outcomes(codex.id)[0].outcome, 'included');
 });
+
+test('a Clear interrupted while the wall clock was behind is finished on restart up to what the store had recorded', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'pal-clear-replay-')), project = join(directory, 'project');
+  await mkdir(project);
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const settings = (store: Store): Settings => ({ ...store.settings(), ollama: { host: 'http://127.0.0.1:9', model: 'chat' }, memory: { enabled: true, model: 'nomic-embed-text', allowCloudMemory: true, allowCloudExtraction: false } });
+  const codex = session('codex', 'codex-session', project);
+  let store = new Store(directory), memory = new Memory(store, () => settings(store));
+  await memory.ready;
+  store.saveSession(codex);
+  await memory.save(codex, 'The cedar build cache lives on the second disk.');
+  await memory.save(codex, 'The orchid deploy runs on Fridays.');
+  // The broker's clock is an hour behind the times the store recorded, and the deletion never runs.
+  const real = Date.now;
+  t.mock.method(Date, 'now', () => real() - 3_600_000);
+  const canonical = memory.service.canonical, call = canonical.call.bind(canonical);
+  canonical.call = async (method: string, params: Record<string, unknown> = {}, signal?: AbortSignal) => {
+    if (method === 'forget') throw Object.assign(new Error('Memory stopped a request that ran too long and restarted'), { code: 'BACKEND_UNAVAILABLE' });
+    return call(method, params, signal);
+  };
+  await assert.rejects(memory.clear(codex), { code: 'OUTCOME_UNKNOWN' });
+  t.mock.restoreAll();
+  canonical.call = call;
+  await memory.close(); store.close();
+  store = new Store(directory); memory = new Memory(store, () => settings(store));
+  t.after(async () => { await memory.close(); store.close(); });
+  await memory.ready;
+  assert.deepEqual(store.get<any[]>('memory-pending-erasure', []), []);
+  assert.equal((await memory.list(codex)).total, 0, 'the replay reached every record the Clear was asked for');
+});

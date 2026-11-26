@@ -359,9 +359,11 @@ export class Memory {
     // opaque retry intent, so startup finishes deletion before memory can serve.
     const {expected_revision: _expected,selection: _token,...retryParams}=params;
     // A replay after a restart must not reach what was recorded since, so the stored intent bounds a range
-    // at this moment; the deletion now keeps the request's own bounds, as the sources just read did.
+    // by what the store had recorded at the source lookup, in the store's own clock (the wall clock can be
+    // behind it); the deletion now keeps the request's own bounds, as the sources just read did.
     request={scope_id,...retryParams};
-    this.store.set('memory-pending-erasure',[...this.store.get<any[]>('memory-pending-erasure',[]),{intentId,...request,...(!params.id?{to_us:params.to_us??Date.now()*1000}:{})}]);
+    const recorded=Number.isSafeInteger(sources.as_of_us)?sources.as_of_us+1:Date.now()*1000;
+    this.store.set('memory-pending-erasure',[...this.store.get<any[]>('memory-pending-erasure',[]),{intentId,...request,...(!params.id?{to_us:params.to_us??recorded}:{})}]);
     this.store.db.exec('COMMIT'); } catch(error){this.store.db.exec('ROLLBACK');throw error;}
     // The log's earlier frames still hold the scrubbed pages as they were; a truncating checkpoint
     // removes them from disk.
