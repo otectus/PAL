@@ -2,6 +2,10 @@
 
 Date: 2026-09-29. This initial repository publication contains an integrated, experimental graph-memory implementation. It does **not** satisfy every completion criterion in the reference design (`PAL_Graph_Memory_Implementation.md`, kept outside the repository) yet.
 
+## Audit of 2026-11-26
+
+Graph memory remains **experimental**, and the reference-design gates below are unchanged: no evaluation that would close one was run. A full audit of the memory code found ten defects, all fixed with tests; the findings, the fixes and what was checked are in [the audit report](audit-2026-11-26.md). In short: a forget bound to its preview could fail after the conversation history was scrubbed and leave the record recallable; a pending erasure whose record was gone stopped memory from starting; the full-text index, the write-ahead logs and the conversation database kept forgotten text on disk; a knowledge collection without cloud consent was embedded by hosted providers; failed extraction was never retried; a busy memory worker made a search fail instead of answering from keywords; a message could be recorded twice after a recall timeout; and a reply citing evidence it was not given lost its provenance record. Migrations 8 and 9 were added for the index and the extraction retry schedule.
+
 ## Status reconciled with source (2026-10-20)
 
 Graph memory remains **experimental**. The reference-design gates below are still open; none was closed by this review pass. In particular the recorded extraction rerun's predicate precision is 88.9%, below its 95% gate ([evaluation](evaluation.md)), and 32 of 32 accepted assertions on a small synthetic set does not establish production precision. A representative held-out evaluation was not run: it needs a production-domain corpus, the extraction models and billed cloud calls the owner has not authorized.
