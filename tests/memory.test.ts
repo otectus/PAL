@@ -674,3 +674,22 @@ test("retry starts failed and waiting extraction again at once", (t) => {
   assert.ok(runs.every((run) => run.status === "pending" && run.attempts === 0), JSON.stringify(runs));
   assert.ok(c.extractionNext(), "a run is due at once");
 });
+test("importing pre-graph memories keeps a saved note the person's unless it carries the assistant's marker", async (t) => {
+  const { c } = fixture(t);
+  const row = (id: string, kind: string, text: string) => ({ id, scope: JSON.stringify(["http://127.0.0.1:11434", "/project"]), kind, session_id: "legacy-session", text, created: 1, updated: 1, embedding_key: "", vector: null });
+  await c.call("import_legacy", { rows: [
+    row("note-user", "saved", "Assistant should always answer in French."),
+    row("note-marked", "saved", "Assistant: I will answer in French from now on."),
+    row("turn-assistant", "conversation", "Assistant: The build passed on the second try."),
+    row("turn-word", "conversation", "Assistant confirmed the build."),
+    row("turn-user", "conversation", "Please answer in French."),
+  ] });
+  const role = (id: string) => c.one("SELECT role FROM observations WHERE source_event_id=?", "legacy:" + id).role;
+  assert.equal(role("note-user"), "user", "a note addressed to the assistant is still the person's");
+  assert.equal(role("note-marked"), "assistant");
+  // Conversation passages keep the earlier rule: a passage that begins with the word is the assistant's,
+  // the safer reading for text whose author cannot be checked.
+  assert.equal(role("turn-assistant"), "assistant");
+  assert.equal(role("turn-word"), "assistant");
+  assert.equal(role("turn-user"), "user");
+});

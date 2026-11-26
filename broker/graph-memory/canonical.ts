@@ -5179,7 +5179,10 @@ export class Canonical {
           this.observeText({
             scope_id: scope.id,
             text: row.text,
-            role: row.text.startsWith("Assistant") ? "assistant" : "user",
+            // The pre-graph table recorded no author. A saved note is the person's unless it carries the
+            // assistant's marker: "Assistant should answer in French" is an instruction to the assistant. A
+            // conversation passage that begins with the word stays the assistant's, the safer reading.
+            role: (row.kind === "saved" ? /^Assistant(?: \(unverified\))?:\s/u.test(row.text) : row.text.startsWith("Assistant")) ? "assistant" : "user",
             session_id: row.session_id,
             source_event_id: "legacy:" + row.id,
             kind: row.kind,
