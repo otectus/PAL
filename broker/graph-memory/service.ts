@@ -853,8 +853,10 @@ export class MemoryService {
       coverage: string[] = [],
       semanticFloor: number | null = null;
     const {host: _host,...seedQuery}=p;
-    // Inherited scopes are authorized for every retrieval route, not only lexical recall.
-    const scopeIds: string[] = await this.canonical.call("effective_scopes", { scope_id: p.scope_id }, guard);
+    // Inherited scopes are authorized for every retrieval route, not only lexical recall. The lookup waits
+    // for the worker like the lexical retrieval below: the deadline bounds the optional routes, and a busy
+    // worker must cost them, not the whole recall.
+    const scopeIds: string[] = await this.canonical.call("effective_scopes", { scope_id: p.scope_id }, signal);
     const graphPromise=(async()=>{
       if(!this.graph)return [];
       const seedPacket=await this.canonical.call('retrieve',seedQuery,guard),seeds=[...new Set<string>(seedPacket.assertions.flatMap((a:Row)=>[a.subject_id,a.object_entity_id].filter(Boolean)))];

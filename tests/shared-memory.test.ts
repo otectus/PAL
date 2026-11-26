@@ -313,3 +313,28 @@ test('clearing memory removes every record it scrubbed even when the wall clock 
   assert.equal((await f.memory.list(codex)).total, 0);
   assert.deepEqual(f.store.get<any[]>('memory-pending-erasure', []), []);
 });
+
+test('a busy memory worker delays recall but does not fail it: keyword matches are still found, and coverage says the rest was cut short', async t => {
+  const f = await fixture(t), project = join(f.directory, 'project');
+  await mkdir(project);
+  const codex = session('codex', 'codex-session', project);
+  f.store.saveSession(codex);
+  await f.memory.save(codex, 'The aquamarine deploy key rotates every quarter.');
+  const canonical = f.memory.service.canonical, call = canonical.call.bind(canonical);
+  // The worker reaches the scope lookup only after the 500 ms retrieval deadline, as when housekeeping
+  // runs ahead of it; a caller that gives up first is answered at once.
+  canonical.call = async (method: string, params: Record<string, unknown> = {}, signal?: AbortSignal) => {
+    if (method === 'effective_scopes') await new Promise<void>(resolve => {
+      const timer = setTimeout(resolve, 700);
+      signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+    });
+    return call(method, params, signal);
+  };
+  const found = await f.memory.recall(codex, 'aquamarine deploy key', signal());
+  assert.ok(found.items.some((item: any) => /aquamarine deploy key/.test(item.text)), 'an explicit search still finds the keyword match');
+  assert.ok(found.coverage.includes('deadline_partial'), 'and reports that the optional routes were cut short');
+  const packet = await f.memory.context(codex, 'Which aquamarine deploy key schedule applies here?', signal());
+  canonical.call = call;
+  assert.match(packet, /aquamarine deploy key rotates every quarter/, 'a turn is still given the keyword match');
+  assert.equal(f.memory.outcomes(codex.id)[0].outcome, 'included');
+});
