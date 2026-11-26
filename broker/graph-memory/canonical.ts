@@ -4440,6 +4440,26 @@ export class Canonical {
       });
     return { upgraded: rows.length };
   }
+  /**
+   * Gives everything in one knowledge collection's scope (its document passages and what PAL derived
+   * from them) the collection's own cloud consent. Local-only records are never embedded by a hosted
+   * provider (vectorBacklog, pendingArtifacts, the vector projection) or recalled on a cloud route. Only
+   * a collection scope qualifies: a conversation's scope can hold records a person restricted.
+   */
+  collectionSensitivity(p: Row) {
+    strict(p, ["scope_id", "sensitivity"]);
+    const scope = this.scope(p.scope_id);
+    let key: unknown;
+    try { key = JSON.parse(scope.external_key)[1]; } catch {}
+    if (typeof key !== "string" || !key.startsWith("collection:")) fail("INVALID_ARGUMENT", "Only a knowledge collection's scope follows its consent");
+    if (!["local_only", "cloud_allowed"].includes(p.sensitivity)) fail("INVALID_ARGUMENT", "Unsupported collection restriction");
+    return this.queue(() => {
+      let changed = 0;
+      for (const table of ["artifacts", "payloads", "evidence", "assertion_versions", "memory_statement_versions"])
+        changed += Number(this.run(`UPDATE ${table} SET sensitivity=? WHERE scope_id=? AND sensitivity!=?`, p.sensitivity, p.scope_id, p.sensitivity).changes);
+      return { changed };
+    });
+  }
   pendingArtifacts(p: Row) {
     return this.all(
       "SELECT a.*,p.body AS text FROM artifacts a JOIN payloads p ON p.id=a.payload_id WHERE a.scope_id IN (SELECT value FROM json_each(?)) AND a.invalidated=0 AND p.erased=0 AND a.known_to_revision IS NULL AND (?=0 OR a.sensitivity='cloud_allowed') AND NOT EXISTS (SELECT 1 FROM embedding_records e WHERE e.artifact_id=a.id AND e.content_revision=a.content_revision AND e.fingerprint=?) ORDER BY a.content_revision DESC LIMIT 8",
@@ -5078,6 +5098,8 @@ export class Canonical {
         return this.embeddingSave(p);
       case "pending_artifacts":
         return this.pendingArtifacts(p);
+      case "collection_sensitivity":
+        return this.collectionSensitivity(p);
       case "embedding_spaces":
         return this.meta("embedding_spaces", []);
       case "embedding_impact":

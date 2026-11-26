@@ -175,6 +175,16 @@ export class KnowledgeCollections {
   private async eraseSource(scopeId: string, documentSource: string) {
     return this.core.memory.service.call('forget', { scope_id: scopeId, document_source: documentSource });
   }
+  /** Collections whose passages carry their current cloud consent since PAL started, as `id:allowCloud`. */
+  private sensitivitySynced = new Set<string>();
+  /**
+   * A collection's passages take its cloud consent: without it they are local-only, so a hosted
+   * embedding provider never receives them, as a reranker or cloud model does not.
+   */
+  private async applyConsent(collection: Collection) {
+    await this.core.memory.service.call('collection_sensitivity', { scope_id: collection.scopeId, sensitivity: collection.allowCloud ? 'cloud_allowed' : 'local_only' });
+    this.sensitivitySynced.add(collection.id + ':' + collection.allowCloud);
+  }
   private async eraseScope(scopeId: string) {
     return this.core.memory.service.call('forget', { scope_id: scopeId, from_us: 0, to_us: Number.MAX_SAFE_INTEGER });
   }
@@ -200,6 +210,10 @@ export class KnowledgeCollections {
           // Keep the durable row. The next collection operation retries canonical erasure.
         }
       }
+      // Passages indexed before they followed their collection's consent are corrected once per start;
+      // a failure is retried by the next collection operation.
+      for (const collection of this.all())
+        if (!this.sensitivitySynced.has(collection.id + ':' + collection.allowCloud)) await this.applyConsent(collection).catch(() => {});
     })();
     try { await this.reconciling; } finally { this.reconciling = undefined; }
   }
@@ -286,14 +300,19 @@ export class KnowledgeCollections {
     if (p.name !== undefined) patch.name = nameOf(p.name);
     if (p.grounding !== undefined) patch.grounding = groundingOf(p.grounding);
     if (p.allowCloud !== undefined) { if (typeof p.allowCloud !== 'boolean') throw new Error('Choose whether cloud models may read this collection'); patch.allowCloud = p.allowCloud; }
-    return this.catalog(() => {
+    return this.catalog(async () => {
       const collection = this.find(p.id); this.available(collection); this.expect(collection, p.expectedRevision);
       if (patch.name && ([...this.all().filter(item => item.id !== collection.id).map(item => item.name), ...this.creating.values()].some(item => item.toLowerCase() === patch.name!.toLowerCase()))) throw new Error('A collection already has this name');
       const next = { ...collection, ...patch };
       // Reranking sends excerpts to Voyage, so it needs the same permission a cloud model does, and ends with it.
       if (patch.rerank && !next.allowCloud) throw new Error('Reranking sends excerpts to Voyage. Allow cloud models to read this collection first.');
       if (next.rerank && !next.allowCloud) patch.rerank = false;
-      return this.replace(this.bump(collection, patch));
+      // Withdrawn consent restricts the passages before it is recorded, granted consent after it; a
+      // failure here is retried by the next collection operation (reconcile).
+      if (collection.allowCloud && !next.allowCloud) await this.applyConsent(next).catch(() => {});
+      const updated = this.replace(this.bump(collection, patch));
+      if (!collection.allowCloud && next.allowCloud) await this.applyConsent(next).catch(() => {});
+      return updated;
     });
   }
   /** Adds a file or folder the user picked. Hidden locations and PAL's own state are refused. */
@@ -519,7 +538,7 @@ export class KnowledgeCollections {
           for (const [index, chunk] of chunks.entries()) {
             signal.throwIfAborted();
             const event = `${generation}#${index}`;
-            const receipt = await this.core.memory.service.call('observe_text', { scope_id: collection.scopeId, text: chunk.text, role: 'document', kind: 'document', session_id: documentSource, source_event_id: event });
+            const receipt = await this.core.memory.service.call('observe_text', { scope_id: collection.scopeId, text: chunk.text, role: 'document', kind: 'document', session_id: documentSource, source_event_id: event, sensitivity: collection.allowCloud ? 'cloud_allowed' : 'local_only' });
             if (!receipt?.id || receipt.erased) throw new Error('Canonical memory rejected an indexed document chunk');
             staged.accepted.push(event); this.saveIngestion(ingestion);
           }

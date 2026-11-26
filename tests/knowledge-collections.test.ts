@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
 import { chunkDocument } from '../broker/knowledge-collections.ts';
+import { ollamaHost } from '../broker/ollama.ts';
 
 test('M06 chunks keep their heading, overlap, and respect the size', () => {
   const text = '# Guide\n\nIntro.\n\n## Install\n\n' + 'Install step. '.repeat(200) + '\n\n## Usage\n\nRun it.';
@@ -357,4 +358,31 @@ test('M06 a bound collection reaches an Ollama request as reference data and its
   const layer = plan.layers.find((item: any) => item.id === 'documents');
   assert.equal(layer.included, true); assert.deepEqual(layer.detail.sources, ['guide.md']); assert.deepEqual(layer.detail.collections, ['Docs']);
   assert.doesNotMatch(JSON.stringify(plan), /pipx/, 'the plan stores sources, not their text');
+});
+
+test('a collection cloud models may not read keeps its passages local, so a hosted embedding provider is never given them', async t => {
+  const { docs, core } = await fixture(t);
+  let collection = await core.rpc('collections.create', { name: 'Private docs' });
+  collection = await core.rpc('collections.addSource', { id: collection.id, expectedRevision: collection.revision, path: docs });
+  assert.equal((await indexed(core, collection.id)).error, '');
+  const scope_id = core.collections.all().find(item => item.id === collection.id)!.scopeId;
+  // What background and foreground embedding would send to the configured provider (the cloud flag is set for a hosted one).
+  const queued = async (cloud: boolean) => {
+    const host = ollamaHost(core.settings.ollama.host);
+    const backlog = await core.memory.service.call('vector_backlog', { host, fingerprint: 'hosted-space', limit: 64, cloud });
+    const pending = await core.memory.service.call('pending_artifacts', { scope_id, fingerprint: 'hosted-space', cloud });
+    return [...backlog, ...pending].map((row: any) => String(row.text)).filter(text => /zircon|heliotrope/.test(text));
+  };
+  assert.ok((await queued(false)).length > 0, 'a local embedding model still indexes the collection');
+  assert.deepEqual(await queued(true), [], 'a collection without cloud consent is never sent to a hosted embedding provider');
+  const latest = async () => (await core.rpc('collections.list', {})).collections.find((item: any) => item.id === collection.id);
+  await core.rpc('collections.update', { id: collection.id, expectedRevision: (await latest()).revision, allowCloud: true });
+  assert.ok((await queued(true)).length > 0, 'allowing cloud models lets a hosted provider embed it');
+  await core.rpc('collections.update', { id: collection.id, expectedRevision: (await latest()).revision, allowCloud: false });
+  assert.deepEqual(await queued(true), [], 'withdrawing consent restricts the passages again');
+  // A collection indexed before passages followed its consent: the next collection operation corrects it.
+  await core.memory.service.call('collection_sensitivity', { scope_id, sensitivity: 'cloud_allowed' });
+  (core.collections as any).sensitivitySynced.clear();
+  await core.rpc('collections.list', {});
+  assert.deepEqual(await queued(true), []);
 });
