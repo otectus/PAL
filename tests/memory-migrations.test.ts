@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { migrations, schema } from '../broker/graph-memory/schema.ts';
@@ -155,4 +156,61 @@ test('S3 migration 9 lets extraction that failed before the upgrade run again', 
     assert.equal(retried?.observation_id, source, 'the stranded run is extracted again after the upgrade');
     assert.equal(c.one('SELECT attempts FROM extraction_runs WHERE id=?', retried.id).attempts, 2);
   } finally { c.close(); }
+});
+
+test('erased text also leaves the pre-migration backup, which keeps its schema, restores and still re-derives a fact with surviving support', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'pal-backup-scrub-')), directory = join(root, 'graph-memory'), backups = join(root, 'memory-backups');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const eighth = migrations.findIndex(migration => migration.id === 8);
+  const pending = migrations.splice(eighth);
+  let scope = '', vault = '', source = '';
+  try {
+    // A store at schema 7, as 2.0.2 left it, with one passage forgotten there already.
+    const c = new Canonical(directory);
+    scope = c.registerScope({ key: 'backup-scrub', label: 'Backup scrub' }).id;
+    const old = c.observeText({ scope_id: scope, text: 'The old vault word was zqxjgammazz.', role: 'user' });
+    c.forget({ scope_id: scope, id: old.id });
+    vault = c.observeText({ scope_id: scope, text: 'The vault word is zqxjbetazz.', role: 'user' }).id;
+    source = c.observeText({ scope_id: scope, text: 'Atlas uses Kitty for zqxjalphazz work.', role: 'user' }).id;
+    const other = c.observeText({ scope_id: scope, text: 'Atlas uses Kitty.', role: 'user' }).id;
+    const claim = { subject: { type: 'Project', name: 'Atlas' }, predicate: 'USES_TOOL', object: { type: 'Tool', name: 'Kitty' } };
+    for (const observation_id of [source, other]) c.remember({ scope_id: scope, claim, witness: { observation_id, quote: 'Atlas uses Kitty' } });
+    c.close();
+  } finally { migrations.push(...pending); }
+  // Opening it with this version backs it up before migrations 8 and 9.
+  const c = new Canonical(directory, { backups });
+  const [backup] = c.migrationBackups();
+  assert.ok(backup && backup.from === 7, 'a pre-migration backup was taken');
+  const fact = c.one("SELECT version_id FROM assertion_versions WHERE predicate='USES_TOOL' AND known_to_revision IS NULL AND erased=0").version_id;
+  const inFile = (token: string) => ['', '-wal', '-journal'].some(suffix => existsSync(backup.path + suffix) && readFileSync(backup.path + suffix).includes(Buffer.from(token)));
+  assert.equal(inFile('zqxjgammazz'), false, 'what an earlier erasure left in the index is not copied into the backup');
+  await c.call('forget', { scope_id: scope, id: vault });
+  await c.call('forget', { scope_id: scope, id: source });
+  assert.equal(inFile('zqxjbetazz'), false, 'a forgotten passage leaves the backup');
+  assert.equal(inFile('zqxjalphazz'), false, 'so does a forgotten source of a fact');
+  const copy = new DatabaseSync(backup.path, { readOnly: true });
+  try {
+    assert.equal((copy.prepare('SELECT MAX(id) AS n FROM schema_migrations').get() as any).n, 7, 'the backup keeps its schema, so the version that wrote it can still open it');
+    assert.equal((copy.prepare('PRAGMA integrity_check').get() as any).integrity_check, 'ok');
+    assert.equal((copy.prepare('SELECT predicate,erased FROM assertion_versions WHERE version_id=?').get(fact) as any).predicate, 'USES_TOOL', 'the fact another source supports is kept for re-derivation');
+  } finally { copy.close(); }
+  // Restoring the backup replays the registry: the passage stays forgotten and the fact is re-derived from its other source.
+  const staging = join(root, 'staging');
+  await c.call('restore', { input: backup.path, staging });
+  c.close();
+  const restored = new Canonical(staging);
+  try {
+    assert.equal(restored.retrieve({ scope_id: scope, text: 'vault word' }).items.length, 0);
+    assert.ok(restored.retrieve({ scope_id: scope, text: 'Atlas Kitty' }).items.some((item: any) => item.kind === 'fact' && /USES_TOOL/.test(item.text)), 'the fact survives on its other source');
+  } finally { restored.close(); }
+  // A backup that cannot be changed would keep what was forgotten: it is deleted instead.
+  const again = new Canonical(directory, { backups });
+  try {
+    const kept = again.observeText({ scope_id: scope, text: 'The garden gate code is zqxjdeltazz.', role: 'user' }).id;
+    const [locked] = again.migrationBackups();
+    chmodSync(locked.path, 0o400);
+    await again.call('forget', { scope_id: scope, id: kept });
+    assert.equal(existsSync(locked.path), false);
+    assert.equal(again.health().migration_backup_scrub_failures, 1);
+  } finally { again.close(); }
 });

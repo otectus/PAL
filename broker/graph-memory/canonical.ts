@@ -39,6 +39,7 @@ import { validateClaim, normalized, stableJSON, span, occurrenceAt } from "./ont
 import { overlaps, remainder, eligibleTime } from "./temporal.ts";
 import { rrf, relationalRank, ftsQuery, lexicalFloor, informativeTerms, hasInformativeTerm } from "./ranking.ts";
 import { compactItem, itemTokens, packetOverheadTokens, itemEvidenceLimit, recallGroup, automaticGroupLimits, automaticDisputedWeight } from "./packet.ts";
+import { scrubCopy, scrubRecord, type CopyErasure } from "./erasure-scrub.ts";
 import {
   planRetention,
   restatedSupport,
@@ -150,8 +151,9 @@ export class Canonical {
     this.reconcileRegistry();
     this.queue(() => this.reconcileExtraction());
     // A forget that committed just before a crash, or one replayed above, can still have its text in
-    // the log's earlier frames.
+    // the log's earlier frames, and in the pre-migration backups.
     this.purgeLog();
+    this.scrubBackups();
   }
   /**
    * Removes erased text from the write-ahead log on disk. Its earlier frames keep pages as they were
@@ -280,6 +282,13 @@ export class Canonical {
       rmSync(partial, { force: true });
       Canonical.copyStore(this.db, partial);
       chmodSync(partial, 0o600);
+      // What earlier erasures left in the full-text index is not part of what the backup keeps. A copy
+      // that cannot be merged is still a complete backup.
+      try {
+        const merging = new DatabaseSync(partial);
+        try { merging.exec("PRAGMA secure_delete=ON;INSERT INTO memory_fts(memory_fts) VALUES('optimize');INSERT INTO meta VALUES ('fts_remnants_merged','1') ON CONFLICT(key) DO UPDATE SET value=excluded.value;"); }
+        finally { merging.close(); }
+      } catch {}
       const file = openSync(partial, "r+");
       try { fsyncSync(file); } finally { closeSync(file); }
       const copy = new DatabaseSync(partial, { readOnly: true });
@@ -3441,7 +3450,8 @@ export class Canonical {
       intent.id,
     );
     if (existing.id) return existing;
-    return this.tx((r,time) => {
+    let rederived: string[] = [];
+    const receipt = this.tx((r,time) => {
       this.setMeta(
         "erasure_epoch",
         Math.max(intent.epoch, this.epoch("erasure")),
@@ -3473,8 +3483,6 @@ export class Canonical {
         (target) => !this.one("SELECT target_id FROM tombstones WHERE target_id=?", target).target_id,
       );
       for (const target of fresh) {
-        this.curation.eraseInput(target);
-        this.run("UPDATE memory_statement_versions SET text='',erased=1,status='erased' WHERE version_id=?",target);
         this.run(
           "INSERT OR IGNORE INTO tombstones VALUES (?,?,?,?)",
           target,
@@ -3483,68 +3491,7 @@ export class Canonical {
           r,
         );
         this.effect(target);
-        this.run("DELETE FROM retrieval_documents WHERE artifact_id=?", target);
-        this.run("DELETE FROM embedding_records WHERE artifact_id=?", target);
-        this.run(
-          "UPDATE artifacts SET invalidated=1 WHERE id=? OR record_id=?",
-          target,
-          target,
-        );
-        this.run(
-          "UPDATE payloads SET body='',digest='',erased=1 WHERE id=?",
-          target,
-        );
-        this.run(
-          "UPDATE evidence SET witness='',digest='',locator='{}',erased=1 WHERE id=?",
-          target,
-        );
-      this.run(
-        "UPDATE observations SET erased=1,extraction_state='erased' WHERE id=?",
-          target,
-        );
-        this.run(
-          "UPDATE extraction_runs SET status='erased',model_identity='',error_code=NULL WHERE observation_id=?",
-          target,
-        );
-        this.run(
-          "UPDATE assertion_versions SET erased=1,status='erased',object_entity_id=NULL,value_json='null',qualifiers='{}',time_expression='',predicate='ERASED' WHERE version_id=?",
-          target,
-        );
-        this.run(
-          "UPDATE entities SET erased=1,name='',external_id=NULL WHERE id=?",
-          target,
-        );
-        this.run("DELETE FROM entity_aliases WHERE entity_id=?", target);
-        this.run(
-          "DELETE FROM identity_links WHERE left_id=? OR right_id=? OR evidence_id=?",
-          target,
-          target,
-          target,
-        );
-        this.run(
-          "DELETE FROM event_edges WHERE from_id=? OR to_id=? OR evidence_id=?",
-          target,
-          target,
-          target,
-        );
-        this.run("UPDATE events SET erased=1 WHERE id=?", target);
-        this.run(
-          "UPDATE episodes SET erased=1,summary_id=NULL WHERE id=?",
-          target,
-        );
-        this.run(
-          "UPDATE topics SET erased=1,name='',summary_id=NULL WHERE id=?",
-          target,
-        );
-        this.run(
-          "DELETE FROM topic_links WHERE topic_id=? OR target_id=?",
-          target,
-          target,
-        );
-        this.run(
-          "UPDATE response_records SET erased=1,response_ref='',supplied_evidence_ids='[]',cited_evidence_ids='[]' WHERE id=?",
-          target,
-        );
+        scrubRecord((sql, ...args) => this.run(sql, ...args), () => true, target);
       }
       this.run(
         "DELETE FROM retrieval_documents WHERE artifact_id IN (SELECT id FROM artifacts WHERE invalidated=1)",
@@ -3554,6 +3501,7 @@ export class Canonical {
         this.run('UPDATE fact_slots SET predicate=?,qualifiers=?,aggregate_revision=? WHERE id=?',version.predicate,version.qualifiers,r,version.slot_id);
         this.newVersion(version,evidence,time,version.logical_id);
       }
+      rederived = rederive.map(({version}) => version.version_id);
       this.removeRetentionForTargets(intent.targets);
       // A pin goes with its target, note included: erased passages, and assertions with no live version left.
       this.run("DELETE FROM retention_pins WHERE target_kind='observation' AND target_id IN (SELECT value FROM json_each(?))", JSON.stringify(intent.targets));
@@ -3580,6 +3528,30 @@ export class Canonical {
         revision: r,
       };
     });
+    // The same content leaves the copies PAL keeps of this store once the call that erased it ends.
+    if (this.backups) this.backupScrubs.push({ targets: intent.targets, keep: rederived });
+    return receipt;
+  }
+  /** Erasures committed in the current call whose content still has to leave the pre-migration backups. */
+  backupScrubs: CopyErasure[] = [];
+  /** Pre-migration backups deleted because their erased content could not be removed. */
+  backupScrubFailures = 0;
+  /**
+   * Removes what this call's erasures erased from every pre-migration backup (scrubCopy), keeping each
+   * backup's schema, so it still restores. A backup that cannot be changed would keep what the person
+   * asked to forget, so it is deleted, as clearing memory deletes them.
+   */
+  scrubBackups() {
+    if (!this.backupScrubs.length) return;
+    const erasures = this.backupScrubs.splice(0);
+    for (const backup of this.migrationBackups()) {
+      try {
+        scrubCopy(backup.path, erasures);
+      } catch {
+        for (const path of [backup.path, backup.path + ".manifest.json", backup.path + "-journal", backup.path + "-wal", backup.path + "-shm"]) rmSync(path, { force: true });
+        this.backupScrubFailures++;
+      }
+    }
   }
   registryRepairs: { supplemented: Row[]; unresolved: Row[] } = { supplemented: [], unresolved: [] };
   reconcileRegistry() {
@@ -4537,6 +4509,7 @@ export class Canonical {
         unresolved: this.registryRepairs.unresolved,
       },
       migration_backups: this.migrationBackups().map(({ name, created_us, from, to }) => ({ name, created_us, from, to })),
+      migration_backup_scrub_failures: this.backupScrubFailures,
       wal_bytes: existsSync(join(this.directory, "memory.sqlite-wal"))
         ? statSync(join(this.directory, "memory.sqlite-wal")).size
         : 0,
@@ -4975,7 +4948,15 @@ export class Canonical {
        UNION SELECT a.id FROM events e JOIN evidence v ON v.observation_id=e.observation_id JOIN assertion_evidence x ON x.evidence_id=v.id JOIN artifacts a ON a.record_id=x.version_id WHERE e.task_id=?
        UNION SELECT a.id FROM episodes s JOIN artifacts a ON a.record_id=s.id WHERE s.thread_id=?`, taskId, taskId, taskId).map((row) => String(row.id)));
   }
+  /** Serves one worker request; whatever it erased then leaves the pre-migration backups too. */
   async call(method: string, p: Row = {}): Promise<any> {
+    try {
+      return await this.dispatch(method, p);
+    } finally {
+      this.scrubBackups();
+    }
+  }
+  async dispatch(method: string, p: Row = {}): Promise<any> {
     // Remote inspection/erasure shares the canonical semantics, with a bounded
     // work envelope checked inside the worker before materializing a closure.
     // Large stores remain available through the desktop maintenance interface.
@@ -4988,7 +4969,7 @@ export class Canonical {
       }
       const payload=this.one('SELECT COALESCE(SUM(size),0) AS size,COALESCE(MAX(size),0) AS largest FROM (SELECT length(CAST(body AS BLOB)) AS size FROM payloads WHERE erased=0 LIMIT 2049)');
       if(payload.size>8*1024*1024||payload.largest>256*1024)fail('LIMIT_EXCEEDED','This memory graph exceeds the mobile payload quota; use desktop maintenance.');
-      return this.call(method.slice('mobile_'.length),p);
+      return this.dispatch(method.slice('mobile_'.length),p);
     }
     if(method.startsWith("curation_"))return this.curation.call(method,p);
     switch (method) {

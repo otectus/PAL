@@ -130,7 +130,7 @@ export class Curation {
   /**
    * Whether a job's settings still hold. Its sources are fenced separately and exactly: claim, finish
    * and apply rebuild the bundle and compare its digest with the one the reviewer saw, and erasing an
-   * input deletes or stales the job (eraseInput). The global erasure epoch is not compared: every
+   * input deletes or stales the job (scrubRecord in erasure-scrub.ts). The global erasure epoch is not compared: every
    * routine expiry advances it, so comparing it discarded review results made across any unrelated
    * expiry, re-queued them, and could keep a busy store from finishing a review at all.
    */
@@ -302,14 +302,6 @@ export class Curation {
       c.run('UPDATE memory_curation_decisions SET undone_revision=? WHERE id=?',c.revision,d.id);
       return {undone:true,revision:c.revision};
     });
-  }
-  eraseInput(id:string){
-    const c=this.store;
-    c.run("UPDATE memory_curation_jobs SET state=CASE WHEN state='applied' THEN 'applied' ELSE 'stale' END,error_code='EVIDENCE_ERASED',lease_token=NULL WHERE id IN (SELECT m.job_id FROM memory_assessments m JOIN memory_assessment_inputs i ON i.assessment_id=m.id WHERE i.input_id=?)",id);
-    c.run('DELETE FROM memory_assessments WHERE id IN (SELECT assessment_id FROM memory_assessment_inputs WHERE input_id=?)',id);
-    c.run('DELETE FROM memory_curation_jobs WHERE version_id=?',id);
-    c.run('DELETE FROM memory_extractor_hints WHERE version_id=?',id);
-    c.run('DELETE FROM memory_synthesis WHERE artifact_id=? OR episode_id=?',id,id);
   }
   list(p:Row){
     const c=this.store;c.scope(p.scope_id);

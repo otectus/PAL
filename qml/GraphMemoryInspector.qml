@@ -158,9 +158,9 @@ CDialog {
         }
     }
     CText { objectName:"graphMemoryForgetImpact";visible:inspector.previewCurrent;text:"Forgetting "+(inspector.preview.selector?.kind||"record").replace("_"," ")+" "+inspector.preview.id+" suppresses "+inspector.preview.count+" records and dependent copies immediately. Physical purge waits for database acknowledgements.";color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
-    // NF-01: a pre-migration backup keeps its own copy of the text until it expires or is deleted.
+    // NF-01: a pre-migration backup holds a copy of the text until forgetting removes it there; it expires after 14 days.
     CText { objectName:"graphMemoryForgetBackups";visible:inspector.previewCurrent&&(inspector.preview.backups||[]).length>0;Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.amber;font.pixelSize:Theme.secondary
-        text:"A backup taken before a memory update on "+new Date(((inspector.preview.backups||[])[0]?.created_us||0)/1000).toLocaleDateString()+" may still contain this text. Forgetting does not change that file, and restoring it would forget this again. It is deleted after 14 days." }
+        text:"A backup taken before a memory update on "+new Date(((inspector.preview.backups||[])[0]?.created_us||0)/1000).toLocaleDateString()+" may still contain this text. Forgetting removes it from the backup too, and the backup can still be restored. It is deleted after 14 days." }
     CButton { objectName:"graphMemoryDeleteBackups";visible:inspector.previewCurrent&&(inspector.preview.backups||[]).length>0;text:"Delete the pre-migration backup";enabled:inspector.pending<0;onClicked:inspector.call("delete_migration_backups",{}) }
     CButton { objectName:"graphMemoryForget";visible:inspector.previewCurrent;text:"Forget "+inspector.preview.id;danger:true;enabled:inspector.pending<0&&inspector.previewCurrent;onClicked:inspector.call("forget",{id:inspector.preview.id,expected_revision:inspector.preview.revision,selection:inspector.preview.selection}) }
     CButton { visible:!!inspector.erasureJob;text:"Check purge progress";onClicked:inspector.call("erasure_status",{job_id:inspector.erasureJob}) }
