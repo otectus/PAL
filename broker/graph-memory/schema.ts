@@ -116,4 +116,15 @@ CREATE INDEX retention_pins_scope ON retention_pins(scope_id,released_revision);
   },
   { id: 6, sql: curationMigrationSql },
   { id: 7, sql: retentionMigrationSql, repair: repairLegacyPins },
+  {
+    // FTS5 records a deleted row as a delete key and keeps the row's index entries until segments
+    // merge, so the terms of a forgotten or expired passage stayed in memory_fts_data, readable from the
+    // file and from every later backup. Secure delete removes them as each row goes; optimize merges
+    // away what earlier erasures left. The FTS5 format this writes needs SQLite 3.42, below PAL's minimum.
+    id: 8,
+    sql: `
+INSERT INTO memory_fts(memory_fts,rank) VALUES('secure-delete',1);
+INSERT INTO memory_fts(memory_fts) VALUES('optimize');
+`,
+  },
 ];

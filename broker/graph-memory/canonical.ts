@@ -149,6 +149,17 @@ export class Canonical {
     );
     this.reconcileRegistry();
     this.queue(() => this.reconcileExtraction());
+    // A forget that committed just before a crash, or one replayed above, can still have its text in
+    // the log's earlier frames.
+    this.purgeLog();
+  }
+  /**
+   * Removes erased text from the write-ahead log on disk. Its earlier frames keep pages as they were
+   * before an erasure until the log is reset and overwritten, and a passive checkpoint never shortens
+   * the file. With no other connection open the truncating checkpoint returns at once.
+   */
+  purgeLog() {
+    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   }
   /** Runs queue bookkeeping atomically, joining an enclosing canonical mutation when present. */
   queue<T>(fn: () => T): T {
@@ -4110,7 +4121,8 @@ export class Canonical {
         this.run("UPDATE episodes SET state='retryable',consolidation_attempts=?,next_retry_us=?,error_code=? WHERE id=? AND state IN ('open','consolidating','retryable')",attempts,now()+Math.min(36e8,1e6*2**attempts),String(e.code||'CONSOLIDATION_FAILED').slice(0,100),episode.id);
       }
     }
-    this.db.exec('PRAGMA wal_checkpoint(PASSIVE)');return {...result,archived,empty,failed};
+    if(result.expired)this.purgeLog();else this.db.exec('PRAGMA wal_checkpoint(PASSIVE)');
+    return {...result,archived,empty,failed};
   }
   claimJob(p: Row) {
     if (!["graph", "vector"].includes(p.backend))
@@ -5011,8 +5023,11 @@ export class Canonical {
         for(const id of preview.target_ids){const payload=this.one('SELECT body FROM payloads WHERE id=? AND erased=0',id);if(payload.body)texts.add(payload.body);const witness=this.one('SELECT witness FROM evidence WHERE id=? AND erased=0',id);if(witness.witness)texts.add(witness.witness);}
         return {texts:[...texts],revision:preview.revision,selection:preview.selection};
       }
-      case "forget":
-        return this.forget(p);
+      case "forget": {
+        const receipt = this.forget(p);
+        this.purgeLog();
+        return receipt;
+      }
       case "erasure_status": {
         const row = this.one("SELECT * FROM erasure_jobs WHERE id=?", p.job_id);
         if (!row.id) fail("NOT_FOUND", "Unknown erasure job");
@@ -5091,8 +5106,11 @@ export class Canonical {
         return this.backup(p);
       case "restore":
         return this.restore(p);
-      case "expire":
-        return this.expire();
+      case "expire": {
+        const result = this.expire();
+        if (result.expired) this.purgeLog();
+        return result;
+      }
       case "compact":
         return this.compact(p);
       case "import_legacy": {

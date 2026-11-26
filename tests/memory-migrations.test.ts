@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { migrations, schema } from '../broker/graph-memory/schema.ts';
@@ -19,6 +19,7 @@ const applied: Record<number, string> = {
   5: 'fa3a04d5ee812bac2a80d207c533710444649077807a1c54df46117035b1ecf5',
   6: '4175254d9bb46e9084eacf29bb6c28d5ef6f0a2b256231dfaa1db27c5544ffa7',
   7: '27c145c4a88ff46ceda9e2dc733c506d002474bbe584cde230af9a20fe413c62',
+  8: '7fb1406bdbe1e0fc63cf2df5c423346e5aaeeec464ffba676467de272f9cd373',
 };
 
 test('S3 applied memory migrations are never edited', () => {
@@ -67,4 +68,64 @@ test('S3 migration 7 opens a store whose legacy pins name one record twice', t =
     assert.equal(c.one('SELECT erased FROM observations WHERE id=?', passage).erased, 0);
     assert.equal(c.activePin(logical)?.id, 'pin-d');
   } finally { c.close(); }
+});
+
+// Bytes of a token anywhere in the store's files: the database, its full-text index blobs and its write-ahead log.
+const onDisk = (directory: string, token: string) => ['memory.sqlite', 'memory.sqlite-wal']
+  .some(name => existsSync(join(directory, name)) && readFileSync(join(directory, name)).includes(Buffer.from(token)));
+const inIndex = (c: Canonical, token: string) => c.all('SELECT block FROM memory_fts_data').some(row => Buffer.from(row.block as Uint8Array).includes(Buffer.from(token)));
+
+test('S3 migration 8 removes what earlier erasures left in the full-text index, and later erasures leave nothing there', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'pal-fts-erasure-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const earlier = 'zqxjheliotropezz', later = 'zqxjcormorantzz';
+  // A store written by code that knew migrations 1–7: forgetting left the passage's terms in the index.
+  const eighth = migrations.findIndex(migration => migration.id === 8);
+  assert.notEqual(eighth, -1, 'migration 8 secures the full-text index');
+  const pending = migrations.splice(eighth);
+  let scope = '';
+  try {
+    const c = new Canonical(directory);
+    scope = c.registerScope({ key: 'fts-erasure', label: 'FTS erasure' }).id;
+    for (let i = 0; i < 20; i++) c.observeText({ scope_id: scope, text: `Filler passage ${i} about the garden.`, role: 'user' });
+    const forgotten = c.observeText({ scope_id: scope, text: `The vault word is ${earlier}.`, role: 'user' });
+    c.forget({ scope_id: scope, id: forgotten.id });
+    assert.equal(c.retrieve({ scope_id: scope, text: earlier }).items.length, 0);
+    assert.ok(inIndex(c, earlier), 'before migration 8 the index still held the forgotten term');
+    c.close();
+  } finally { migrations.push(...pending); }
+  const c = new Canonical(directory);
+  try {
+    assert.equal(c.one('SELECT MAX(id) AS n FROM schema_migrations').n, migrations.at(-1)!.id);
+    assert.equal(inIndex(c, earlier), false, 'the upgrade merged away the earlier erasure');
+    assert.equal(c.one("SELECT v FROM memory_fts_config WHERE k='secure-delete'").v, 1);
+    const kept = c.observeText({ scope_id: scope, text: 'The garden hose is green.', role: 'user' });
+    const forgotten = c.observeText({ scope_id: scope, text: `The second vault word is ${later}.`, role: 'user' });
+    c.forget({ scope_id: scope, id: forgotten.id });
+    assert.equal(inIndex(c, later), false, 'a later erasure removes its terms from the index at once');
+    assert.ok(c.retrieve({ scope_id: scope, text: 'garden hose green' }).items.some((item: any) => item.text === 'The garden hose is green.'), 'other passages stay searchable');
+    assert.ok(kept.id);
+  } finally { c.close(); }
+  assert.equal(onDisk(directory, earlier) || onDisk(directory, later), false);
+});
+
+test('a forget and an expiry leave no copy of the removed text in the write-ahead log', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'pal-wal-erasure-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const c = new Canonical(directory);
+  t.after(() => c.close());
+  const scope = c.registerScope({ key: 'wal-erasure', label: 'WAL erasure' }).id;
+  const forgotten = c.observeText({ scope_id: scope, text: 'The locker code is zqxjmarmalade.', role: 'user' });
+  const expiring = c.observeText({ scope_id: scope, text: 'The old locker code was zqxjtangerine.', role: 'user' });
+  c.db.exec('PRAGMA wal_checkpoint(PASSIVE)');
+  assert.ok(onDisk(directory, 'zqxjmarmalade'));
+  return (async () => {
+    await c.call('forget', { scope_id: scope, id: forgotten.id });
+    assert.equal(onDisk(directory, 'zqxjmarmalade'), false, 'the forgotten text is gone from every file once the forget returns');
+    c.run('UPDATE payloads SET expires_us=? WHERE id=(SELECT payload_id FROM observations WHERE id=?)', Date.now() * 1000 - 1_000_000, expiring.id);
+    assert.ok(onDisk(directory, 'zqxjtangerine'));
+    await c.call('maintenance');
+    assert.equal(c.one('SELECT erased FROM observations WHERE id=?', expiring.id).erased, 1);
+    assert.equal(onDisk(directory, 'zqxjtangerine'), false, 'expired text is gone from every file after the housekeeping tick');
+  })();
 });
