@@ -361,6 +361,9 @@ export class Memory {
     intent={scope_id,...retryParams,...(!params.id?{to_us:params.to_us??Date.now()*1000}:{})};
     this.store.set('memory-pending-erasure',[...this.store.get<any[]>('memory-pending-erasure',[]),{intentId,...intent}]);
     this.store.db.exec('COMMIT'); } catch(error){this.store.db.exec('ROLLBACK');throw error;}
+    // The log's earlier frames still hold the scrubbed pages as they were; a truncating checkpoint
+    // removes them from disk.
+    this.store.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     publishDelegations?.();
     let result:any;
     // The preview binding was checked against the sources just read, before anything was scrubbed. The

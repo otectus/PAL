@@ -48,7 +48,9 @@ export class Store {
     const current = join(directory, 'pal.sqlite'), legacy = join(directory, 'cere.sqlite');
     const file = existsSync(current) || !existsSync(legacy) ? current : legacy;
     this.db = new DatabaseSync(file); chmodSync(file, 0o600);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
+    // secure_delete zeroes what a change frees: a passage memory erasure scrubs from a long message would
+    // otherwise stay readable in the freed overflow pages.
+    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;
       CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY,data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY,session_id TEXT NOT NULL,data TEXT NOT NULL);

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { ServerResponse } from 'node:http';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Memory, memoryScope } from '../broker/memory.ts';
@@ -252,4 +253,21 @@ test('a forget the stopped memory worker never ran is finished when the worker r
   for (let tries = 0; tries < 100 && f.store.get<any[]>('memory-pending-erasure', []).length; tries++) await new Promise(resolve => setTimeout(resolve, 20));
   assert.deepEqual(f.store.get<any[]>('memory-pending-erasure', []), []);
   assert.equal((await f.memory.list(codex)).total, 0);
+});
+
+test('a scrubbed conversation passage leaves no copy in the conversation database or its log', async t => {
+  const f = await fixture(t), project = join(f.directory, 'project');
+  await mkdir(project);
+  const codex = session('codex', 'codex-session', project);
+  f.store.saveSession(codex);
+  const token = 'zqxjpomegranatezz';
+  // Long enough to need overflow pages, which a scrub frees rather than rewrites.
+  f.store.message({ id: 'message-long', sessionId: codex.id, role: 'user', text: `My locker pin is ${token}. ` + 'Context for the request. '.repeat(1200), time: 1 });
+  const note = await f.memory.save(codex, `My locker pin is ${token}.`);
+  f.store.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  const onDisk = () => ['pal.sqlite', 'pal.sqlite-wal'].filter(name => existsSync(join(f.directory, name)) && readFileSync(join(f.directory, name)).includes(Buffer.from(token)));
+  assert.deepEqual(onDisk(), ['pal.sqlite']);
+  await f.memory.forget(codex, note.id);
+  assert.equal(f.store.messages(codex.id)[0].text, '[Content removed by memory erasure]');
+  assert.deepEqual(onDisk(), [], 'neither freed pages nor earlier log frames keep the scrubbed text');
 });
