@@ -385,4 +385,19 @@ test('a collection cloud models may not read keeps its passages local, so a host
   (core.collections as any).sensitivitySynced.clear();
   await core.rpc('collections.list', {});
   assert.deepEqual(await queued(true), []);
+  // Withdrawing consent again while memory cannot apply it: the next collection operation does.
+  await core.rpc('collections.update', { id: collection.id, expectedRevision: (await latest()).revision, allowCloud: true });
+  assert.ok((await queued(true)).length > 0);
+  const service = core.memory.service, call = service.call.bind(service);
+  let refused = 0;
+  service.call = async (method: string, params: any = {}, signal?: AbortSignal) => {
+    if (method === 'collection_sensitivity' && !refused++) throw Object.assign(new Error('Memory is busy'), { code: 'BACKEND_UNAVAILABLE' });
+    return call(method, params, signal);
+  };
+  await core.rpc('collections.update', { id: collection.id, expectedRevision: (await latest()).revision, allowCloud: false });
+  assert.equal(refused, 1);
+  assert.equal((await latest()).allowCloud, false, 'the withdrawal is recorded even while memory is busy');
+  await core.rpc('collections.list', {});
+  service.call = call;
+  assert.deepEqual(await queued(true), [], 'and the passages are restricted by the next collection operation');
 });

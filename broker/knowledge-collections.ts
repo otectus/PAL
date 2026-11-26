@@ -175,15 +175,16 @@ export class KnowledgeCollections {
   private async eraseSource(scopeId: string, documentSource: string) {
     return this.core.memory.service.call('forget', { scope_id: scopeId, document_source: documentSource });
   }
-  /** Collections whose passages carry their current cloud consent since PAL started, as `id:allowCloud`. */
-  private sensitivitySynced = new Set<string>();
+  /** The cloud consent each collection's passages were last given since PAL started; absent until it is applied. */
+  private sensitivitySynced = new Map<string, boolean>();
   /**
    * A collection's passages take its cloud consent: without it they are local-only, so a hosted
    * embedding provider never receives them, as a reranker or cloud model does not.
    */
   private async applyConsent(collection: Collection) {
+    this.sensitivitySynced.delete(collection.id);
     await this.core.memory.service.call('collection_sensitivity', { scope_id: collection.scopeId, sensitivity: collection.allowCloud ? 'cloud_allowed' : 'local_only' });
-    this.sensitivitySynced.add(collection.id + ':' + collection.allowCloud);
+    this.sensitivitySynced.set(collection.id, collection.allowCloud);
   }
   private async eraseScope(scopeId: string) {
     return this.core.memory.service.call('forget', { scope_id: scopeId, from_us: 0, to_us: Number.MAX_SAFE_INTEGER });
@@ -213,7 +214,7 @@ export class KnowledgeCollections {
       // Passages indexed before they followed their collection's consent are corrected once per start;
       // a failure is retried by the next collection operation.
       for (const collection of this.all())
-        if (!this.sensitivitySynced.has(collection.id + ':' + collection.allowCloud)) await this.applyConsent(collection).catch(() => {});
+        if (this.sensitivitySynced.get(collection.id) !== collection.allowCloud) await this.applyConsent(collection).catch(() => {});
     })();
     try { await this.reconciling; } finally { this.reconciling = undefined; }
   }
