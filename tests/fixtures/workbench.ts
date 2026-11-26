@@ -90,7 +90,7 @@ export async function workbenchFixture(t: any, steps: Step[] = [() => ({ content
   const core = new Core(store);
   await core.refreshProviderModels('ollama');
   await core.workbench.probe();
-  t.after(async () => { await core.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); });
+  t.after(async () => { await core.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true, maxRetries: 10 }).catch(() => {}); });
   const fixture = { core, directory, project, state, host, requests, server,
     /** A tool-capable Ollama conversation with Files turned on and the project as its write-enabled root. */
     async session(policy: Record<string, unknown> = { write: true, organize: true }, extra: Record<string, unknown> = {}) {

@@ -16,7 +16,8 @@ import { hostedSearch } from '../broker/hosted-search.ts';
 import { synthesize,transcribe } from '../broker/hosted-speech.ts';
 import { migrateProviderReferences } from '../broker/provider-import.ts';
 
-const signal=AbortSignal.timeout(60000);
+// A fresh deadline for each request: one made when the file loads expires while earlier tests run.
+const signal=()=>AbortSignal.timeout(60000);
 const json=(v:unknown)=>Response.json(v);
 async function fixture(t:any) {
   const dir=await mkdtemp(join(tmpdir(),'pal-provider-fixture-'));
@@ -27,7 +28,7 @@ async function fixture(t:any) {
 }
 test('provider migration backs up the previous SQLite profile once and imports PyGPT as inert data',async t=>{
   const directory=await mkdtemp(join(tmpdir(),'pal-provider-migration-'));
-  t.after(()=>rm(directory,{recursive:true,force:true}));
+  t.after(()=>rm(directory, { recursive: true, force: true, maxRetries: 10 }).catch(() => {}));
   const store=new Store(directory);store.set('settings',store.settings());
   migrateProviderReferences(store);
   const backup=join(directory,'migration-backups','pre-provider-v2.sqlite'),before=await stat(backup);
@@ -96,17 +97,17 @@ test('embedding services enforce ordering, signed-byte encoding, dimensions and 
     const rows=[{index:1,embedding:encoded?'Af8=':[1,-1]},{index:0,embedding:encoded?'/wE=':[-1,1]}];
     const access={key:()=>'fixture',route:()=>({baseUrl:'https://example.com/v1',deployment:provider==='azure_openai'?'embedding-deployment':undefined}),endpoint:()=>({baseUrl:'https://example.com/v1',requiresKey:true}) as any,
       fetch:async(url:any,init:any)=>{request.push([url,JSON.parse(init.body)]);return json({data:rows});}};
-    const vectors=await hostedEmbeddings(provider,access,'model',['a','b'],'document',signal,2);
+    const vectors=await hostedEmbeddings(provider,access,'model',['a','b'],'document',signal(),2);
     assert.deepEqual(vectors,[[-1,1],[1,-1]]);assert.equal(request.length,1);
     if(encoded||provider==='voyage')assert.equal(request[0][1].input_type,'document');
     const bad={...access,fetch:async()=>json({data:[rows[0],rows[0]]})};
-    await assert.rejects(hostedEmbeddings(provider,bad,'model',['a','b'],'query',signal,2),/index/);
+    await assert.rejects(hostedEmbeddings(provider,bad,'model',['a','b'],'query',signal(),2),/index/);
   }
 });
 test('Hugging Face hosted embeddings use feature extraction with explicit pooling',async()=>{
   const requests:any[]=[];
   const access={key:()=> 'hf-key',route:()=>({baseUrl:'https://router.huggingface.co/v1/'}),fetch:async(url:any,init:any)=>{requests.push([String(url),JSON.parse(init.body)]);return json([[[1,3],[3,5]],[[2,4],[4,6]]]);}};
-  assert.deepEqual(await hostedEmbeddings('huggingface',access as any,'org/embed',['a','b'],'document',signal,2,'mean'),[[2,4],[3,5]]);
+  assert.deepEqual(await hostedEmbeddings('huggingface',access as any,'org/embed',['a','b'],'document',signal(),2,'mean'),[[2,4],[3,5]]);
   assert.equal(requests[0][0],'https://router.huggingface.co/hf-inference/models/org/embed');
   assert.deepEqual(requests[0][1],{inputs:['a','b']});
   assert.equal((access as any).route().baseUrl,'https://router.huggingface.co/v1/');
@@ -125,19 +126,19 @@ test('local vectors survive reopening, enforce scope and forget erased content',
 });
 test('Jev answers match requested names and Voyage reranks only permitted candidates',async()=>{
   const input={state:'Fixture text',questions:{relevant:{type:'noul' as const,instructions:'Is this relevant?'}}};
-  const r=await jevEvaluate('fixture','model',input,signal,async()=>json({model:'model',answers:{relevant:{type:'noul',noul:.8}}}));
+  const r=await jevEvaluate('fixture','model',input,signal(),async()=>json({model:'model',answers:{relevant:{type:'noul',noul:.8}}}));
   assert.deepEqual(r.answers.relevant,{type:'noul',noul:.8});
-  await assert.rejects(jevEvaluate('fixture','model',input,signal,async()=>json({model:'m',answers:{wrong:{}}})),/names/);
+  await assert.rejects(jevEvaluate('fixture','model',input,signal(),async()=>json({model:'m',answers:{wrong:{}}})),/names/);
   const items=[{id:'a',text:'one',sensitivity:'cloud_allowed'},{id:'b',text:'two',sensitivity:'cloud_allowed'}];
-  assert.deepEqual((await voyageRerank('fixture','rank','query',items,signal,async()=>json({data:[{index:1,relevance_score:.8},{index:0,relevance_score:.1}]}))).ids,['b','a']);
-  await assert.rejects(voyageRerank('fixture','rank','query',[{...items[0],sensitivity:'private'}],signal,async()=>{assert.fail('unexpected request');}),/authorized/);
+  assert.deepEqual((await voyageRerank('fixture','rank','query',items,signal(),async()=>json({data:[{index:1,relevance_score:.8},{index:0,relevance_score:.1}]}))).ids,['b','a']);
+  await assert.rejects(voyageRerank('fixture','rank','query',[{...items[0],sensitivity:'private'}],signal(),async()=>{assert.fail('unexpected request');}),/authorized/);
 });
 test('raw search, verbatim transcription and synthesis use their selected service and format',async()=>{
   const credentials:any={key:()=>'fixture'},core:any={credentials,accountAccess:()=>({key:()=>'fixture'})};
-  assert.deepEqual((await hostedSearch('perplexity','query',{} as any,credentials,signal,async()=>json({results:[{url:'https://example.com',title:'Example',snippet:'Found'}]})))[0].content,'Found');
+  assert.deepEqual((await hostedSearch('perplexity','query',{} as any,credentials,signal(),async()=>json({results:[{url:'https://example.com',title:'Example',snippet:'Found'}]})))[0].content,'Found');
   const wav=Buffer.alloc(48);wav.write('RIFF');wav.writeUInt32LE(40,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(4,40);
-  assert.equal(await transcribe(core,'openai',{model:'whisper-1'},wav,signal,async(url,init)=>{assert.match(String(url),/audio\/transcriptions$/);assert.equal((init!.body as FormData).get('model'),'whisper-1');return json({text:'spoken'});}),'spoken');
-  const audio=[];for await(const chunk of synthesize(core,'azure_speech',{region:'eastus'},'Read a < b',signal,async(url,init)=>{assert.match(String(url),/eastus\.tts/);assert.match(String(init!.body),/a &lt; b/);return new Response(new Uint8Array([1,2]),{headers:{'Content-Type':'audio/pcm'}});}))audio.push(chunk);
+  assert.equal(await transcribe(core,'openai',{model:'whisper-1'},wav,signal(),async(url,init)=>{assert.match(String(url),/audio\/transcriptions$/);assert.equal((init!.body as FormData).get('model'),'whisper-1');return json({text:'spoken'});}),'spoken');
+  const audio=[];for await(const chunk of synthesize(core,'azure_speech',{region:'eastus'},'Read a < b',signal(),async(url,init)=>{assert.match(String(url),/eastus\.tts/);assert.match(String(init!.body),/a &lt; b/);return new Response(new Uint8Array([1,2]),{headers:{'Content-Type':'audio/pcm'}});}))audio.push(chunk);
   assert.equal(audio.length,1);
 });
 test('prepared video dispatch stores a single job handle, validated bytes and durable artifact',async t=>{
@@ -222,12 +223,12 @@ test('provider-native computer actions require the current offered tool, a revie
     approval:async(_id:string,p:any)=>{requested.push(p.kind);return {choice:allow?'allow':'deny'};},
     remoteView:{start:async()=>({viewId:'v'}),frame:async()=>({output:'fixture',data:'data:image/png;base64,'+frame.toString('base64'),revision:1}),stop(){},send:async(_id:string,_device:string,p:any,check:()=>void)=>{check();inputs.push(p);}}};
   const computer=new ProviderComputer(core),click={items:[{type:'click',x:512,y:384,button:'left'}]};
-  await assert.rejects(computer.run('s',click,signal),/fresh/);
-  assert.ok(Reflect.get(await computer.run('s',{items:[{type:'screenshot'}]},signal),frameResult).image);
+  await assert.rejects(computer.run('s',click,signal()),/fresh/);
+  assert.ok(Reflect.get(await computer.run('s',{items:[{type:'screenshot'}]},signal()),frameResult).image);
   assert.deepEqual(requested,['computer','capture']);
-  allow=false;await assert.rejects(computer.run('s',click,signal),/declined/);assert.equal(inputs.length,0);
-  allow=true;await computer.run('s',click,signal);assert.deepEqual(inputs,[{kind:'click',x:0.5,y:0.5,frameRevision:1}]);
-  enabled=false;await assert.rejects(computer.run('s',click,signal),/turned off/);
+  allow=false;await assert.rejects(computer.run('s',click,signal()),/declined/);assert.equal(inputs.length,0);
+  allow=true;await computer.run('s',click,signal());assert.deepEqual(inputs,[{kind:'click',x:0.5,y:0.5,frameRevision:1}]);
+  enabled=false;await assert.rejects(computer.run('s',click,signal()),/turned off/);
 });
 
 test('Eden async video polls its public_id, downloads the result and records upstream provenance',async t=>{

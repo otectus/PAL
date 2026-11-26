@@ -70,7 +70,9 @@ test('M10 a chosen device that is missing fails visibly before any recorder or p
 test('M10 device settings accept only listed-style IDs, and a new speaker stops speech without replaying it', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'pal-audio-'));
   const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
-  t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); selectAudio({ input: '', output: '' }); });
+  let restarted: Core | undefined;
+  // Both Cores close before their directory goes: a memory worker still writing there would fail the removal.
+  t.after(async () => { await core.close(); await restarted?.close(); await rm(dir, { recursive: true, force: true }); selectAudio({ input: '', output: '' }); });
   for (const value of ['hw:0', 'pw:name; rm -rf /', 'alsa:$(id)', 'pw:'] as string[]) await assert.rejects(core.updateSettings({ audio: { input: value } }), /Choose an audio device from the list/, value);
   await assert.rejects(core.updateSettings({ audio: { speaker: 'x' } }), /Invalid audio device settings/);
   let stopped = 0; const stop = core.speech.stop.bind(core.speech); core.speech.stop = () => { stopped++; stop(); };
@@ -79,7 +81,6 @@ test('M10 device settings accept only listed-style IDs, and a new speaker stops 
   await core.updateSettings({ audio: { output: 'alsa:plughw:CARD=PCH,DEV=0' } });
   assert.equal(stopped, 1);
   assert.deepEqual(core.settings.audio, { input: 'pw:alsa_input.usb-Headset-00.mono-fallback', output: 'alsa:plughw:CARD=PCH,DEV=0' });
-  const restarted = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
-  t.after(() => restarted.close());
+  restarted = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   assert.deepEqual(restarted.settings.audio, core.settings.audio, 'the choice is kept across restarts');
 });

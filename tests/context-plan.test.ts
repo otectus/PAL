@@ -129,7 +129,7 @@ test('A01/M03 a request that omits old turns carries excerpts and a content-free
 test('M03 forgetting a summarized source removes it from the next request and from storage, across a restart', async t => {
   const { host, requests } = await ollamaFixture(t, 8192);
   const dir = await mkdtemp(join(tmpdir(), 'pal-continuity-erasure-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 10 }).catch(() => {}));
   let core = new Core(new Store(dir));
   t.after(async () => { if (!core.closed) await core.close(); });
   await core.updateSettings({ ollama: { host }, memory: { enabled: true } });
@@ -172,10 +172,13 @@ test('A01/M04 a CLI turn records what PAL supplied and names what it cannot see;
   t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
   const session = await core.create({ provider: 'codex', cwd: dir, trusted: true });
   await core.rpc('session.send', { id: session.id, text: 'Summarize the release plan.' });
+  for (let index = 0; index < 200 && core.store.session(session.id).status !== 'idle'; index++) await new Promise(resolve => setTimeout(resolve, 10));
+  await core.memory.ready;
+  // Only the plan read is watched: memory's own start-up calls (configure, health) are not part of it.
   const calls: string[] = [], original = core.memory.service.call.bind(core.memory.service);
   core.memory.service.call = (async (method: string, ...rest: any[]) => { calls.push(method); return (original as any)(method, ...rest); }) as any;
-  for (let index = 0; index < 200 && core.store.session(session.id).status !== 'idle'; index++) await new Promise(resolve => setTimeout(resolve, 10));
   const { lastPlan } = await core.rpc('session.context', { id: session.id });
+  core.memory.service.call = original;
   assert.equal(lastPlan.boundary, 'cli-owned'); assert.equal(lastPlan.contextSize, null);
   assert.equal(lastPlan.turnId, core.store.session(session.id).turnId);
   assert.ok(lastPlan.unknown.some((text: string) => /AGENTS\.md or CLAUDE\.md/.test(text)));

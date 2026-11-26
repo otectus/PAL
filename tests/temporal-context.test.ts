@@ -238,7 +238,7 @@ for (const provider of apiProviders) test(`P10 ${provider}: one block in the ins
 async function cli(t: any) {
   const directory = await mkdtemp(join(tmpdir(), 'pal-time-cli-')), executable = resolve('tests/fixtures/permissions-cli.mjs'), log = join(directory, 'requests.jsonl');
   for (const [key, value] of Object.entries({ PAL_CODEX_BIN: executable, PAL_CLAUDE_BIN: executable, PAL_PERMISSION_TEST_LOG: log })) { const previous = process.env[key]; process.env[key] = value; t.after(() => { if (previous === undefined) delete process.env[key]; else process.env[key] = previous; }); }
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  t.after(() => rm(directory, { recursive: true, force: true, maxRetries: 10 }).catch(() => {}));
   const clock = new FakeClock('2026-11-21T16:30:00Z');
   const settings = { time: { enabled: true, zoneMode: 'automatic', fixedZone: null, conversationTiming: true, clockFormat: 'system' } };
   const temporal = new Temporal({ settings, store: { findSession: () => undefined } } as any, new TimeService(clock, () => 'America/New_York'));
@@ -339,7 +339,8 @@ test('M01–M05 the clock tools: exact, scoped, bounded, and asked about by nobo
 
 test('a conversation’s own zone is told to its model, changes no other conversation, timer or schedule, and is cleared explicitly', async t => {
   const f = await ollama(t), other = await f.core.create({ provider: 'ollama', model: 'chat:latest', cwd: f.directory, trusted: true, tools: false });
-  f.store.timer({ id: 'timer', label: 'tea', due: f.clock.wall + 600_000 });
+  // Due in the real future as well: the Core checks timers against the real clock every second.
+  f.store.timer({ id: 'timer', label: 'tea', due: Math.max(f.clock.wall, Date.now()) + 600_000 });
   const before = JSON.stringify(f.store.timers());
   await assert.rejects(f.core.rpc('session.timeZone', { id: f.session.id, timeZone: 'Nowhere/Bad' }));
   const stale = f.store.session(f.session.id).configRevision || '0';

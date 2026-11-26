@@ -13,7 +13,7 @@ import { validWhen } from '../broker/schedules.ts';
 
 async function broker(t: any) {
   const dir = await mkdtemp(join(tmpdir(), 'pal-routines-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 10 }).catch(() => {}));
   const sent: string[] = [];
   let finish = true;
   const core = new Core(new Store(join(dir, 'state')), (_session, h) => ({

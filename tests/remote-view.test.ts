@@ -15,7 +15,7 @@ const inputTools = ['/usr/bin/ydotool', '/usr/bin/wtype', '/usr/local/bin/ydotoo
 
 test('a view is announced, shows still frames and says why input is unavailable', { skip: inputTools ? 'this computer has an input tool; the refusal path cannot be shown' : !existsSync('/usr/bin/grim') && !existsSync('/usr/local/bin/grim') ? 'needs grim' : false }, async t => {
   const directory = await mkdtemp(join(tmpdir(), 'pal-view-')), bin = join(directory, 'bin');
-  t.after(async () => { process.env.PATH = path; await rm(directory, { recursive: true, force: true }); });
+  t.after(async () => { process.env.PATH = path; await rm(directory, { recursive: true, force: true, maxRetries: 10 }).catch(() => {}); });
   const path = process.env.PATH || '';
   await (await import('node:fs/promises')).mkdir(bin);
   const png = await sharp({ create: { width: 1920, height: 1080, channels: 3, background: { r: 20, g: 40, b: 60 } } }).png().toBuffer();

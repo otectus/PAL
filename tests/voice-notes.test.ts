@@ -17,7 +17,7 @@ function wav(seconds = 1) {
 }
 
 test('a voice note becomes draft text on the desktop and leaves no audio behind', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'pal-voice-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const dir = await mkdtemp(join(tmpdir(), 'pal-voice-')); t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 10 }).catch(() => {}));
   const whisper = join(dir, 'whisper-cli.mjs'), model = join(dir, 'model.bin');
   await writeFile(whisper, `#!${process.execPath}\nimport {writeFileSync} from 'node:fs';const args=process.argv.slice(2),prefix=args[args.indexOf('--output-file')+1];writeFileSync(prefix+'.txt',' Please summarize the plan. ');`, { mode: 0o755 });
   await writeFile(model, 'fixture model');

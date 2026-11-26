@@ -219,7 +219,7 @@ test('F-030 vector purge needs only Qdrant, never the embedding model', async t 
   const env = { PAL_QDRANT_URL: 'http://127.0.0.1:' + (qdrant.address() as any).port, PAL_QDRANT_API_KEY: 'secret' };
   for (const [key, value] of Object.entries(env)) { const old = process.env[key]; process.env[key] = value; t.after(() => { if (old === undefined) delete process.env[key]; else process.env[key] = old; }); }
   const dir=await mkdtemp(join(tmpdir(),'pal-purge-'));
-  t.after(()=>rm(dir,{recursive:true,force:true}));
+  t.after(()=>rm(dir, { recursive: true, force: true, maxRetries: 10 }).catch(() => {}));
   const service = () => {
     const instance=new MemoryService(dir);
     clearInterval(instance.timer);

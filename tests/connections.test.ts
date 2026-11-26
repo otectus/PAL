@@ -11,7 +11,7 @@ const idle = () => ({ async send() {}, async interrupt() {}, async close() {} })
 
 test('11.1 the Settings host and endpoint become named connections once, with the same destinations and no keys in SQLite', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'pal-connections-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 10 }).catch(() => {}));
   const store = new Store(join(dir, 'state'));
   store.set('settings', { ...store.settings(), ollama: { host: 'http://127.0.0.1:11434', model: '' }, compatible: { ...store.settings().compatible, baseUrl: 'http://127.0.0.1:1234/v1', label: 'LM Studio', requiresKey: true, processing: 'local' } });
   let core = new Core(store, idle);
