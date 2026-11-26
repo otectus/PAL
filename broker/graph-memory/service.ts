@@ -871,7 +871,6 @@ export class MemoryService {
       return this.canonical.call('graph_pointers',{scope_id:p.scope_id,seeds,nodes:expanded.nodes,edges:expanded.edges,known_revision:seedQuery.known_revision,world_at_us:seedQuery.world_at_us,model_route:seedQuery.model_route});
     })().catch(()=>{coverage.push('graph_degraded');return [];});
     try {
-      if ((this.cloudEmbeddings() || vectorConfig()?.external) && p.model_route === "local_only") throw new Error("This query requires local processing");
       const host = p.host || this.configuration.host,
         identity = await this.identity(host, guard),
         [vector] = await this.embed(host, [p.text], "query", guard),
