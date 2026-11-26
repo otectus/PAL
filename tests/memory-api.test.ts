@@ -73,3 +73,27 @@ test('API memory service works without Ollama and excludes local-only embedding 
   assert.ok(service.extractor instanceof ApiExtractionAdapter);
   assert.ok(sent.every(body => !JSON.stringify(body).includes('local_only')));
 });
+
+test('expiry waits while a turn recalls, but not for longer than ten minutes', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'pal-retention-yield-'));
+  const service = new MemoryService(directory);
+  clearInterval(service.timer);
+  t.after(async () => { await service.close(); await rm(directory, { recursive: true, force: true, maxRetries: 10 }).catch(() => {}); });
+  service.configuration = { ...service.configuration, enabled: true, host: 'http://127.0.0.1:9' };
+  const calls: string[] = [], call = service.canonical.call.bind(service.canonical);
+  service.canonical.call = (async (method: string, params?: any, signal?: AbortSignal) => {
+    calls.push(method);
+    if (method === 'maintenance') return { expired: 0 };
+    return call(method, params, signal);
+  }) as typeof service.canonical.call;
+  const tick = async () => { await service.maintain(); await service.retentionWork; };
+  service.foreground = 1; service.lastMaintenance = Date.now() - 120_000;
+  await tick();
+  assert.equal(calls.includes('maintenance'), false, 'a turn that is recalling is not queued behind expiry');
+  service.foreground = 0;
+  await tick();
+  assert.equal(calls.filter(method => method === 'maintenance').length, 1, 'expiry runs once the turn is done');
+  service.foreground = 1; service.lastMaintenance = Date.now() - 11 * 60_000;
+  await tick();
+  assert.equal(calls.filter(method => method === 'maintenance').length, 2, 'foreground work that never ends cannot hold expiry off for good');
+});

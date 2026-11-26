@@ -791,8 +791,13 @@ export class MemoryService {
   }
   static readonly projectionBatch = 50;
   static readonly projectionBudgetMs = 400;
+  /** The longest foreground work holds off expiry: a foreground count that never falls cannot stop it. */
+  static readonly retentionYieldMs = 10 * 60_000;
   async maintain() {
-    if(!this.recoveryFrozen&&!this.closed&&this.configuration.enabled&&!this.configuration.paused)this.scheduleRetention();
+    // Expiry runs in the single memory worker, so a turn that recalls while it runs waits behind it. It
+    // starts while no turn is in the foreground, or once it has waited the longest it may.
+    if(!this.recoveryFrozen&&!this.closed&&this.configuration.enabled&&!this.configuration.paused&&
+      (!this.foreground||Date.now()-this.lastMaintenance>=MemoryService.retentionYieldMs))this.scheduleRetention();
     if (
       this.busy ||
       this.recoveryFrozen ||

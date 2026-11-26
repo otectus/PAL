@@ -432,7 +432,7 @@ export class Memory {
     // A turn never waits on memory longer than the deadline: a busy, slow or stopped memory worker
     // costs this turn its recalled context, not its reply. Stopping the turn still ends the wait.
     const deadline = AbortSignal.timeout(this.recallDeadlineMs), guard = AbortSignal.any([signal, deadline]);
-    // Housekeeping (projection, extraction, expiry) yields while a turn recalls.
+    // Housekeeping (projection, extraction, review and expiry) yields while a turn recalls; expiry waits ten minutes at most.
     void this.service.call('foreground', { active: true }).catch(() => {});
     try {
       const value = await abortable(this.prepare(session, text, guard, tokenBudget, route, write, authorize, trace), guard);
