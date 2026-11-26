@@ -34,7 +34,10 @@ function environment(t: any, values: Record<string, string>) {
 }
 async function directory(t: any, prefix = 'pal-review-core-') {
   const path = await realpath(await mkdtemp(join(tmpdir(), prefix)));
-  t.after(() => rm(path, { recursive: true, force: true }));
+  // Registered before the test's own hooks, so this runs before a Core in the directory is closed, and a
+  // hook that throws skips the rest. A memory worker still writing there must not turn into a test whose
+  // Core is never closed and whose file never exits: retry, and leave the directory rather than throw.
+  t.after(() => rm(path, { recursive: true, force: true, maxRetries: 10 }).catch(() => {}));
   return path;
 }
 function ollamaSession(core: Core, cwd: string): Session {
