@@ -165,3 +165,91 @@ test('a turn waits at most the recall deadline for memory; stopping the turn end
   await assert.rejects(waiting, /Stopped by the user/);
   assert.ok(Date.now() - started < 6000);
 });
+
+test('a forget bound to its preview completes when other memory commits between its source lookup and the deletion', async t => {
+  const f = await fixture(t), project = join(f.directory, 'project');
+  await mkdir(project);
+  const codex = session('codex', 'codex-session', project);
+  f.store.saveSession(codex);
+  f.store.message({ id: 'message-codex', sessionId: codex.id, role: 'user', text: 'The deployment hint is aquamarine falcon.', time: 1 });
+  const note = await f.memory.save(codex, 'The deployment hint is aquamarine falcon.');
+  const preview = await f.memory.graph(codex, 'forget_preview', { id: note.id });
+  // Another conversation's reply is recorded after the erasure has read its sources and scrubbed the
+  // transcripts, and before the canonical deletion runs.
+  const scope_id = await f.memory.scope(codex), canonical = f.memory.service.canonical, call = canonical.call.bind(canonical);
+  canonical.call = async (method: string, params: Record<string, unknown> = {}, signal?: AbortSignal) => {
+    if (method === 'forget') await call('observe_text', { scope_id, text: 'An unrelated reply about the build cache.', role: 'assistant', session_id: 'other-session' });
+    return call(method, params, signal);
+  };
+  const receipt = await f.memory.graph(codex, 'forget', { id: note.id, expected_revision: preview.revision, selection: preview.selection });
+  canonical.call = call;
+  assert.equal(receipt.suppressed, true);
+  assert.equal(f.store.messages(codex.id)[0].text, '[Content removed by memory erasure]');
+  assert.equal((await f.memory.list(codex)).total, 0, 'the forgotten note is gone, not left recallable after the transcripts were scrubbed');
+  assert.ok(!(await f.memory.recall(codex, 'aquamarine falcon deployment hint', signal())).items.some((item: any) => /aquamarine/.test(item.text)));
+  assert.deepEqual(f.store.get<any[]>('memory-pending-erasure', []), []);
+  // A preview made before a change the person did not see is still refused, before anything is scrubbed.
+  f.store.message({ id: 'message-later', sessionId: codex.id, role: 'user', text: 'The staging hint is copper heron.', time: 2 });
+  const later = await f.memory.save(codex, 'The staging hint is copper heron.');
+  const stale = await f.memory.graph(codex, 'forget_preview', { id: later.id });
+  await f.memory.save(codex, 'Another note saved after the preview.');
+  await assert.rejects(f.memory.graph(codex, 'forget', { id: later.id, expected_revision: stale.revision, selection: stale.selection }), { code: 'REVISION_CONFLICT' });
+  assert.equal(f.store.messages(codex.id).find(message => message.id === 'message-later')!.text, 'The staging hint is copper heron.');
+  assert.ok((await f.memory.list(codex)).rows.some((row: any) => row.text === 'The staging hint is copper heron.'));
+  assert.deepEqual(f.store.get<any[]>('memory-pending-erasure', []), []);
+});
+
+test('an erasure interrupted after its transcripts were scrubbed is finished when memory restarts; one with nothing left to delete does not stop memory', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'pal-pending-erasure-')), project = join(directory, 'project');
+  await mkdir(project);
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const settings = (store: Store): Settings => ({ ...store.settings(), ollama: { host: 'http://127.0.0.1:9', model: 'chat' }, memory: { enabled: true, model: 'nomic-embed-text', allowCloudMemory: true, allowCloudExtraction: false } });
+  const codex = session('codex', 'codex-session', project);
+  let store = new Store(directory), memory = new Memory(store, () => settings(store));
+  await memory.ready;
+  store.saveSession(codex);
+  const scope_id = await memory.scope(codex);
+  const kept = await memory.save(codex, 'The rollback window is two hours.');
+  const interrupted = await memory.save(codex, 'The vault passphrase hint is lilac otter.');
+  // The canonical deletion never ran: the worker stopped after the intent was recorded.
+  const canonical = memory.service.canonical, call = canonical.call.bind(canonical);
+  canonical.call = async (method: string, params: Record<string, unknown> = {}, signal?: AbortSignal) => {
+    if (method === 'forget') throw Object.assign(new Error('Memory stopped a request that ran too long and restarted'), { code: 'BACKEND_UNAVAILABLE' });
+    return call(method, params, signal);
+  };
+  await assert.rejects(memory.forget(codex, interrupted.id), { code: 'OUTCOME_UNKNOWN' });
+  canonical.call = call;
+  assert.equal(store.get<any[]>('memory-pending-erasure', []).length, 1);
+  await memory.close(); store.close();
+  // One more intent names a record that no longer exists, as after compaction or restoring an older store.
+  store = new Store(directory);
+  store.set('memory-pending-erasure', [...store.get<any[]>('memory-pending-erasure', []), { intentId: 'gone', scope_id, id: '00000000-0000-4000-8000-000000000000' }]);
+  memory = new Memory(store, () => settings(store));
+  t.after(async () => { await memory.close(); store.close(); });
+  await memory.ready;
+  assert.deepEqual(store.get<any[]>('memory-pending-erasure', []), []);
+  const rows = (await memory.list(codex)).rows.map((row: any) => row.text);
+  assert.deepEqual(rows, ['The rollback window is two hours.'], 'the interrupted erasure finished before memory served');
+  assert.ok((await memory.save(codex, 'Memory still accepts notes.')).id);
+  assert.ok(kept.id);
+});
+
+test('a forget the stopped memory worker never ran is finished when the worker restarts', async t => {
+  const f = await fixture(t), project = join(f.directory, 'project');
+  await mkdir(project);
+  const codex = session('codex', 'codex-session', project);
+  f.store.saveSession(codex);
+  const note = await f.memory.save(codex, 'The recovery code hint is saffron lynx.');
+  const canonical = f.memory.service.canonical, call = canonical.call.bind(canonical);
+  canonical.call = async (method: string, params: Record<string, unknown> = {}, signal?: AbortSignal) => {
+    if (method === 'forget') throw Object.assign(new Error('Memory stopped a request that ran too long and restarted'), { code: 'BACKEND_UNAVAILABLE' });
+    return call(method, params, signal);
+  };
+  await assert.rejects(f.memory.forget(codex, note.id), { code: 'OUTCOME_UNKNOWN' });
+  canonical.call = call;
+  assert.equal((await f.memory.list(codex)).total, 1);
+  canonical.notify({ type: 'worker_restarted', method: 'forget' });
+  for (let tries = 0; tries < 100 && f.store.get<any[]>('memory-pending-erasure', []).length; tries++) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(f.store.get<any[]>('memory-pending-erasure', []), []);
+  assert.equal((await f.memory.list(codex)).total, 0);
+});

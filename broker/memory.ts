@@ -168,14 +168,33 @@ export class Memory {
       }
       if (event.type === 'workspace_observation') { this.observed(event.observation, event.current); return; }
       if (event.type === 'workspace_policy') { this.historyPolicy = event; this.policyChanged(event); return; }
-      if (event.type === 'worker_restarted') { this.setStatus('degraded', 'Memory stopped a request that ran too long and restarted. Replies continue meanwhile.'); return; }
+      if (event.type === 'worker_restarted') {
+        this.setStatus('degraded', 'Memory stopped a request that ran too long and restarted. Replies continue meanwhile.');
+        // An erasure whose canonical deletion the stopped worker never ran is finished by the new one.
+        void this.ready.then(() => this.replayPendingErasures()).catch(() => this.setStatus('degraded', 'An interrupted forget is still pending; it is retried when memory restarts.'));
+        return;
+      }
       this.notify();
     });
     this.ready = this.initialize(); this.ready.catch(error => this.setStatus('degraded', error.message));
   }
+  /**
+   * Finishes erasures whose canonical deletion did not complete: erase() scrubbed the managed copies
+   * and recorded each intent first. Runs before memory serves at startup, and again after the worker
+   * restarts. A target or scope that no longer exists has nothing left to delete, so its intent is
+   * done; any other failure keeps that intent and is thrown, so startup still fails closed.
+   */
+  async replayPendingErasures() {
+    const key = 'memory-pending-erasure', same = (a: any, b: any) => a.intentId !== undefined ? a.intentId === b.intentId : JSON.stringify(a) === JSON.stringify(b);
+    for (const entry of this.store.get<any[]>(key, [])) {
+      const { intentId: _intentId, ...intent } = entry;
+      try { await this.service.call('forget', intent); }
+      catch (error: any) { if (!['NOT_FOUND', 'UNAUTHORIZED_SCOPE'].includes(error?.code)) throw error; }
+      this.store.set(key, this.store.get<any[]>(key, []).filter(other => !same(entry, other)));
+    }
+  }
   async initialize() {
-    for(const {intentId:_intentId,...intent} of this.store.get<any[]>('memory-pending-erasure',[]))await this.service.call('forget',intent);
-    this.store.set('memory-pending-erasure',[]);
+    await this.replayPendingErasures();
     if (!this.store.get('graph-memory-migrated', false)) {
       const rows = this.store.db.prepare('SELECT * FROM memories').all();
       await this.service.call('import_legacy', { rows });
@@ -319,7 +338,7 @@ export class Memory {
     const matches=erasureMatcher(sources);
     const scrub=(value:any):any=>typeof value==='string'?(matches(value)?'[Content removed by memory erasure]':value):Array.isArray(value)?value.map(scrub):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,scrub(v)])):value;
     const intentId=randomUUID(), scopedSessions = new Set<string>();
-    let publishDelegations: (() => void) | undefined;
+    let publishDelegations: (() => void) | undefined, intent: Record<string, unknown> = {};
     this.store.db.exec('BEGIN');
     try { this.invalidateTranscript();for(const other of this.store.sessions()) {
       if(other.temporary)continue;
@@ -335,11 +354,15 @@ export class Memory {
     // Commit transcript scrubbing before canonical deletion. A crash leaves an
     // opaque retry intent, so startup finishes deletion before memory can serve.
     const {expected_revision: _expected,selection: _token,...retryParams}=params;
-    this.store.set('memory-pending-erasure',[...this.store.get<any[]>('memory-pending-erasure',[]),{intentId,scope_id,...retryParams,...(!params.id?{to_us:params.to_us??Date.now()*1000}:{})}]);
+    intent={scope_id,...retryParams,...(!params.id?{to_us:params.to_us??Date.now()*1000}:{})};
+    this.store.set('memory-pending-erasure',[...this.store.get<any[]>('memory-pending-erasure',[]),{intentId,...intent}]);
     this.store.db.exec('COMMIT'); } catch(error){this.store.db.exec('ROLLBACK');throw error;}
     publishDelegations?.();
     let result:any;
-    try { authorize?.();signal?.throwIfAborted();result=await this.service.call(mobileBounded?'mobile_forget':'forget',{scope_id,...params},signal); }
+    // The preview binding was checked against the sources just read, before anything was scrubbed. The
+    // deletion then runs the recorded intent, as a replay would: a commit elsewhere in memory meanwhile
+    // (another reply, background extraction) must not leave scrubbed text recallable.
+    try { authorize?.();signal?.throwIfAborted();result=await this.service.call(mobileBounded?'mobile_forget':'forget',intent,signal); }
     catch { throw Object.assign(new Error('Erasure was accepted; its final outcome must be reconciled before retrying.'),{code:'OUTCOME_UNKNOWN'}); }
     this.store.set('memory-pending-erasure',this.store.get<any[]>('memory-pending-erasure',[]).filter(intent=>intent.intentId!==intentId));
     await this.refreshAfterCommit();return result;
