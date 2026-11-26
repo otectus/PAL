@@ -241,7 +241,9 @@ test('AUD-013 an index manifest cannot overwrite a concurrent consent revision',
   release.resolve();
   for (let index = 0; index < 200 && !core.collections.job?.done; index++) await new Promise(resolve => setTimeout(resolve, 5));
   const snapshot = core.collections.snapshot()!;
-  assert.equal(snapshot.done, true, JSON.stringify(snapshot)); assert.match(snapshot.error, /changed in another window/);
+  // Withdrawn consent stops the indexing at once instead of letting it fail when it commits, so it writes
+  // nothing more under the consent it started with; it never publishes either way.
+  assert.equal(snapshot.done, true, JSON.stringify(snapshot)); assert.equal(snapshot.error, 'Indexing was cancelled');
   const current = (await core.rpc('collections.list', {})).collections[0];
   assert.equal(current.allowCloud, false); assert.equal(current.revision, revoked.revision); assert.equal(current.chunks, 0);
   assert.equal((await original('retrieve', { scope_id: scope, text: 'zircon' })).results.length, 0, 'the conflicted staged generation is erased');
@@ -400,4 +402,37 @@ test('a collection cloud models may not read keeps its passages local, so a host
   await core.rpc('collections.list', {});
   service.call = call;
   assert.deepEqual(await queued(true), [], 'and the passages are restricted by the next collection operation');
+});
+
+test('withdrawing cloud consent while the collection is being indexed stops the indexing, so nothing it writes afterwards reaches a hosted embedding provider', async t => {
+  const { docs, core } = await fixture(t);
+  await writeFile(join(docs, 'long.md'), '# Release guide\n\n' + Array.from({ length: 40 }, (_, i) => `Step ${i} of the heliotrope release checks the zircon flag and the orchid sync.`).join('\n\n'));
+  let collection = await core.rpc('collections.create', { name: 'Shared docs', allowCloud: true });
+  collection = await core.rpc('collections.addSource', { id: collection.id, expectedRevision: collection.revision, path: docs });
+  const scope_id = core.collections.all().find(item => item.id === collection.id)!.scopeId, host = ollamaHost(core.settings.ollama.host);
+  const service = core.memory.service, call = service.call.bind(service);
+  // What a hosted embedding provider would be given now, in the background and for a query.
+  const hosted = async () => (await call('vector_backlog', { host, fingerprint: 'hosted-space', limit: 64, cloud: true })).length
+    + (await call('pending_artifacts', { scope_id, fingerprint: 'hosted-space', cloud: true })).length;
+  // The worker is slow to answer chunk writes that have already committed: the second, then the third.
+  const second = deferred(), third = deferred();
+  let written = 0;
+  service.call = async (method: string, params: any = {}, signal?: AbortSignal) => {
+    const result = await call(method, params, signal);
+    if (method === 'observe_text' && params.role === 'document') { written++; if (written === 2) await second.promise; if (written === 3) await third.promise; }
+    return result;
+  };
+  t.after(() => { second.resolve(); third.resolve(); service.call = call; });
+  const until = async (check: () => boolean) => { for (let i = 0; i < 1000 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.ok(check(), 'timed out'); };
+  await core.rpc('collections.index', { id: collection.id });
+  await until(() => written === 2);
+  const current = (await core.rpc('collections.list', {})).collections.find((item: any) => item.id === collection.id);
+  await core.rpc('collections.update', { id: collection.id, expectedRevision: current.revision, allowCloud: false });
+  second.resolve();
+  await until(() => written >= 3 || !!core.collections.job?.done);
+  assert.equal(await hosted(), 0, 'no passage written after the withdrawal is offered to a hosted provider');
+  third.resolve();
+  await until(() => !!core.collections.job?.done);
+  assert.equal(core.collections.job?.error, 'Indexing was cancelled');
+  assert.equal(await hosted(), 0);
 });

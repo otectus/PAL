@@ -177,14 +177,22 @@ export class KnowledgeCollections {
   }
   /** The cloud consent each collection's passages were last given since PAL started; absent until it is applied. */
   private sensitivitySynced = new Map<string, boolean>();
+  private consentTail: Promise<unknown> = Promise.resolve();
   /**
-   * A collection's passages take its cloud consent: without it they are local-only, so a hosted
-   * embedding provider never receives them, as a reranker or cloud model does not.
+   * A collection's passages take its recorded cloud consent: without it they are local-only, so a hosted
+   * embedding provider never receives them, as a reranker or cloud model does not. Changes are sent one
+   * at a time, each with the consent recorded when it is sent, so an older one never lands after a newer.
    */
-  private async applyConsent(collection: Collection) {
-    this.sensitivitySynced.delete(collection.id);
-    await this.core.memory.service.call('collection_sensitivity', { scope_id: collection.scopeId, sensitivity: collection.allowCloud ? 'cloud_allowed' : 'local_only' });
-    this.sensitivitySynced.set(collection.id, collection.allowCloud);
+  private applyConsent(collection: Collection): Promise<void> {
+    const applied = this.consentTail.then(async () => {
+      const current = this.all().find(item => item.id === collection.id);
+      if (!current) return;
+      this.sensitivitySynced.delete(current.id);
+      await this.core.memory.service.call('collection_sensitivity', { scope_id: current.scopeId, sensitivity: current.allowCloud ? 'cloud_allowed' : 'local_only' });
+      this.sensitivitySynced.set(current.id, current.allowCloud);
+    });
+    this.consentTail = applied.catch(() => {});
+    return applied;
   }
   private async eraseScope(scopeId: string) {
     return this.core.memory.service.call('forget', { scope_id: scopeId, from_us: 0, to_us: Number.MAX_SAFE_INTEGER });
@@ -308,11 +316,14 @@ export class KnowledgeCollections {
       // Reranking sends excerpts to Voyage, so it needs the same permission a cloud model does, and ends with it.
       if (patch.rerank && !next.allowCloud) throw new Error('Reranking sends excerpts to Voyage. Allow cloud models to read this collection first.');
       if (next.rerank && !next.allowCloud) patch.rerank = false;
-      // Withdrawn consent restricts the passages before it is recorded, granted consent after it; a
-      // failure here is retried by the next collection operation (reconcile).
-      if (collection.allowCloud && !next.allowCloud) await this.applyConsent(next).catch(() => {});
       const updated = this.replace(this.bump(collection, patch));
-      if (!collection.allowCloud && next.allowCloud) await this.applyConsent(next).catch(() => {});
+      if (collection.allowCloud !== next.allowCloud) {
+        // Indexing writes with the consent it started with, and the new revision fails it when it commits;
+        // one that loses consent stops now, so nothing it writes from here on is cloud_allowed. The passages
+        // then take the recorded consent; a failure is retried by the next collection operation (reconcile).
+        if (!next.allowCloud && this.job && !this.job.done && this.job.collectionId === collection.id) this.job.controller.abort(new Error('Cloud access to this collection was withdrawn'));
+        await this.applyConsent(updated).catch(() => {});
+      }
       return updated;
     });
   }
