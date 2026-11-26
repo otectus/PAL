@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp,mkdir,rm,writeFile,access } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../broker/store.ts';
@@ -46,4 +48,31 @@ test('working-copy erasure uses source identities and removes actual copied file
     assert.equal(capsule.goal,'[Content removed by memory erasure]');assert.deepEqual(capsule.decisions,[]);assert.deepEqual(capsule.sources,[]);
     assert.deepEqual(store.get<any[]>('workflow:results',[]).map(row=>row.id),['keep']);
   }finally{store.close();await rm(directory,{recursive:true,force:true});}
+});
+
+test('a conversation store written before secure delete is compacted once, so text a forget scrubbed earlier leaves the file',async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'pal-freed-space-'));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const token='zqxjcalendulazz',file=join(dir,'pal.sqlite');
+  const onDisk=()=>['pal.sqlite','pal.sqlite-wal'].some(name=>{try{return readFileSync(join(dir,name)).includes(Buffer.from(token));}catch{return false;}});
+  // A store as an earlier version left it: no secure_delete, and a long message whose text a forget then scrubbed.
+  const old=new DatabaseSync(file);
+  old.exec('PRAGMA journal_mode=WAL;CREATE TABLE meta (key TEXT PRIMARY KEY,value TEXT NOT NULL);CREATE TABLE sessions (id TEXT PRIMARY KEY,data TEXT NOT NULL);CREATE TABLE messages (id TEXT PRIMARY KEY,session_id TEXT NOT NULL,data TEXT NOT NULL)');
+  const put=old.prepare('INSERT INTO messages VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'),message=(id:string,text:string)=>put.run(id,'s',JSON.stringify({id,sessionId:'s',role:'user',text,time:1}));
+  message('m1','Before the secret.');
+  message('m2',`My locker pin is ${token}. `+'Context for the request. '.repeat(1200));
+  message('m3','After the secret.');
+  message('m2','[Content removed by memory erasure]');
+  old.exec('PRAGMA wal_checkpoint(TRUNCATE)');old.close();
+  assert.ok(onDisk(),'the earlier store kept the scrubbed text in freed space');
+  const store=new Store(dir);
+  try {
+    assert.equal(onDisk(),false,'opening it once leaves no copy of the scrubbed text');
+    assert.deepEqual(store.messages('s').map(m=>[m.id,m.text]),[['m1','Before the secret.'],['m2','[Content removed by memory erasure]'],['m3','After the secret.']],'every message is kept, in order');
+    assert.equal(store.get('secureDeleteCompacted',0),1);
+  } finally { store.close(); }
+  const fresh=await mkdtemp(join(tmpdir(),'pal-fresh-store-'));
+  t.after(()=>rm(fresh,{recursive:true,force:true}));
+  const created=new Store(fresh);
+  try { assert.equal(created.get('secureDeleteCompacted',0),1,'a new store starts with secure delete and needs no compaction'); } finally { created.close(); }
 });

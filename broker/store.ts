@@ -46,7 +46,7 @@ export class Store {
       CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);`);
     privateDir(directory);
     const current = join(directory, 'pal.sqlite'), legacy = join(directory, 'cere.sqlite');
-    const file = existsSync(current) || !existsSync(legacy) ? current : legacy;
+    const file = existsSync(current) || !existsSync(legacy) ? current : legacy, existed = existsSync(file);
     this.db = new DatabaseSync(file); chmodSync(file, 0o600);
     // secure_delete zeroes what a change frees: a passage memory erasure scrubs from a long message would
     // otherwise stay readable in the freed overflow pages.
@@ -77,6 +77,22 @@ export class Store {
       CREATE INDEX IF NOT EXISTS sessions_project ON sessions(json_extract(data,'$.cwd'));`);
     this.migrateWorkbench();
     this.migrateIdentity();
+    this.compactFreedSpace(existed);
+  }
+
+  /**
+   * A store written before secure_delete can still hold text memory erasure scrubbed from a message: in
+   * freed overflow pages and in the unused part of pages still in use. One VACUUM rewrites the file
+   * without them, before anything else uses it, and secure_delete keeps it that way. A new store needs
+   * none. If the VACUUM cannot run (no room for its copy), the next start tries again.
+   */
+  private compactFreedSpace(existed: boolean) {
+    if (this.get<number>('secureDeleteCompacted', 0) >= 1) return;
+    if (existed) {
+      try { this.db.exec('VACUUM'); this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); }
+      catch { return; }
+    }
+    this.set('secureDeleteCompacted', 1);
   }
 
   private migrateIdentity() {
