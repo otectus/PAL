@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import type { ServerResponse } from 'node:http';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Memory, memoryScope } from '../broker/memory.ts';
@@ -270,4 +271,28 @@ test('a scrubbed conversation passage leaves no copy in the conversation databas
   await f.memory.forget(codex, note.id);
   assert.equal(f.store.messages(codex.id)[0].text, '[Content removed by memory erasure]');
   assert.deepEqual(onDisk(), [], 'neither freed pages nor earlier log frames keep the scrubbed text');
+});
+
+test('a message recorded after its turn stopped waiting for memory is recorded once', async t => {
+  const f = await fixture(t), project = join(f.directory, 'project');
+  await mkdir(project);
+  const codex = session('codex', 'codex-session', project);
+  f.store.saveSession(codex);
+  await f.memory.scope(codex);
+  f.memory.recallDeadlineMs = 100;
+  const canonical = f.memory.service.canonical, call = canonical.call.bind(canonical);
+  // A busy worker accepts the message's write, which commits after the turn went ahead without memory.
+  canonical.call = async (method: string, params: Record<string, unknown> = {}, signal?: AbortSignal) => {
+    if (method === 'observe_text' && params.role === 'user') { const written = call(method, params); await new Promise(resolve => setTimeout(resolve, 300)); return written; }
+    return call(method, params, signal);
+  };
+  const text = 'Which cedar release notes did we publish?';
+  assert.equal(await f.memory.context(codex, text, signal()), '');
+  canonical.call = call;
+  assert.equal((await f.memory.capture(codex, text, 'The cedar notes went out Monday.')).outcome, 'captured');
+  const database = new DatabaseSync(join(f.directory, 'graph-memory', 'memory.sqlite'), { readOnly: true });
+  try {
+    const count = (database.prepare("SELECT COUNT(*) AS n FROM observations o JOIN payloads p ON p.id=o.payload_id WHERE o.role='user' AND p.body=?").get(text) as { n: number }).n;
+    assert.equal(count, 1, 'one message is one source, not two independent ones');
+  } finally { database.close(); }
 });

@@ -251,7 +251,7 @@ export class Memory {
     try {
       const scope_id = await this.scope(session), task_id = await this.task(session, scope_id, signal);
       const write=(method:string,params:Record<string,unknown>)=>{authorize?.();signal?.throwIfAborted();return this.service.call(method,params,signal);};
-      if (!packet?.observed && !packet?.skipped) await this.intake(() => write('observe_text', { scope_id, text, role: 'user', session_id: session.id, source_event_id: randomUUID(), ...(task_id ? { task_id } : {}) })) || (skipped = true);
+      if (!packet?.observed && !packet?.skipped) await this.intake(() => write('observe_text', { scope_id, text, role: 'user', session_id: session.id, source_event_id: packet?.event ?? randomUUID(), ...(task_id ? { task_id } : {}) })) || (skipped = true);
       const response = await this.intake(() => write('observe_text', { scope_id, text: answer || '(empty response)', role: 'assistant', session_id: session.id, source_event_id: randomUUID(), ...(task_id ? { task_id } : {}) }));
       if (!response) skipped = true;
       else if (packet?.snapshot) {
@@ -497,7 +497,11 @@ export class Memory {
     const scope_id = await this.scope(session, signal);
     authorize?.();signal.throwIfAborted();
     const task_id = await this.task(session, scope_id, signal);
-    const observation=await this.intake(() => this.service.call('observe_text', { scope_id, text, role: 'user', session_id: session.id, source_event_id: randomUUID(), ...(task_id ? { task_id } : {}) }, signal));
+    // Kept before the write: when the turn stops waiting while the write still commits, capture() sends
+    // the same event, which the store finds instead of recording the message a second time.
+    const event = randomUUID();
+    this.packets.set(session.id, { event });
+    const observation=await this.intake(() => this.service.call('observe_text', { scope_id, text, role: 'user', session_id: session.id, source_event_id: event, ...(task_id ? { task_id } : {}) }, signal));
     signal.throwIfAborted();
     if(!observation){
       // The query itself is excluded from persistence and recall alike.
