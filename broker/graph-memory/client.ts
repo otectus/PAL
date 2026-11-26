@@ -64,6 +64,14 @@ export class GraphMemory {
     this.watchdog = setInterval(() => this.inspect(), options.watchdogMs ?? 5000);
     this.watchdog.unref();
   }
+  /**
+   * The worker keeps the process alive only while it starts or has calls to answer. An idle one holds no
+   * work, so a process that is otherwise done (a test whose cleanup failed, a script that never closed
+   * memory) can still exit; the broker stays alive through its own sockets.
+   */
+  idle() {
+    if (!this.calls.size) this.worker.unref();
+  }
   /** Starts a worker. Messages, errors and exits from a replaced worker are ignored. */
   spawn() {
     const worker = new Worker(this.workerUrl, {
@@ -90,6 +98,7 @@ export class GraphMemory {
       if (!current()) return;
       if (m.ready) {
         resolve();
+        this.idle();
         return;
       }
       if (m.fatal) {
@@ -105,6 +114,7 @@ export class GraphMemory {
         return;
       }
       this.calls.delete(m.id);
+      this.idle();
       if (this.active?.id === m.id) this.active = undefined;
       const request = this.pending.get(m.id);
       if (!request) return;
@@ -176,11 +186,13 @@ export class GraphMemory {
         },
       });
       this.calls.set(id, method);
+      worker.ref();
       try {
         worker.postMessage({ id, method, params, cancellation, budgetMs: memoryBudgets[method] ?? 0 });
       } catch (error: any) {
         this.pending.delete(id);
         this.calls.delete(id);
+        this.idle();
         signal?.removeEventListener("abort", abort);
         reject(new MemoryError("BACKEND_UNAVAILABLE", `Memory request could not be sent: ${error?.message || error}`));
       }

@@ -74,3 +74,25 @@ test('closing gives a busy worker five seconds, then ends it', async t => {
   assert.ok(Date.now() - started < 8000);
   await assert.rejects(hung);
 });
+
+test('an idle memory worker does not keep its process alive, so a client that was never closed cannot stall it', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'pal-memory-idle-'));
+  t.after(() => rm(directory, { recursive: true, force: true, maxRetries: 10 }).catch(() => {}));
+  const client = new URL('../broker/graph-memory/client.ts', import.meta.url).href;
+  // The real worker and store: it starts, answers one call, and is then left open, as a test whose cleanup failed leaves it.
+  const script = `import { GraphMemory } from ${JSON.stringify(client)};
+    const memory = new GraphMemory(${JSON.stringify(directory)});
+    await memory.ready;
+    const health = await memory.call('health');
+    console.log(health.revision >= 0 ? 'answered' : 'no answer');`;
+  const { execFile } = await import('node:child_process'), file = join(directory, 'leave-open.mjs');
+  await writeFile(file, script);
+  const started = Date.now();
+  const output = await new Promise<string>((resolve, reject) => {
+    const child = execFile(process.execPath, [file], { timeout: 20000 }, (error, stdout, stderr) =>
+      error ? reject(Object.assign(error, { stderr })) : resolve(stdout));
+    child.on('error', reject);
+  });
+  assert.equal(output.trim(), 'answered');
+  assert.ok(Date.now() - started < 15000, 'the process ended once its work was done');
+});
